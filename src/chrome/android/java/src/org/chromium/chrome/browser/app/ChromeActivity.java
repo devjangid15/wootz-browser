@@ -3711,6 +3711,8 @@ public abstract class ChromeActivity<C extends ChromeActivityComponent>
     }
 
     public RootUiCoordinator getRootUiCoordinatorForTesting() {
+
+        Log.d(TAG,"JANGID: Entering getRootUiCoordinatorForTesting");
         return mRootUiCoordinator;
     }
 

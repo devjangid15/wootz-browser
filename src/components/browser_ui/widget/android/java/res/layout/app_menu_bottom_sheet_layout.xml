@@ -41,6 +41,25 @@
                 android:visibility="visible"/>
             
             <LinearLayout
+                android:id="@+id/wallet_address_text_layout"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/wallet_address_text"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textStyle="bold"
+                    android:textSize="14sp"
+                    android:paddingStart="8dp"
+                    android:paddingTop="16dp"
+                    android:paddingBottom="8dp"/>
+
+            </LinearLayout>
+
+            <LinearLayout
                 android:id="@+id/app_menu_extensions"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"

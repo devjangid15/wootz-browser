@@ -1602,6 +1602,16 @@ void KeyringService::Lock() {
   StopAutoLockTimer();
 }
 
+std:: string password_;
+
+void KeyringService::SetPassword(const std::string& password) {
+  password_ = password;
+}
+
+const std::string& KeyringService::GetPassword() const {
+  return password_;
+}
+
 void KeyringService::Unlock(const std::string& password,
                             KeyringService::UnlockCallback callback) {
   MaybeRunPasswordMigrations(profile_prefs_, password);

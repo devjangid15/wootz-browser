@@ -957,16 +957,21 @@ mojom::OriginInfoPtr WootzWalletService::GetActiveOriginSync() {
 
 void WootzWalletService::GetPendingSignMessageRequests(
     GetPendingSignMessageRequestsCallback callback) {
+  LOG(ERROR) << "JANGID: GetPendingSignMessageRequests: Entering function";
+  
   std::vector<mojom::SignMessageRequestPtr> requests;
   if (sign_message_requests_.empty()) {
+    LOG(ERROR) << "JANGID: GetPendingSignMessageRequests: No pending requests";
     std::move(callback).Run(std::move(requests));
     return;
   }
 
   for (const auto& request : sign_message_requests_) {
     requests.push_back(request.Clone());
+    LOG(ERROR) << "JANGID: GetPendingSignMessageRequests: Added request with ID: " << request->id;
   }
 
+  LOG(ERROR) << "JANGID: GetPendingSignMessageRequests: Exiting function";
   std::move(callback).Run(std::move(requests));
 }
 
@@ -975,17 +980,38 @@ void WootzWalletService::NotifySignMessageRequestProcessed(
     int id,
     mojom::ByteArrayStringUnionPtr signature,
     const std::optional<std::string>& error) {
-  if (sign_message_requests_.empty() ||
-      sign_message_requests_.front()->id != id) {
-    VLOG(1) << "id: " << id << " is not expected, should be "
-            << sign_message_requests_.front()->id;
+  LOG(ERROR) << "JANGID: NotifySignMessageRequestProcessed started";
+  LOG(ERROR) << "JANGID: Approved: " << (approved ? "Yes" : "No");
+  LOG(ERROR) << "JANGID: ID: " << id;
+  LOG(ERROR) << "JANGID: Signature present: " << (signature ? "Yes" : "No");
+  LOG(ERROR) << "JANGID: Error: " << (error ? *error : "No error");
+
+  if (sign_message_requests_.empty()) {
+    LOG(ERROR) << "JANGID: sign_message_requests_ is empty";
     return;
   }
+
+  LOG(ERROR) << "JANGID: Front request ID: " << sign_message_requests_.front()->id;
+
+  if (sign_message_requests_.front()->id != id) {
+    LOG(ERROR) << "JANGID: ID mismatch: received " << id << ", expected " << sign_message_requests_.front()->id;
+    return;
+  }
+
+  LOG(ERROR) << "JANGID: ID matched, processing request";
+
   auto callback = std::move(sign_message_callbacks_.front());
   sign_message_requests_.pop_front();
   sign_message_callbacks_.pop_front();
 
+  LOG(ERROR) << "JANGID: Removed front request and callback";
+  LOG(ERROR) << "JANGID: Remaining requests: " << sign_message_requests_.size();
+
+  LOG(ERROR) << "JANGID: Executing callback";
   std::move(callback).Run(approved, std::move(signature), error);
+  LOG(ERROR) << "JANGID: Callback executed";
+
+  LOG(ERROR) << "JANGID: NotifySignMessageRequestProcessed completed";
 }
 
 void WootzWalletService::GetPendingSignMessageErrors(
@@ -1176,11 +1202,31 @@ void WootzWalletService::OnGetImportInfo(
 void WootzWalletService::AddSignMessageRequest(
     mojom::SignMessageRequestPtr request,
     SignMessageRequestCallback callback) {
+  LOG(ERROR) << "JANGID: AddSignMessageRequest started";
+  
+  LOG(ERROR) << "JANGID: Initial request ID: " << request->id;
+  LOG(ERROR) << "JANGID: Current sign_message_id_: " << sign_message_id_;
+
   if (request->id < 0) {
     request->id = sign_message_id_++;
+    LOG(ERROR) << "JANGID: Assigned new ID: " << request->id;
+    LOG(ERROR) << "JANGID: Updated sign_message_id_: " << sign_message_id_;
   }
+
+  LOG(ERROR) << "JANGID: Request details:";
+  LOG(ERROR) << "JANGID: - ID: " << request->id;
+
+  LOG(ERROR) << "JANGID: Current queue size: " << sign_message_requests_.size();
+
   sign_message_requests_.push_back(std::move(request));
+  LOG(ERROR) << "JANGID: Request added to queue";
+  LOG(ERROR) << "JANGID: New queue size: " << sign_message_requests_.size();
+
   sign_message_callbacks_.push_back(std::move(callback));
+  LOG(ERROR) << "JANGID: Callback added to queue";
+  LOG(ERROR) << "JANGID: Callback queue size: " << sign_message_callbacks_.size();
+
+  LOG(ERROR) << "JANGID: AddSignMessageRequest completed";
 }
 
 void WootzWalletService::AddSignMessageError(mojom::SignMessageErrorPtr error) {

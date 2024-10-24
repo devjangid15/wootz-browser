@@ -26,6 +26,8 @@
 #include "mojo/public/cpp/bindings/remote.h"
 #include "url/origin.h"
 
+#include "chrome/browser/profiles/profile.h"
+
 class HostContentSettingsMap;
 class PrefService;
 
@@ -52,7 +54,8 @@ class EthereumProviderImpl final : public mojom::EthereumProvider,
   EthereumProviderImpl(HostContentSettingsMap* host_content_settings_map,
                        WootzWalletService* wootz_wallet_service,
                        std::unique_ptr<WootzWalletProviderDelegate> delegate,
-                       PrefService* prefs);
+                       PrefService* prefs,
+                       Profile* profile);
   ~EthereumProviderImpl() override;
 
   void SendErrorOnRequest(const mojom::ProviderError& error,
@@ -158,6 +161,8 @@ class EthereumProviderImpl final : public mojom::EthereumProvider,
   FRIEND_TEST_ALL_PREFIXES(EthereumProviderImplUnitTest,
                            EthSubscribeLogsFiltered);
   friend class EthereumProviderImplUnitTest;
+  
+  raw_ptr<Profile> profile_;
 
   mojom::AccountIdPtr FindAuthenticatedAccountByAddress(
       const std::string& address,
@@ -170,6 +175,9 @@ class EthereumProviderImpl final : public mojom::EthereumProvider,
       mojo::PendingRemote<mojom::EventsListener> events_listener) override;
   void Request(base::Value input, RequestCallback callback) override;
   void Enable(EnableCallback callback) override;
+
+  void SendAddressToBottomSheet(const std::string& address);
+
   void Send(const std::string& method,
             base::Value params,
             SendCallback callback) override;
@@ -212,6 +220,22 @@ class EthereumProviderImpl final : public mojom::EthereumProvider,
                            std::vector<uint8_t>&& message_to_sign,
                            RequestCallback callback,
                            base::Value id);
+
+  void OnSignMessageRequestAdded(
+      RequestCallback callback,
+      base::Value id,
+      mojom::AccountIdPtr account_id,
+      std::vector<uint8_t> message_to_sign,
+      bool is_eip712,
+      bool approved,
+      wootz_wallet::mojom::ByteArrayStringUnionPtr signature,
+      const std::optional<std::string>& error);
+
+  void OnExtensionSignMessageResponse(
+      bool approved,
+      wootz_wallet::mojom::ByteArrayStringUnionPtr signature,
+      const std::optional<std::string>& error);
+
   bool CheckAccountAllowed(const mojom::AccountIdPtr& account_id,
                            const std::vector<std::string>& allowed_accounts);
   void UpdateKnownAccounts();
@@ -330,6 +354,13 @@ class EthereumProviderImpl final : public mojom::EthereumProvider,
   bool first_known_accounts_check_ = true;
   const raw_ptr<PrefService> prefs_ = nullptr;
   bool wallet_onboarding_shown_ = false;
+
+  RequestCallback pending_sign_message_callback_;
+  base::Value pending_sign_message_id_;
+  mojom::AccountIdPtr pending_sign_message_account_id_;
+  std::vector<uint8_t> pending_sign_message_message_;
+  bool pending_sign_message_is_eip712_ = false;
+
   base::WeakPtrFactory<EthereumProviderImpl> weak_factory_{this};
 };
 

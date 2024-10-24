@@ -385,6 +385,12 @@ void CrxUpdateService::OnDemandUpdate(const std::vector<std::string>& ids,
                          std::move(update_complete_callback));
 }
 
+void OnDemandUpdater::OnDemandUpdate(const std::vector<std::string>& ids,
+                                     Priority priority,
+                                     Callback callback) {
+  NOTREACHED_NORETURN();
+}
+
 bool CrxUpdateService::OnDemandUpdateWithCooldown(const std::string& id) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 

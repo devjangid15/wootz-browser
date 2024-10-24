@@ -18,6 +18,7 @@
 #include "components/wootz_wallet/browser/permission_utils.h"
 #include "components/permissions/contexts/wootz_wallet_permission_context.h"
 #include "components/content_settings/core/common/content_settings.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/visibility.h"
 #include "content/public/browser/web_contents.h"
@@ -92,6 +93,12 @@ void WootzWalletProviderDelegateImpl::ShowWalletBackup() {
 void WootzWalletProviderDelegateImpl::WalletInteractionDetected() {
   ::wootz_wallet::WalletInteractionDetected(web_contents_);
 }
+
+void WootzWalletProviderDelegateImpl::ShowAddressInBottomSheet(
+    const std::string& address) {
+  ::wootz_wallet::ShowAddressInBottomSheet(address);
+}
+
 
 void WootzWalletProviderDelegateImpl::ShowWalletOnboarding() {
   ::wootz_wallet::ShowWalletOnboarding(web_contents_);

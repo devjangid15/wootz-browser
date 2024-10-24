@@ -13,6 +13,7 @@
 #include "components/wootz_wallet/common/wootz_wallet.mojom.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
+#include "base/logging.h"
 
 using base::android::JavaParamRef;
 
@@ -46,6 +47,15 @@ void WalletInteractionDetected(content::WebContents* web_contents) {
   }
   Java_WootzWalletProviderDelegateImplHelper_walletInteractionDetected(
       base::android::AttachCurrentThread(), web_contents->GetJavaWebContents());
+}
+
+void ShowAddressInBottomSheet(const std::string& address){
+
+  LOG(ERROR)<<"JANGID: passing address"<<address;
+
+  Java_WootzWalletProviderDelegateImplHelper_showAddressInBottomSheet(
+    base::android::AttachCurrentThread(),
+    base::android::ConvertUTF8ToJavaString(base::android::AttachCurrentThread(), address));
 }
 
 bool IsWeb3NotificationAllowed() {

@@ -942,7 +942,8 @@ void MaybeBindEthereumProvider(
           wootz_wallet_service,
           std::make_unique<wootz_wallet::WootzWalletProviderDelegateImpl>(
               web_contents, frame_host),
-          user_prefs::UserPrefs::Get(web_contents->GetBrowserContext())),
+          user_prefs::UserPrefs::Get(web_contents->GetBrowserContext()),
+          Profile::FromBrowserContext(web_contents->GetBrowserContext())),
       std::move(receiver));
 }
 

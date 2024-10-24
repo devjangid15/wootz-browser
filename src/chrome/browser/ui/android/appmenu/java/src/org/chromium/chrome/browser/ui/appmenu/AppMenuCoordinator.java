@@ -21,6 +21,12 @@ public interface AppMenuCoordinator {
     AppMenuHandler getAppMenuHandler();
 
     /**
+     * Shows the address in the bottom sheet of the app menu.
+     * @param address The address to be shown.
+     */
+    void showAddressInBottomSheet(String address);
+
+    /**
      * @return The {@link AppMenuPropertiesDelegate} associated with this activity.
      */
     AppMenuPropertiesDelegate getAppMenuPropertiesDelegate();

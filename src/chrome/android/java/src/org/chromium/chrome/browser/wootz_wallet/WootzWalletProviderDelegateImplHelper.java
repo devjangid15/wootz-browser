@@ -62,6 +62,20 @@ public class WootzWalletProviderDelegateImplHelper {
     }
 
     @CalledByNative
+    public static void showAddressInBottomSheet(String address) {
+
+        Log.d(TAG, "JANGID: " + address);
+        try {
+            Log.d(TAG, "JANGID: CALLING ADDRESSBOTTOMSHEET");
+            ChromeActivity activity = ChromeActivity.getChromeActivity();
+            activity.getRootUiCoordinatorForTesting().getAppMenuCoordinatorForTesting()
+                    .showAddressInBottomSheet(address);
+        } catch (ChromeActivity.ChromeActivityNotFoundException e) {
+            Log.e(TAG, "showAddressInBottomSheet " + e);
+        }
+    }
+
+    @CalledByNative
     public static boolean isWeb3NotificationAllowed() {
         return WootzWalletPreferences.getPrefWeb3NotificationsEnabled();
     }

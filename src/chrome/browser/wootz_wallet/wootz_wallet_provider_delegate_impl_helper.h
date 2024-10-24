@@ -34,6 +34,9 @@ void ShowAccountCreation(content::WebContents* web_contents,
 // Triggers when any kind interaction from a DApp is detected
 void WalletInteractionDetected(content::WebContents* web_contents);
 
+// Passing address to bottomsheet
+void ShowAddressInBottomSheet(const std::string& address);
+
 // Check are web3 notifications allowed or not. Used on Android to
 // show or not a permissions prompt dialog
 bool IsWeb3NotificationAllowed();

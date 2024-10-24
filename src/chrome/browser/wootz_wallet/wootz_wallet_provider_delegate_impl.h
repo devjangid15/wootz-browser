@@ -41,6 +41,10 @@ class WootzWalletProviderDelegateImpl : public WootzWalletProviderDelegate,
   void ShowPanel() override;
   void ShowWalletBackup() override;
   void WalletInteractionDetected() override;
+  
+  void ShowAddressInBottomSheet(const std::string& address) override;
+
+
   void ShowWalletOnboarding() override;
   void ShowAccountCreation(mojom::CoinType type) override;
   url::Origin GetOrigin() const override;

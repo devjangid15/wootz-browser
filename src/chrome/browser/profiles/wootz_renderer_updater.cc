@@ -151,11 +151,11 @@ void WootzRendererUpdater::UpdateRenderer(
 
           LOG(ERROR)<<"WootzRendererUpdater ANKIT8";
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-  extensions::ExtensionRegistry* registry =
-      extensions::ExtensionRegistry::Get(profile_);
-  bool has_installed_metamask =
-      registry && registry->enabled_extensions().Contains(kMetamaskExtensionId);
-#else
+  // extensions::ExtensionRegistry* registry =
+  //     extensions::ExtensionRegistry::Get(profile_);
+  // bool has_installed_metamask =
+  //     registry && registry->enabled_extensions().Contains(kMetamaskExtensionId);
+// #else
   bool has_installed_metamask = false;
 #endif
 

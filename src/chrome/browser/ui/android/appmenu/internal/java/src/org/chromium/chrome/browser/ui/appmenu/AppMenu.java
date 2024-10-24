@@ -146,6 +146,10 @@ public class AppMenu extends BottomSheetDialogFragment implements OnItemClickLis
     private BottomSheetBehavior<View> mBehavior;
     private ImageButton mFloatingBackButton;
     private WebContents mCurrentWebContents;
+    private View mAppMenuView;
+
+    private String mWalletAddress="";
+
     /**
      * Creates and sets up the App Menu.
      * @param itemRowHeight Desired height for each app menu row.
@@ -784,6 +788,12 @@ public class AppMenu extends BottomSheetDialogFragment implements OnItemClickLis
         return mGridView;
     }
 
+    public void showAddressInBottomSheet(String address) {
+        Log.d(TAG, "JANGID: ADDRESS " + address);
+
+        mWalletAddress = address;
+    }
+    
     private class GridAdapter extends BaseAdapter {
         private ModelList mModelList;
         private LayoutInflater mInflater;
@@ -883,6 +893,8 @@ public class AppMenu extends BottomSheetDialogFragment implements OnItemClickLis
     public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
         View view = inflater.inflate(R.layout.app_menu_bottom_sheet_layout, container, false);
         
+        mAppMenuView = view;
+
         LinearLayout contentLayout = view.findViewById(R.id.app_menu_content);
         
         // Add extensions row
@@ -901,6 +913,24 @@ public class AppMenu extends BottomSheetDialogFragment implements OnItemClickLis
         
         mGridView.setOnItemClickListener(this);
 
+        if(!mWalletAddress.isEmpty()){
+
+            LinearLayout addressLayout = view.findViewById(R.id.wallet_address_text_layout);
+            TextView addressTextView = view.findViewById(R.id.wallet_address_text);
+            if (addressLayout != null && addressTextView != null) {
+                if (!TextUtils.isEmpty(mWalletAddress)) {
+                    addressTextView.setText("Wallet Address: " + mWalletAddress);
+                    addressLayout.setVisibility(View.VISIBLE);
+                    Log.d(TAG, "JANGID: Wallet address set and layout made visible " + mWalletAddress);
+                } else {
+                    addressLayout.setVisibility(View.GONE);
+                    Log.d(TAG, "JANGID: Address is empty, hiding layout");
+                }
+            } else {
+                Log.e(TAG, "JANGID: Wallet address layout or TextView not found");
+            }
+
+        }
         // ImageButton backButton = view.findViewById(R.id.back_to_menu_button);
         // backButton.setOnClickListener(v -> returnToAppMenu());
 

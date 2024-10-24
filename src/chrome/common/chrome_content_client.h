@@ -16,6 +16,7 @@
 #include "base/task/sequenced_task_runner.h"
 #include "build/branding_buildflags.h"
 #include "build/build_config.h"
+#include "chrome/browser/chrome_content_browser_client.h"
 #include "chrome/common/buildflags.h"
 #include "components/nacl/common/buildflags.h"
 #include "content/public/common/content_client.h"

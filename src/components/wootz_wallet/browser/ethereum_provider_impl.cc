@@ -43,6 +43,7 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "url/origin.h"
 
+#include "chrome/browser/extensions/api/wootz/wootz_api.h"
 namespace {
 
 base::Value::Dict GetJsonRpcRequest(const std::string& method,
@@ -152,8 +153,10 @@ EthereumProviderImpl::EthereumProviderImpl(
     HostContentSettingsMap* host_content_settings_map,
     WootzWalletService* wootz_wallet_service,
     std::unique_ptr<WootzWalletProviderDelegate> delegate,
-    PrefService* prefs)
-    : host_content_settings_map_(host_content_settings_map),
+    PrefService* prefs,
+    Profile* profile)
+    : profile_(profile),
+      host_content_settings_map_(host_content_settings_map),
       delegate_(std::move(delegate)),
       wootz_wallet_service_(wootz_wallet_service),
       json_rpc_service_(wootz_wallet_service->json_rpc_service()),
@@ -902,11 +905,10 @@ void EthereumProviderImpl::SignTypedMessage(
 //                      std::move(id), account_id.Clone(),
 //                      std::move(message_to_sign), is_eip712));
                      
-//   LOG(ERROR)<<"GO to wootz_wallet_service ffor addsignmessagesrequest AFTER JANGID";
+//   LOG(ERROR)<<"GO to wootz_wallet_service ffor addsignmessagesrequest AFTER JANGID"; 
 
-//   // delegate_->ShowPanel();
+//   delegate_->ShowPanel();
 // }
-
 void EthereumProviderImpl::SignMessageInternal(
     const mojom::AccountIdPtr& account_id,
     mojom::SignDataUnionPtr sign_data,
@@ -914,43 +916,153 @@ void EthereumProviderImpl::SignMessageInternal(
     RequestCallback callback,
     base::Value id) {
 
-  LOG(ERROR) << "JANGID: SignMessageInternal started";
-  LOG(ERROR) << "JANGID: Account ID address: " << account_id->address;
-  LOG(ERROR) << "JANGID: Account ID keyring_id: " << account_id->keyring_id;
-  LOG(ERROR) << "JANGID: Account ID coin: " << static_cast<int>(account_id->coin);
-  LOG(ERROR) << "JANGID: Message to sign length: " << message_to_sign.size();
-  LOG(ERROR) << "JANGID: Message to sign (hex): " << ToHex(message_to_sign);
-  LOG(ERROR) << "JANGID: ID type: " << id.type();
-  if (id.is_string()) {
-    LOG(ERROR) << "JANGID: ID value: " << id.GetString();
-  } else if (id.is_int()) {
-    LOG(ERROR) << "JANGID: ID value: " << id.GetInt();
-  }
+  LOG(ERROR) << "SignMessageInternal sign_data JANGID: " << (sign_data ? "valid" : "null");
 
+  CHECK(sign_data);
   bool is_eip712 = sign_data->is_eth_sign_typed_data();
-  LOG(ERROR) << "JANGID: Is EIP712: " << (is_eip712 ? "Yes" : "No");
-  LOG(ERROR) << "JANGID: Sign data type: " << static_cast<int>(sign_data->which());
+  auto request = mojom::SignMessageRequest::New(
+      MakeOriginInfo(delegate_->GetOrigin()), -1, account_id.Clone(),
+      std::move(sign_data), mojom::CoinType::ETH,
+      json_rpc_service_->GetChainIdSync(mojom::CoinType::ETH,
+                                        delegate_->GetOrigin()));
 
-  // Use the KeyringService to sign the message
-  auto signature_with_err = keyring_service_->SignMessageByDefaultKeyring(
-      account_id, message_to_sign, is_eip712);
+  LOG(ERROR) << "SignMessageInternal is_eip712 JANGID: " << is_eip712;
+  LOG(ERROR) << "SignMessageInternal request JANGID: " << (request ? "valid" : "null");
 
-  if (!signature_with_err.signature) {
-    LOG(ERROR) << "JANGID: Signing failed. Error: " << signature_with_err.error_message;
-    base::Value formed_response = GetProviderErrorDictionary(
-        mojom::ProviderError::kInternalError,
-        signature_with_err.error_message);
-    LOG(ERROR) << "JANGID: Error response: " << formed_response;
-    std::move(callback).Run(std::move(id), std::move(formed_response), true, "", false);
-  } else {
-    LOG(ERROR) << "JANGID: Signing successful. Signature length: " << signature_with_err.signature->size();
-    base::Value formed_response = base::Value(ToHex(*signature_with_err.signature));
-    LOG(ERROR) << "JANGID: Hexadecimal signature: " << formed_response.GetString();
-    std::move(callback).Run(std::move(id), std::move(formed_response), false, "", false);
-  }
+  wootz_wallet_service_->AddSignMessageRequest(
+      std::move(request),
+      base::BindOnce(&EthereumProviderImpl::OnSignMessageRequestProcessed,
+                     weak_factory_.GetWeakPtr(), std::move(callback),
+                     std::move(id), account_id.Clone(),
+                     std::move(message_to_sign), is_eip712));
+  
+  LOG(ERROR)<<"JANGID: BEFORE Going to extensions";
+  
+  extensions::WootzSignMessageFunction::NotifyExtensionOfPendingRequest(profile_);
 
-  LOG(ERROR) << "JANGID: SignMessageInternal completed";
+  LOG(ERROR) << "JANGID: SendSignMessageRequestToExtension called";
 }
+
+// void EthereumProviderImpl::SignMessageInternal(
+//     const mojom::AccountIdPtr& account_id,
+//     mojom::SignDataUnionPtr sign_data,
+//     std::vector<uint8_t>&& message_to_sign,
+//     RequestCallback callback,
+//     base::Value id) {
+
+//   LOG(ERROR) << "SignMessageInternal sign_data JANGID: " << (sign_data ? "valid" : "null");
+
+//   CHECK(sign_data);
+//   bool is_eip712 = sign_data->is_eth_sign_typed_data();
+//   auto request = mojom::SignMessageRequest::New(
+//       MakeOriginInfo(delegate_->GetOrigin()), -1, account_id.Clone(),
+//       std::move(sign_data), mojom::CoinType::ETH,
+//       json_rpc_service_->GetChainIdSync(mojom::CoinType::ETH,
+//                                         delegate_->GetOrigin()));
+
+//   LOG(ERROR) << "SignMessageInternal is_eip712 JANGID: " << is_eip712;
+//   LOG(ERROR) << "SignMessageInternal request JANGID: " << (request ? "valid" : "null");
+
+//   // Store the pending information first
+//   pending_sign_message_callback_ = std::move(callback);
+//   pending_sign_message_id_ = id.Clone();
+//   pending_sign_message_account_id_ = account_id->Clone();
+//   pending_sign_message_message_ = message_to_sign;
+//   pending_sign_message_is_eip712_ = is_eip712;
+
+//   LOG(ERROR) << "JANGID: Stored pending sign message information";
+
+//   wootz_wallet_service_->AddSignMessageRequest(
+//       std::move(request),
+//       base::BindOnce(&EthereumProviderImpl::OnSignMessageRequestProcessed,
+//                      weak_factory_.GetWeakPtr(), std::move(callback),
+//                      std::move(id), account_id.Clone(),
+//                      std::move(message_to_sign), is_eip712));
+
+//   LOG(ERROR) << "SignMessageInternal: AddSignMessageRequest called JANGID";
+
+//   std::string hex_encoded_message = base::HexEncode(message_to_sign);
+//   LOG(ERROR) << "JANGID: Hex encoded message: " << hex_encoded_message;
+
+//   std::string origin = delegate_->GetOrigin().Serialize();
+//   LOG(ERROR) << "JANGID: Origin: " << origin;
+
+//   LOG(ERROR) << "JANGID: Calling SendSignMessageRequestToExtension";
+//   extensions::WootzSignMessageFunction::SendSignMessageRequestToExtension(
+//       profile_,
+//       account_id->address,
+//       hex_encoded_message,
+//       origin,
+//       is_eip712,
+//       base::BindOnce(&EthereumProviderImpl::OnExtensionSignMessageResponse,
+//                      weak_factory_.GetWeakPtr()));
+
+//   LOG(ERROR) << "JANGID: SendSignMessageRequestToExtension called";
+// }
+
+// void EthereumProviderImpl::OnExtensionSignMessageResponse(
+//     bool approved,
+//     wootz_wallet::mojom::ByteArrayStringUnionPtr signature,
+//     const std::optional<std::string>& error) {
+  
+//   LOG(ERROR) << "OnExtensionSignMessageResponse: Received response from extension UI JANGID";
+//   LOG(ERROR) << "Approved: " << (approved ? "true" : "false");
+//   LOG(ERROR) << "Signature: " << (approved && signature ? signature->get_str() : "N/A");
+
+//   // Notify WootzWalletService about the sign message request result
+//   wootz_wallet_service_->NotifySignMessageRequestProcessed(
+//       approved,
+//       pending_sign_message_id_.GetInt(),
+//       signature ? signature->Clone() : nullptr,
+//       error);
+
+//   LOG(ERROR) << "OnExtensionSignMessageResponse: NotifySignMessageRequestProcessed and OnSignMessageRequestProcessed called JANGID";
+// }
+
+// void EthereumProviderImpl::SignMessageInternal(
+//     const mojom::AccountIdPtr& account_id,
+//     mojom::SignDataUnionPtr sign_data,
+//     std::vector<uint8_t>&& message_to_sign,
+//     RequestCallback callback,
+//     base::Value id) {
+
+//   LOG(ERROR) << "JANGID: SignMessageInternal started";
+//   LOG(ERROR) << "JANGID: Account ID address: " << account_id->address;
+//   LOG(ERROR) << "JANGID: Account ID keyring_id: " << account_id->keyring_id;
+//   LOG(ERROR) << "JANGID: Account ID coin: " << static_cast<int>(account_id->coin);
+//   LOG(ERROR) << "JANGID: Message to sign length: " << message_to_sign.size();
+//   LOG(ERROR) << "JANGID: Message to sign (hex): " << ToHex(message_to_sign);
+//   LOG(ERROR) << "JANGID: ID type: " << id.type();
+//   if (id.is_string()) {
+//     LOG(ERROR) << "JANGID: ID value: " << id.GetString();
+//   } else if (id.is_int()) {
+//     LOG(ERROR) << "JANGID: ID value: " << id.GetInt();
+//   }
+
+//   bool is_eip712 = sign_data->is_eth_sign_typed_data();
+//   LOG(ERROR) << "JANGID: Is EIP712: " << (is_eip712 ? "Yes" : "No");
+//   LOG(ERROR) << "JANGID: Sign data type: " << static_cast<int>(sign_data->which());
+
+//   // Use the KeyringService to sign the message
+//   auto signature_with_err = keyring_service_->SignMessageByDefaultKeyring(
+//       account_id, message_to_sign, is_eip712);
+
+//   if (!signature_with_err.signature) {
+//     LOG(ERROR) << "JANGID: Signing failed. Error: " << signature_with_err.error_message;
+//     base::Value formed_response = GetProviderErrorDictionary(
+//         mojom::ProviderError::kInternalError,
+//         signature_with_err.error_message);
+//     LOG(ERROR) << "JANGID: Error response: " << formed_response;
+//     std::move(callback).Run(std::move(id), std::move(formed_response), true, "", false);
+//   } else {
+//     LOG(ERROR) << "JANGID: Signing successful. Signature length: " << signature_with_err.signature->size();
+//     base::Value formed_response = base::Value(ToHex(*signature_with_err.signature));
+//     LOG(ERROR) << "JANGID: Hexadecimal signature: " << formed_response.GetString();
+//     std::move(callback).Run(std::move(id), std::move(formed_response), false, "", false);
+//   }
+
+//   LOG(ERROR) << "JANGID: SignMessageInternal completed";
+// }
 
 void EthereumProviderImpl::OnSignMessageRequestProcessed(
     RequestCallback callback,
@@ -1068,14 +1180,18 @@ void EthereumProviderImpl::OnAddEthereumChainRequestCompleted(
 
 void EthereumProviderImpl::Request(base::Value input,
                                    RequestCallback callback) {
+  LOG(ERROR) << "JANGID: EthereumProviderImpl::Request called with input: " << input;
   CommonRequestOrSendAsync(input, std::move(callback), false);
   delegate_->WalletInteractionDetected();
+  LOG(ERROR) << "JANGID: EthereumProviderImpl::Request completed";
 }
 
 void EthereumProviderImpl::SendAsync(base::Value input,
                                      SendAsyncCallback callback) {
+  LOG(ERROR) << "JANGID: EthereumProviderImpl::SendAsync called with input: " << input;
   CommonRequestOrSendAsync(input, std::move(callback), true);
   delegate_->WalletInteractionDetected();
+  LOG(ERROR) << "JANGID: EthereumProviderImpl::SendAsync completed";
 }
 
 void EthereumProviderImpl::SendErrorOnRequest(const mojom::ProviderError& error,
@@ -1743,7 +1859,9 @@ if (method == kEthSignTypedDataV4) {
 void EthereumProviderImpl::Send(const std::string& method,
                                 base::Value params,
                                 SendCallback callback) {
-  LOG(ERROR) << "JANGID: EthereumProviderImpl::Send called";
+  
+  LOG(ERROR) << "JANGID: EthereumProviderImpl::Send called"<<" method"<<method<<" params"<<params;
+
   CommonRequestOrSendAsync(GetJsonRpcRequest(method, std::move(params)),
                            std::move(callback), true);
   delegate_->WalletInteractionDetected();
@@ -1877,9 +1995,10 @@ void EthereumProviderImpl::RequestEthereumPermissions(
 
   LOG(ERROR) << "RequestEthereum: Starting unlock process JANGID";
 
-  const std::string hardcoded_password = "asdfasdf";
+  const std::string password = keyring_service_->GetPassword();
+  
   keyring_service_->Unlock(
-      hardcoded_password,
+      password,
       base::BindOnce(&EthereumProviderImpl::OnUnlockComplete,
                      weak_factory_.GetWeakPtr(),
                      std::move(callback),
@@ -1959,6 +2078,13 @@ void EthereumProviderImpl::OnGetAllAccounts(
                                  origin, RequestPermissionsError::kNone,
                                  std::vector<std::string>{selected_account});
   }
+}
+
+void EthereumProviderImpl::SendAddressToBottomSheet(const std::string& address) {
+  
+  LOG(ERROR)<<"JANGID: Passing address "<<address;
+
+  delegate_->ShowAddressInBottomSheet(address);
 }
 
 void EthereumProviderImpl::Enable(EnableCallback callback) {
@@ -2110,6 +2236,9 @@ EthereumProviderImpl::GetAllowedAccounts(bool include_accounts_when_locked) {
       filtered_accounts.push_back(base::ToLowerASCII(selected_account->address));
     }
 
+    if (selected_account && !selected_account->address.empty()) {
+      SendAddressToBottomSheet(selected_account->address);
+    }
 
     LOG(ERROR) << "INSIDE filter accounts of INSIDE getallowedaccounts JANGID " 
                << (filtered_accounts.empty() ? "no-accounts" : 

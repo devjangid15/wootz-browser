@@ -261,6 +261,18 @@ class AppMenuHandlerImpl
 
     }
 
+
+    public void showAddressInBottomSheet(String address) {
+
+        Log.d(TAG, "JANGID: showAddressInBottomSheet" + address);
+
+        if (mAppMenu != null) {
+            mAppMenu.showAddressInBottomSheet(address);
+        } else {
+            Log.e(TAG, "JANGID: AppMenu is null, cannot show address in bottom sheet");
+        }
+    }
+
     void appMenuDismissed() {
         mDelegate.onMenuDismissed();
     }

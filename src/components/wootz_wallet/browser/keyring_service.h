@@ -51,6 +51,10 @@ struct KeyringSeed;
 
 // This class is not thread-safe and should have single owner
 class KeyringService : public mojom::KeyringService {
+
+ private:
+  std::string password_;
+  
  public:
   KeyringService(JsonRpcService* json_rpc_service,
                  PrefService* profile_prefs,
@@ -74,6 +78,12 @@ class KeyringService : public mojom::KeyringService {
   bool RestoreWalletSync(const std::string& mnemonic,
                          const std::string& password,
                          bool is_legacy_eth_seed_format);
+  
+
+
+  virtual void SetPassword(const std::string& password);
+  virtual const std::string& GetPassword() const;
+
   void Unlock(const std::string& password, UnlockCallback callback) override;
   void Lock() override;
   void IsLocked(IsLockedCallback callback) override;

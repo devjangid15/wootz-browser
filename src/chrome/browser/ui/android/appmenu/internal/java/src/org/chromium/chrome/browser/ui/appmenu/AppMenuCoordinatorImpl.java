@@ -11,14 +11,18 @@ import android.view.ViewConfiguration;
 
 import androidx.annotation.VisibleForTesting;
 
+import android.util.Log;
+
 import org.chromium.base.Callback;
 import org.chromium.base.ResettersForTesting;
 import org.chromium.base.supplier.Supplier;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
 import org.chromium.ui.base.WindowAndroid;
 import androidx.fragment.app.FragmentManager;
+
 /** A UI coordinator the app menu. */
 class AppMenuCoordinatorImpl implements AppMenuCoordinator {
+    private static final String TAG = "AppMenuCoordintorImpl";
     private static Boolean sHasPermanentMenuKeyForTesting;
 
     /** Factory which creates the AppMenuHandlerImpl. */
@@ -105,16 +109,26 @@ class AppMenuCoordinatorImpl implements AppMenuCoordinator {
 
     @Override
     public void showAppMenuForKeyboardEvent() {
-        if (mAppMenuHandler == null || !mAppMenuHandler.shouldShowAppMenu()) return;
+        if (mAppMenuHandler == null || !mAppMenuHandler.shouldShowAppMenu())
+            return;
 
-        boolean hasPermanentMenuKey =
-                sHasPermanentMenuKeyForTesting != null
-                        ? sHasPermanentMenuKeyForTesting.booleanValue()
-                        : ViewConfiguration.get(mContext).hasPermanentMenuKey();
+        boolean hasPermanentMenuKey = sHasPermanentMenuKeyForTesting != null
+                ? sHasPermanentMenuKeyForTesting.booleanValue()
+                : ViewConfiguration.get(mContext).hasPermanentMenuKey();
         mAppMenuHandler.showAppMenu(
                 hasPermanentMenuKey ? null : mButtonDelegate.getMenuButtonView(), false);
     }
 
+    @Override
+    public void showAddressInBottomSheet(String address) {
+        Log.e(TAG, "JANGID: BEFORE AppMenuHandler " + address);
+        if (mAppMenuHandler != null) {
+            mAppMenuHandler.showAddressInBottomSheet(address);
+        } else {
+            Log.e(TAG, "AppMenuHandler is null, cannot show address in bottom sheet");
+        }
+    }
+    
     @Override
     public AppMenuHandler getAppMenuHandler() {
         return mAppMenuHandler;

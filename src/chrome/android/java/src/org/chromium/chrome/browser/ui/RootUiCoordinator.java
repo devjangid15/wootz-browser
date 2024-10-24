@@ -2288,6 +2288,7 @@ public class RootUiCoordinator
     // Testing methods
 
     public AppMenuCoordinator getAppMenuCoordinatorForTesting() {
+        Log.d(TAG,"JANGID: getAppMenuCoordinatorForTesting ");
         return mAppMenuCoordinator;
     }
 
