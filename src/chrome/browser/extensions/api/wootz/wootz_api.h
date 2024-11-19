@@ -163,6 +163,16 @@ class WootzSignMessageFunction : public ExtensionFunction {
       content::BrowserContext* context,
       std::vector<wootz_wallet::mojom::SignMessageRequestPtr> requests);
 };
+
+// Add this new class
+class WootzGetExtensionIdFunction : public ExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("wootz.getExtensionId", WOOTZ_GET_EXTENSION_ID)
+ protected:
+  ~WootzGetExtensionIdFunction() override {}
+  ResponseAction Run() override;
+};
+
 }
 
 #endif  // CHROME_BROWSER_EXTENSIONS_API_WOOTZ_WOOTZ_API_H_

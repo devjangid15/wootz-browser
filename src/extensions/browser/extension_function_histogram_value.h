@@ -1963,6 +1963,7 @@ enum HistogramValue {
   WOOTZ_GET_ALL_ACCOUNTS = 1901,
   WOOTZ_GET_ACCOUNT_BALANCE = 1902,
   WOOTZ_SIGN_MESSAGE = 1903,
+  WOOTZ_GET_EXTENSION_ID = 1904,
     
   // Last entry: Add new entries above, then run:
   // tools/metrics/histograms/update_extension_histograms.py

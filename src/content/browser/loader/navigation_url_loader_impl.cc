@@ -1153,14 +1153,33 @@ void NavigationURLLoaderImpl::OnTransferSizeUpdated(
 
 void NavigationURLLoaderImpl::OnComplete(
     const network::URLLoaderCompletionStatus& status) {
+  LOG(ERROR) << "JANGID_CORS: === NavigationURLLoader OnComplete ==="
+             << "\nJANGID_CORS: URL: " << url_.spec()
+             << "\nJANGID_CORS: Error Code: " << status.error_code
+             << "\nJANGID_CORS: Error Name: " << net::ErrorToString(status.error_code)
+             << "\nJANGID_CORS: Received Response: " << received_response_
+             << "\nJANGID_CORS: Default Loader Used: " << default_loader_used_
+             << "\nJANGID_CORS: Frame Tree Node ID: " << frame_tree_node_id_
+             << "\nJANGID_CORS: Is Main Frame: " << request_info_->is_main_frame
+             << "\nJANGID_CORS: Is Outermost Main Frame: " 
+             << request_info_->is_outermost_main_frame;
+
   // Successful load must have used OnResponseStarted first. In this case, the
   // URLLoaderClient has already been transferred to the renderer process and
   // OnComplete is not expected to be called here.
   if (status.error_code == net::OK) {
+    LOG(ERROR) << "JANGID_CORS: Unexpected OK status in OnComplete"
+               << "\nJANGID_CORS: This indicates a potential bug - dumping crash";
     SCOPED_CRASH_KEY_STRING256("NavigationURLLoader_Complete", "url",
                                url_.spec());
     base::debug::DumpWithoutCrashing();
     return;
+  }
+
+  // Log SSL info if present
+  if (status.ssl_info && status.ssl_info->cert_status != 0) {
+    LOG(ERROR) << "JANGID_CORS: SSL Error Details:"
+               << "\nJANGID_CORS: Cert Status: " << status.ssl_info->cert_status;
   }
 
   // If the default loader (network) was used to handle the URL load request
@@ -1171,16 +1190,26 @@ void NavigationURLLoaderImpl::OnComplete(
   //       are ignored using OnComplete(net::ERR_ABORTED). No interceptor must
   //       be used in this case.
   if (!received_response_) {
+    LOG(ERROR) << "JANGID_CORS: No response received yet, checking interceptors"
+               << "\nJANGID_CORS: Number of interceptors: " << interceptors_.size();
+    
     auto response = network::mojom::URLResponseHead::New();
     if (MaybeCreateLoaderForResponse(status, &response)) {
+      LOG(ERROR) << "JANGID_CORS: Interceptor created new loader - returning";
       return;
     }
+    LOG(ERROR) << "JANGID_CORS: No interceptor handled the response";
   }
+
+  LOG(ERROR) << "JANGID_CORS: Proceeding with request failure notification"
+             << "\nJANGID_CORS: Posting NotifyRequestFailed task";
 
   status_ = status;
   GetUIThreadTaskRunner({})->PostTask(
       FROM_HERE, base::BindOnce(&NavigationURLLoaderImpl::NotifyRequestFailed,
                                 weak_factory_.GetWeakPtr(), status));
+
+  LOG(ERROR) << "JANGID_CORS: === NavigationURLLoader OnComplete Complete ===";
 }
 
 void NavigationURLLoaderImpl::OnAcceptCHFrameReceived(
@@ -1764,9 +1793,39 @@ void NavigationURLLoaderImpl::NotifyRequestRedirected(
 
 void NavigationURLLoaderImpl::NotifyRequestFailed(
     const network::URLLoaderCompletionStatus& status) {
+
+  LOG(ERROR) << "Navigation request failed:"
+             << " URL: " << url_.spec()
+             << " Error: " << net::ErrorToString(status.error_code)
+             << " IsMainFrame: " << request_info_->is_main_frame
+             << " IsOutermostMainFrame: " << request_info_->is_outermost_main_frame;
+        
   TRACE_EVENT_NESTABLE_ASYNC_END2(
       "navigation", "Navigation timeToResponseStarted", TRACE_ID_LOCAL(this),
       "&NavigationURLLoaderImpl", static_cast<void*>(this), "success", false);
+
+  // Add logging for navigation failure details
+  SCOPED_CRASH_KEY_NUMBER("Navigation", "error_code", status.error_code);
+  SCOPED_CRASH_KEY_STRING256("Navigation", "url", url_.spec());
+  SCOPED_CRASH_KEY_BOOL("Navigation", "is_main_frame", 
+                        request_info_->is_main_frame);
+  SCOPED_CRASH_KEY_BOOL("Navigation", "is_outermost_main_frame",
+                        request_info_->is_outermost_main_frame);
+
+  LOG(ERROR) << "Navigation request failed:"
+             << " URL: " << url_.spec()
+             << " Error: " << net::ErrorToString(status.error_code)
+             << " IsMainFrame: " << request_info_->is_main_frame
+             << " IsOutermostMainFrame: " << request_info_->is_outermost_main_frame;
+
+  // Log additional details if there was a SSL certificate error
+  if (status.ssl_info && status.ssl_info->cert_status != 0) {
+    SCOPED_CRASH_KEY_NUMBER("Navigation", "cert_status", 
+                           status.ssl_info->cert_status);
+    LOG(ERROR) << "SSL certificate error:"
+               << " Cert Status: " << status.ssl_info->cert_status;
+  }
+
   delegate_->OnRequestFailed(status);
 }
 

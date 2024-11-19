@@ -120,6 +120,19 @@ ExtensionNavigationThrottle::~ExtensionNavigationThrottle() = default;
 
 content::NavigationThrottle::ThrottleCheckResult
 ExtensionNavigationThrottle::WillStartOrRedirectRequest() {
+  LOG(ERROR) << "JANGID_CORS: === WillStartOrRedirectRequest Start ==="
+             << "\nJANGID_CORS: URL: " << navigation_handle()->GetURL().spec()
+             << "\nJANGID_CORS: Is Extension URL: " 
+             << navigation_handle()->GetURL().SchemeIs(kExtensionScheme);
+
+  // Force proceed for extension URLs
+  if (navigation_handle()->GetURL().SchemeIs(kExtensionScheme)) {
+    LOG(ERROR) << "JANGID_CORS: Extension URL detected - Forcing PROCEED"
+               << "\nJANGID_CORS: Extension URL: " 
+               << navigation_handle()->GetURL().spec();
+    return content::NavigationThrottle::PROCEED;
+  }
+  
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   content::WebContents* web_contents = navigation_handle()->GetWebContents();
   content::BrowserContext* browser_context = web_contents->GetBrowserContext();
@@ -349,17 +362,35 @@ ExtensionNavigationThrottle::WillRedirectRequest() {
 
 content::NavigationThrottle::ThrottleCheckResult
 ExtensionNavigationThrottle::WillProcessResponse() {
+  LOG(ERROR) << "JANGID_CORS: === Navigation Response Processing ==="
+             << "\nJANGID_CORS: Frame Tree Node ID: " 
+             << navigation_handle()->GetFrameTreeNodeId()
+             << "\nJANGID_CORS: URL: " << navigation_handle()->GetURL().spec()
+             << "\nJANGID_CORS: Sandbox Flags: " 
+             << navigation_handle()->SandboxFlagsToCommit();
+
   if ((navigation_handle()->SandboxFlagsToCommit() &
        network::mojom::WebSandboxFlags::kPlugins) ==
       network::mojom::WebSandboxFlags::kNone) {
+    LOG(ERROR) << "JANGID_CORS: No plugin sandbox flags - proceeding with navigation";
     return PROCEED;
   }
 
   auto* mime_handler_view_embedder =
       MimeHandlerViewEmbedder::Get(navigation_handle()->GetFrameTreeNodeId());
-  if (!mime_handler_view_embedder)
-    return PROCEED;
+  
+  LOG(ERROR) << "JANGID_CORS: Checking MimeHandlerViewEmbedder"
+             << "\nJANGID_CORS: Has Embedder: " 
+             << (mime_handler_view_embedder ? "true" : "false");
 
+  if (!mime_handler_view_embedder) {
+    LOG(ERROR) << "JANGID_CORS: No mime handler view embedder - proceeding";
+    return PROCEED;
+  }
+
+  LOG(ERROR) << "JANGID_CORS: Frame is sandboxed - blocking embedded resource"
+             << "\nJANGID_CORS: Notifying MimeHandlerViewEmbedder of sandbox state";
+  
   // If we have a MimeHandlerViewEmbedder, the frame might embed a resource. If
   // the frame is sandboxed, however, we shouldn't show the embedded resource.
   // Instead, we should notify the MimeHandlerViewEmbedder (so that it will
@@ -371,6 +402,10 @@ ExtensionNavigationThrottle::WillProcessResponse() {
   // NavigationThrottle instead and check the sandbox flags before creating, so
   // that we don't have to remove it soon after creation.
   mime_handler_view_embedder->OnFrameSandboxed();
+  
+  LOG(ERROR) << "JANGID_CORS: Cancelling navigation with ERR_BLOCKED_BY_CLIENT"
+             << "\nJANGID_CORS: === Navigation Response Processing Complete ===";
+             
   return ThrottleCheckResult(CANCEL, net::ERR_BLOCKED_BY_CLIENT);
 }
 

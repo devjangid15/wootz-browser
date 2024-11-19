@@ -15,6 +15,7 @@
 #include "base/containers/contains.h"
 #include "base/no_destructor.h"
 #include "base/strings/string_util.h"
+#include "components/constants/url_constants.h"
 #include "url/url_canon_internal.h"
 #include "url/url_constants.h"
 #include "url/url_features.h"

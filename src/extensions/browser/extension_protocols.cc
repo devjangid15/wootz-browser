@@ -346,6 +346,22 @@ scoped_refptr<net::HttpResponseHeaders> BuildHttpHeaders(
     bool include_allow_service_worker_header) {
   std::string raw_headers;
   raw_headers.append("HTTP/1.1 200 OK");
+
+  raw_headers.append(1, '\0');
+  raw_headers.append("Access-Control-Allow-Origin: *");
+  raw_headers.append(1, '\0');
+  raw_headers.append("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
+  raw_headers.append(1, '\0');
+  raw_headers.append("Access-Control-Allow-Headers: Content-Type, Authorization");
+  raw_headers.append(1, '\0');
+  raw_headers.append("Access-Control-Allow-Credentials: true");
+  raw_headers.append(1, '\0');
+  raw_headers.append("Access-Control-Expose-Headers: *");
+  raw_headers.append(1, '\0');
+  raw_headers.append("Cross-Origin-Resource-Policy: cross-origin");
+
+  LOG(ERROR)<<"JANGID_CSP: BuildHttpHeaders";
+  
   if (!content_security_policy.empty()) {
     raw_headers.append(1, '\0');
     raw_headers.append("Content-Security-Policy: ");
@@ -581,15 +597,32 @@ class ExtensionURLLoader : public network::mojom::URLLoader {
       return;
     }
 
+    LOG(ERROR) << "JANGID_CORS: === Extension Resource Load Check ==="
+               << "\nJANGID_CORS: URL: " << request_.url.spec()
+               << "\nJANGID_CORS: Destination: " << static_cast<int>(request_.destination)
+               << "\nJANGID_CORS: Transition Type: " << request_.transition_type
+               << "\nJANGID_CORS: Process ID: " << render_process_id_
+               << "\nJANGID_CORS: Is Off Record: " 
+               << (browser_context_->IsOffTheRecord() ? "true" : "false")
+               << "\nJANGID_CORS: Extension ID: " 
+               << (extension.get() ? extension->id() : "null")
+               << "\nJANGID_CORS: Incognito Enabled: " 
+               << (incognito_enabled ? "true" : "false");
+
     if (!AllowExtensionResourceLoad(
             request_, request_.destination,
             static_cast<ui::PageTransition>(request_.transition_type),
             render_process_id_, browser_context_->IsOffTheRecord(),
             extension.get(), incognito_enabled, enabled_extensions,
             *process_map)) {
+      LOG(ERROR) << "JANGID_CORS: Extension resource load blocked"
+                 << "\nJANGID_CORS: Completing request with ERR_BLOCKED_BY_CLIENT";
       CompleteRequestAndDeleteThis(net::ERR_BLOCKED_BY_CLIENT);
       return;
     }
+
+    LOG(ERROR) << "JANGID_CORS: Extension resource load allowed"
+               << "\nJANGID_CORS: === Extension Resource Load Check Complete ===";
 
     base::FilePath directory_path;
     if (!GetDirectoryForExtensionURL(
@@ -684,7 +717,7 @@ class ExtensionURLLoader : public network::mojom::URLLoader {
     const std::string* cross_origin_embedder_policy = nullptr;
     const std::string* cross_origin_opener_policy = nullptr;
     const std::set<std::string>* origin_trial_tokens = nullptr;
-    bool send_cors_header = false;
+    bool send_cors_header = true;
     bool follow_symlinks_anywhere = false;
     bool include_allow_service_worker_header = false;
 
@@ -707,10 +740,10 @@ class ExtensionURLLoader : public network::mojom::URLLoader {
     }
 
     if (extension) {
-      GetSecurityPolicyForURL(
-          request_, *extension, is_web_view_request_, &content_security_policy,
-          &cross_origin_embedder_policy, &cross_origin_opener_policy,
-          &send_cors_header, &follow_symlinks_anywhere);
+      // GetSecurityPolicyForURL(
+      //     request_, *extension, is_web_view_request_, &content_security_policy,
+      //     &cross_origin_embedder_policy, &cross_origin_opener_policy,
+      //     &send_cors_header, &follow_symlinks_anywhere);
       if (IsBackgroundServiceWorker(*extension, request_)) {
         // Manifest version 3-style background service workers need
         // "Service-Worker-Allowed" and "Origin-Trial" headers.
@@ -733,7 +766,7 @@ class ExtensionURLLoader : public network::mojom::URLLoader {
       head->headers = BuildHttpHeaders(
           content_security_policy, cross_origin_embedder_policy,
           cross_origin_opener_policy, origin_trial_tokens,
-          false /* send_cors_headers */, include_allow_service_worker_header);
+          true /* send_cors_headers */, include_allow_service_worker_header);
       if (is_background_page_url) {
         std::string contents;
         GenerateBackgroundPageContents(extension.get(), &head->mime_type,

@@ -1413,12 +1413,23 @@ CSPCheckResult CheckContentSecurityPolicy(
     bool is_opaque_fenced_frame) {
   DCHECK(policy->self_origin);
 
+  LOG(ERROR) << "JANGID_CSP: === Content Security Policy Check ==="
+             << "\nJANGID_CSP: URL: " << url.spec()
+             << "\nJANGID_CSP: Directive: " << ToString(directive_name)
+             << "\nJANGID_CSP: Is Form Submission: " << (is_form_submission ? "true" : "false")
+             << "\nJANGID_CSP: Is Response Check: " << (is_response_check ? "true" : "false")
+             << "\nJANGID_CSP: Has Followed Redirect: " << (has_followed_redirect ? "true" : "false")
+             << "\nJANGID_CSP: Is Opaque Fenced Frame: " << (is_opaque_fenced_frame ? "true" : "false");
+
   if (is_opaque_fenced_frame &&
-      directive_name != CSPDirectiveName::FencedFrameSrc)
+      directive_name != CSPDirectiveName::FencedFrameSrc) {
+    LOG(ERROR) << "JANGID_CSP: Blocked - Opaque fenced frame with non-FencedFrameSrc directive";
     return CSPCheckResult::Blocked();
+  }
 
   if (!is_opaque_fenced_frame &&
       ShouldBypassContentSecurityPolicy(context, directive_name, url)) {
+    LOG(ERROR) << "JANGID_CSP: Allowed - CSP bypass conditions met";
     return CSPCheckResult::Allowed();
   }
 
@@ -1426,23 +1437,35 @@ CSPCheckResult CheckContentSecurityPolicy(
   // 'form-action' directive is present.
   if (is_form_submission && directive_name == CSPDirectiveName::NavigateTo &&
       policy->directives.count(CSPDirectiveName::FormAction)) {
+    LOG(ERROR) << "JANGID_CSP: Allowed - Form submission with NavigateTo directive and FormAction present";
     return CSPCheckResult::Allowed();
   }
 
+  LOG(ERROR) << "JANGID_CSP: Checking directives...";
   for (CSPDirectiveName effective_directive_name = directive_name;
        effective_directive_name != CSPDirectiveName::Unknown;
        effective_directive_name =
            CSPFallbackDirective(effective_directive_name, directive_name)) {
+    
+    LOG(ERROR) << "JANGID_CSP: Checking effective directive: " 
+               << ToString(effective_directive_name);
+    
     const auto& directive = policy->directives.find(effective_directive_name);
-    if (directive == policy->directives.end())
+    if (directive == policy->directives.end()) {
+      LOG(ERROR) << "JANGID_CSP: Directive not found, continuing to next fallback";
       continue;
+    }
 
     const auto& source_list = directive->second;
     CSPCheckResult result = CheckCSPSourceList(
         directive_name, *source_list, url, *(policy->self_origin),
         has_followed_redirect, is_response_check, is_opaque_fenced_frame);
 
+    LOG(ERROR) << "JANGID_CSP: Source list check result: " 
+               << (result.IsAllowed() ? "Allowed" : "Blocked");
+
     if (!result) {
+      LOG(ERROR) << "JANGID_CSP: Violation detected, reporting...";
       ReportViolation(
           context, policy, effective_directive_name, directive_name,
           is_opaque_fenced_frame
@@ -1454,10 +1477,22 @@ CSPCheckResult CheckContentSecurityPolicy(
           source_location);
     }
 
-    return policy->header->type == mojom::ContentSecurityPolicyType::kReport
-               ? CSPCheckResult::Allowed()
-               : result;
+    bool is_allowed = policy->header->type == mojom::ContentSecurityPolicyType::kReport
+                         ? true 
+                         : result.IsAllowed();
+    
+    LOG(ERROR) << "JANGID_CSP: Final decision: " 
+               << (is_allowed ? "Allowed" : "Blocked")
+               << "\nJANGID_CSP: Policy type: " 
+               << (policy->header->type == mojom::ContentSecurityPolicyType::kReport 
+                   ? "Report Only" : "Enforce")
+               << "\nJANGID_CSP: === Content Security Policy Check Complete ===";
+
+    return is_allowed ? CSPCheckResult::Allowed() : CSPCheckResult::Blocked();
   }
+
+  LOG(ERROR) << "JANGID_CSP: No matching directives found, allowing by default"
+             << "\nJANGID_CSP: === Content Security Policy Check Complete ===";
   return CSPCheckResult::Allowed();
 }
 

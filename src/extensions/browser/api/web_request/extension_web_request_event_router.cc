@@ -1123,6 +1123,25 @@ int WebRequestEventRouter::OnHeadersReceived(
     return net::OK;
   }
 
+  // Create new headers if they don't exist
+  if (!override_response_headers->get()) {
+    *override_response_headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+        original_response_headers->raw_headers());
+  }
+
+  if (request->initiator && request->initiator->scheme() == "chrome-extension") {
+    (*override_response_headers)->RemoveHeader("Access-Control-Allow-Origin");
+    (*override_response_headers)->RemoveHeader("Access-Control-Allow-Methods");
+    (*override_response_headers)->RemoveHeader("Access-Control-Allow-Headers");
+    (*override_response_headers)->RemoveHeader("Access-Control-Allow-Credentials");
+    (*override_response_headers)->SetHeader("Access-Control-Allow-Origin", "*");
+    (*override_response_headers)->SetHeader("Access-Control-Allow-Methods", "*");
+    (*override_response_headers)->SetHeader("Access-Control-Allow-Headers", "*");
+    (*override_response_headers)->SetHeader("Access-Control-Allow-Credentials", "true");
+  }
+
+  LOG(ERROR)<<"JANGID_CSP: OnHeadersReceived";
+  
   bool initialize_blocked_requests = false;
   const bool is_incognito_context = browser_context->IsOffTheRecord();
 

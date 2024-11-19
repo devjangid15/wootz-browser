@@ -1676,6 +1676,15 @@ void URLLoader::ProcessInboundAttributionInterceptorOnResponseStarted() {
 
 void URLLoader::OnResponseStarted(net::URLRequest* url_request, int net_error) {
   DCHECK(url_request == url_request_.get());
+  
+  LOG(ERROR) << "JANGID_ERROR: === URLLoader::OnResponseStarted ==="
+             << "\nURL: " << url_request->url().spec()
+             << "\nError Code: " << net_error
+             << "\nError Name: " << net::ErrorToString(net_error)
+             << "\nHas Received Response: " << has_received_response_
+             << "\nRequest Destination: " << static_cast<int>(request_destination_)
+             << "\nRequest Mode: " << static_cast<int>(request_mode_);
+
   has_received_response_ = true;
 
   // Use `true` to force sending the cookie accessed update now. This is because
@@ -1684,17 +1693,27 @@ void URLLoader::OnResponseStarted(net::URLRequest* url_request, int net_error) {
   ReportFlaggedResponseCookies(true);
 
   if (net_error != net::OK) {
+    LOG(ERROR) << "JANGID_ERROR: Calling NotifyCompleted due to error"
+               << "\nError Code: " << net_error
+               << "\nError Name: " << net::ErrorToString(net_error)
+               << "\nURL: " << url_request->url().spec();
+               
     NotifyCompleted(net_error);
     // |this| may have been deleted.
     return;
   }
 
   response_ = BuildResponseHead();
+  LOG(ERROR) << "JANGID_ERROR: Built Response Head"
+             << "\nHas Response: " << (response_ ? "yes" : "no")
+             << "\nHas Headers: " << (response_ && response_->headers ? "yes" : "no");
+             
   DispatchOnRawResponse();
 
   // Parse and remove the Trust Tokens response headers, if any are expected,
   // potentially failing the request if an error occurs.
   if (response_ && response_->headers && trust_token_helper_) {
+    LOG(ERROR) << "JANGID_ERROR: Processing Trust Tokens";
     DCHECK(response_);
     trust_token_helper_->Finalize(
         *response_->headers.get(),
@@ -1705,10 +1724,12 @@ void URLLoader::OnResponseStarted(net::URLRequest* url_request, int net_error) {
   }
 
   if (memory_cache_) {
+    LOG(ERROR) << "JANGID_ERROR: Creating Memory Cache Writer";
     memory_cache_writer_ = memory_cache_->MaybeCreateWriter(
         url_request_.get(), request_destination_, transport_info_, response_);
   }
 
+  LOG(ERROR) << "JANGID_ERROR: Processing Attribution Interceptor";
   ProcessInboundAttributionInterceptorOnResponseStarted();
 }
 
@@ -2297,16 +2318,27 @@ void URLLoader::CancelRequestIfNonceMatchesAndUrlNotExempted(
 }
 
 void URLLoader::NotifyCompleted(int error_code) {
+  LOG(ERROR) << "JANGID_ERROR: === NotifyCompleted START ==="
+             << "\nError Code: " << error_code
+             << "\nError Name: " << net::ErrorToString(error_code)
+             << "\nURL: " << url_request_->url().spec()
+             << "\nHas Upload Tracker: " << (upload_progress_tracker_ ? "yes" : "no");
+
   // Ensure sending the final upload progress message here, since
   // OnResponseCompleted can be called without OnResponseStarted on cancellation
   // or error cases.
   if (upload_progress_tracker_) {
+    LOG(ERROR) << "JANGID_ERROR: Completing upload progress tracking";
     upload_progress_tracker_->OnUploadCompleted();
     upload_progress_tracker_ = nullptr;
   }
 
   auto total_received = url_request_->GetTotalReceivedBytes();
   auto total_sent = url_request_->GetTotalSentBytes();
+  LOG(ERROR) << "JANGID_ERROR: Transfer stats:"
+             << "\nTotal Received: " << total_received
+             << "\nTotal Sent: " << total_sent;
+
   if (total_received > 0) {
     base::UmaHistogramCustomCounts("DataUse.BytesReceived3.Delegate",
                                    total_received, 50, 10 * 1000 * 1000, 50);
@@ -2316,12 +2348,14 @@ void URLLoader::NotifyCompleted(int error_code) {
     UMA_HISTOGRAM_COUNTS_1M("DataUse.BytesSent3.Delegate", total_sent);
   }
 
+  LOG(ERROR) << "JANGID_ERROR: Recording shared dictionary metrics";
   MaybeRecordSharedDictionaryUsedResponseMetrics(
       error_code, request_destination_, url_request_->response_info(),
       shared_dictionary_allowed_check_passed_);
 
   if ((total_received > 0 || total_sent > 0)) {
     if (url_loader_network_observer_ && provide_data_use_updates_) {
+      LOG(ERROR) << "JANGID_ERROR: Updating network observer with data use";
       url_loader_network_observer_->OnDataUseUpdate(
           url_request_->traffic_annotation().unique_id_hash_code,
           total_received, total_sent);
@@ -2329,20 +2363,31 @@ void URLLoader::NotifyCompleted(int error_code) {
   }
 
   if (url_loader_client_.Get()) {
-    if (consumer_handle_.is_valid())
+    LOG(ERROR) << "JANGID_ERROR: Client exists, preparing completion"
+               << "\nConsumer Handle Valid: " << consumer_handle_.is_valid();
+
+    if (consumer_handle_.is_valid()) {
+      LOG(ERROR) << "JANGID_ERROR: Sending response to client";
       SendResponseToClient();
+    }
 
     URLLoaderCompletionStatus status;
     status.error_code = error_code;
+    LOG(ERROR) << "JANGID_ERROR: Creating completion status"
+               << "\nInitial Error Code: " << status.error_code;
+
     if (error_code == net::ERR_QUIC_PROTOCOL_ERROR) {
+      LOG(ERROR) << "JANGID_ERROR: Processing QUIC error";
       net::NetErrorDetails details;
       url_request_->PopulateNetErrorDetails(&details);
       status.extended_error_code = details.quic_connection_error;
     } else if (error_code == net::ERR_INCONSISTENT_IP_ADDRESS_SPACE) {
+      LOG(ERROR) << "JANGID_ERROR: Processing IP address space error";
       // The error code is only used internally, translate it into a CORS error.
       DCHECK(cors_error_status_.has_value());
       status.error_code = net::ERR_FAILED;
     }
+
     status.exists_in_cache = url_request_->response_info().was_cached;
     status.completion_time = base::TimeTicks::Now();
     status.encoded_data_length = url_request_->GetTotalReceivedBytes();
@@ -2350,21 +2395,37 @@ void URLLoader::NotifyCompleted(int error_code) {
     status.decoded_body_length = total_written_bytes_;
     status.resolve_error_info =
         url_request_->response_info().resolve_error_info;
+
+    LOG(ERROR) << "JANGID_ERROR: Status details:"
+               << "\nExists in Cache: " << status.exists_in_cache
+               << "\nEncoded Length: " << status.encoded_data_length
+               << "\nBody Length: " << status.encoded_body_length
+               << "\nDecoded Length: " << status.decoded_body_length
+               << "\nHas Trust Token: " << (trust_token_status_ ? "yes" : "no")
+               << "\nHas CORS Error: " << (cors_error_status_.has_value() ? "yes" : "no");
+
     if (trust_token_status_)
       status.trust_token_operation_status = *trust_token_status_;
     status.cors_error_status = cors_error_status_;
 
     if ((options_ & mojom::kURLLoadOptionSendSSLInfoForCertificateError) &&
         net::IsCertStatusError(url_request_->ssl_info().cert_status)) {
+      LOG(ERROR) << "JANGID_ERROR: Adding SSL info to status";
       status.ssl_info = url_request_->ssl_info();
     }
 
-    if (memory_cache_writer_)
+    if (memory_cache_writer_) {
+      LOG(ERROR) << "JANGID_ERROR: Notifying memory cache writer";
       memory_cache_writer_->OnCompleted(status);
+    }
 
+    LOG(ERROR) << "JANGID_ERROR: Sending final completion to client"
+               << "\nFinal Error Code: " << status.error_code
+               << "\nExtended Error Code: " << status.extended_error_code;
     url_loader_client_.Get()->OnComplete(status);
   }
 
+  LOG(ERROR) << "JANGID_ERROR: === NotifyCompleted END === Calling DeleteSelf";
   DeleteSelf();
 }
 

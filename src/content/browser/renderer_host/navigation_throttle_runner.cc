@@ -129,6 +129,7 @@ NavigationThrottleRunner::NavigationThrottleRunner(Delegate* delegate,
 NavigationThrottleRunner::~NavigationThrottleRunner() = default;
 
 void NavigationThrottleRunner::ProcessNavigationEvent(Event event) {
+  LOG(ERROR) << "JANGID_CORS: === ProcessNavigationEvent Start ===";
   DCHECK_NE(Event::NoEvent, event);
   current_event_ = event;
   next_index_ = 0;
@@ -137,9 +138,19 @@ void NavigationThrottleRunner::ProcessNavigationEvent(Event event) {
 
 void NavigationThrottleRunner::ResumeProcessingNavigationEvent(
     NavigationThrottle* deferring_throttle) {
+  LOG(ERROR) << "JANGID_CORS: === ResumeProcessingNavigationEvent Start ===";
+
   DCHECK_EQ(GetDeferringThrottle(), deferring_throttle);
+
+  LOG(ERROR) << "JANGID_CORS: Recording defer metrics"
+             << "\nJANGID_CORS: Recording histogram"
+             << "\nJANGID_CORS: Recording UKM";
+
   RecordDeferTimeHistogram(current_event_, defer_start_time_);
   RecordDeferTimeUKM();
+
+  LOG(ERROR) << "JANGID_CORS: Resuming ProcessInternal";
+
   ProcessInternal();
 }
 
@@ -312,6 +323,12 @@ void NavigationThrottleRunner::AddThrottle(
 }
 
 void NavigationThrottleRunner::ProcessInternal() {
+  LOG(ERROR) << "JANGID_CORS: === ProcessInternal Start ==="
+             << "\nJANGID_CORS: Current Event: " << GetEventName(current_event_)
+             << "\nJANGID_CORS: Navigation ID: " << navigation_id_
+             << "\nJANGID_CORS: Next Index: " << next_index_
+             << "\nJANGID_CORS: Total Throttles: " << throttles_.size();
+
   TRACE_EVENT0("navigation", "NavigationThrottleRunner::ProcessInternal");
   DCHECK_NE(Event::NoEvent, current_event_);
   base::WeakPtr<NavigationThrottleRunner> weak_ref = weak_factory_.GetWeakPtr();
@@ -322,6 +339,10 @@ void NavigationThrottleRunner::ProcessInternal() {
   int64_t local_navigation_id = navigation_id_;
 
   for (size_t i = next_index_; i < throttles_.size(); ++i) {
+    LOG(ERROR) << "JANGID_CORS: Processing Throttle " << i
+               << "\nJANGID_CORS: Throttle Name: " 
+               << throttles_[i]->GetNameForLogging();
+
     TRACE_EVENT0("navigation",
                  "NavigationThrottleRunner::ProcessInternal.loop");
     TRACE_EVENT_NESTABLE_ASYNC_BEGIN1(
@@ -331,9 +352,22 @@ void NavigationThrottleRunner::ProcessInternal() {
     base::Time start = base::Time::Now();
     NavigationThrottle::ThrottleCheckResult result =
         ExecuteNavigationEvent(throttles_[i].get(), current_event_);
+
+    LOG(ERROR) << "JANGID_CORS: Throttle Execution Result"
+               << "\nJANGID_CORS: Action: " << static_cast<int>(result.action())
+               << "\nJANGID_CORS: Action Name: " 
+               << (result.action() == NavigationThrottle::PROCEED ? "PROCEED" :
+                  result.action() == NavigationThrottle::CANCEL ? "CANCEL" :
+                  result.action() == NavigationThrottle::CANCEL_AND_IGNORE ? "CANCEL_AND_IGNORE" :
+                  result.action() == NavigationThrottle::BLOCK_REQUEST ? "BLOCK_REQUEST" :
+                  result.action() == NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE ? "BLOCK_REQUEST_AND_COLLAPSE" :
+                  result.action() == NavigationThrottle::BLOCK_RESPONSE ? "BLOCK_RESPONSE" :
+                  result.action() == NavigationThrottle::DEFER ? "DEFER" : "UNKNOWN")
+               << "\nJANGID_CORS: Error Code: " << result.net_error_code()
+               << "\nJANGID_CORS: Error Name: " << net::ErrorToString(result.net_error_code());
+
     if (!weak_ref) {
-      // The NavigationThrottle execution has destroyed this
-      // NavigationThrottleRunner. Return immediately.
+      LOG(ERROR) << "JANGID_CORS: NavigationThrottleRunner destroyed during execution";
       TRACE_EVENT_NESTABLE_ASYNC_END1("navigation", "", local_navigation_id,
                                       "result", "deleted");
       return;
@@ -345,6 +379,7 @@ void NavigationThrottleRunner::ProcessInternal() {
 
     switch (result.action()) {
       case NavigationThrottle::PROCEED:
+        LOG(ERROR) << "JANGID_CORS: Throttle Result: PROCEED - Continuing to next throttle";
         continue;
 
       case NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE:
@@ -352,11 +387,17 @@ void NavigationThrottleRunner::ProcessInternal() {
       case NavigationThrottle::BLOCK_RESPONSE:
       case NavigationThrottle::CANCEL:
       case NavigationThrottle::CANCEL_AND_IGNORE:
+        LOG(ERROR) << "JANGID_CORS: Throttle Result: Blocking/Canceling Navigation"
+                   << "\nJANGID_CORS: Resetting next_index_ to 0"
+                   << "\nJANGID_CORS: Informing delegate";
         next_index_ = 0;
         InformDelegate(result);
         return;
 
       case NavigationThrottle::DEFER:
+        LOG(ERROR) << "JANGID_CORS: Throttle Result: DEFER"
+                   << "\nJANGID_CORS: Setting next_index_ to: " << (i + 1)
+                   << "\nJANGID_CORS: Recording defer start time";
         next_index_ = i + 1;
         defer_start_time_ = base::Time::Now();
         if (first_deferral_callback_for_testing_) {
@@ -366,19 +407,45 @@ void NavigationThrottleRunner::ProcessInternal() {
     }
   }
 
+  LOG(ERROR) << "JANGID_CORS: All throttles processed successfully"
+             << "\nJANGID_CORS: Resetting next_index_ to 0"
+             << "\nJANGID_CORS: Informing delegate with PROCEED";
   next_index_ = 0;
   InformDelegate(NavigationThrottle::PROCEED);
 }
 
 void NavigationThrottleRunner::InformDelegate(
     const NavigationThrottle::ThrottleCheckResult& result) {
+  LOG(ERROR) << "JANGID_CORS: === InformDelegate Start ==="
+             << "\nJANGID_CORS: Current Event: " << GetEventName(current_event_)
+             << "\nJANGID_CORS: Navigation ID: " << navigation_id_
+             << "\nJANGID_CORS: Is Primary Main Frame: " << is_primary_main_frame_
+             << "\nJANGID_CORS: Result Action: " << static_cast<int>(result.action())
+             << "\nJANGID_CORS: Action Name: " 
+             << (result.action() == NavigationThrottle::PROCEED ? "PROCEED" :
+                result.action() == NavigationThrottle::CANCEL ? "CANCEL" :
+                result.action() == NavigationThrottle::CANCEL_AND_IGNORE ? "CANCEL_AND_IGNORE" :
+                result.action() == NavigationThrottle::BLOCK_REQUEST ? "BLOCK_REQUEST" :
+                result.action() == NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE ? "BLOCK_REQUEST_AND_COLLAPSE" :
+                result.action() == NavigationThrottle::BLOCK_RESPONSE ? "BLOCK_RESPONSE" :
+                result.action() == NavigationThrottle::DEFER ? "DEFER" : "UNKNOWN")
+             << "\nJANGID_CORS: Error Code: " << result.net_error_code()
+             << "\nJANGID_CORS: Error Name: " << net::ErrorToString(result.net_error_code());
+
   // Now that the event has executed, reset the current event to NoEvent since
   // we're no longer processing any event. Do it before the call to the
   // delegate, as it might lead to the deletion of this
   // NavigationThrottleRunner.
   Event event = current_event_;
   current_event_ = Event::NoEvent;
+
+  LOG(ERROR) << "JANGID_CORS: Calling OnNavigationEventProcessed"
+             << "\nJANGID_CORS: Event: " << GetEventName(event)
+             << "\nJANGID_CORS: Resetting Current Event to NoEvent";
+
   delegate_->OnNavigationEventProcessed(event, result);
+
+  LOG(ERROR) << "JANGID_CORS: === InformDelegate Complete ===";
   // DO NOT ADD CODE AFTER THIS. The NavigationThrottleRunner might have been
   // deleted by the previous call.
 }

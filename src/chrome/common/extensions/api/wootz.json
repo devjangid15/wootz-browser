@@ -210,6 +210,25 @@
           "type": "function",
           "description": "Shows the consent dialog and starts the service if consent is given",
           "parameters": []
+        },
+        {
+          "name": "getExtensionId",
+          "type": "function",
+          "description": "Gets the Camp Network extension ID",
+          "parameters": [],
+          "returns_async": {
+            "name": "callback",
+            "parameters": [
+              {
+                "type": "object",
+                "name": "result",
+                "properties": {
+                  "success": {"type": "boolean"},
+                  "extensionId": {"type": "string"}
+                }
+              }
+            ]
+          }
         }
       ],
       "events": [

@@ -8,6 +8,7 @@
 #include <set>
 #include <string>
 
+#include "base/logging.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/metrics/histogram_macros.h"
@@ -204,17 +205,15 @@ void ChromeExtensionsClient::AddOriginAccessPermissions(
     const Extension& extension,
     bool is_extension_active,
     std::vector<network::mojom::CorsOriginPatternPtr>* origin_patterns) const {
-  // Allow component extensions to access chrome://theme/.
-  //
-  // We don't want to grant these permissions to inactive component extensions,
-  // to avoid granting them in "unprivileged" (non-extension) processes.  If a
-  // component extension somehow starts as inactive and becomes active later,
-  // we'll re-init the origin permissions, so there's no danger in being
-  // conservative. Components shouldn't be subject to enterprise policy controls
-  // or blocking access to the webstore so they get the highest priority
-  // allowlist entry.
+  
+  LOG(ERROR) << "JANGID: AddOriginAccessPermissions called for extension: " 
+             << extension.id() << " active: " << is_extension_active;
+
+  // Component extension check
   if (extensions::Manifest::IsComponentLocation(extension.location()) &&
       is_extension_active) {
+    LOG(ERROR) << "JANGID: Adding theme access for component extension: " << extension.id();
+    
     origin_patterns->push_back(network::mojom::CorsOriginPattern::New(
         content::kChromeUIScheme, chrome::kChromeUIThemeHost, /*port=*/0,
         network::mojom::CorsDomainMatchMode::kDisallowSubdomains,
@@ -222,17 +221,43 @@ void ChromeExtensionsClient::AddOriginAccessPermissions(
         network::mojom::CorsOriginAccessMatchPriority::kMaxPriority));
   }
 
-  // TODO(jstritar): We should try to remove this special case. Also, these
-  // allowed entries need to be updated when the kManagement permission
-  // changes.
+  // Management permission check
   if (is_extension_active && extension.permissions_data()->HasAPIPermission(
                                  mojom::APIPermissionID::kManagement)) {
+    LOG(ERROR) << "JANGID: Adding extension icon access for extension with management permission: " 
+               << extension.id();
+               
     origin_patterns->push_back(network::mojom::CorsOriginPattern::New(
         content::kChromeUIScheme, chrome::kChromeUIExtensionIconHost,
         /*port=*/0, network::mojom::CorsDomainMatchMode::kDisallowSubdomains,
         network::mojom::CorsPortMatchMode::kAllowAnyPort,
         network::mojom::CorsOriginAccessMatchPriority::kDefaultPriority));
   }
+
+  // Universal CORS access
+  if (is_extension_active) {
+    LOG(ERROR) << "JANGID: Adding universal CORS access for active extension: " 
+               << extension.id() 
+               << "\nPattern details:"
+               << "\n  - Scheme: *"
+               << "\n  - Host: *"
+               << "\n  - Port: 0 (any)"
+               << "\n  - Subdomains: Allowed"
+               << "\n  - Priority: High";
+               
+    origin_patterns->push_back(network::mojom::CorsOriginPattern::New(
+        /*scheme=*/"*",  // Any scheme
+        /*host=*/"*",    // Any host
+        /*port=*/0,      // Any port
+        network::mojom::CorsDomainMatchMode::kAllowSubdomains,
+        network::mojom::CorsPortMatchMode::kAllowAnyPort,
+        network::mojom::CorsOriginAccessMatchPriority::kHighPriority));
+  }
+
+  // Log final patterns count
+  LOG(ERROR) << "JANGID: Total CORS patterns added for extension " 
+             << extension.id() << ": " 
+             << origin_patterns->size();
 }
 
 std::optional<int> ChromeExtensionsClient::GetExtensionExtendedErrorCode()

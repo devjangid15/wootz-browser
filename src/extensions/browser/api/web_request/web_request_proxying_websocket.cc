@@ -239,11 +239,19 @@ void WebRequestProxyingWebSocket::OnAuthRequired(
     const scoped_refptr<net::HttpResponseHeaders>& headers,
     const net::IPEndPoint& remote_endpoint,
     OnAuthRequiredCallback callback) {
+  LOG(ERROR) << "JANGID_CORS: === WebSocket Auth Required ==="
+             << "\nJANGID_CORS: Auth Scheme: " << auth_info.scheme
+             << "\nJANGID_CORS: Auth Realm: " << auth_info.realm
+             << "\nJANGID_CORS: Remote Endpoint: " << remote_endpoint.ToString()
+             << "\nJANGID_CORS: Has Callback: " << (callback ? "true" : "false");
+
   if (!callback) {
+    LOG(ERROR) << "JANGID_CORS: No auth callback provided - failing request";
     OnError(net::ERR_FAILED);
     return;
   }
 
+  LOG(ERROR) << "JANGID_CORS: Storing response headers and endpoint";
   response_->headers = headers;
   response_->remote_endpoint = remote_endpoint;
   auth_required_callback_ = std::move(callback);
@@ -252,27 +260,40 @@ void WebRequestProxyingWebSocket::OnAuthRequired(
       &WebRequestProxyingWebSocket::OnHeadersReceivedCompleteForAuth,
       weak_factory_.GetWeakPtr(), auth_info);
   bool should_collapse_initiator = false;
+
+  LOG(ERROR) << "JANGID_CORS: Processing headers with WebRequestEventRouter";
   int result =
       WebRequestEventRouter::Get(browser_context_)
           ->OnHeadersReceived(browser_context_, &info_, continuation,
                               response_->headers.get(), &override_headers_,
                               &redirect_url_, &should_collapse_initiator);
 
+  LOG(ERROR) << "JANGID_CORS: Headers processing result: " << result
+             << "\nJANGID_CORS: Should Collapse (expected false): " 
+             << (should_collapse_initiator ? "true" : "false");
+
   // It doesn't make sense to collapse WebSocket requests since they won't be
   // associated with a DOM element.
   CHECK(!should_collapse_initiator);
 
   if (result == net::ERR_BLOCKED_BY_CLIENT) {
+    LOG(ERROR) << "JANGID_CORS: Request blocked by client";
     OnError(result);
     return;
   }
 
+  LOG(ERROR) << "JANGID_CORS: Pausing incoming method call processing";
   PauseIncomingMethodCallProcessing();
-  if (result == net::ERR_IO_PENDING)
+  if (result == net::ERR_IO_PENDING) {
+    LOG(ERROR) << "JANGID_CORS: Operation pending - waiting for completion";
     return;
+  }
 
   DCHECK_EQ(net::OK, result);
+  LOG(ERROR) << "JANGID_CORS: Processing auth headers with result: " << result;
   OnHeadersReceivedCompleteForAuth(auth_info, net::OK);
+
+  LOG(ERROR) << "JANGID_CORS: === WebSocket Auth Processing Complete ===";
 }
 
 void WebRequestProxyingWebSocket::OnBeforeSendHeaders(

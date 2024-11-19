@@ -690,7 +690,15 @@ void CorsURLLoader::CheckTainted(const net::RedirectInfo& redirect_info) {
 }
 
 void CorsURLLoader::OnReceiveRedirect(const net::RedirectInfo& redirect_info,
-                                      mojom::URLResponseHeadPtr response_head) {
+                                    mojom::URLResponseHeadPtr response_head) {
+  LOG(ERROR) << "JANGID_CSP: === OnReceiveRedirect Start ==="
+             << "\nJANGID_CSP: Original URL: " << request_.url.spec()
+             << "\nJANGID_CSP: Redirect URL: " << redirect_info.new_url.spec()
+             << "\nJANGID_CSP: Request Mode: " << static_cast<int>(request_.mode)
+             << "\nJANGID_CSP: Redirect Mode: " << static_cast<int>(request_.redirect_mode)
+             << "\nJANGID_CSP: CORS Flag: " << (fetch_cors_flag_ ? "true" : "false")
+             << "\nJANGID_CSP: Redirect Count: " << redirect_count_;
+
   DCHECK(network_loader_);
   DCHECK(forwarding_client_);
   DCHECK(!deferred_redirect_url_);
@@ -698,31 +706,44 @@ void CorsURLLoader::OnReceiveRedirect(const net::RedirectInfo& redirect_info,
   response_head->private_network_access_preflight_result =
       TakePrivateNetworkAccessPreflightResult();
 
-  // If `CORS flag` is set and a CORS check for `request` and `response` returns
-  // failure, then return a network error.
+  // CORS check logging
   if (fetch_cors_flag_ && IsCorsEnabledRequestMode(request_.mode)) {
+    auto allow_origin = GetHeaderString(*response_head, 
+                                      header_names::kAccessControlAllowOrigin);
+    auto allow_credentials = GetHeaderString(*response_head, 
+                                           header_names::kAccessControlAllowCredentials);
+                                           
+    LOG(ERROR) << "JANGID_CSP: Performing CORS check for redirect"
+               << "\nJANGID_CSP: Allow-Origin Header: " 
+               << (allow_origin.has_value() ? allow_origin.value() : "<not present>")
+               << "\nJANGID_CSP: Allow-Credentials Header: "
+               << (allow_credentials.has_value() ? allow_credentials.value() : "<not present>")
+               << "\nJANGID_CSP: Request Initiator: " 
+               << (request_.request_initiator ? request_.request_initiator->Serialize() : "null");
+
     const auto result = CheckAccessAndReportMetrics(
         request_.url,
-        GetHeaderString(*response_head,
-                        header_names::kAccessControlAllowOrigin),
-        GetHeaderString(*response_head,
-                        header_names::kAccessControlAllowCredentials),
+        allow_origin.value_or(""),
+        allow_credentials.value_or(""),
         request_.credentials_mode,
         tainted_ ? url::Origin() : *request_.request_initiator);
+    
     if (!result.has_value()) {
+      LOG(ERROR) << "JANGID_CSP: CORS check failed for redirect";
       HandleComplete(URLLoaderCompletionStatus(result.error()));
       return;
     }
+    LOG(ERROR) << "JANGID_CSP: CORS check passed for redirect";
   }
 
   timing_allow_failed_flag_ = !PassesTimingAllowOriginCheck(*response_head);
   last_response_url_ = redirect_info.new_url;
 
   if (request_.redirect_mode == mojom::RedirectMode::kManual) {
+    LOG(ERROR) << "JANGID_CSP: Manual redirect mode detected";
     CheckTainted(redirect_info);
     deferred_redirect_url_ = std::make_unique<GURL>(redirect_info.new_url);
-    forwarding_client_->OnReceiveRedirect(redirect_info,
-                                          std::move(response_head));
+    forwarding_client_->OnReceiveRedirect(redirect_info, std::move(response_head));
     return;
   }
 
@@ -734,26 +755,33 @@ void CorsURLLoader::OnReceiveRedirect(const net::RedirectInfo& redirect_info,
   // If `request`’s redirect count is twenty, return a network error.
   // Increase `request`’s redirect count by one.
   if (redirect_count_++ == 20) {
+    LOG(ERROR) << "JANGID_CSP: Too many redirects (20) - aborting";
     HandleComplete(URLLoaderCompletionStatus(net::ERR_TOO_MANY_REDIRECTS));
     return;
   }
 
+  LOG(ERROR) << "JANGID_CSP: Checking redirect location";
   const auto error_status = CheckRedirectLocation(
       redirect_info.new_url, request_.mode, request_.request_initiator,
       fetch_cors_flag_, tainted_);
   if (error_status) {
+    LOG(ERROR) << "JANGID_CSP: Invalid redirect location - Error code: " 
+               << error_status->cors_error;
     HandleComplete(URLLoaderCompletionStatus(*error_status));
     return;
   }
+  LOG(ERROR) << "JANGID_CSP: Redirect location check passed";
 
   // If `actualResponse`’s status is not 303, `request`’s body is non-null, and
   // `request`’s body’s source is null, then return a network error.
   if (redirect_info.status_code != net::HTTP_SEE_OTHER &&
       network::URLLoader::HasFetchStreamingUploadBody(&request_)) {
+    LOG(ERROR) << "JANGID_CSP: Invalid redirect with streaming upload body";
     HandleComplete(URLLoaderCompletionStatus(net::ERR_INVALID_ARGUMENT));
     return;
   }
 
+  LOG(ERROR) << "JANGID_CSP: Checking tainted status";
   CheckTainted(redirect_info);
 
   // TODO(crbug.com/40686262): Implement the following:
@@ -776,13 +804,24 @@ void CorsURLLoader::OnReceiveRedirect(const net::RedirectInfo& redirect_info,
   deferred_redirect_url_ = std::make_unique<GURL>(redirect_info.new_url);
 
   if (request_.redirect_mode == mojom::RedirectMode::kManual) {
+    LOG(ERROR) << "JANGID_CSP: Setting response type to OpaqueRedirect";
     response_head->response_type = mojom::FetchResponseType::kOpaqueRedirect;
   } else {
+    LOG(ERROR) << "JANGID_CSP: Setting response type to: " 
+               << static_cast<int>(response_tainting_);
     response_head->response_type = response_tainting_;
   }
+
   response_head->timing_allow_passed = !timing_allow_failed_flag_;
-  forwarding_client_->OnReceiveRedirect(redirect_info,
-                                        std::move(response_head));
+  
+  LOG(ERROR) << "JANGID_CSP: Redirect processing complete"
+             << "\nJANGID_CSP: Final Response Type: " 
+             << static_cast<int>(response_head->response_type)
+             << "\nJANGID_CSP: Timing Allow Passed: " 
+             << (response_head->timing_allow_passed ? "true" : "false")
+             << "\nJANGID_CSP: === OnReceiveRedirect End ===";
+
+  forwarding_client_->OnReceiveRedirect(redirect_info, std::move(response_head));
 }
 
 void CorsURLLoader::OnUploadProgress(int64_t current_position,
@@ -843,42 +882,57 @@ void CorsURLLoader::CancelRequestIfNonceMatchesAndUrlNotExempted(
 }
 
 void CorsURLLoader::StartRequest() {
+  LOG(ERROR) << "JANGID_CSP: === StartRequest Begin ==="
+             << "\nJANGID_CSP: URL: " << request_.url.spec()
+             << "\nJANGID_CSP: Scheme: " << request_.url.scheme()
+             << "\nJANGID_CSP: CORS Flag: " << (fetch_cors_flag_ ? "true" : "false")
+             << "\nJANGID_CSP: Skip CORS Check: " << (skip_cors_enabled_scheme_check_ ? "true" : "false")
+             << "\nJANGID_CSP: Request Mode: " << static_cast<int>(request_.mode)
+             << "\nJANGID_CSP: Method: " << request_.method
+             << "\nJANGID_CSP: Initiator: " << (request_.request_initiator ? request_.request_initiator->Serialize() : "null");
+
   TRACE_EVENT("loading", "CorsURLLoader::StartRequest",
               perfetto::Flow::ProcessScoped(net_log_.source().id));
-  // All results should be reported to `forwarding_client_` as part of a
-  // `URLResponseHead`, then `pna_preflight_result_` reset to `kNone`.
+              
   CHECK_EQ(pna_preflight_result_,
            mojom::PrivateNetworkAccessPreflightResult::kNone);
 
+  // CORS scheme check
   if (fetch_cors_flag_ && !skip_cors_enabled_scheme_check_ &&
       !base::Contains(url::GetCorsEnabledSchemes(), request_.url.scheme())) {
+    LOG(ERROR) << "JANGID_CSP: Request blocked - CORS disabled scheme"
+               << "\nJANGID_CSP: URL: " << request_.url.spec()
+               << "\nJANGID_CSP: Scheme: " << request_.url.scheme();
     HandleComplete(URLLoaderCompletionStatus(
         CorsErrorStatus(mojom::CorsError::kCorsDisabledScheme)));
     return;
   }
 
-  // If the `CORS flag` is set, `httpRequest`’s method is neither `GET` nor
-  // `HEAD`, or `httpRequest`’s mode is "websocket", then append
-  // `Origin`/the result of serializing a request origin with `httpRequest`, to
-  // `httpRequest`’s header list.
-  //
-  // We exclude navigation requests to keep the existing behavior.
-  // TODO(yhirano): Reconsider this.
-  if (request_.mode != network::mojom::RequestMode::kNavigate &&
-      request_.request_initiator &&
-      (fetch_cors_flag_ ||
-       (request_.method != net::HttpRequestHeaders::kGetMethod &&
-        request_.method != net::HttpRequestHeaders::kHeadMethod))) {
-    if (tainted_) {
-      request_.headers.SetHeader(net::HttpRequestHeaders::kOrigin,
-                                 url::Origin().Serialize());
-    } else {
-      request_.headers.SetHeader(net::HttpRequestHeaders::kOrigin,
-                                 request_.request_initiator->Serialize());
-    }
+  // Origin header handling
+  bool should_add_origin = request_.mode != network::mojom::RequestMode::kNavigate &&
+                          request_.request_initiator &&
+                          (fetch_cors_flag_ ||
+                           (request_.method != net::HttpRequestHeaders::kGetMethod &&
+                            request_.method != net::HttpRequestHeaders::kHeadMethod));
+
+  LOG(ERROR) << "JANGID_CSP: Origin Header Check"
+             << "\nJANGID_CSP: Should Add Origin: " << (should_add_origin ? "true" : "false")
+             << "\nJANGID_CSP: Is Navigation: " << (request_.mode == mojom::RequestMode::kNavigate)
+             << "\nJANGID_CSP: Has Initiator: " << (request_.request_initiator ? "true" : "false")
+             << "\nJANGID_CSP: Method: " << request_.method;
+
+  if (should_add_origin) {
+    std::string origin_value = tainted_ ? url::Origin().Serialize() : 
+                                         request_.request_initiator->Serialize();
+    LOG(ERROR) << "JANGID_CSP: Adding Origin Header"
+               << "\nJANGID_CSP: Origin Value: " << origin_value
+               << "\nJANGID_CSP: Is Tainted: " << (tainted_ ? "true" : "false");
+    request_.headers.SetHeader(net::HttpRequestHeaders::kOrigin, origin_value);
   }
 
+  // Same-origin mode check
   if (fetch_cors_flag_ && request_.mode == mojom::RequestMode::kSameOrigin) {
+    LOG(ERROR) << "JANGID_CSP: Request blocked - Same origin mode violation";
     DCHECK(request_.request_initiator);
     HandleComplete(URLLoaderCompletionStatus(
         CorsErrorStatus(mojom::CorsError::kDisallowedByMode)));
@@ -890,38 +944,41 @@ void CorsURLLoader::StartRequest() {
       request_.isolated_world_origin, fetch_cors_flag_, tainted_,
       *origin_access_list_);
 
-  // Note that even when `needs_preflight` holds we might not make a preflight
-  // request. This happens when `fetch_cors_flag_` is false, e.g. when the
-  // origin of the url is equal to the origin of the request, and the preflight
-  // reason is not `kPrivateNetworkAccess`. In the case of a private network
-  // access we always send a preflight, even for CORS-disabled requests.
-  //
-  // See the first step of the HTTP-no-service-worker fetch algorithm defined in
-  // the Private Network Access spec:
-  // https://wicg.github.io/private-network-access/#http-no-service-worker-fetch
-  std::optional<PreflightRequiredReason> needs_preflight =
-      NeedsPreflight(request_);
-  bool preflight_required =
-      needs_preflight.has_value() &&
-      (fetch_cors_flag_ ||
-       *needs_preflight == PreflightRequiredReason::kPrivateNetworkAccess);
+  LOG(ERROR) << "JANGID_CSP: Response Tainting Calculated"
+             << "\nJANGID_CSP: Tainting Value: " << static_cast<int>(response_tainting_)
+             << "\nJANGID_CSP: Has Isolated World: " << (request_.isolated_world_origin.has_value() ? "true" : "false");
+
+  // Preflight check
+  std::optional<PreflightRequiredReason> needs_preflight = NeedsPreflight(request_);
+  bool preflight_required = needs_preflight.has_value() &&
+      (fetch_cors_flag_ || *needs_preflight == PreflightRequiredReason::kPrivateNetworkAccess);
+
+  LOG(ERROR) << "JANGID_CSP: Preflight Analysis"
+             << "\nJANGID_CSP: Needs Preflight: " << (needs_preflight.has_value() ? "true" : "false")
+             << "\nJANGID_CSP: Preflight Required: " << (preflight_required ? "true" : "false")
+             << "\nJANGID_CSP: Preflight Reason: " << (needs_preflight.has_value() ? 
+                                                      static_cast<int>(*needs_preflight) : -1);
+
   net_log_.AddEvent(net::NetLogEventType::CHECK_CORS_PREFLIGHT_REQUIRED, [&] {
     return NetLogPreflightRequiredParams(needs_preflight);
   });
 
   has_authorization_covered_by_wildcard_ = false;
   if (!preflight_required) {
+    LOG(ERROR) << "JANGID_CSP: No preflight needed - starting network request";
     StartNetworkRequest();
     return;
   }
 
+  LOG(ERROR) << "JANGID_CSP: Setting up preflight request";
   preflight_mode_.Clear();
   if (fetch_cors_flag_ && NeedsCorsPreflight(request_).has_value()) {
+    LOG(ERROR) << "JANGID_CSP: Adding CORS preflight type";
     preflight_mode_.Put(PreflightController::PreflightType::kCors);
   }
   if (NeedsPrivateNetworkAccessPreflight(request_).has_value()) {
-    preflight_mode_.Put(
-        PreflightController::PreflightType::kPrivateNetworkAccess);
+    LOG(ERROR) << "JANGID_CSP: Adding Private Network Access preflight type";
+    preflight_mode_.Put(PreflightController::PreflightType::kPrivateNetworkAccess);
   }
   CHECK(!preflight_mode_.empty());
 
@@ -931,6 +988,7 @@ void CorsURLLoader::StartRequest() {
 
   mojo::PendingRemote<mojom::URLLoaderNetworkServiceObserver> remote_observer;
 
+  // Private Network Access check
   if (needs_preflight.has_value() &&
       *needs_preflight == PreflightRequiredReason::kPrivateNetworkAccess) {
     // TODO(crbug.com/40229602): Create a base function and clean up all
@@ -940,12 +998,15 @@ void CorsURLLoader::StartRequest() {
         state && PrivateNetworkAccessChecker::NeedPermission(
                      request_.url, state->is_web_secure_context,
                      request_.required_ip_address_space);
-    if (needs_pna_permission &&
-        url_loader_network_service_observer_->is_bound()) {
-      // Fail the request if `targetAddressSpace` on fetch option is not the
-      // same as the real target address space.
-      if (request_.required_ip_address_space !=
-          request_.target_ip_address_space) {
+
+    LOG(ERROR) << "JANGID_CSP: Private Network Access Check"
+               << "\nJANGID_CSP: Needs PNA Permission: " << (needs_pna_permission ? "true" : "false")
+               << "\nJANGID_CSP: Is Secure Context: " << (state ? state->is_web_secure_context : false)
+               << "\nJANGID_CSP: Required IP Space: " << static_cast<int>(request_.required_ip_address_space);
+
+    if (needs_pna_permission && url_loader_network_service_observer_->is_bound()) {
+      if (request_.required_ip_address_space != request_.target_ip_address_space) {
+        LOG(ERROR) << "JANGID_CSP: Invalid private network access - IP space mismatch";
         HandleComplete(URLLoaderCompletionStatus(
             CorsErrorStatus(mojom::CorsError::kInvalidPrivateNetworkAccess)));
         return;
@@ -954,6 +1015,11 @@ void CorsURLLoader::StartRequest() {
           ->Clone(remote_observer.InitWithNewPipeAndPassReceiver());
     }
   }
+
+  LOG(ERROR) << "JANGID_CSP: Initiating preflight check"
+             << "\nJANGID_CSP: Preflight Mode: " << preflight_mode_.ToString()
+             << "\nJANGID_CSP: === StartRequest End ===";
+
   context_->cors_preflight_controller()->PerformPreflightCheck(
       base::BindOnce(&CorsURLLoader::OnPreflightRequestComplete,
                      weak_factory_.GetWeakPtr()),

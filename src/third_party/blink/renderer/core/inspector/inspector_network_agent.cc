@@ -434,11 +434,29 @@ String BuildBlockedReason(ResourceRequestBlockedReason reason) {
 }
 
 Maybe<String> BuildBlockedReason(const ResourceError& error) {
+  LOG(ERROR) << "JANGID_CORS: === BuildBlockedReason Start ==="
+             << "\nJANGID_CORS: Error Code: " << error.ErrorCode()
+             << "\nJANGID_CORS: Is Blocked Error: " 
+             << (error.ErrorCode() == net::ERR_BLOCKED_BY_CLIENT || 
+                 error.ErrorCode() == net::ERR_BLOCKED_BY_RESPONSE);
+
   int error_code = error.ErrorCode();
   if (error_code != net::ERR_BLOCKED_BY_CLIENT &&
       error_code != net::ERR_BLOCKED_BY_RESPONSE) {
+    LOG(ERROR) << "JANGID_CORS: Not a blocked error, returning empty reason"
+               << "\nJANGID_CORS: Error Code: " << error_code
+               << "\nJANGID_CORS: Expected ERR_BLOCKED_BY_CLIENT: " 
+               << net::ERR_BLOCKED_BY_CLIENT
+               << "\nJANGID_CORS: Expected ERR_BLOCKED_BY_RESPONSE: " 
+               << net::ERR_BLOCKED_BY_RESPONSE;
     return Maybe<String>();
   }
+
+  LOG(ERROR) << "JANGID_CORS: Processing blocked error"
+             << "\nJANGID_CORS: Is Client Block: " 
+             << (error_code == net::ERR_BLOCKED_BY_CLIENT)
+             << "\nJANGID_CORS: Is Response Block: " 
+             << (error_code == net::ERR_BLOCKED_BY_RESPONSE);
 
   std::optional<ResourceRequestBlockedReason> resource_request_blocked_reason =
       error.GetResourceRequestBlockedReason();

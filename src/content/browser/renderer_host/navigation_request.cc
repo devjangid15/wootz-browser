@@ -2275,11 +2275,34 @@ void NavigationRequest::BeginNavigation() {
 
   // Fenced frames are not allowed to load if nested in iframes with CSPEE.
   bool is_fenced_frame = frame_tree_node_->IsFencedFrameRoot();
+  
+  LOG(ERROR) << "JANGID_CORS: === Fenced Frame CSP Check ==="
+             << "\nJANGID_CORS: Is Fenced Frame: " << is_fenced_frame
+             << "\nJANGID_CORS: Navigation URL: " << common_params_->url.spec()
+             << "\nJANGID_CORS: Frame Tree Node ID: " << frame_tree_node_->frame_tree_node_id();
+
   if (is_fenced_frame) {
+    LOG(ERROR) << "JANGID_CORS: Processing Fenced Frame"
+               << "\nJANGID_CORS: Has CSP Attribute: " 
+               << (frame_tree_node_->csp_attribute() ? "true" : "false");
+
     DCHECK(!frame_tree_node_->csp_attribute());
+
+    auto* parent_frame = GetParentFrameOrOuterDocument();
+    LOG(ERROR) << "JANGID_CORS: Parent Frame Check"
+               << "\nJANGID_CORS: Has Parent Frame: " << (parent_frame != nullptr)
+               << "\nJANGID_CORS: Parent Has Required CSP: " 
+               << (parent_frame && parent_frame->required_csp());
+
     if (GetParentFrameOrOuterDocument()->required_csp()) {
       GURL sanitized_blocked_url =
           common_params_->url.DeprecatedGetOriginAsURL();
+      
+      LOG(ERROR) << "JANGID_CORS: CSP Block Details"
+                 << "\nJANGID_CORS: Sanitized URL: " << sanitized_blocked_url.spec()
+                 << "\nJANGID_CORS: Original URL: " << common_params_->url.spec()
+                 << "\nJANGID_CORS: Adding Console Error Message";
+
       AddDeferredConsoleMessage(
           blink::mojom::ConsoleMessageLevel::kError,
           base::StringPrintf(
@@ -2287,15 +2310,26 @@ void NavigationRequest::BeginNavigation() {
               "CSP Embedded Enforcement is specified by the embedder",
               sanitized_blocked_url.spec().c_str()));
 
+      LOG(ERROR) << "JANGID_CORS: Starting Navigation Before Failure";
       StartNavigation();
+
+      LOG(ERROR) << "JANGID_CORS: Calling OnRequestFailedInternal for CSP Block"
+                 << "\nJANGID_CORS: Error Code: ERR_BLOCKED_BY_CSP"
+                 << "\nJANGID_CORS: Skip Throttles: false"
+                 << "\nJANGID_CORS: Has Error Page: false"
+                 << "\nJANGID_CORS: Collapse Frame: false";
+
       OnRequestFailedInternal(
           network::URLLoaderCompletionStatus(net::ERR_BLOCKED_BY_CSP),
-          false /*skip_throttles*/, std::nullopt /*error_page_content*/,
+          false /*skip_throttles*/, 
+          std::nullopt /*error_page_content*/,
           false /*collapse_frame*/);
+
       // DO NOT ADD CODE after this. The previous call to
       // OnRequestFailedInternal has destroyed the NavigationRequest.
       return;
     }
+    LOG(ERROR) << "JANGID_CORS: Fenced Frame CSP Check Passed";
   }
 
   // If this is a fenced frame with a urn:uuid, or an iframe with a urn::uuid
@@ -2603,21 +2637,50 @@ void NavigationRequest::BeginNavigationImpl() {
   // gives CSP a chance to modify requests that NavigationThrottles would
   // otherwise block. Similarly, the NavigationHandle is created afterwards, so
   // that it gets the request URL after potentially being modified by CSP.
+  LOG(ERROR) << "JANGID_CORS: === Content Security Policy Check Start ==="
+             << "\nJANGID_CORS: URL: " << common_params_->url.spec()
+             << "\nJANGID_CORS: Has Followed Redirect: false"
+             << "\nJANGID_CORS: URL Upgraded After Redirect: false"
+             << "\nJANGID_CORS: Is Response Check: false";
+
   net::Error net_error = CheckContentSecurityPolicy(
       false /* has_followed redirect */,
-      false /* url_upgraded_after_redirect */, false /* is_response_check */);
+      false /* url_upgraded_after_redirect */, 
+      false /* is_response_check */);
+
+  LOG(ERROR) << "JANGID_CORS: CSP Check Result:"
+             << "\nJANGID_CORS: Net Error Code: " << net_error
+             << "\nJANGID_CORS: Is Error: " << (net_error != net::OK);
+
   if (net_error != net::OK) {
+    LOG(ERROR) << "JANGID_CORS: CSP Check Failed"
+               << "\nJANGID_CORS: Creating Navigation Handle"
+               << "\nJANGID_CORS: Frame Tree Node ID: " << frame_tree_node_->frame_tree_node_id();
+
     // Create a navigation handle so that the correct error code can be set on
     // it by OnRequestFailedInternal().
     StartNavigation();
+
+    LOG(ERROR) << "JANGID_CORS: Calling OnRequestFailedInternal for CSP Violation"
+               << "\nJANGID_CORS: Error Code: " << net_error
+               << "\nJANGID_CORS: Skip Throttles: false"
+               << "\nJANGID_CORS: Has Error Page Content: false"
+               << "\nJANGID_CORS: Collapse Frame: false"
+               << "\nJANGID_CORS: Initiator Origin: " 
+               << (common_params_->initiator_origin ? 
+                   common_params_->initiator_origin->Serialize() : "null");
+
     OnRequestFailedInternal(network::URLLoaderCompletionStatus(net_error),
                             false /* skip_throttles */,
                             std::nullopt /* error_page_content */,
                             false /* collapse_frame */);
+    
     // DO NOT ADD CODE after this. The previous call to OnRequestFailedInternal
     // has destroyed the NavigationRequest.
     return;
   }
+
+  LOG(ERROR) << "JANGID_CORS: === Content Security Policy Check Passed ===";
 
   if (CheckCredentialedSubresource() ==
       CredentialedSubresourceCheckResult::BLOCK_REQUEST) {
@@ -2669,16 +2732,40 @@ void NavigationRequest::BeginNavigationImpl() {
     return;
   }
 
+  LOG(ERROR) << "JANGID_CORS: === Post Commit Error Page Check ==="
+             << "\nJANGID_CORS: Has Error Page HTML: " 
+             << (!post_commit_error_page_html_.empty())
+             << "\nJANGID_CORS: Navigation URL: " << common_params_->url.spec()
+             << "\nJANGID_CORS: Frame Tree Node ID: " 
+             << frame_tree_node_->frame_tree_node_id();
+
   if (!post_commit_error_page_html_.empty()) {
+    LOG(ERROR) << "JANGID_CORS: Processing Post Commit Error Page"
+               << "\nJANGID_CORS: Current Net Error: " << net_error_
+               << "\nJANGID_CORS: Error Page HTML Length: " 
+               << post_commit_error_page_html_.length()
+               << "\nJANGID_CORS: Initiator Origin: " 
+               << (common_params_->initiator_origin ? 
+                   common_params_->initiator_origin->Serialize() : "null");
+
+    LOG(ERROR) << "JANGID_CORS: Calling OnRequestFailedInternal for Error Page"
+               << "\nJANGID_CORS: Skip Throttles: true"
+               << "\nJANGID_CORS: Has Error Page Content: true"
+               << "\nJANGID_CORS: Collapse Frame: false";
+
     OnRequestFailedInternal(
         network::URLLoaderCompletionStatus(net_error_),
         true /* skip_throttles  */,
         post_commit_error_page_html_ /* error_page_content */,
         false /* collapse_frame */);
+
+    LOG(ERROR) << "JANGID_CORS: Post Commit Error Page handling complete";
     // DO NOT ADD CODE after this. The previous call to OnRequestFailedInternal
     // has destroyed the NavigationRequest.
     return;
   }
+
+  LOG(ERROR) << "JANGID_CORS: No Post Commit Error Page Present";
 
   if (IsForMhtmlSubframe())
     is_mhtml_or_subframe_ = true;
@@ -2727,17 +2814,43 @@ void NavigationRequest::BeginNavigationImpl() {
       // [spec]: https://html.spec.whatwg.org/C/#process-a-navigate-response
       // 4. if [...] the result of checking a navigation response's adherence to
       // its embedder policy [...], then set failure to true.
+      LOG(ERROR) << "JANGID_CORS: === COEP Adherence Check Start ==="
+                 << "\nJANGID_CORS: URL: " << common_params_->url.spec()
+                 << "\nJANGID_CORS: Frame Tree Node ID: " 
+                 << frame_tree_node_->frame_tree_node_id()
+                 << "\nJANGID_CORS: Is Main Frame: " 
+                 << frame_tree_node_->IsMainFrame();
+
       if (!CheckResponseAdherenceToCoep(common_params_->url)) {
+        LOG(ERROR) << "JANGID_CORS: COEP Check Failed"
+                   << "\nJANGID_CORS: Initiator Origin: " 
+                   << (common_params_->initiator_origin ? 
+                       common_params_->initiator_origin->Serialize() : "null")
+                   << "\nJANGID_CORS: Is Cross Origin: " 
+                   << (common_params_->initiator_origin && 
+                       !common_params_->initiator_origin->IsSameOriginWith(
+                           url::Origin::Create(common_params_->url)));
+
+        LOG(ERROR) << "JANGID_CORS: Calling OnRequestFailedInternal for COEP Violation"
+                   << "\nJANGID_CORS: Error: kCoepFrameResourceNeedsCoepHeader"
+                   << "\nJANGID_CORS: Skip Throttles: false"
+                   << "\nJANGID_CORS: Has Error Page: false"
+                   << "\nJANGID_CORS: Collapse Frame: false";
+
         OnRequestFailedInternal(network::URLLoaderCompletionStatus(
                                     network::mojom::BlockedByResponseReason::
                                         kCoepFrameResourceNeedsCoepHeader),
                                 false /* skip_throttles */,
                                 std::nullopt /* error_page_content */,
                                 false /* collapse_frame */);
+
+        LOG(ERROR) << "JANGID_CORS: COEP Violation handling complete";
         return;
         // DO NOT ADD CODE after this. The previous call to
         // OnRequestFailedInternal has destroyed the NavigationRequest.
       }
+
+      LOG(ERROR) << "JANGID_CORS: === COEP Adherence Check Passed ===";
 
       // Enforce cross-origin-opener-policy for about:blank, about:srcdoc and
       // MHTML iframe, before selecting the RenderFrameHost.
@@ -3316,15 +3429,42 @@ void NavigationRequest::OnRequestRedirected(
   const std::optional<network::mojom::BlockedByResponseReason>
       coop_requires_blocking =
           coop_status_.SanitizeResponse(response_head_.get());
+  LOG(ERROR) << "JANGID_CORS: === COOP Blocking Check Start ==="
+             << "\nJANGID_CORS: Has COOP Block Requirement: " 
+             << coop_requires_blocking.has_value()
+             << "\nJANGID_CORS: URL: " << common_params_->url.spec()
+             << "\nJANGID_CORS: Frame Tree Node ID: " 
+             << frame_tree_node_->frame_tree_node_id();
+
   if (coop_requires_blocking) {
+    LOG(ERROR) << "JANGID_CORS: COOP Block Required"
+               << "\nJANGID_CORS: Block Reason: " 
+               << static_cast<int>(*coop_requires_blocking)
+               << "\nJANGID_CORS: Initiator Origin: " 
+               << (common_params_->initiator_origin ? 
+                   common_params_->initiator_origin->Serialize() : "null")
+               << "\nJANGID_CORS: Is Main Frame: " 
+               << frame_tree_node_->IsMainFrame()
+               << "\nJANGID_CORS: COOP Status: ";
+
+    LOG(ERROR) << "JANGID_CORS: Calling OnRequestFailedInternal for COOP Block"
+               << "\nJANGID_CORS: Skip Throttles: false"
+               << "\nJANGID_CORS: Has Error Page: false"
+               << "\nJANGID_CORS: Collapse Frame: false";
+
     OnRequestFailedInternal(
         network::URLLoaderCompletionStatus(*coop_requires_blocking),
-        false /* skip_throttles */, std::nullopt /* error_page_content */,
+        false /* skip_throttles */, 
+        std::nullopt /* error_page_content */,
         false /* collapse_frame */);
+
+    LOG(ERROR) << "JANGID_CORS: COOP Block handling complete";
     // DO NOT ADD CODE after this. The previous call to
     // OnRequestFailedInternal has destroyed the NavigationRequest.
     return;
   }
+
+  LOG(ERROR) << "JANGID_CORS: === COOP Blocking Check Passed ===";
   const url::Origin origin = GetOriginForURLLoaderFactoryUnchecked();
   // Set the COOP origin in the policy container builder via the mutable
   // reference before coop is sent to EnforceCOOP.
@@ -3419,15 +3559,50 @@ void NavigationRequest::OnRequestRedirected(
       CheckContentSecurityPolicy(true /* has_followed_redirect */,
                                  redirect_info.insecure_scheme_was_upgraded,
                                  false /* is_response_check */);
-  if (net_error != net::OK) {
-    OnRequestFailedInternal(
-        network::URLLoaderCompletionStatus(net_error), false /*skip_throttles*/,
-        std::nullopt /*error_page_content*/, false /*collapse_frame*/);
+  LOG(ERROR) << "JANGID_CORS: === CSP Navigation Check Start ==="
+             << "\nJANGID_CORS: Net Error Code: " << net_error
+             << "\nJANGID_CORS: URL: " << common_params_->url.spec()
+             << "\nJANGID_CORS: Frame Tree Node ID: " 
+             << frame_tree_node_->frame_tree_node_id()
+             << "\nJANGID_CORS: Navigation ID: " << navigation_id_;
 
+  if (net_error != net::OK) {
+    LOG(ERROR) << "JANGID_CORS: CSP Navigation Error Detected"
+               << "\nJANGID_CORS: Error Code: " << net_error
+               << "\nJANGID_CORS: Error Name: " << net::ErrorToString(net_error)
+               << "\nJANGID_CORS: Initiator Origin: " 
+               << (common_params_->initiator_origin ? 
+                   common_params_->initiator_origin->Serialize() : "null")
+               << "\nJANGID_CORS: Target Origin: " 
+               << url::Origin::Create(common_params_->url).Serialize()
+               << "\nJANGID_CORS: Navigation Type: " 
+               << static_cast<int>(common_params_->navigation_type)
+               << "\nJANGID_CORS: Is Same Origin: "
+               << (common_params_->initiator_origin && 
+                   common_params_->initiator_origin->IsSameOriginWith(
+                       url::Origin::Create(common_params_->url)));
+
+    LOG(ERROR) << "JANGID_CORS: Calling OnRequestFailedInternal for CSP Error"
+               << "\nJANGID_CORS: Skip Throttles: false"
+               << "\nJANGID_CORS: Has Error Page: false"
+               << "\nJANGID_CORS: Collapse Frame: false"
+               << "\nJANGID_CORS: Current State: " << state_;
+
+    OnRequestFailedInternal(
+        network::URLLoaderCompletionStatus(net_error), 
+        false /*skip_throttles*/,
+        std::nullopt /*error_page_content*/, 
+        false /*collapse_frame*/);
+
+    LOG(ERROR) << "JANGID_CORS: CSP Error handling complete for Navigation " 
+               << navigation_id_;
     // DO NOT ADD CODE after this. The previous call to OnRequestFailedInternal
     // has destroyed the NavigationRequest.
     return;
   }
+
+  LOG(ERROR) << "JANGID_CORS: === CSP Navigation Check Passed ==="
+             << "\nJANGID_CORS: Navigation ID: " << navigation_id_;
 
   if (CheckCredentialedSubresource() ==
       CredentialedSubresourceCheckResult::BLOCK_REQUEST) {
@@ -4385,11 +4560,18 @@ void NavigationRequest::SelectFrameHostForOnResponseStarted(
     network::mojom::URLLoaderClientEndpointsPtr url_loader_client_endpoints,
     bool is_download,
     SubresourceLoaderParams subresource_loader_params) {
+
+  LOG(ERROR) << "JANGID_CORS: === SelectFrameHostForOnResponseStarted Started ==="
+             << "\nJANGID_CORS: URL: " << common_params_->url.spec()
+             << "\nJANGID_CORS: Is Download: " << is_download
+             << "\nJANGID_CORS: Has RenderFrameHost: " << HasRenderFrameHost();
+
   TRACE_EVENT_WITH_FLOW0(
       "navigation", "NavigationRequest::SelectFrameHostForOnResponseStarted",
       TRACE_ID_WITH_SCOPE(kNavigationRequestScope,
                           TRACE_ID_LOCAL(navigation_id_)),
       TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT);
+  
   CHECK(!HasRenderFrameHost())
       << "`render_frame_host_` should not be set before the "
          "`NavigationRequest` starts to select the RFH.";
@@ -4399,45 +4581,58 @@ void NavigationRequest::SelectFrameHostForOnResponseStarted(
 
   // Select an appropriate renderer to commit the navigation.
   if (IsServedFromBackForwardCache()) {
+    LOG(ERROR) << "JANGID_CORS: Processing back/forward cache navigation";
+    
     NavigationControllerImpl* controller = GetNavigationController();
     auto entry =
         controller->GetBackForwardCache().GetOrEvictEntry(nav_entry_id_);
+    
     if (!entry.has_value() &&
         entry.error() == BackForwardCacheImpl::kEntryIneligibleAndEvicted) {
-      // If the RenderFrameHost to restore has been evicted and deleted, or the
-      // current navigation is being restarted due to the `GetOrEvictEntry`
-      // call, we should stop processing this back/forward cache restore
-      // navigation, as the navigation will soon be restarted as a normal
-      // history navigation and the current NavigationRequest will be reset.
-      // DO NOT ADD CODE after this. The previous call to
-      // `GetOrEvictEntry()` has destroyed the NavigationRequest.
+      LOG(ERROR) << "JANGID_CORS: Back/forward cache entry evicted - stopping navigation";
       return;
     }
     CHECK(entry.has_value() && entry.value());
     CHECK(entry.value()->render_frame_host());
+    
+    LOG(ERROR) << "JANGID_CORS: Setting render_frame_host from back/forward cache";
     render_frame_host_ = entry.value()->render_frame_host()->GetSafeRef();
+    
   } else if (IsPrerenderedPageActivation()) {
+    LOG(ERROR) << "JANGID_CORS: Processing prerendered page activation";
+    
     // Prerendering requires changing pages starting at the root node.
     DCHECK(IsInMainFrame());
 
+    LOG(ERROR) << "JANGID_CORS: Getting render frame host for prerendered page"
+               << "\nJANGID_CORS: Prerender Frame Tree Node ID: " 
+               << prerender_frame_tree_node_id_.value();
+               
     render_frame_host_ = GetPrerenderHostRegistry()
                              .GetRenderFrameHostForReservedHost(
                                  prerender_frame_tree_node_id_.value())
                              ->GetSafeRef();
+                             
   } else if (response_should_be_rendered_) {
+    LOG(ERROR) << "JANGID_CORS: Getting frame host for normal navigation";
+    
     if (auto result =
             frame_tree_node_->render_manager()->GetFrameHostForNavigation(
                 this, &browsing_context_group_swap_, &rfh_selected_reason);
         result.has_value()) {
+      LOG(ERROR) << "JANGID_CORS: Frame host selected successfully"
+                 << "\nJANGID_CORS: Selection reason: " << rfh_selected_reason;
       render_frame_host_ = result.value()->GetSafeRef();
     } else {
+      LOG(ERROR) << "JANGID_CORS: Frame host selection failed"
+                 << "\nJANGID_CORS: Error: " << static_cast<int>(result.error());
+                 
       switch (result.error()) {
         case GetFrameHostForNavigationFailed::kCouldNotReinitializeMainFrame:
-          // TODO(crbug.com/40250311): This was unhandled before and
-          // remains explicitly unhandled. This branch may be removed in the
-          // future.
+          LOG(ERROR) << "JANGID_CORS: Could not reinitialize main frame";
           break;
         case GetFrameHostForNavigationFailed::kBlockedByPendingCommit:
+          LOG(ERROR) << "JANGID_CORS: Blocked by pending commit";
           DCHECK(ShouldQueueDueToExistingPendingCommitRFH());
           // This closure is posted to the event loop, so it must use WeakPtr.
           resume_commit_closure_ = base::BindOnce(
@@ -4457,35 +4652,66 @@ void NavigationRequest::SelectFrameHostForOnResponseStarted(
     // should never be NONE here.
     DCHECK_NE(AssociatedRenderFrameHostType::NONE, associated_rfh_type_);
 
+    LOG(ERROR) << "JANGID_CORS: Checking WebUI renderer compatibility"
+               << "\nJANGID_CORS: Associated RFH Type: " 
+               << static_cast<int>(associated_rfh_type_);
+
     if (!Navigator::CheckWebUIRendererDoesNotDisplayNormalURL(
             GetRenderFrameHost(), GetUrlInfo(),
             /* is_renderer_initiated_check */ false)) {
+      LOG(ERROR) << "JANGID_CORS: WebUI renderer check failed"
+                 << "\nJANGID_CORS: URL: " << GetUrlInfo().url.spec();
       CHECK(false);
     }
+    LOG(ERROR) << "JANGID_CORS: WebUI renderer check passed";
   } else {
+    LOG(ERROR) << "JANGID_CORS: Setting null render frame host";
     render_frame_host_ = std::nullopt;
   }
+
   if (!HasRenderFrameHost()) {
+    LOG(ERROR) << "JANGID_CORS: No render frame host available"
+               << "\nJANGID_CORS: Response should be rendered: " 
+               << response_should_be_rendered_;
     DCHECK(!response_should_be_rendered_);
   }
 
+  // Cross-process navigation check
   if (!commit_params_->is_browser_initiated && HasRenderFrameHost() &&
       GetRenderFrameHost()->GetProcess() !=
           frame_tree_node_->current_frame_host()->GetProcess()) {
+    LOG(ERROR) << "JANGID_CORS: Detected cross-process navigation"
+               << "\nJANGID_CORS: Current Process ID: " 
+               << frame_tree_node_->current_frame_host()->GetProcess()->GetID()
+               << "\nJANGID_CORS: Target Process ID: " 
+               << GetRenderFrameHost()->GetProcess()->GetID()
+               << "\nJANGID_CORS: Is Browser Initiated: " 
+               << commit_params_->is_browser_initiated
+               << "\nJANGID_CORS: Is Outermost Main Frame: " 
+               << frame_tree_node_->IsOutermostMainFrame();
+
     // Allow the embedder to cancel the cross-process commit if needed.
     if (!frame_tree_node_->navigator()
              .GetDelegate()
              ->ShouldAllowRendererInitiatedCrossProcessNavigation(
                  frame_tree_node_->IsOutermostMainFrame())) {
+      LOG(ERROR) << "JANGID_CORS: Cross-process navigation blocked by embedder";
       net_error_ = net::ERR_ABORTED;
       frame_tree_node_->ResetNavigationRequest(
           NavigationDiscardReason::kCancelled);
       return;
     }
+    LOG(ERROR) << "JANGID_CORS: Cross-process navigation allowed by embedder";
   }
+
+  LOG(ERROR) << "JANGID_CORS: Storing URLLoaderClient endpoints"
+             << "\nJANGID_CORS: Has Endpoints: " 
+             << (url_loader_client_endpoints ? "true" : "false");
 
   // Store the URLLoaderClient endpoints until checks have been processed.
   url_loader_client_endpoints_ = std::move(url_loader_client_endpoints);
+
+  LOG(ERROR) << "JANGID_CORS: Storing subresource loader params";
 
   subresource_loader_params_ = std::move(subresource_loader_params);
 
@@ -4501,18 +4727,25 @@ void NavigationRequest::SelectFrameHostForOnResponseStarted(
   // started.  Hence, about:blank is the only possible URL which both uses
   // unassigned SiteInstances and can reach this point (via an extension
   // redirect).
+  LOG(ERROR) << "JANGID_CORS: === URL Validation Started ==="
+             << "\nJANGID_CORS: URL: " << common_params_->url.spec();
+
   if (common_params_->url.IsAboutBlank()) {
+    LOG(ERROR) << "JANGID_CORS: Processing about:blank URL";
     // TODO(alexmos): Convert to a CHECK after verifying that this doesn't
     // happen in practice.
     if (!WasServerRedirect()) {
+      LOG(ERROR) << "JANGID_CORS: WARNING - about:blank without server redirect";
       DVLOG(1) << "about:blank should only go through the network stack "
                << "when an extension redirects to it.";
       base::debug::DumpWithoutCrashing();
     }
   } else {
+    LOG(ERROR) << "JANGID_CORS: Checking if site should be assigned for URL";
     // TODO(alexmos): Convert to a CHECK after verifying that this doesn't
     // happen in practice.
     if (!SiteInstanceImpl::ShouldAssignSiteForUrlInfo(GetUrlInfo())) {
+      LOG(ERROR) << "JANGID_CORS: WARNING - Unexpected URL through network stack";
       DVLOG(1) << "This URL was unexpectedly loaded through the network stack: "
                << common_params_->url;
       base::debug::DumpWithoutCrashing();
@@ -4520,32 +4753,23 @@ void NavigationRequest::SelectFrameHostForOnResponseStarted(
   }
 
   if (HasRenderFrameHost()) {
-    // Set the site URL now if it hasn't been set already. If the site requires
-    // a dedicated process, this will lock the process to that site, which will
-    // prevent other sites from incorrectly reusing this process. See
-    // https://crbug.com/738634.
+    LOG(ERROR) << "JANGID_CORS: Processing RenderFrameHost site assignment";
+    
     SiteInstanceImpl* instance = GetRenderFrameHost()->GetSiteInstance();
+    LOG(ERROR) << "JANGID_CORS: Site Instance Info:"
+               << "\nJANGID_CORS: Has Site: " << instance->HasSite()
+               << "\nJANGID_CORS: Should Assign Site: " 
+               << SiteInstanceImpl::ShouldAssignSiteForUrlInfo(GetUrlInfo());
+
     if (!instance->HasSite() &&
         SiteInstanceImpl::ShouldAssignSiteForUrlInfo(GetUrlInfo())) {
+      LOG(ERROR) << "JANGID_CORS: Converting to default or setting site";
       instance->ConvertToDefaultOrSetSite(GetUrlInfo());
     }
 
-    // Since we've made the final pick for the RenderFrameHost above, the picked
-    // RenderFrameHost's process should be considered "tainted" for future
-    // process reuse decisions. That is, a site requiring a dedicated process
-    // should not reuse this process, unless it's same-site with the URL we're
-    // committing.
-    //
-    // The process must be marked used after calling ConvertToDefaultOrSetSite,
-    // because that call verifies that a SiteInstance with an unassigned site
-    // (e.g., about:blank) can only be locked to a site if it is still unused.
-    //
-    // Note that although NavigationThrottles could still cancel the navigation
-    // as part of WillProcessResponse below, we must update the process here,
-    // since otherwise there could be a race if a NavigationThrottle defers the
-    // navigation, and in the meantime another navigation reads the incorrect
-    // IsUnused() value from the same process when making a process reuse
-    // decision.
+    LOG(ERROR) << "JANGID_CORS: Marking process as used"
+               << "\nJANGID_CORS: Process ID: " 
+               << GetRenderFrameHost()->GetProcess()->GetID();
     GetRenderFrameHost()->GetProcess()->SetIsUsed();
 
     // Now that we know the IsolationContext for the assigned SiteInstance, we
@@ -4558,6 +4782,7 @@ void NavigationRequest::SelectFrameHostForOnResponseStarted(
     // will be handled by the existing pathway in
     // SiteInstanceImpl::SetSiteInfoInternal().
     const IsolationContext& isolation_context = instance->GetIsolationContext();
+    LOG(ERROR) << "JANGID_CORS: Adding origin agent cluster state if necessary";
     AddOriginAgentClusterStateIfNecessary(isolation_context);
 
     // TODO(wjmaclean): Once this is all working, consider combining the
@@ -4580,6 +4805,12 @@ void NavigationRequest::SelectFrameHostForOnResponseStarted(
         IsLoadDataWithBaseURL()
             ? url::Origin::Create(common_params_->base_url_for_data_url)
             : url::Origin::Create(common_params_->url);
+
+    LOG(ERROR) << "JANGID_CORS: Origin Info:"
+               << "\nJANGID_CORS: Is Load Data With Base URL: " 
+               << IsLoadDataWithBaseURL()
+               << "\nJANGID_CORS: Origin: " << origin.Serialize();
+
     ChildProcessSecurityPolicyImpl::GetInstance()
         ->AddDefaultIsolatedOriginIfNeeded(
             isolation_context, origin,
@@ -4592,14 +4823,27 @@ void NavigationRequest::SelectFrameHostForOnResponseStarted(
     // See http://crbug.com/992198 for further context.
     NavigationEntryImpl* nav_entry =
         frame_tree_node_->navigator().controller().GetLastCommittedEntry();
+
+    LOG(ERROR) << "JANGID_CORS: Navigation Entry Check:"
+               << "\nJANGID_CORS: Has Nav Entry: " << (nav_entry != nullptr)
+               << "\nJANGID_CORS: Entry URL: " 
+               << (nav_entry ? nav_entry->GetURL().spec() : "null");
+
     if (nav_entry && !nav_entry->GetURL().IsAboutBlank() &&
         !SiteInstance::ShouldAssignSiteForURL(nav_entry->GetURL()) &&
         SiteInstanceImpl::ShouldAssignSiteForUrlInfo(GetUrlInfo())) {
+      LOG(ERROR) << "JANGID_CORS: Updating navigation entry site instance";
+      
       scoped_refptr<FrameNavigationEntry> frame_entry =
           nav_entry->root_node()->frame_entry;
       scoped_refptr<SiteInstanceImpl> new_site_instance =
           base::WrapRefCounted<SiteInstanceImpl>(static_cast<SiteInstanceImpl*>(
               instance->GetRelatedSiteInstance(frame_entry->url()).get()));
+
+      LOG(ERROR) << "JANGID_CORS: New Site Instance Created:"
+                 << "\nJANGID_CORS: Frame Entry URL: " << frame_entry->url()
+                 << "\nJANGID_CORS: Method: " << frame_entry->method();
+
       nav_entry->AddOrUpdateFrameEntry(
           frame_tree_node_, NavigationEntryImpl::UpdatePolicy::kReplace,
           frame_entry->item_sequence_number(),
@@ -4614,17 +4858,31 @@ void NavigationRequest::SelectFrameHostForOnResponseStarted(
           frame_entry->policy_container_policies()
               ? frame_entry->policy_container_policies()->ClonePtr()
               : nullptr);
+      
+      LOG(ERROR) << "JANGID_CORS: Navigation entry updated successfully";
     }
   }
+
+  LOG(ERROR) << "JANGID_CORS: === URL Validation Completed ===";
+
+  LOG(ERROR) << "JANGID_CORS: === Processing Navigation Response ==="
+             << "\nJANGID_CORS: URL: " << common_params_->url.spec();
 
   devtools_instrumentation::OnNavigationResponseReceived(*this,
                                                          *response_head_);
 
-  // The response code indicates that this is an error page, but we don't
-  // know how to display the content.  We follow Firefox here and show our
-  // own error page instead of intercepting the request as a stream or a
-  // download.
+  LOG(ERROR) << "JANGID_CORS: Checking for failed download"
+             << "\nJANGID_CORS: Is Download: " << is_download
+             << "\nJANGID_CORS: Has Headers: " 
+             << (response_head_->headers ? "true" : "false");
+
+  // Check for failed download
   if (IsFailedDownload(is_download, response_head_->headers.get())) {
+    LOG(ERROR) << "JANGID_CORS: Download failed - showing error page"
+               << "\nJANGID_CORS: Response Code: " 
+               << (response_head_->headers ? 
+                   response_head_->headers->response_code() : 0);
+
     OnRequestFailedInternal(
         network::URLLoaderCompletionStatus(net::ERR_INVALID_RESPONSE),
         false /* skip_throttles */, std::nullopt /* error_page_content */,
@@ -4635,14 +4893,21 @@ void NavigationRequest::SelectFrameHostForOnResponseStarted(
     return;
   }
 
-  // The CSP 'navigate-to' directive needs to know whether the response is a
-  // redirect or not in order to perform its checks. This is the reason why we
-  // need to check the CSP both on request and response.
+  LOG(ERROR) << "JANGID_CORS: Checking CSP navigate-to directive"
+             << "\nJANGID_CORS: Was Redirected: " << was_redirected_
+             << "\nJANGID_CORS: Is Response Check";
+
+  // CSP Check
   net::Error net_error = CheckContentSecurityPolicy(
       was_redirected_ /* has_followed_redirect */,
       false /* url_upgraded_after_redirect */, true /* is_response_check */);
+  
+  LOG(ERROR) << "JANGID_CORS: CSP Check Result:"
+             << "\nJANGID_CORS: Net Error: " << net_error;
+
   DCHECK_NE(net_error, net::ERR_BLOCKED_BY_CLIENT);
   if (net_error != net::OK) {
+    LOG(ERROR) << "JANGID_CORS: Navigation blocked by CSP";
     OnRequestFailedInternal(network::URLLoaderCompletionStatus(net_error),
                             false /* skip_throttles */,
                             std::nullopt /* error_page_content */,
@@ -4653,35 +4918,69 @@ void NavigationRequest::SelectFrameHostForOnResponseStarted(
     return;
   }
 
-  // TODO(crbug.com/40065692): Remove.
+  // Crash keys for debugging
+  LOG(ERROR) << "JANGID_CORS: Setting crash keys"
+             << "\nJANGID_CORS: Base URL Host: " 
+             << common_params_->base_url_for_data_url.host_piece()
+             << "\nJANGID_CORS: RFH Selected Reason: " << rfh_selected_reason;
+
   SCOPED_CRASH_KEY_STRING256(
       "Bug1454273", "base_host_for_data_url",
       common_params_->base_url_for_data_url.host_piece());
   SCOPED_CRASH_KEY_STRING1024("Bug1454273", "rfh_selected_reason",
                               rfh_selected_reason);
 
-  if (HasRenderFrameHost() &&
-      !CheckPermissionsPoliciesForFencedFrames(GetOriginToCommit().value())) {
-    OnRequestFailedInternal(
-        network::URLLoaderCompletionStatus(net::ERR_ABORTED),
-        false /*skip_throttles*/, std::nullopt /*error_page_content*/,
-        false /*collapse_frame*/);
-    // DO NOT ADD CODE after this. The previous call to
-    // OnRequestFailedInternal has destroyed the NavigationRequest.
-    return;
+  // Permissions policy check
+  if (HasRenderFrameHost()) {
+    auto origin_to_commit = GetOriginToCommit();
+    LOG(ERROR) << "JANGID_CORS: Checking permissions policy for fenced frames"
+               << "\nJANGID_CORS: Has RenderFrameHost: true"
+               << "\nJANGID_CORS: Origin: " 
+               << (origin_to_commit.has_value() ? 
+                   origin_to_commit.value().Serialize() : "null");
+
+    if (!CheckPermissionsPoliciesForFencedFrames(origin_to_commit.value())) {
+      LOG(ERROR) << "JANGID_CORS: Navigation blocked by permissions policy";
+      OnRequestFailedInternal(
+          network::URLLoaderCompletionStatus(net::ERR_ABORTED),
+          false /*skip_throttles*/, std::nullopt /*error_page_content*/,
+          false /*collapse_frame*/);
+      // DO NOT ADD CODE after this. The previous call to
+      // OnRequestFailedInternal has destroyed the NavigationRequest.
+      return;
+    }
+    LOG(ERROR) << "JANGID_CORS: Permissions policy check passed";
   }
 
+  LOG(ERROR) << "JANGID_CORS: Proceeding with navigation response processing";
   // Check if the navigation should be allowed to proceed.
   WillProcessResponse();
+
+  LOG(ERROR) << "JANGID_CORS: === Navigation Response Processing Complete ===";
 }
 
 void NavigationRequest::OnRequestFailed(
     const network::URLLoaderCompletionStatus& status) {
   DCHECK_NE(status.error_code, net::OK);
 
+  LOG(ERROR) << "JANGID_CORS: === Navigation Request Failed ==="
+             << "\nJANGID_CORS: URL: " << common_params_->url.spec()
+             << "\nJANGID_CORS: Error Code: " << status.error_code
+             << "\nJANGID_CORS: Error Name: " << net::ErrorToString(status.error_code)
+             << "\nJANGID_CORS: Extended Error Code: " << status.extended_error_code
+             << "\nJANGID_CORS: Should Collapse Initiator: " 
+             << status.should_collapse_initiator
+             << "\nJANGID_CORS: Frame Tree Node ID: " 
+             << frame_tree_node_->frame_tree_node_id()
+             << "\nJANGID_CORS: Is Main Frame: " << IsInMainFrame()
+             << "\nJANGID_CORS: Is Same Document: " << IsSameDocument()
+             << "\nJANGID_CORS: Navigation State: " << state_;
+
   OnRequestFailedInternal(
       status, false /* skip_throttles */, std::nullopt /* error_page_content */,
       status.should_collapse_initiator /* collapse_frame */);
+
+  LOG(ERROR) << "JANGID_CORS: === Navigation Request Failed Complete ===";
 }
 
 std::optional<NavigationEarlyHintsManagerParams>
@@ -4777,18 +5076,27 @@ void NavigationRequest::OnRequestFailedInternal(
     bool skip_throttles,
     const std::optional<std::string>& error_page_content,
     bool collapse_frame) {
+  // Add initial failure logging
+  LOG(ERROR) << "JANGID_CORS: === Navigation Request Failed ==="
+             << "\nJANGID_CORS: Error Code: " << status.error_code
+             << "\nJANGID_CORS: Extended Error Code: " << status.extended_error_code
+             << "\nJANGID_CORS: Skip Throttles: " << skip_throttles
+             << "\nJANGID_CORS: Has Error Page Content: " << error_page_content.has_value()
+             << "\nJANGID_CORS: Should Collapse Frame: " << collapse_frame;
+
   TRACE_EVENT_WITH_FLOW0("navigation",
                          "NavigationRequest::OnRequestFailedInternal",
                          TRACE_ID_WITH_SCOPE(kNavigationRequestScope,
                                              TRACE_ID_LOCAL(navigation_id_)),
                          TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT);
+  
   CheckStateTransition(WILL_FAIL_REQUEST);
-  DCHECK(!(status.error_code == net::ERR_ABORTED &&
-           error_page_content.has_value()));
-  ScopedCrashKeys crash_keys(*this);
-
-  // The request failed, the |loader_| must not call the NavigationRequest
-  // anymore from now while the error page is being loaded.
+  
+  // Log SSL info
+  LOG(ERROR) << "JANGID_CORS: SSL Info Present: " << status.ssl_info.has_value();
+  
+  // Reset loader and log
+  LOG(ERROR) << "JANGID_CORS: Resetting loader and RenderFrameHost";
   loader_.reset();
 
   // Reset the RenderFrameHost R1 that had been computed for committing the
@@ -4800,7 +5108,9 @@ void NavigationRequest::OnRequestFailedInternal(
 
   ssl_info_ = status.ssl_info;
 
-  devtools_instrumentation::OnNavigationRequestFailed(*this, status);
+  // Log state transition
+  LOG(ERROR) << "JANGID_CORS: Setting state to WILL_FAIL_REQUEST"
+             << "\nJANGID_CORS: Processing Navigation Throttle: " << processing_navigation_throttle_;
 
   // TODO(crbug.com/41340435): Check that ssl_info.has_value() if
   // net_error is a certificate error.
@@ -4808,21 +5118,36 @@ void NavigationRequest::OnRequestFailedInternal(
   SetState(WILL_FAIL_REQUEST);
   processing_navigation_throttle_ = false;
 
-  // Ensure the pending entry also gets discarded if it has no other active
-  // requests.
+  // Log pending entry reset
+  LOG(ERROR) << "JANGID_CORS: Resetting pending entry reference";
   pending_entry_ref_.reset();
+
+  // Log error details
+  LOG(ERROR) << "JANGID_CORS: Setting error details:"
+             << "\nJANGID_CORS: Net Error: " << static_cast<net::Error>(status.error_code)
+             << "\nJANGID_CORS: Extended Error Code: " << status.extended_error_code;
 
   net_error_ = static_cast<net::Error>(status.error_code);
   extended_error_code_ = status.extended_error_code;
   resolve_error_info_ = status.resolve_error_info;
 
+
   if (MaybeCancelFailedNavigation())
     return;
 
+  LOG(ERROR) << "JANGID_CORS: === Frame Collapse Check ==="
+             << "\nJANGID_CORS: Should Collapse: " << (collapse_frame ? "true" : "false")
+             << "\nJANGID_CORS: Error Code: " << status.error_code
+             << "\nJANGID_CORS: Frame Tree Node ID: " << frame_tree_node_->frame_tree_node_id();
+
   if (collapse_frame) {
     DCHECK_EQ(net::ERR_BLOCKED_BY_CLIENT, status.error_code);
+    LOG(ERROR) << "JANGID_CORS: Collapsing frame due to client block";
     frame_tree_node_->SetCollapsed(true);
+    LOG(ERROR) << "JANGID_CORS: Frame collapse complete";
   }
+
+  LOG(ERROR) << "JANGID_CORS: === Frame Collapse Check Complete ===";
 
   is_mhtml_or_subframe_ = false;
   // TODO(crbug.com/40736932): Apparently, error pages inherit sandbox
@@ -4993,6 +5318,25 @@ NavigationRequest::ComputeErrorPageProcess() {
 
 void NavigationRequest::OnStartChecksComplete(
     NavigationThrottle::ThrottleCheckResult result) {
+
+    LOG(ERROR) << "JANGID_CORS: === OnStartChecksComplete Start ==="
+          << "\nJANGID_CORS: Current State: " << state_
+          << "\nJANGID_CORS: Action: " << static_cast<int>(result.action())
+          << "\nJANGID_CORS: Action Name: " 
+          << (result.action() == NavigationThrottle::PROCEED ? "PROCEED" :
+            result.action() == NavigationThrottle::CANCEL ? "CANCEL" :
+            result.action() == NavigationThrottle::CANCEL_AND_IGNORE ? "CANCEL_AND_IGNORE" :
+            result.action() == NavigationThrottle::BLOCK_REQUEST ? "BLOCK_REQUEST" :
+            result.action() == NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE ? "BLOCK_REQUEST_AND_COLLAPSE" :
+            result.action() == NavigationThrottle::BLOCK_RESPONSE ? "BLOCK_RESPONSE" :
+            result.action() == NavigationThrottle::DEFER ? "DEFER" : "UNKNOWN")
+          << "\nJANGID_CORS: Error Code: " << result.net_error_code()
+          << "\nJANGID_CORS: Error Name: " << net::ErrorToString(result.net_error_code())
+          << "\nJANGID_CORS: Has Error Page: " << result.error_page_content().has_value()
+          << "\nJANGID_CORS: Processing Throttle: " << processing_navigation_throttle_
+          << "\nJANGID_CORS: URL: " << common_params_->url.spec();
+
+
   TRACE_EVENT_WITH_FLOW0("navigation",
                          "NavigationRequest::OnStartChecksComplete",
                          TRACE_ID_WITH_SCOPE(kNavigationRequestScope,
@@ -5276,6 +5620,25 @@ void NavigationRequest::AddResourceTimingEntryForFailedSubframeNavigation(
 
 void NavigationRequest::OnRedirectChecksComplete(
     NavigationThrottle::ThrottleCheckResult result) {
+
+    LOG(ERROR) << "JANGID_CORS: === OnRedirectChecksComplete Start ==="
+          << "\nJANGID_CORS: Current State: " << state_
+          << "\nJANGID_CORS: Action: " << static_cast<int>(result.action())
+          << "\nJANGID_CORS: Action Name: " 
+          << (result.action() == NavigationThrottle::PROCEED ? "PROCEED" :
+            result.action() == NavigationThrottle::CANCEL ? "CANCEL" :
+            result.action() == NavigationThrottle::CANCEL_AND_IGNORE ? "CANCEL_AND_IGNORE" :
+            result.action() == NavigationThrottle::BLOCK_REQUEST ? "BLOCK_REQUEST" :
+            result.action() == NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE ? "BLOCK_REQUEST_AND_COLLAPSE" :
+            result.action() == NavigationThrottle::BLOCK_RESPONSE ? "BLOCK_RESPONSE" :
+            result.action() == NavigationThrottle::DEFER ? "DEFER" : "UNKNOWN")
+          << "\nJANGID_CORS: Error Code: " << result.net_error_code()
+          << "\nJANGID_CORS: Error Name: " << net::ErrorToString(result.net_error_code())
+          << "\nJANGID_CORS: Has Error Page: " << result.error_page_content().has_value()
+          << "\nJANGID_CORS: Processing Throttle: " << processing_navigation_throttle_
+          << "\nJANGID_CORS: URL: " << common_params_->url.spec();
+
+
   TRACE_EVENT_WITH_FLOW0("navigation",
                          "NavigationRequest::OnRedirectChecksComplete",
                          TRACE_ID_WITH_SCOPE(kNavigationRequestScope,
@@ -5289,15 +5652,54 @@ void NavigationRequest::OnRedirectChecksComplete(
       result.action() == NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE;
 
   // Abort the request if needed. This will destroy the NavigationRequest.
+  LOG(ERROR) << "JANGID_CORS: === Navigation Throttle Action Check ==="
+             << "\nJANGID_CORS: Action: " << static_cast<int>(result.action())
+             << "\nJANGID_CORS: Action Name: " 
+             << (result.action() == NavigationThrottle::PROCEED ? "PROCEED" :
+                result.action() == NavigationThrottle::CANCEL ? "CANCEL" :
+                result.action() == NavigationThrottle::CANCEL_AND_IGNORE ? "CANCEL_AND_IGNORE" :
+                result.action() == NavigationThrottle::BLOCK_REQUEST ? "BLOCK_REQUEST" :
+                result.action() == NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE ? "BLOCK_REQUEST_AND_COLLAPSE" :
+                result.action() == NavigationThrottle::BLOCK_RESPONSE ? "BLOCK_RESPONSE" :
+                result.action() == NavigationThrottle::DEFER ? "DEFER" : "UNKNOWN")
+             << "\nJANGID_CORS: Should Collapse Frame: " << collapse_frame
+             << "\nJANGID_CORS: Result Error Code: " << result.net_error_code()
+             << "\nJANGID_CORS: Result Error Name: " 
+             << net::ErrorToString(result.net_error_code())
+             << "\nJANGID_CORS: Has Error Page Content: " 
+             << result.error_page_content().has_value()
+             << "\nJANGID_CORS: URL: " << common_params_->url.spec()
+             << "\nJANGID_CORS: Frame Tree Node ID: " 
+             << frame_tree_node_->frame_tree_node_id();
+
   if (result.action() == NavigationThrottle::CANCEL_AND_IGNORE ||
       result.action() == NavigationThrottle::CANCEL) {
+    LOG(ERROR) << "JANGID_CORS: Navigation Cancel Detected"
+               << "\nJANGID_CORS: Cancel Type: " 
+               << (result.action() == NavigationThrottle::CANCEL ? 
+                   "CANCEL" : "CANCEL_AND_IGNORE")
+               << "\nJANGID_CORS: Error Code: " << result.net_error_code()
+               << "\nJANGID_CORS: Error Name: " 
+               << net::ErrorToString(result.net_error_code())
+               << "\nJANGID_CORS: Has Error Page: " 
+               << result.error_page_content().has_value()
+               << "\nJANGID_CORS: Should Collapse: " << collapse_frame;
+
     // TODO(clamy): distinguish between CANCEL and CANCEL_AND_IGNORE if needed.
     DCHECK(result.action() == NavigationThrottle::CANCEL ||
            result.net_error_code() == net::ERR_ABORTED);
+
+    LOG(ERROR) << "JANGID_CORS: Calling OnRequestFailedInternal for Cancel"
+               << "\nJANGID_CORS: Skip Throttles: true"
+               << "\nJANGID_CORS: Current State: " << state_;
+
     OnRequestFailedInternal(
         network::URLLoaderCompletionStatus(result.net_error_code()),
-        true /* skip_throttles */, result.error_page_content(), collapse_frame);
+        true /* skip_throttles */, 
+        result.error_page_content(), 
+        collapse_frame);
 
+    LOG(ERROR) << "JANGID_CORS: Navigation Cancel handling complete";
     // DO NOT ADD CODE after this. The previous call to OnRequestFailedInternal
     // has destroyed the NavigationRequest.
     return;
@@ -5305,14 +5707,38 @@ void NavigationRequest::OnRedirectChecksComplete(
 
   if (result.action() == NavigationThrottle::BLOCK_REQUEST ||
       result.action() == NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE) {
+    LOG(ERROR) << "JANGID_CORS: Navigation Block Detected"
+               << "\nJANGID_CORS: Block Type: " 
+               << (result.action() == NavigationThrottle::BLOCK_REQUEST ? 
+                   "BLOCK_REQUEST" : "BLOCK_REQUEST_AND_COLLAPSE")
+               << "\nJANGID_CORS: Error Code: " << result.net_error_code()
+               << "\nJANGID_CORS: Error Name: " 
+               << net::ErrorToString(result.net_error_code())
+               << "\nJANGID_CORS: Is Blocked Error: " 
+               << net::IsRequestBlockedError(result.net_error_code())
+               << "\nJANGID_CORS: Has Error Page: " 
+               << result.error_page_content().has_value()
+               << "\nJANGID_CORS: Should Collapse: " << collapse_frame;
+
     DCHECK(net::IsRequestBlockedError(result.net_error_code()));
+
+    LOG(ERROR) << "JANGID_CORS: Calling OnRequestFailedInternal for Block"
+               << "\nJANGID_CORS: Skip Throttles: true"
+               << "\nJANGID_CORS: Current State: " << state_;
+
     OnRequestFailedInternal(
         network::URLLoaderCompletionStatus(result.net_error_code()),
-        true /* skip_throttles */, result.error_page_content(), collapse_frame);
+        true /* skip_throttles */, 
+        result.error_page_content(), 
+        collapse_frame);
+
+    LOG(ERROR) << "JANGID_CORS: Navigation Block handling complete";
     // DO NOT ADD CODE after this. The previous call to OnRequestFailedInternal
     // has destroyed the NavigationRequest.
     return;
   }
+
+  LOG(ERROR) << "JANGID_CORS: === Navigation Throttle Action Check Passed ===";
 
   devtools_instrumentation::OnNavigationRequestWillBeSent(*this);
 
@@ -5470,6 +5896,25 @@ void NavigationRequest::OnRedirectChecksComplete(
 
 void NavigationRequest::OnFailureChecksComplete(
     NavigationThrottle::ThrottleCheckResult result) {
+
+    LOG(ERROR) << "JANGID_CORS: === OnFailureChecksComplete Start ==="
+          << "\nJANGID_CORS: Current State: " << state_
+          << "\nJANGID_CORS: Action: " << static_cast<int>(result.action())
+          << "\nJANGID_CORS: Action Name: " 
+          << (result.action() == NavigationThrottle::PROCEED ? "PROCEED" :
+            result.action() == NavigationThrottle::CANCEL ? "CANCEL" :
+            result.action() == NavigationThrottle::CANCEL_AND_IGNORE ? "CANCEL_AND_IGNORE" :
+            result.action() == NavigationThrottle::BLOCK_REQUEST ? "BLOCK_REQUEST" :
+            result.action() == NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE ? "BLOCK_REQUEST_AND_COLLAPSE" :
+            result.action() == NavigationThrottle::BLOCK_RESPONSE ? "BLOCK_RESPONSE" :
+            result.action() == NavigationThrottle::DEFER ? "DEFER" : "UNKNOWN")
+          << "\nJANGID_CORS: Error Code: " << result.net_error_code()
+          << "\nJANGID_CORS: Error Name: " << net::ErrorToString(result.net_error_code())
+          << "\nJANGID_CORS: Has Error Page: " << result.error_page_content().has_value()
+          << "\nJANGID_CORS: Processing Throttle: " << processing_navigation_throttle_
+          << "\nJANGID_CORS: URL: " << common_params_->url.spec();
+
+
   TRACE_EVENT_WITH_FLOW0("navigation",
                          "NavigationRequest::OnFailureChecksComplete",
                          TRACE_ID_WITH_SCOPE(kNavigationRequestScope,
@@ -5510,6 +5955,24 @@ void NavigationRequest::OnFailureChecksComplete(
 
 void NavigationRequest::OnWillProcessResponseChecksComplete(
     NavigationThrottle::ThrottleCheckResult result) {
+    LOG(ERROR) << "JANGID_CORS: === OnWillProcessResponseChecksComplete Start ==="
+          << "\nJANGID_CORS: Current State: " << state_
+          << "\nJANGID_CORS: Action: " << static_cast<int>(result.action())
+          << "\nJANGID_CORS: Action Name: " 
+          << (result.action() == NavigationThrottle::PROCEED ? "PROCEED" :
+            result.action() == NavigationThrottle::CANCEL ? "CANCEL" :
+            result.action() == NavigationThrottle::CANCEL_AND_IGNORE ? "CANCEL_AND_IGNORE" :
+            result.action() == NavigationThrottle::BLOCK_REQUEST ? "BLOCK_REQUEST" :
+            result.action() == NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE ? "BLOCK_REQUEST_AND_COLLAPSE" :
+            result.action() == NavigationThrottle::BLOCK_RESPONSE ? "BLOCK_RESPONSE" :
+            result.action() == NavigationThrottle::DEFER ? "DEFER" : "UNKNOWN")
+          << "\nJANGID_CORS: Error Code: " << result.net_error_code()
+          << "\nJANGID_CORS: Error Name: " << net::ErrorToString(result.net_error_code())
+          << "\nJANGID_CORS: Has Error Page: " << result.error_page_content().has_value()
+          << "\nJANGID_CORS: Processing Throttle: " << processing_navigation_throttle_
+          << "\nJANGID_CORS: URL: " << common_params_->url.spec();
+
+
   DCHECK(result.action() != NavigationThrottle::DEFER);
 
   // If the NavigationThrottles allowed the navigation to continue, have the
@@ -5612,11 +6075,24 @@ void NavigationRequest::OnWillProcessResponseChecksComplete(
       return;
     }
 
+    LOG(ERROR) << "JANGID_CORS: === Navigation Throttle Result Check ==="
+               << "\nJANGID_CORS: Action: " << static_cast<int>(result.action())
+               << "\nJANGID_CORS: Net Error Code: " << result.net_error_code()
+               << "\nJANGID_CORS: Has Error Page Content: " << result.error_page_content().has_value();
+
     DCHECK(result.action() == NavigationThrottle::CANCEL ||
            result.net_error_code() == net::ERR_ABORTED);
+
+    LOG(ERROR) << "JANGID_CORS: Calling OnRequestFailedInternal"
+               << "\nJANGID_CORS: Skip Throttles: true"
+               << "\nJANGID_CORS: Collapse Frame: false"
+               << "\nJANGID_CORS: Navigation URL: " << common_params_->url.spec()
+               << "\nJANGID_CORS: Frame Tree Node ID: " << frame_tree_node_->frame_tree_node_id();
+
     OnRequestFailedInternal(
         network::URLLoaderCompletionStatus(result.net_error_code()),
-        true /* skip_throttles */, result.error_page_content(),
+        true /* skip_throttles */, 
+        result.error_page_content(),
         false /* collapse_frame */);
 
     // DO NOT ADD CODE after this. The previous call to OnRequestFailedInternal
@@ -5625,11 +6101,33 @@ void NavigationRequest::OnWillProcessResponseChecksComplete(
   }
 
   if (result.action() == NavigationThrottle::BLOCK_RESPONSE) {
+    LOG(ERROR) << "JANGID_CORS: === Navigation Block Response Check ==="
+               << "\nJANGID_CORS: Action: BLOCK_RESPONSE"
+               << "\nJANGID_CORS: Net Error Code: " << result.net_error_code()
+               << "\nJANGID_CORS: Has Error Page Content: " << result.error_page_content().has_value()
+               << "\nJANGID_CORS: Navigation URL: " << common_params_->url.spec()
+               << "\nJANGID_CORS: Frame Tree Node ID: " << frame_tree_node_->frame_tree_node_id();
+
+    // Log initiator information if available
+    if (common_params_->initiator_origin) {
+      LOG(ERROR) << "JANGID_CORS: Initiator Origin: " 
+                 << common_params_->initiator_origin->Serialize();
+    }
+
     DCHECK_EQ(net::ERR_BLOCKED_BY_RESPONSE, result.net_error_code());
+
+    LOG(ERROR) << "JANGID_CORS: Calling OnRequestFailedInternal for BLOCK_RESPONSE"
+               << "\nJANGID_CORS: Skip Throttles: true"
+               << "\nJANGID_CORS: Collapse Frame: false"
+               << "\nJANGID_CORS: Expected Error: ERR_BLOCKED_BY_RESPONSE";
+
     OnRequestFailedInternal(
         network::URLLoaderCompletionStatus(result.net_error_code()),
-        true /* skip_throttles */, result.error_page_content(),
+        true /* skip_throttles */, 
+        result.error_page_content(),
         false /* collapse_frame */);
+
+    LOG(ERROR) << "JANGID_CORS: Block Response handling complete";
     // DO NOT ADD CODE after this. The previous call to OnRequestFailedInternal
     // has destroyed the NavigationRequest.
     return;
@@ -5658,6 +6156,8 @@ void NavigationRequest::OnWillCommitWithoutUrlLoaderChecksComplete(
   DCHECK(result.action() == NavigationThrottle::CANCEL_AND_IGNORE ||
          result.action() == NavigationThrottle::PROCEED);
   if (result.action() == NavigationThrottle::CANCEL_AND_IGNORE) {
+
+    LOG(ERROR) << "JANGID_CORS: OnWillCommitWithoutUrlLoaderChecksComplete: CANCEL_AND_IGNORE";
     OnRequestFailedInternal(
         network::URLLoaderCompletionStatus(result.net_error_code()),
         /*skip_throttles=*/true, result.error_page_content(),
@@ -6440,6 +6940,16 @@ bool NavigationRequest::IsAllowedByCSPDirective(
     bool is_response_check,
     bool is_opaque_fenced_frame,
     network::CSPContext::CheckCSPDisposition disposition) {
+  LOG(ERROR) << "JANGID_CORS: === CSP Directive Check Started ==="
+             << "\nJANGID_CORS: Original URL: " << common_params_->url.spec()
+             << "\nJANGID_CORS: Directive Type: " << static_cast<int>(directive)
+             << "\nJANGID_CORS: Has Followed Redirect: " << has_followed_redirect
+             << "\nJANGID_CORS: URL Upgraded After Redirect: " << url_upgraded_after_redirect
+             << "\nJANGID_CORS: Is Response Check: " << is_response_check
+             << "\nJANGID_CORS: Is Opaque Fenced Frame: " << is_opaque_fenced_frame
+             << "\nJANGID_CORS: CSP Disposition: " << static_cast<int>(disposition)
+             << "\nJANGID_CORS: Number of CSP Policies: " << policies.size();
+
   GURL url;
   // If this request was upgraded in the net stack, downgrade the URL back to
   // HTTP before checking report only policies.
@@ -6447,26 +6957,52 @@ bool NavigationRequest::IsAllowedByCSPDirective(
       disposition ==
           network::CSPContext::CheckCSPDisposition::CHECK_REPORT_ONLY_CSP &&
       common_params_->url.SchemeIs(url::kHttpsScheme)) {
+    LOG(ERROR) << "JANGID_CORS: Downgrading HTTPS to HTTP for report-only CSP check"
+               << "\nJANGID_CORS: Original Scheme: " << common_params_->url.scheme();
+    
     GURL::Replacements replacements;
     replacements.SetSchemeStr(url::kHttpScheme);
     url = common_params_->url.ReplaceComponents(replacements);
+    
+    LOG(ERROR) << "JANGID_CORS: URL after downgrade: " << url.spec();
   } else {
     url = common_params_->url;
+    LOG(ERROR) << "JANGID_CORS: Using original URL without scheme change";
   }
+
+  LOG(ERROR) << "JANGID_CORS: Performing CSP check"
+             << "\nJANGID_CORS: Final URL: " << url.spec()
+             << "\nJANGID_CORS: Original URL: " << commit_params_->original_url.spec()
+             << "\nJANGID_CORS: Is Form Submission: " << begin_params_->is_form_submission;
+
   network::CSPCheckResult result = context->IsAllowedByCsp(
       policies, directive, url, commit_params_->original_url,
       has_followed_redirect, is_response_check, common_params_->source_location,
       disposition, begin_params_->is_form_submission, is_opaque_fenced_frame);
+
+  LOG(ERROR) << "JANGID_CORS: CSP check result"
+             << "\nJANGID_CORS: Is Allowed: " << result.IsAllowed()
+             << "\nJANGID_CORS: Would Block WS Wildcard: " 
+             << result.WouldBlockIfWildcardDoesNotMatchWs()
+             << "\nJANGID_CORS: Would Block FTP Wildcard: " 
+             << result.WouldBlockIfWildcardDoesNotMatchFtp();
+
   if (result.WouldBlockIfWildcardDoesNotMatchWs()) {
+    LOG(ERROR) << "JANGID_CORS: Logging WebSocket wildcard feature";
     GetContentClient()->browser()->LogWebFeatureForCurrentPage(
         GetParentFrame(),
         blink::mojom::WebFeature::kCspWouldBlockIfWildcardDoesNotMatchWs);
   }
   if (result.WouldBlockIfWildcardDoesNotMatchFtp()) {
+    LOG(ERROR) << "JANGID_CORS: Logging FTP wildcard feature";
     GetContentClient()->browser()->LogWebFeatureForCurrentPage(
         GetParentFrame(),
         blink::mojom::WebFeature::kCspWouldBlockIfWildcardDoesNotMatchFtp);
   }
+
+  LOG(ERROR) << "JANGID_CORS: === CSP Directive Check Complete ==="
+             << "\nJANGID_CORS: Final Result: " << result.IsAllowed();
+             
   return result.IsAllowed();
 }
 
@@ -6479,47 +7015,60 @@ net::Error NavigationRequest::CheckCSPDirectives(
     bool url_upgraded_after_redirect,
     bool is_response_check,
     network::CSPContext::CheckCSPDisposition disposition) {
-  // Following directive checks' order is important as the `error` code takes
-  // only the result last set.
+  LOG(ERROR) << "JANGID_CORS: === CSP Directives Check Started ==="
+             << "\nJANGID_CORS: Has Parent Policies: " << (parent_policies ? "true" : "false")
+             << "\nJANGID_CORS: Has Initiator Policies: " << (initiator_policies ? "true" : "false")
+             << "\nJANGID_CORS: Has Followed Redirect: " << has_followed_redirect
+             << "\nJANGID_CORS: URL Upgraded After Redirect: " << url_upgraded_after_redirect
+             << "\nJANGID_CORS: Is Response Check: " << is_response_check
+             << "\nJANGID_CORS: CSP Disposition: " << static_cast<int>(disposition);
+
   net::Error error = net::OK;
 
   if (initiator_policies) {
+    LOG(ERROR) << "JANGID_CORS: Checking initiator policies"
+               << "\nJANGID_CORS: Is Form Submission: " << begin_params_->is_form_submission;
+
     // [form-action]
-    if (begin_params_->is_form_submission && !is_response_check &&
-        !IsAllowedByCSPDirective(
-            initiator_policies->content_security_policies, &initiator_context,
-            network::mojom::CSPDirectiveName::FormAction, has_followed_redirect,
-            url_upgraded_after_redirect, is_response_check,
-            /*is_opaque_fenced_frame=*/false, disposition)) {
-      // net::ERR_ABORTED is used instead of net::ERR_BLOCKED_BY_CSP. This is
-      // a better user experience as the user is not presented with an error
-      // page. However if other CSP directives like frame-src are violated, it
-      // may be appropriate for them to use ERR_BLOCKED_BY_CSP so this can be
-      // overridden by the checks below.
-      error = net::ERR_ABORTED;
+    if (begin_params_->is_form_submission && !is_response_check) {
+      LOG(ERROR) << "JANGID_CORS: Checking form-action directive";
+      bool allowed = IsAllowedByCSPDirective(
+          initiator_policies->content_security_policies, &initiator_context,
+          network::mojom::CSPDirectiveName::FormAction, has_followed_redirect,
+          url_upgraded_after_redirect, is_response_check,
+          /*is_opaque_fenced_frame=*/false, disposition);
+
+      LOG(ERROR) << "JANGID_CORS: Form action check result: " << (allowed ? "allowed" : "blocked");
+      if (!allowed) {
+        error = net::ERR_ABORTED;
+        LOG(ERROR) << "JANGID_CORS: Form submission blocked by CSP";
+      }
     }
 
     if (base::FeatureList::IsEnabled(
             features::kExperimentalContentSecurityPolicyFeatures)) {
-      // [navigate-to]
-      if (!IsAllowedByCSPDirective(
-              initiator_policies->content_security_policies, &initiator_context,
-              network::mojom::CSPDirectiveName::NavigateTo,
-              has_followed_redirect, url_upgraded_after_redirect,
-              is_response_check, /*is_opaque_fenced_frame=*/false,
-              disposition)) {
-        // net::ERR_ABORTED is used instead of net::ERR_BLOCKED_BY_CSP. This is
-        // a better user experience as the user is not presented with an error
-        // page. However if other CSP directives life frame-src are violated, it
-        // may be appropriate for them to use ERR_BLOCKED_BY_CSP so this can be
-        // overridden by the checks below.
+      LOG(ERROR) << "JANGID_CORS: Experimental CSP features enabled"
+                 << "\nJANGID_CORS: Checking navigate-to directive";
+
+      bool allowed = IsAllowedByCSPDirective(
+          initiator_policies->content_security_policies, &initiator_context,
+          network::mojom::CSPDirectiveName::NavigateTo,
+          has_followed_redirect, url_upgraded_after_redirect,
+          is_response_check, /*is_opaque_fenced_frame=*/false,
+          disposition);
+
+      LOG(ERROR) << "JANGID_CORS: Navigate-to check result: " << (allowed ? "allowed" : "blocked");
+      if (!allowed) {
         error = net::ERR_ABORTED;
+        LOG(ERROR) << "JANGID_CORS: Navigation blocked by navigate-to directive";
       }
     }
   }
 
   // [frame-src] or [fenced-frame-src]
   if (parent_policies) {
+    LOG(ERROR) << "JANGID_CORS: Checking parent frame policies";
+    
     bool is_opaque_fenced_frame_root_navigation =
         frame_tree_node_->IsFencedFrameRoot() &&
         fenced_frame_properties_.has_value() &&
@@ -6527,17 +7076,36 @@ net::Error NavigationRequest::CheckCSPDirectives(
         !fenced_frame_properties_->mapped_url()
              ->GetValueForEntity(FencedFrameEntity::kEmbedder)
              .has_value();
-    if (!IsAllowedByCSPDirective(
-            parent_policies->content_security_policies, &parent_context,
-            frame_tree_node_->IsFencedFrameRoot()
-                ? network::mojom::CSPDirectiveName::FencedFrameSrc
-                : network::mojom::CSPDirectiveName::FrameSrc,
-            has_followed_redirect, url_upgraded_after_redirect,
-            is_response_check, is_opaque_fenced_frame_root_navigation,
-            disposition)) {
+
+    LOG(ERROR) << "JANGID_CORS: Frame properties:"
+               << "\nJANGID_CORS: Is Fenced Frame Root: " 
+               << frame_tree_node_->IsFencedFrameRoot()
+               << "\nJANGID_CORS: Has Fenced Frame Properties: " 
+               << fenced_frame_properties_.has_value()
+               << "\nJANGID_CORS: Is Opaque Navigation: " 
+               << is_opaque_fenced_frame_root_navigation;
+
+    bool allowed = IsAllowedByCSPDirective(
+        parent_policies->content_security_policies, &parent_context,
+        frame_tree_node_->IsFencedFrameRoot()
+            ? network::mojom::CSPDirectiveName::FencedFrameSrc
+            : network::mojom::CSPDirectiveName::FrameSrc,
+        has_followed_redirect, url_upgraded_after_redirect,
+        is_response_check, is_opaque_fenced_frame_root_navigation,
+        disposition);
+
+    LOG(ERROR) << "JANGID_CORS: Frame source check result: " << (allowed ? "allowed" : "blocked")
+               << "\nJANGID_CORS: Directive used: " 
+               << (frame_tree_node_->IsFencedFrameRoot() ? "fenced-frame-src" : "frame-src");
+
+    if (!allowed) {
       error = net::ERR_BLOCKED_BY_CSP;
+      LOG(ERROR) << "JANGID_CORS: Frame navigation blocked by CSP";
     }
   }
+
+  LOG(ERROR) << "JANGID_CORS: === CSP Directives Check Complete ==="
+             << "\nJANGID_CORS: Final Error Code: " << error;
 
   return error;
 }
@@ -6546,15 +7114,27 @@ net::Error NavigationRequest::CheckContentSecurityPolicy(
     bool has_followed_redirect,
     bool url_upgraded_after_redirect,
     bool is_response_check) {
-  DCHECK(policy_container_builder_.has_value());
-  if (common_params_->url.SchemeIs(url::kAboutScheme))
-    return net::OK;
+  LOG(ERROR) << "JANGID_CORS: === Content Security Policy Check Started ==="
+             << "\nJANGID_CORS: URL: " << common_params_->url.spec()
+             << "\nJANGID_CORS: Has Followed Redirect: " << has_followed_redirect
+             << "\nJANGID_CORS: URL Upgraded After Redirect: " << url_upgraded_after_redirect
+             << "\nJANGID_CORS: Is Response Check: " << is_response_check;
 
-  if (IsSameDocument())
+  DCHECK(policy_container_builder_.has_value());
+  
+  if (common_params_->url.SchemeIs(url::kAboutScheme)) {
+    LOG(ERROR) << "JANGID_CORS: Skipping CSP check for about: scheme";
     return net::OK;
+  }
+
+  if (IsSameDocument()) {
+    LOG(ERROR) << "JANGID_CORS: Skipping CSP check for same-document navigation";
+    return net::OK;
+  }
 
   if (common_params_->should_check_main_world_csp ==
       network::mojom::CSPDisposition::DO_NOT_CHECK) {
+    LOG(ERROR) << "JANGID_CORS: CSP check explicitly disabled";
     return net::OK;
   }
 
@@ -6562,10 +7142,17 @@ net::Error NavigationRequest::CheckContentSecurityPolicy(
   const PolicyContainerPolicies* parent_policies =
       policy_container_builder_->ParentPolicies();
   DCHECK(!parent == !parent_policies);
+
+  LOG(ERROR) << "JANGID_CORS: Frame hierarchy info:"
+             << "\nJANGID_CORS: Has Parent Frame: " << (parent ? "true" : "false")
+             << "\nJANGID_CORS: Has Parent Policies: " << (parent_policies ? "true" : "false");
+
   bool set_parent_for_nested_frame_tree =
       !parent && frame_tree_node()->IsFencedFrameRoot() &&
       frame_tree_node()->render_manager()->GetOuterDelegateNode();
+
   if (set_parent_for_nested_frame_tree) {
+    LOG(ERROR) << "JANGID_CORS: Setting parent for nested frame tree";
     parent = frame_tree_node()
                  ->render_manager()
                  ->GetOuterDelegateNode()
@@ -6575,21 +7162,16 @@ net::Error NavigationRequest::CheckContentSecurityPolicy(
     // frames, consider storing a snapshot of the parent policies in the
     // `policy_container_builder_` at the beginning of the navigation.
     parent_policies = &parent->policy_container_host()->policies();
+    LOG(ERROR) << "JANGID_CORS: Updated parent frame info"
+               << "\nJANGID_CORS: New Parent Valid: " << (parent ? "true" : "false");
   }
 
   const PolicyContainerPolicies* initiator_policies =
       policy_container_builder_->InitiatorPolicies();
 
-  // CSP checking happens in three phases, per steps 3-5 of
-  // https://fetch.spec.whatwg.org/#main-fetch:
-  //
-  // (1) Check report-only policies and trigger reports for any violations.
-  // (2) Upgrade the request to HTTPS if necessary.
-  // (3) Check enforced policies (triggering reports for any violations of those
-  //     policies) and block the request if necessary.
-  //
-  // This sequence of events allows site owners to learn about (via step 1) any
-  // requests that are upgraded in step 2.
+  LOG(ERROR) << "JANGID_CORS: Starting CSP check phases"
+             << "\nJANGID_CORS: Has Initiator Policies: " 
+             << (initiator_policies ? "true" : "false");
 
   RenderFrameHostCSPContext parent_context(parent);
 
@@ -6603,33 +7185,44 @@ net::Error NavigationRequest::CheckContentSecurityPolicy(
   RenderFrameHostCSPContext initiator_context(
       GetInitiatorDocumentRenderFrameHost());
 
+  LOG(ERROR) << "JANGID_CORS: Phase 1 - Checking report-only policies";
   net::Error report_only_csp_status = CheckCSPDirectives(
       parent_context, parent_policies, initiator_context, initiator_policies,
       has_followed_redirect, url_upgraded_after_redirect, is_response_check,
       network::CSPContext::CHECK_REPORT_ONLY_CSP);
 
-  // upgrade-insecure-requests is handled in the network code for redirects,
-  // only do the upgrade here if this is not a redirect.
-  // Note that `FrameTreeNode::IsMainFrame()` returns true for fenced frames
-  // based on MPArch, but it's fine to skip the logic below as
-  // `network::UpgradeInsecureRequest()` does not apply to fenced frame
-  // navigation requests. (See https://github.com/WICG/fenced-frame/issues/23)
+  LOG(ERROR) << "JANGID_CORS: Report-only CSP check result: " << report_only_csp_status;
+
+  // Phase 2: URL upgrade check
   if (!has_followed_redirect && !frame_tree_node()->IsMainFrame()) {
+    LOG(ERROR) << "JANGID_CORS: Phase 2 - Checking for insecure URL upgrade"
+               << "\nJANGID_CORS: Original URL: " << common_params_->url.spec();
+    
     DCHECK(parent_policies);
     if (parent_policies && network::ShouldUpgradeInsecureRequest(
                                parent_policies->content_security_policies)) {
+      LOG(ERROR) << "JANGID_CORS: Upgrading insecure request";
       upgrade_if_insecure_ = true;
       network::UpgradeInsecureRequest(&common_params_->url);
       common_params_->referrer = Referrer::SanitizeForRequest(
           common_params_->url, *common_params_->referrer);
       commit_params_->original_url = common_params_->url;
+      
+      LOG(ERROR) << "JANGID_CORS: URL after upgrade: " << common_params_->url.spec();
     }
   }
 
+  LOG(ERROR) << "JANGID_CORS: Phase 3 - Checking enforced policies";
   net::Error enforced_csp_status = CheckCSPDirectives(
       parent_context, parent_policies, initiator_context, initiator_policies,
       has_followed_redirect, url_upgraded_after_redirect, is_response_check,
       network::CSPContext::CHECK_ENFORCED_CSP);
+
+  LOG(ERROR) << "JANGID_CORS: === Content Security Policy Check Complete ==="
+             << "\nJANGID_CORS: Report-only Status: " << report_only_csp_status
+             << "\nJANGID_CORS: Enforced Status: " << enforced_csp_status
+             << "\nJANGID_CORS: Final URL: " << common_params_->url.spec();
+ 
   if (enforced_csp_status != net::OK)
     return enforced_csp_status;
   return report_only_csp_status;
@@ -6989,6 +7582,33 @@ void NavigationRequest::RecordDownloadUseCountersPostPolicyCheck() {
 void NavigationRequest::OnNavigationEventProcessed(
     NavigationThrottleRunner::Event event,
     NavigationThrottle::ThrottleCheckResult result) {
+
+    LOG(ERROR) << "JANGID_CORS: === OnNavigationEventProcessed Start ==="
+          << "\nJANGID_CORS: Current State: " << state_
+          << "\nJANGID_CORS: Event: " << static_cast<int>(event)
+          << "\nJANGID_CORS: Event Name: "
+          << (event == NavigationThrottleRunner::Event::WillStartRequest ? "WillStartRequest" :
+              event == NavigationThrottleRunner::Event::WillRedirectRequest ? "WillRedirectRequest" :
+              event == NavigationThrottleRunner::Event::WillFailRequest ? "WillFailRequest" :
+              event == NavigationThrottleRunner::Event::WillProcessResponse ? "WillProcessResponse" :
+              event == NavigationThrottleRunner::Event::WillCommitWithoutUrlLoader ? "WillCommitWithoutUrlLoader" :
+              event == NavigationThrottleRunner::Event::NoEvent ? "NoEvent" : "UNKNOWN")
+          << "\nJANGID_CORS: Action: " << static_cast<int>(result.action())
+          << "\nJANGID_CORS: Action Name: " 
+          << (result.action() == NavigationThrottle::PROCEED ? "PROCEED" :
+            result.action() == NavigationThrottle::CANCEL ? "CANCEL" :
+            result.action() == NavigationThrottle::CANCEL_AND_IGNORE ? "CANCEL_AND_IGNORE" :
+            result.action() == NavigationThrottle::BLOCK_REQUEST ? "BLOCK_REQUEST" :
+            result.action() == NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE ? "BLOCK_REQUEST_AND_COLLAPSE" :
+            result.action() == NavigationThrottle::BLOCK_RESPONSE ? "BLOCK_RESPONSE" :
+            result.action() == NavigationThrottle::DEFER ? "DEFER" : "UNKNOWN")
+          << "\nJANGID_CORS: Error Code: " << result.net_error_code()
+          << "\nJANGID_CORS: Error Name: " << net::ErrorToString(result.net_error_code())
+          << "\nJANGID_CORS: Has Error Page: " << result.error_page_content().has_value()
+          << "\nJANGID_CORS: Processing Throttle: " << processing_navigation_throttle_
+          << "\nJANGID_CORS: URL: " << common_params_->url.spec();
+
+
   DCHECK_NE(NavigationThrottle::DEFER, result.action());
   switch (event) {
     case NavigationThrottleRunner::Event::NoEvent:
@@ -7015,6 +7635,24 @@ void NavigationRequest::OnNavigationEventProcessed(
 
 void NavigationRequest::OnWillStartRequestProcessed(
     NavigationThrottle::ThrottleCheckResult result) {
+    LOG(ERROR) << "JANGID_CORS: === OnWillStartRequestProcessed Start ==="
+          << "\nJANGID_CORS: Current State: " << state_
+          << "\nJANGID_CORS: Action: " << static_cast<int>(result.action())
+          << "\nJANGID_CORS: Action Name: " 
+          << (result.action() == NavigationThrottle::PROCEED ? "PROCEED" :
+            result.action() == NavigationThrottle::CANCEL ? "CANCEL" :
+            result.action() == NavigationThrottle::CANCEL_AND_IGNORE ? "CANCEL_AND_IGNORE" :
+            result.action() == NavigationThrottle::BLOCK_REQUEST ? "BLOCK_REQUEST" :
+            result.action() == NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE ? "BLOCK_REQUEST_AND_COLLAPSE" :
+            result.action() == NavigationThrottle::BLOCK_RESPONSE ? "BLOCK_RESPONSE" :
+            result.action() == NavigationThrottle::DEFER ? "DEFER" : "UNKNOWN")
+          << "\nJANGID_CORS: Error Code: " << result.net_error_code()
+          << "\nJANGID_CORS: Error Name: " << net::ErrorToString(result.net_error_code())
+          << "\nJANGID_CORS: Has Error Page: " << result.error_page_content().has_value()
+          << "\nJANGID_CORS: Processing Throttle: " << processing_navigation_throttle_
+          << "\nJANGID_CORS: URL: " << common_params_->url.spec();
+
+
   DCHECK_EQ(WILL_START_REQUEST, state_);
   DCHECK_NE(NavigationThrottle::BLOCK_RESPONSE, result.action());
   DCHECK(processing_navigation_throttle_);
@@ -7042,6 +7680,25 @@ void NavigationRequest::OnWillStartRequestProcessed(
 
 void NavigationRequest::OnWillRedirectRequestProcessed(
     NavigationThrottle::ThrottleCheckResult result) {
+
+    LOG(ERROR) << "JANGID_CORS: === OnWillRedirectRequestProcessed Start ==="
+          << "\nJANGID_CORS: Current State: " << state_
+          << "\nJANGID_CORS: Action: " << static_cast<int>(result.action())
+          << "\nJANGID_CORS: Action Name: " 
+          << (result.action() == NavigationThrottle::PROCEED ? "PROCEED" :
+            result.action() == NavigationThrottle::CANCEL ? "CANCEL" :
+            result.action() == NavigationThrottle::CANCEL_AND_IGNORE ? "CANCEL_AND_IGNORE" :
+            result.action() == NavigationThrottle::BLOCK_REQUEST ? "BLOCK_REQUEST" :
+            result.action() == NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE ? "BLOCK_REQUEST_AND_COLLAPSE" :
+            result.action() == NavigationThrottle::BLOCK_RESPONSE ? "BLOCK_RESPONSE" :
+            result.action() == NavigationThrottle::DEFER ? "DEFER" : "UNKNOWN")
+          << "\nJANGID_CORS: Error Code: " << result.net_error_code()
+          << "\nJANGID_CORS: Error Name: " << net::ErrorToString(result.net_error_code())
+          << "\nJANGID_CORS: Has Error Page: " << result.error_page_content().has_value()
+          << "\nJANGID_CORS: Processing Throttle: " << processing_navigation_throttle_
+          << "\nJANGID_CORS: URL: " << common_params_->url.spec();
+
+
   DCHECK_EQ(WILL_REDIRECT_REQUEST, state_);
   DCHECK_NE(NavigationThrottle::BLOCK_RESPONSE, result.action());
   DCHECK(processing_navigation_throttle_);
@@ -7071,6 +7728,23 @@ void NavigationRequest::OnWillRedirectRequestProcessed(
 
 void NavigationRequest::OnWillFailRequestProcessed(
     NavigationThrottle::ThrottleCheckResult result) {
+    LOG(ERROR) << "JANGID_CORS: === OnWillFailRequestProcessed Start ==="
+          << "\nJANGID_CORS: Current State: " << state_
+          << "\nJANGID_CORS: Action: " << static_cast<int>(result.action())
+          << "\nJANGID_CORS: Action Name: " 
+          << (result.action() == NavigationThrottle::PROCEED ? "PROCEED" :
+            result.action() == NavigationThrottle::CANCEL ? "CANCEL" :
+            result.action() == NavigationThrottle::CANCEL_AND_IGNORE ? "CANCEL_AND_IGNORE" :
+            result.action() == NavigationThrottle::BLOCK_REQUEST ? "BLOCK_REQUEST" :
+            result.action() == NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE ? "BLOCK_REQUEST_AND_COLLAPSE" :
+            result.action() == NavigationThrottle::BLOCK_RESPONSE ? "BLOCK_RESPONSE" :
+            result.action() == NavigationThrottle::DEFER ? "DEFER" : "UNKNOWN")
+          << "\nJANGID_CORS: Error Code: " << result.net_error_code()
+          << "\nJANGID_CORS: Error Name: " << net::ErrorToString(result.net_error_code())
+          << "\nJANGID_CORS: Has Error Page: " << result.error_page_content().has_value()
+          << "\nJANGID_CORS: Processing Throttle: " << processing_navigation_throttle_
+          << "\nJANGID_CORS: URL: " << common_params_->url.spec();
+
   DCHECK_EQ(WILL_FAIL_REQUEST, state_);
   DCHECK_NE(NavigationThrottle::BLOCK_RESPONSE, result.action());
   DCHECK(processing_navigation_throttle_);
@@ -7094,12 +7768,31 @@ void NavigationRequest::OnWillFailRequestProcessed(
 
 void NavigationRequest::OnWillProcessResponseProcessed(
     NavigationThrottle::ThrottleCheckResult result) {
+  LOG(ERROR) << "JANGID_CORS: === OnWillProcessResponseProcessed Start ==="
+             << "\nJANGID_CORS: Current State: " << state_
+             << "\nJANGID_CORS: Action: " << static_cast<int>(result.action())
+             << "\nJANGID_CORS: Action Name: " 
+             << (result.action() == NavigationThrottle::PROCEED ? "PROCEED" :
+                result.action() == NavigationThrottle::CANCEL ? "CANCEL" :
+                result.action() == NavigationThrottle::CANCEL_AND_IGNORE ? "CANCEL_AND_IGNORE" :
+                result.action() == NavigationThrottle::BLOCK_REQUEST ? "BLOCK_REQUEST" :
+                result.action() == NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE ? "BLOCK_REQUEST_AND_COLLAPSE" :
+                result.action() == NavigationThrottle::BLOCK_RESPONSE ? "BLOCK_RESPONSE" :
+                result.action() == NavigationThrottle::DEFER ? "DEFER" : "UNKNOWN")
+             << "\nJANGID_CORS: Error Code: " << result.net_error_code()
+             << "\nJANGID_CORS: Error Name: " << net::ErrorToString(result.net_error_code())
+             << "\nJANGID_CORS: Has Error Page: " << result.error_page_content().has_value()
+             << "\nJANGID_CORS: Processing Throttle: " << processing_navigation_throttle_
+             << "\nJANGID_CORS: URL: " << common_params_->url.spec();
+
   DCHECK_EQ(WILL_PROCESS_RESPONSE, state_);
   DCHECK_NE(NavigationThrottle::BLOCK_REQUEST, result.action());
   DCHECK_NE(NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE, result.action());
   DCHECK(processing_navigation_throttle_);
   processing_navigation_throttle_ = false;
   if (result.action() != NavigationThrottle::PROCEED) {
+    LOG(ERROR) << "JANGID_CORS: Setting state to CANCELING due to non-PROCEED action"
+               << "\nJANGID_CORS: Previous State: " << state_;
     SetState(CANCELING);
   }
 
@@ -7115,6 +7808,23 @@ void NavigationRequest::OnWillProcessResponseProcessed(
 
 void NavigationRequest::OnWillCommitWithoutUrlLoaderProcessed(
     NavigationThrottle::ThrottleCheckResult result) {
+    LOG(ERROR) << "JANGID_CORS: === CancelDeferredNavigationInternal Start ==="
+          << "\nJANGID_CORS: Current State: " << state_
+          << "\nJANGID_CORS: Action: " << static_cast<int>(result.action())
+          << "\nJANGID_CORS: Action Name: " 
+          << (result.action() == NavigationThrottle::PROCEED ? "PROCEED" :
+            result.action() == NavigationThrottle::CANCEL ? "CANCEL" :
+            result.action() == NavigationThrottle::CANCEL_AND_IGNORE ? "CANCEL_AND_IGNORE" :
+            result.action() == NavigationThrottle::BLOCK_REQUEST ? "BLOCK_REQUEST" :
+            result.action() == NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE ? "BLOCK_REQUEST_AND_COLLAPSE" :
+            result.action() == NavigationThrottle::BLOCK_RESPONSE ? "BLOCK_RESPONSE" :
+            result.action() == NavigationThrottle::DEFER ? "DEFER" : "UNKNOWN")
+          << "\nJANGID_CORS: Error Code: " << result.net_error_code()
+          << "\nJANGID_CORS: Error Name: " << net::ErrorToString(result.net_error_code())
+          << "\nJANGID_CORS: Has Error Page: " << result.error_page_content().has_value()
+          << "\nJANGID_CORS: Processing Throttle: " << processing_navigation_throttle_
+          << "\nJANGID_CORS: URL: " << common_params_->url.spec();
+
   DCHECK_EQ(WILL_COMMIT_WITHOUT_URL_LOADER, state_);
   DCHECK(result.action() == NavigationThrottle::CANCEL_AND_IGNORE ||
          result.action() == NavigationThrottle::PROCEED);
@@ -7174,6 +7884,23 @@ void NavigationRequest::Resume(NavigationThrottle* resuming_throttle) {
 void NavigationRequest::CancelDeferredNavigation(
     NavigationThrottle* cancelling_throttle,
     NavigationThrottle::ThrottleCheckResult result) {
+    LOG(ERROR) << "JANGID_CORS: === CancelDeferredNavigationInternal Start ==="
+          << "\nJANGID_CORS: Current State: " << state_
+          << "\nJANGID_CORS: Action: " << static_cast<int>(result.action())
+          << "\nJANGID_CORS: Action Name: " 
+          << (result.action() == NavigationThrottle::PROCEED ? "PROCEED" :
+            result.action() == NavigationThrottle::CANCEL ? "CANCEL" :
+            result.action() == NavigationThrottle::CANCEL_AND_IGNORE ? "CANCEL_AND_IGNORE" :
+            result.action() == NavigationThrottle::BLOCK_REQUEST ? "BLOCK_REQUEST" :
+            result.action() == NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE ? "BLOCK_REQUEST_AND_COLLAPSE" :
+            result.action() == NavigationThrottle::BLOCK_RESPONSE ? "BLOCK_RESPONSE" :
+            result.action() == NavigationThrottle::DEFER ? "DEFER" : "UNKNOWN")
+          << "\nJANGID_CORS: Error Code: " << result.net_error_code()
+          << "\nJANGID_CORS: Error Name: " << net::ErrorToString(result.net_error_code())
+          << "\nJANGID_CORS: Has Error Page: " << result.error_page_content().has_value()
+          << "\nJANGID_CORS: Processing Throttle: " << processing_navigation_throttle_
+          << "\nJANGID_CORS: URL: " << common_params_->url.spec();
+
   DCHECK(cancelling_throttle);
   DCHECK_EQ(cancelling_throttle, throttle_runner_->GetDeferringThrottle());
   CancelDeferredNavigationInternal(result);
@@ -7208,6 +7935,24 @@ bool NavigationRequest::IsForMhtmlSubframe() const {
 
 void NavigationRequest::CancelDeferredNavigationInternal(
     NavigationThrottle::ThrottleCheckResult result) {
+
+  LOG(ERROR) << "JANGID_CORS: === CancelDeferredNavigationInternal Start ==="
+        << "\nJANGID_CORS: Current State: " << state_
+        << "\nJANGID_CORS: Action: " << static_cast<int>(result.action())
+        << "\nJANGID_CORS: Action Name: " 
+        << (result.action() == NavigationThrottle::PROCEED ? "PROCEED" :
+          result.action() == NavigationThrottle::CANCEL ? "CANCEL" :
+          result.action() == NavigationThrottle::CANCEL_AND_IGNORE ? "CANCEL_AND_IGNORE" :
+          result.action() == NavigationThrottle::BLOCK_REQUEST ? "BLOCK_REQUEST" :
+          result.action() == NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE ? "BLOCK_REQUEST_AND_COLLAPSE" :
+          result.action() == NavigationThrottle::BLOCK_RESPONSE ? "BLOCK_RESPONSE" :
+          result.action() == NavigationThrottle::DEFER ? "DEFER" : "UNKNOWN")
+        << "\nJANGID_CORS: Error Code: " << result.net_error_code()
+        << "\nJANGID_CORS: Error Name: " << net::ErrorToString(result.net_error_code())
+        << "\nJANGID_CORS: Has Error Page: " << result.error_page_content().has_value()
+        << "\nJANGID_CORS: Processing Throttle: " << processing_navigation_throttle_
+        << "\nJANGID_CORS: URL: " << common_params_->url.spec();
+
   DCHECK(processing_navigation_throttle_);
   DCHECK(result.action() == NavigationThrottle::CANCEL_AND_IGNORE ||
          result.action() == NavigationThrottle::CANCEL ||

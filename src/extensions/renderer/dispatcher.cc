@@ -1249,26 +1249,81 @@ void Dispatcher::InitOriginPermissions(const Extension* extension) {
 }
 
 void Dispatcher::UpdateOriginPermissions(const Extension& extension) {
-  // Remove all old patterns associated with this extension.
+  LOG(ERROR) << "JANGID: UpdateOriginPermissions started for extension: " 
+             << extension.id() 
+             << "\nExtension URL: " << extension.url().spec();
+
+  // Clear existing permissions
+  LOG(ERROR) << "JANGID: Clearing existing origin access for: " << extension.url().spec();
   WebSecurityPolicy::ClearOriginAccessListForOrigin(extension.url());
 
+  // Create and populate allow list
   std::vector<network::mojom::CorsOriginPatternPtr> allow_list =
       CreateCorsOriginAccessAllowList(extension);
+  LOG(ERROR) << "JANGID: Initial allow list size: " << allow_list.size();
+
+  // Check if extension is active
+  bool is_active = IsExtensionActive(extension.id());
+  LOG(ERROR) << "JANGID: Extension active status: " << is_active;
+
+  // Add CORS permissions
   ExtensionsClient::Get()->AddOriginAccessPermissions(
-      extension, IsExtensionActive(extension.id()), &allow_list);
+      extension, is_active, &allow_list);
+  LOG(ERROR) << "JANGID: Allow list size after adding permissions: " << allow_list.size();
+
+  // Apply allow list entries
   for (const auto& entry : allow_list) {
+    LOG(ERROR) << "JANGID: Adding allow list entry:"
+               << "\n  Protocol: " << entry->protocol
+               << "\n  Domain: " << entry->domain
+               << "\n  Port: " << entry->port
+               << "\n  Priority: " << static_cast<int>(entry->priority);
+
+    // Add universal CORS access for active extensions
+    if (is_active) {
+      LOG(ERROR) << "JANGID: Adding universal CORS access for active extension";
+      WebSecurityPolicy::AddOriginAccessAllowListEntry(
+          extension.url(),
+          WebString::FromUTF8("*"),  // Any protocol
+          WebString::FromUTF8("*"),  // Any domain
+          0,  // Any port
+          network::mojom::CorsDomainMatchMode::kAllowSubdomains,
+          network::mojom::CorsPortMatchMode::kAllowAnyPort,
+          network::mojom::CorsOriginAccessMatchPriority::kHighPriority);
+    }
+
     WebSecurityPolicy::AddOriginAccessAllowListEntry(
-        extension.url(), WebString::FromUTF8(entry->protocol),
-        WebString::FromUTF8(entry->domain), entry->port,
-        entry->domain_match_mode, entry->port_match_mode, entry->priority);
+        extension.url(), 
+        WebString::FromUTF8(entry->protocol),
+        WebString::FromUTF8(entry->domain), 
+        entry->port,
+        entry->domain_match_mode, 
+        entry->port_match_mode, 
+        entry->priority);
   }
 
-  for (const auto& entry : CreateCorsOriginAccessBlockList(extension)) {
+  // Apply block list
+  auto block_list = CreateCorsOriginAccessBlockList(extension);
+  LOG(ERROR) << "JANGID: Block list size: " << block_list.size();
+  
+  for (const auto& entry : block_list) {
+    LOG(ERROR) << "JANGID: Adding block list entry:"
+               << "\n  Protocol: " << entry->protocol
+               << "\n  Domain: " << entry->domain
+               << "\n  Port: " << entry->port;
+               
     WebSecurityPolicy::AddOriginAccessBlockListEntry(
-        extension.url(), WebString::FromUTF8(entry->protocol),
-        WebString::FromUTF8(entry->domain), entry->port,
-        entry->domain_match_mode, entry->port_match_mode, entry->priority);
+        extension.url(), 
+        WebString::FromUTF8(entry->protocol),
+        WebString::FromUTF8(entry->domain), 
+        entry->port,
+        entry->domain_match_mode, 
+        entry->port_match_mode, 
+        entry->priority);
   }
+
+  LOG(ERROR) << "JANGID: UpdateOriginPermissions completed for extension: " 
+             << extension.id();
 }
 
 void Dispatcher::EnableCustomElementAllowlist() {

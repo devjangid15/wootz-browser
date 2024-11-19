@@ -68,6 +68,16 @@ bool CSPContext::SchemeShouldBypassCSP(std::string_view scheme) {
   // 2) Bypassing arbitrary scheme for testing purpose only in blink and in V8.
   // TODO(arthursonzogni): url::GetBypassingCSPScheme() is used instead of the
   // blink::SchemeRegistry. It contains 1) but not 2).
+
+
+  LOG(ERROR)<<"JANGID_CSP: SchemeShouldBypassCSP";
+  
+
+  if (scheme == "chrome-extension") {
+     LOG(ERROR)<<"JANGID_CSP: SchemeShouldBypassCSP";
+    return true;
+  }
+
   const auto& bypassing_schemes = url::GetCSPBypassingSchemes();
   return base::Contains(bypassing_schemes, scheme);
 }

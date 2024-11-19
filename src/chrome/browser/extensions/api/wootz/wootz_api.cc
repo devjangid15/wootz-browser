@@ -96,6 +96,38 @@ ExtensionId GetWootzWalletExtensionId(content::BrowserContext* context) {
   return ExtensionId();
 }
 
+ExtensionId GetWootzExtensionId(content::BrowserContext* context) {
+  const char* kWootzExtensionName = "Camp Network";
+  LOG(ERROR) << "JANGID: Searching for extension with name: "
+             << kWootzExtensionName;
+
+  ExtensionRegistry* registry = ExtensionRegistry::Get(context);
+  if (!registry) {
+    LOG(ERROR) << "JANGID: Failed to get ExtensionRegistry";
+    return ExtensionId();
+  }
+
+  LOG(ERROR) << "JANGID: Iterating through enabled extensions";
+  int count = 0;
+  for (const auto& extension : registry->enabled_extensions()) {
+    count++;
+    LOG(ERROR) << "JANGID: Checking extension " << count << ":";
+    LOG(ERROR) << "  ID: " << extension->id();
+    LOG(ERROR) << "  Name: " << extension->name();
+    LOG(ERROR) << "  Version: " << extension->version().GetString();
+
+    if (extension->name() == kWootzExtensionName) {
+      LOG(ERROR) << "JANGID: Found matching extension with ID: "
+                 << extension->id();
+      return extension->id();
+    }
+  }
+
+  LOG(ERROR)<< "JANGID: No matching extension found. Total extensions checked: "<< count;
+  
+  return ExtensionId();
+}
+
 ExtensionFunction::ResponseAction WootzInfoFunction::Run() {
   const base::android::BuildInfo* build_info =
       base::android::BuildInfo::GetInstance();
@@ -481,6 +513,18 @@ ExtensionFunction::ResponseAction WootzSignMessageFunction::Run() {
   closeExtensionBottomSheet();
 
   return RespondNow(WithArguments(base::Value(true)));
+}
+
+ExtensionFunction::ResponseAction WootzGetExtensionIdFunction::Run() {
+  ExtensionId extension_id = GetWootzExtensionId(browser_context());
+  
+  LOG(ERROR) << "JANGID: Getting Camp Network extension ID: " << extension_id;
+  
+  base::Value::Dict result;
+  result.Set("extensionId", extension_id);
+  result.Set("success", !extension_id.empty());
+
+  return RespondNow(WithArguments(std::move(result)));
 }
 
 }  // namespace extensions

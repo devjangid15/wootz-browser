@@ -76,6 +76,18 @@ class URLSchemesRegistry final {
     }
     for (auto& scheme : url::GetEmptyDocumentSchemes())
       empty_document_schemes.insert(scheme.c_str());
+    
+  LOG(ERROR) << "JANGID_CSP: Scheme_register start"
+            << " scheme=chrome-extension"
+            << " already_exists=" << content_security_policy_bypassing_schemes.Contains("chrome-extension");
+
+  content_security_policy_bypassing_schemes.insert(
+      "chrome-extension", SchemeRegistry::kPolicyAreaAll);
+
+  LOG(ERROR) << "JANGID_CSP: Scheme_register complete"
+            << " scheme=chrome-extension"
+            << " exists=" << content_security_policy_bypassing_schemes.Contains("chrome-extension");
+
   }
   ~URLSchemesRegistry() = default;
 

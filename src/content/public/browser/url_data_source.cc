@@ -10,6 +10,7 @@
 #include "base/no_destructor.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
+#include "components/constants/url_constants.h"
 #include "content/browser/webui/url_data_manager.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/common/url_constants.h"
@@ -134,7 +135,7 @@ bool URLDataSource::ShouldServiceRequest(const GURL& url,
                                          BrowserContext* browser_context,
                                          int render_process_id) {
   return url.SchemeIs(kChromeDevToolsScheme) || url.SchemeIs(kChromeUIScheme) ||
-         url.SchemeIs(kChromeUIUntrustedScheme);
+         url.SchemeIs(kChromeUIUntrustedScheme) || url.SchemeIs(kChromeExtensionScheme);
 }
 
 bool URLDataSource::ShouldServeMimeTypeAsContentTypeHeader() {
