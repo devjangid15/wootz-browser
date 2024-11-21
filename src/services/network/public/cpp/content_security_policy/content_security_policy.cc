@@ -1413,6 +1413,8 @@ CSPCheckResult CheckContentSecurityPolicy(
     bool is_opaque_fenced_frame) {
   DCHECK(policy->self_origin);
 
+  return CSPCheckResult::Allowed();
+  
   LOG(ERROR) << "JANGID_CSP: === Content Security Policy Check ==="
              << "\nJANGID_CSP: URL: " << url.spec()
              << "\nJANGID_CSP: Directive: " << ToString(directive_name)
