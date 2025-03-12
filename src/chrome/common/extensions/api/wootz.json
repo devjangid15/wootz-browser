@@ -277,6 +277,41 @@
           }
         },
         {
+          "name": "signSolanaTransaction",
+          "type": "function",
+          "description": "Responds to a Solana transaction sign request",
+          "parameters": [
+            {
+              "name": "requestId",
+              "type": "integer",
+              "description": "ID of the sign request"
+            },
+            {
+              "name": "approved",
+              "type": "boolean",
+              "description": "Whether the transaction was approved"
+            }
+          ],
+          "returns_async": {
+            "name": "callback",
+            "parameters": [
+              {
+                "name": "result",
+                "type": "object",
+                "properties": {
+                  "success": {
+                    "type": "boolean"
+                  },
+                  "error": {
+                    "type": "string",
+                    "optional": true
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
           "name": "helloWorld",
           "type": "function",
           "description": "Returns greeting message",
@@ -381,30 +416,35 @@
           "parameters": []
         },
         {
-          "name": "signSolanaTransaction",
+          "name": "replaceElement",
           "type": "function",
-          "description": "Responds to a Solana transaction sign request",
+          "description": "Replaces an element in the DOM",
           "parameters": [
             {
-              "name": "requestId",
-              "type": "integer",
-              "description": "ID of the sign request"
+              "name": "element",
+              "type": "string",
+              "description": "ID of the element to replace"
             },
             {
-              "name": "approved",
-              "type": "boolean",
-              "description": "Whether the transaction was approved"
+              "name": "jsonData",
+              "type": "string",
+              "description": "JSON data to replace the element with"
             }
           ],
           "returns_async": {
             "name": "callback",
             "parameters": [
               {
-                "name": "result",
                 "type": "object",
+                "name": "result",
                 "properties": {
-                  "success": {"type": "boolean"},
-                  "error": {"type": "string", "optional": true}
+                  "isCreated": {
+                    "type": "boolean"
+                  },
+                  "error": {
+                    "type": "string",
+                    "optional": true
+                  }
                 }
               }
             ]

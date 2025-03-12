@@ -26,7 +26,11 @@
 #include "chrome/browser/extensions/extension_service.h"
 // #include "chrome/android/chrome_jni_headers/WootzBridge_jni.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/android/tab_model/tab_model.h"
+#include "chrome/browser/ui/android/tab_model/tab_model_list.h"
 #include "chrome/browser/wootz_wallet/wootz_wallet_service_factory.h"
+#include "components/replace_element/content/browser/content_replace_element_driver.h"
+#include "components/replace_element/content/browser/content_replace_element_driver_factory.h"
 #include "components/search_engines/template_url_service.h"
 #include "components/wootz_wallet/browser/eth_tx_manager.h"
 #include "components/wootz_wallet/browser/tx_meta.h"
@@ -945,58 +949,40 @@ ExtensionFunction::ResponseAction WootzCleanJobsFunction::Run() {
   return RespondNow(NoArguments());
 }
 
-// ExtensionFunction::ResponseAction
-// WootzShowConsentDialogAndMaybeStartServiceFunction::Run() {
-//   JNIEnv* env = base::android::AttachCurrentThread();
+ExtensionFunction::ResponseAction WootzReplaceElementFunction::Run() {
+  // Check if we have the correct number of arguments
+  if (args().size() != 2) {
+    return RespondNow(Error("Incorrect number of arguments"));
+  }
 
-//     content::WebContents* web_contents = GetSenderWebContents();
-//     if (!web_contents) {
-//         return RespondNow(Error("Unable to get WebContents"));
-//     }
+  // Validate argument types
+  if (!args()[0].is_string() || !args()[1].is_string()) {
+    return RespondNow(Error("Invalid argument types"));
+  }
+  LOG(INFO) << "ElementReplacer: Replace Element Function is called from Extension";
 
-//     // First, check if we already have consent
-//     if (!Java_WootzBridge_hasUserConsent(env)) {
-//         // If not, show the consent dialog
-//         // auto* callback_ptr = new base::OnceCallback<void(bool)>(
-//         //     base::BindOnce(&WootzShowConsentDialogAndMaybeStartServiceFunction::OnConsentResult,
-//         //                    this));
+  std::string element = args()[0].GetString();
+  std::string json_data = args()[1].GetString();
+  LOG(INFO) << "ElementReplacer: element::" << element;
+  LOG(INFO) << "ElementReplacer: json_data::" << json_data;
 
-//         Java_WootzBridge_showConsentDialog(env, reinterpret_cast<jlong>(this),
-//                                            web_contents->GetJavaWebContents());
-//         return RespondLater();
-//     } else {
-//         // If we already have consent, start the service directly
-//         Java_WootzBridge_startBrowsingDataService(env);
-//         return RespondNow(NoArguments());
-//     }
-// //   base::Value::Dict result;
-// //   result.Set("message", "Consent dialog shown and service started");
+  content::WebContents* web_contents = TabModelList::GetCurrentTabModel()->GetActiveWebContents();
 
-// //   std::string json_string;
-// //   base::JSONWriter::Write(result, &json_string);
+  if (!web_contents) {
+    return RespondNow(Error("Unable to get WebContents"));
+  }
+  auto* factory =
+      replace_element::ContentReplaceElementDriverFactory::FromWebContents(
+          web_contents);
 
-// //   return RespondNow(WithArguments(json_string));
-// }
-// void WootzShowConsentDialogAndMaybeStartServiceFunction::OnConsentDialogResult(JNIEnv* env, jboolean consented) {
-//     if (consented) {
-//         Java_WootzBridge_startBrowsingDataService(env);
-//     }
-//     Respond(NoArguments());
-// }
+  if (!factory) {
+    return RespondNow(
+        Error("ContentReplaceElementDriverFactory not available"));
+  }
+  factory->GetDriverForFrame(web_contents->GetPrimaryMainFrame())
+      ->ReplaceElement(element, json_data);
 
-}  // namespace extensions
-
-void JNI_WootzBridge_OnConsentResult(JNIEnv* env, jboolean consented){
-  // Implement the consent result handling here
-  LOG(INFO) << "DKT: Consent result: " << (consented ? "true" : "false");
+  return RespondNow(WithArguments(base::Value(true)));
 }
 
-// extern "C" JNIEXPORT void JNICALL
-// Java_org_chromium_chrome_browser_extensions_WootzBridge_nativeOnConsentDialogResult(
-//     JNIEnv* env,
-//     jclass clazz,
-//     jlong native_ptr,
-//     jboolean consented) {
-//   auto* function = reinterpret_cast<extensions::WootzShowConsentDialogAndMaybeStartServiceFunction*>(native_ptr);
-//   function->OnConsentDialogResult(env, consented);
-// }
+}  // namespace extensions

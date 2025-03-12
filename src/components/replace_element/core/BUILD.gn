@@ -1,0 +1,5 @@
+static_library("core") {
+  sources = [
+    "replace_element_driver.h"
+  ]
+}

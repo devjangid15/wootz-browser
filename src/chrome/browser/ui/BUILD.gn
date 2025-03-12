@@ -625,6 +625,7 @@ static_library("ui") {
     "//components/reading_list/features:flags",
     "//components/renderer_context_menu",
     "//components/resources",
+    "//components/replace_element/content/browser",
     "//components/safe_browsing/content/browser",
     "//components/safe_browsing/content/browser:client_side_detection",
     "//components/safe_browsing/content/browser/password_protection",

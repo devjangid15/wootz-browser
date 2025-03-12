@@ -1,0 +1,12 @@
+import("//mojo/public/tools/bindings/mojom.gni")
+
+mojom("mojom") {
+  sources = [
+    "replace_element_agent.mojom",
+    "replace_element_driver.mojom"
+  ]
+
+  public_deps = [
+    "//mojo/public/mojom/base"
+  ]
+}
