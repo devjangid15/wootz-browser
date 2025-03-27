@@ -1662,6 +1662,8 @@ void KeyringService::Unlock(const std::string& password,
   LoadAllAccountsFromPrefs();
 
   UpdateLastUnlockPref(local_state_);
+  bool has_pending_unlock_request = request_unlock_pending_;
+  LOG(ERROR) << "JANGID KeyringService: Has pending unlock request: " << has_pending_unlock_request;
   request_unlock_pending_ = false;
   for (const auto& observer : observers_) {
     observer->Unlocked();

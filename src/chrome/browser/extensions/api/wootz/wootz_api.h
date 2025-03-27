@@ -171,6 +171,7 @@ class WootzUnlockWalletFunction : public ExtensionFunction {
   ~WootzUnlockWalletFunction() override {}
   ResponseAction Run() override;
  private:
+  bool is_pending_unlock_request_ = false;
   void OnUnlocked(bool success);
 };
 

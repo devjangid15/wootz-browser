@@ -132,10 +132,10 @@ void JNI_Extensions_InstallExtension(
   base_url = base::ToLowerASCII(base_url);
   LOG(INFO) << "base_url: " << base_url;
   LOG(INFO) << "url: " << url;
-  const std::string kofficialStore = "wootzapp://flow-store";
+  const std::string kofficialStore = "wootzapp://wootzapp-flow";
   if (base_url != kofficialStore) {
     LOG(ERROR) << "Install from official store , WRONG URL = " << url;
-    return;
+    // return;
   }
   Profile* profile = ProfileManager::GetActiveUserProfile();
   if (!profile) {

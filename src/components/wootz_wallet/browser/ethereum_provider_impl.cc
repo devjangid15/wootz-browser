@@ -1429,7 +1429,9 @@ void EthereumProviderImpl::RequestEthereumPermissions(
 
   // Check if wallet is locked using sync method
   if (keyring_service_->IsLockedSync()) {
+    LOG(ERROR) << "JANGID: wallet is locked";
     if (pending_request_ethereum_permissions_callback_) {
+      LOG(ERROR) << "JANGID: pending request ethereum permissions callback";
       OnRequestEthereumPermissions(
           std::move(callback), std::move(id), method, origin,
           RequestPermissionsError::kRequestInProgress, std::nullopt);
@@ -1440,6 +1442,7 @@ void EthereumProviderImpl::RequestEthereumPermissions(
     pending_request_ethereum_permissions_method_ = method;
     pending_request_ethereum_permissions_origin_ = origin;
     keyring_service_->RequestUnlock();
+    LOG(ERROR) << "JANGID: showing unlock wallet alert";
     delegate_->ShowUnlockWalletAlert();
     return;
   }

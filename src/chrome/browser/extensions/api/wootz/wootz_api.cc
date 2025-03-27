@@ -182,6 +182,45 @@ void WootzAPI::OnNewUnapprovedTx(
   tx_details.Set("coinType", static_cast<int>(tx_info->from_account_id->coin));
   tx_details.Set("origin", tx_info->origin_info ? tx_info->origin_info->origin_spec : "");
 
+  LOG(ERROR)<<"is_solana_tx_data"<<tx_info->tx_data_union->is_solana_tx_data();
+  LOG(ERROR)<<"is_eth_tx_data"<<tx_info->tx_data_union->is_eth_tx_data();
+  LOG(ERROR)<<"is_eth_tx_data_1559"<<tx_info->tx_data_union->is_eth_tx_data_1559();
+
+  if(tx_info->from_account_id->coin == wootz_wallet::mojom::CoinType::SOL) {
+    LOG(ERROR) << "is_solana_tx_data: " << tx_info->tx_data_union->is_solana_tx_data();
+    auto& solana_tx_data = tx_info->tx_data_union->get_solana_tx_data();
+    auto& instructions = solana_tx_data->instructions;
+    
+    // Loop through all instructions
+    for(size_t i = 0; i < instructions.size(); i++) {
+        LOG(ERROR) << "Instruction " << i + 1 << " of " << instructions.size();
+        
+        // Check if instruction has decoded data
+        if (instructions[i]->decoded_data) {
+            auto& decoded_data = instructions[i]->decoded_data;
+            
+            // Log instruction type
+            LOG(ERROR) << "Instruction Type: " << decoded_data->instruction_type;
+            
+            // Loop through all parameters in the instruction
+            for(size_t j = 0; j < decoded_data->params.size(); j++) {
+                auto& param = decoded_data->params[j];
+                LOG(ERROR) << "Parameter " << j + 1 << ":";
+                LOG(ERROR) << "  Name: " << param->name;
+                LOG(ERROR) << "  Value: " << param->value;
+                LOG(ERROR) << "  Type: " << param->type;
+                LOG(ERROR) << "  Localized Name: " << param->localized_name;
+            }
+        } else {
+            LOG(ERROR) << "No decoded data for instruction " << i + 1;
+        }
+    }
+  }
+  
+  if(tx_info->from_account_id->coin == wootz_wallet::mojom::CoinType::ETH) {
+    LOG(ERROR)<<"is_eth_tx_data"<<tx_info->tx_data_union->is_eth_tx_data();
+  }
+
   LOG(ERROR) << "jangid_sign: Transaction details: " << tx_details;
   event_args.Append(std::move(tx_details));
   LOG(ERROR) << "jangid_sign: Event arguments: " << event_args;
@@ -444,10 +483,18 @@ ExtensionFunction::ResponseAction WootzUnlockWalletFunction::Run() {
 
    std::string input_password = args()[0].GetString();
 
+  LOG(ERROR) << "JANGID: Input password: " << input_password;
+  LOG(ERROR) << "JANGID: Has pending unlock request: " << keyring_service->HasPendingUnlockRequest();
+  LOG(ERROR) << "JANGID: Is locked: " << keyring_service->IsLockedSync();
+  LOG(ERROR) << "JANGID: unlocking wallet";
+
+  is_pending_unlock_request_ = keyring_service->HasPendingUnlockRequest();
+  LOG(ERROR) << "JANGID: Is pending unlock request: " << is_pending_unlock_request_;
   keyring_service->Unlock(
       input_password, base::BindOnce(&WootzUnlockWalletFunction::OnUnlocked, this));
 
   // Set the password again after unlocking
+  LOG(ERROR) << "JANGID: ispendingunlockrequest: "<<is_pending_unlock_request_;
   keyring_service->SetPassword(input_password);
 
   return RespondLater();
@@ -459,6 +506,16 @@ void WootzUnlockWalletFunction::OnUnlocked(bool success) {
   if (!success) {
     result.Set("error", "Failed to unlock wallet");
   }
+
+  LOG(ERROR) << "JANGID: success: " << success;
+  LOG(ERROR) << "JANGID: Has pending unlock request: " << is_pending_unlock_request_;
+
+  if(success && is_pending_unlock_request_) {
+    is_pending_unlock_request_ = false;
+    closeExtensionBottomSheet();
+  }
+  
+  LOG(ERROR) << "JANGID: Responding to unlock wallet";
 
   base::Value::List result_list;
   result_list.Append(std::move(result));

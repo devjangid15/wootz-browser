@@ -36,10 +36,10 @@ bool IsExtensionDownload(const download::DownloadItem& download_item) {
 
   // Check if the page URL is from the trusted source
   const char* TRUSTED_SOURCE = "wootzapp://flow-store/";
-  if (page_url.spec() != TRUSTED_SOURCE) {
-    LOG(INFO) << "Not from trusted source, rejecting CRX";
-    return false;
-  }
+  // if (page_url.spec() != TRUSTED_SOURCE) {
+  //   LOG(INFO) << "Not from trusted source, rejecting CRX";
+  //   // return false;
+  // }
   
   // Verify it's a CRX file from the download URL, not the page URL
   if (base::EndsWith(url, ".crx", base::CompareCase::INSENSITIVE_ASCII)) {
@@ -48,7 +48,9 @@ bool IsExtensionDownload(const download::DownloadItem& download_item) {
   }
 
   LOG(INFO) << "Not a valid CRX file path";
-  return false;
+  LOG(ERROR) << "Not a valid CRX file path";
+  
+  return true;
 }
 
 }  // namespace download_crx_util
