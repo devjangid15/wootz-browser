@@ -1,0 +1,9 @@
+Name: litemap
+URL: https://crates.io/crates/litemap
+Description: A key-value Map implementation based on a flat, sorted Vec.
+Version: 0.7.5
+Security Critical: yes
+Shipped: yes
+License: Unicode License Agreement - Data Files and Software (2016)
+License File:
+Revision: f4290a877dfcb0f87cad6de4abdd65f0cbb33c9c

@@ -1,0 +1,9 @@
+Name: tinystr
+URL: https://crates.io/crates/tinystr
+Description: A small ASCII-only bounded length string representation.
+Version: 0.7.6
+Security Critical: yes
+Shipped: yes
+License: Unicode License Agreement - Data Files and Software (2016)
+License File:
+Revision: 55cd12ebb25c6261492e1e3dfa2e6453c54dde31

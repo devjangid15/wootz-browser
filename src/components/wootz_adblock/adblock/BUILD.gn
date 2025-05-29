@@ -1,0 +1,18 @@
+# Copyright (c) 2025 The WootzApp Authors. All rights reserved.
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this file,
+# You can obtain one at https://mozilla.org/MPL/2.0/.
+
+group("rust_lib") {
+  visibility = [
+    "//components/wootz_adblock/content/browser:*",
+    # "//components/wootz_adblock/content/test:unit_tests",
+    "//components/wootz_adblock/core/browser:*",
+    "//components/wootz_adblock/core/common:*",
+    "//fuzzers:*",
+    "//ios/browser/api/wootz_adblock:*",
+  ]
+  deps = [ "resolver" ]
+
+  public_deps = [ "rs:rust_lib" ]
+}

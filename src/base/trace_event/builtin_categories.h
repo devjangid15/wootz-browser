@@ -198,6 +198,7 @@
   X("webnn")                                                             \
   X("webrtc")                                                            \
   X("webrtc_stats")                                                      \
+  X("wootz.adblock")                                                     \
   X("xr")                                                                \
   X(TRACE_DISABLED_BY_DEFAULT("android_view_hierarchy"))                 \
   X(TRACE_DISABLED_BY_DEFAULT("animation-worklet"))                      \

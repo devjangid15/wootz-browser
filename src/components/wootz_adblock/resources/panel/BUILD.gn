@@ -1,0 +1,22 @@
+# Copyright (c) 2025 The WootzApp Authors. All rights reserved.
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this file,
+# you can obtain one at http://mozilla.org/MPL/2.0/.
+
+import("//components/common/typescript.gni")
+import("//mojo/public/tools/bindings/mojom.gni")
+
+transpile_web_ui("wootz_adblock_panel_ui") {
+  entry_points = [ [
+        "wootz_adblock_panel",
+        rebase_path("shields_panel.tsx"),
+      ] ]
+  resource_name = "wootz_adblock_panel"
+  deps = [ "//components/wootz_adblock/core/common:mojom_js" ]
+}
+
+pack_web_resources("wootz_adblock_panel_generated") {
+  resource_name = "wootz_adblock_panel"
+  output_dir = "$root_gen_dir/components/wootz_adblock/resources/panel"
+  deps = [ ":wootz_adblock_panel_ui" ]
+}

@@ -1,0 +1,64 @@
+# Copyright 2023 The Chromium Authors
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+# @generated from third_party/rust/chromium_crates_io/BUILD.gn.hbs by
+# tools/crates/gnrt.
+# Do not edit!
+
+import("//build/rust/cargo_crate.gni")
+
+cargo_crate("lib") {
+  crate_name = "rmp"
+  epoch = "0.8"
+  crate_type = "rlib"
+  crate_root =
+      "//third_party/rust/chromium_crates_io/vendor/rmp-0.8.14/src/lib.rs"
+  sources = [
+    "//third_party/rust/chromium_crates_io/vendor/rmp-0.8.14/src/decode/bytes.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rmp-0.8.14/src/decode/dec.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rmp-0.8.14/src/decode/ext.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rmp-0.8.14/src/decode/mod.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rmp-0.8.14/src/decode/sint.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rmp-0.8.14/src/decode/str.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rmp-0.8.14/src/decode/uint.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rmp-0.8.14/src/encode/bin.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rmp-0.8.14/src/encode/buffer.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rmp-0.8.14/src/encode/dec.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rmp-0.8.14/src/encode/ext.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rmp-0.8.14/src/encode/map.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rmp-0.8.14/src/encode/mod.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rmp-0.8.14/src/encode/sint.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rmp-0.8.14/src/encode/str.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rmp-0.8.14/src/encode/uint.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rmp-0.8.14/src/encode/vec.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rmp-0.8.14/src/errors.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rmp-0.8.14/src/lib.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rmp-0.8.14/src/marker.rs",
+  ]
+  inputs = ["//third_party/rust/chromium_crates_io/vendor/rmp-0.8.14/README.md"]
+
+  build_native_rust_unit_tests = false
+  edition = "2021"
+  cargo_pkg_version = "0.8.14"
+  cargo_pkg_authors = "Evgeny Safronov <division494@gmail.com>"
+  cargo_pkg_name = "rmp"
+  cargo_pkg_description = "Pure Rust MessagePack serialization implementation"
+  library_configs -= [ "//build/config/compiler:chromium_code" ]
+  library_configs += [ "//build/config/compiler:no_chromium_code" ]
+  executable_configs -= [ "//build/config/compiler:chromium_code" ]
+  executable_configs += [ "//build/config/compiler:no_chromium_code" ]
+  proc_macro_configs -= [ "//build/config/compiler:chromium_code" ]
+  proc_macro_configs += [ "//build/config/compiler:no_chromium_code" ]
+  deps = [
+    "//third_party/rust/byteorder/v1:lib",
+    "//third_party/rust/num_traits/v0_2:lib",
+    "//third_party/rust/paste/v1:lib",
+  ]
+  features = [ "std" ]
+
+  # Only for usage from third-party crates. Add the crate to
+  # //third_party/rust/chromium_crates_io/Cargo.toml to use
+  # it from first-party code.
+  visibility = [ "//third_party/rust/*" ]
+}

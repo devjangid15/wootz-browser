@@ -1,0 +1,11 @@
+include_rules = [
+  "+brave/components/wootz_adblock/core/browser",
+  "+brave/components/wootz_adblock/content/test",
+  "+services/network/host_resolver.h",
+]
+
+specific_include_rules = {
+  "brave_timestamp_rounding_browsertest\.cc": [
+    "!content/public/renderer/render_frame.h",
+  ],
+}

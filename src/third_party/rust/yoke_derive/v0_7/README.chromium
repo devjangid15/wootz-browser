@@ -1,0 +1,9 @@
+Name: yoke-derive
+URL: https://crates.io/crates/yoke-derive
+Description: Custom derive for the yoke crate
+Version: 0.7.5
+Security Critical: yes
+Shipped: yes
+License: Unicode License Agreement - Data Files and Software (2016)
+License File:
+Revision: 6bd4893cc44c2ca2718de47a119a31cc40045fe5

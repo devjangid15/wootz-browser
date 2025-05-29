@@ -1,0 +1,9 @@
+Name: idna_adapter
+URL: https://crates.io/crates/idna_adapter
+Description: Back end adapter for idna
+Version: 1.2.0
+Security Critical: yes
+Shipped: yes
+License: Apache 2.0
+License File: //third_party/rust/chromium_crates_io/vendor/idna_adapter-1.2.0/LICENSE-APACHE
+Revision: 789b7d2c8f257b331fbdf04efa99a7d1e7ea9794

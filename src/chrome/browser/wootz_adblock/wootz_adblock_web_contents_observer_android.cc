@@ -1,0 +1,35 @@
+/* Copyright (c) 2025 The WootzApp Authors. All rights reserved.
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+#include "chrome/browser/wootz_adblock/wootz_adblock_web_contents_observer.h"
+
+#include <string>
+
+#include "chrome/browser/android/wootz_adblock_content_settings.h"
+#include "chrome/browser/android/tab_android.h"
+#include "content/public/browser/web_contents.h"
+
+using content::WebContents;
+
+namespace wootz_adblock {
+// static
+void BraveShieldsWebContentsObserver::DispatchBlockedEventForWebContents(
+    const std::string& block_type,
+    const std::string& subresource,
+    WebContents* web_contents) {
+  if (!web_contents) {
+    return;
+  }
+
+  int tabId = 0;
+  TabAndroid* tab = TabAndroid::FromWebContents(web_contents);
+  if (tab) {
+    tabId = tab->GetAndroidId();
+  }
+  chrome::android::BraveShieldsContentSettings::DispatchBlockedEvent(
+      tabId, block_type, subresource);
+}
+
+}  // namespace wootz_adblock

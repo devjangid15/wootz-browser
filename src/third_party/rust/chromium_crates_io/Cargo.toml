@@ -60,6 +60,8 @@ ark-groth16 = "0.5.0"
 groth16 = "0.1.0"
 bls12_381 = "0.8.0"
 zksync_bellman = "0.32.0"
+adblock-cxx = { version = "1" }
+url = "2.3.1"
 
 [dependencies.tinyvec]
 version = "1.6.0"
@@ -94,3 +96,7 @@ version = "0.1"
 #[patch.crates-io.libc_v0_2]
 #path = "../../../../third_party/rust/chromium_crates_io/vendor/libc-0.2.155"
 #package = "libc"
+
+[patch.crates-io.adblock-cxx_v1]
+path = "../../../components/wootz_adblock/adblock/rs"
+package = "adblock-cxx"

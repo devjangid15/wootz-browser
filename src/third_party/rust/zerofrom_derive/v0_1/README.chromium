@@ -1,0 +1,9 @@
+Name: zerofrom-derive
+URL: https://crates.io/crates/zerofrom-derive
+Description: Custom derive for the zerofrom crate
+Version: 0.1.6
+Security Critical: yes
+Shipped: yes
+License: Unicode License Agreement - Data Files and Software (2016)
+License File:
+Revision: f4290a877dfcb0f87cad6de4abdd65f0cbb33c9c
