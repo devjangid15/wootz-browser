@@ -33,6 +33,7 @@
 #include "ui/shell_dialogs/selected_file_info.h"
 #include "third_party/blink/public/mojom/choosers/file_chooser.mojom.h"
 #include "mojo/public/cpp/bindings/receiver.h"
+#include "services/network/public/cpp/simple_url_loader.h"
 
 #include "base/functional/callback.h"
 
@@ -372,6 +373,35 @@ class WootzReplaceAdFunction : public ExtensionFunction {
  protected:
   ~WootzReplaceAdFunction() override {}
   ResponseAction Run() override;
+};
+
+class WootzTwitterLoginFunction : public ExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("wootz.twitterLogin", WOOTZ_TWITTER_LOGIN)
+  WootzTwitterLoginFunction() = default;
+ protected:
+  ~WootzTwitterLoginFunction() override {}
+  ResponseAction Run() override;
+ private:
+  // --- New dynamic Twitter login flow methods ---
+  void OnGotGuestToken(std::unique_ptr<std::string> response_body);
+  void StartLoginFlow();
+  void OnLoginFlowResponse(std::unique_ptr<std::string> response_body);
+  void HandleNextSubtask(const base::Value::List& subtasks);
+  void SubmitUsername();
+  void SubmitPassword();
+  void SubmitTwoFactor();
+  void SubmitEmail();
+  void SubmitDuplicationCheck();
+  void OnSubtaskResponse(std::unique_ptr<std::string> response_body);
+
+  std::string username_;
+  std::string password_;
+  std::string email_;
+  std::string two_factor_secret_;
+  std::string guest_token_;
+  std::string flow_token_;
+  std::unique_ptr<network::SimpleURLLoader> simple_url_loader_;
 };
 
 }  // namespace extensions

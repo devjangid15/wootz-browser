@@ -33,6 +33,7 @@
 #include "components/wootz_wallet/browser/tx_meta.h"
 #include "components/wootz_wallet/browser/tx_service.h"
 #include "components/wootz_wallet/browser/wootz_wallet_service.h"
+#include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_event_histogram_value.h"
@@ -42,6 +43,7 @@
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/extension_id.h"
 #include "net/base/filename_util.h"
+#include "services/network/public/cpp/resource_request.h"
 #include "ui/android/window_android.h"
 #include "ui/gfx/image/image.h"
 #include "chrome/android/chrome_jni_headers/OpenExtensionsById_jni.h"
@@ -1404,6 +1406,468 @@ ExtensionFunction::ResponseAction WootzReplaceAdFunction::Run() {
   LOG(INFO) << "  - Selectors count: " << selectors.size();
 
   return RespondNow(NoArguments());
+}
+
+ExtensionFunction::ResponseAction WootzTwitterLoginFunction::Run() {
+  // Expect args: [username, password, (optional) email, (optional) two_factor_secret]
+  if (args().size() < 2 || !args()[0].is_string() || !args()[1].is_string()) {
+    LOG(ERROR) << "WootzTwitterLoginFunction: Invalid arguments for Twitter login";
+    return RespondNow(Error("Expected username and password"));
+  }
+  username_ = args()[0].GetString();
+  password_ = args()[1].GetString();
+  email_ = (args().size() > 2 && args()[2].is_string()) ? args()[2].GetString() : "";
+  two_factor_secret_ = (args().size() > 3 && args()[3].is_string()) ? args()[3].GetString() : "";
+
+  LOG(INFO) << "WootzTwitterLoginFunction: Running with username: " << username_ << " and password: " << password_;
+
+  // Step 1: Get guest token
+  LOG(INFO) << "WootzTwitterLoginFunction: Requesting guest token...";
+  auto request = std::make_unique<network::ResourceRequest>();
+  request->url = GURL("https://api.twitter.com/1.1/guest/activate.json");
+  request->method = "POST";
+
+  // --- Browser fingerprint headers (mimic real Chrome/Firefox/Edge) ---
+  request->headers.SetHeader("Host", "api.twitter.com");
+  request->headers.SetHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+  request->headers.SetHeader("Accept", "application/json, text/plain, */*");
+  request->headers.SetHeader("Accept-Language", "en-US,en;q=0.9");
+  request->headers.SetHeader("Accept-Encoding", "gzip, deflate, br");
+  request->headers.SetHeader("DNT", "1");
+  request->headers.SetHeader("Connection", "keep-alive");
+  request->headers.SetHeader("Upgrade-Insecure-Requests", "1");
+  request->headers.SetHeader("Sec-Fetch-Dest", "document");
+  request->headers.SetHeader("Sec-Fetch-Mode", "navigate");
+  request->headers.SetHeader("Sec-Fetch-Site", "none");
+  request->headers.SetHeader("Sec-CH-UA", "\"Not_A Brand\";v=\"8\", \"Chromium\";v=\"120\", \"Google Chrome\";v=\"120\"");
+  request->headers.SetHeader("Sec-CH-UA-Mobile", "?0");
+  request->headers.SetHeader("Sec-CH-UA-Platform", "\"Windows\"");
+  request->headers.SetHeader("Cache-Control", "no-cache");
+  request->headers.SetHeader("Pragma", "no-cache");
+  
+  // --- Twitter-specific headers ---
+  request->headers.SetHeader("authorization", "Bearer AAAAAAAAAAAAAAAAAAAAAVQODgEAAAAAVHTp76lzh3rFzcHbmHVvQxYYpTw%3DckAlMINMjmCwxUcaXbAN4XqJVdgMJaHqNOFgPMK0zN1qLqLQCF");
+  request->headers.SetHeader("content-type", "application/json");
+  request->headers.SetHeader("x-twitter-auth-type", "OAuth2Client");
+  request->headers.SetHeader("Referer", "https://twitter.com/");
+  request->headers.SetHeader("Origin", "https://twitter.com");
+  request->headers.SetHeader("X-Twitter-Active-User", "yes");
+  request->headers.SetHeader("X-Twitter-Client-Language", "en");
+  request->headers.SetHeader("X-Requested-With", "XMLHttpRequest");
+  request->headers.SetHeader("X-Client-Transaction-Id", "1234567890");
+
+  // --- Optionally, add a random X-Forwarded-For header ---
+  request->headers.SetHeader("X-Forwarded-For", "24.48.0.1");
+
+
+  Profile* profile = Profile::FromBrowserContext(browser_context());
+  simple_url_loader_ = network::SimpleURLLoader::Create(std::move(request), net::DefineNetworkTrafficAnnotation("wootz_twitter_login_init", R"(
+      semantics {
+        sender: "Wootz Extension Twitter Login"
+      description: "Logs in to Twitter on behalf of the user using their credentials."
+      trigger: "User initiates a Twitter login via the extension."
+      data: "Twitter username and password, sent to Twitter's login API."
+        destination: WEBSITE
+      }
+      policy {
+        cookies_allowed: YES
+        cookies_store: "user"
+      setting: "This feature is only used when the user explicitly logs in to Twitter via the extension."
+        policy_exception_justification: "Not implemented."
+      }
+  )"));
+  simple_url_loader_->DownloadToString(
+      profile->GetDefaultStoragePartition()->GetURLLoaderFactoryForBrowserProcess().get(),
+      base::BindOnce(&WootzTwitterLoginFunction::OnGotGuestToken, this),
+      1024 * 1024);
+
+  return RespondLater();
+}
+
+void WootzTwitterLoginFunction::OnGotGuestToken(std::unique_ptr<std::string> response_body) {
+  LOG(INFO) << "WootzTwitterLoginFunction::OnGotGuestToken called";
+  int response_code = simple_url_loader_->NetError();
+  LOG(INFO) << "WootzTwitterLoginFunction: Response code: " << response_code;
+  if (!response_body) {
+    LOG(ERROR) << "WootzTwitterLoginFunction: Failed to get guest token (no response body)";
+    Respond(Error("Failed to get guest token"));
+    return;
+  }
+  LOG(INFO) << "WootzTwitterLoginFunction: Guest token response: " << *response_body;
+  absl::optional<base::Value> parsed = base::JSONReader::Read(*response_body);
+  if (!parsed || !parsed->is_dict()) {
+    LOG(ERROR) << "WootzTwitterLoginFunction: Invalid guest token response (not a dict)";
+    Respond(Error("Invalid guest token response"));
+    return;
+  }
+  const std::string* guest_token = parsed->GetDict().FindString("guest_token");
+  if (!guest_token) {
+    LOG(ERROR) << "WootzTwitterLoginFunction: No guest_token in response";
+    Respond(Error("No guest_token in response"));
+    return;
+  }
+  guest_token_ = *guest_token;
+  LOG(INFO) << "WootzTwitterLoginFunction: Got guest_token: " << guest_token_;
+
+  // Step 2: Start login flow
+  StartLoginFlow();
+}
+
+void WootzTwitterLoginFunction::StartLoginFlow() {
+  LOG(INFO) << "WootzTwitterLoginFunction: Starting login flow (init)...";
+  auto request = std::make_unique<network::ResourceRequest>();
+  request->url = GURL("https://api.twitter.com/1.1/onboarding/task.json");
+  request->method = "POST";
+  request->headers.SetHeader("authorization", "Bearer AAAAAAAAAAAAAAAAAAAAAVQODgEAAAAAVHTp76lzh3rFzcHbmHVvQxYYpTw%3DckAlMINMjmCwxUcaXbAN4XqJVdgMJaHqNOFgPMK0zN1qLqLQCF");
+  request->headers.SetHeader("x-guest-token", guest_token_);
+  request->headers.SetHeader("content-type", "application/json");
+  request->headers.SetHeader("x-twitter-auth-type", "OAuth2Client");
+
+  base::Value::Dict body;
+  body.Set("flow_name", "login");
+  base::Value::Dict flow_context;
+  flow_context.Set("debug_overrides", base::Value::Dict());
+  base::Value::Dict start_location;
+  start_location.Set("location", "splash_screen");
+  flow_context.Set("start_location", std::move(start_location));
+  base::Value::Dict input_flow_data;
+  input_flow_data.Set("flow_context", std::move(flow_context));
+  body.Set("input_flow_data", std::move(input_flow_data));
+
+  std::string body_str;
+  base::JSONWriter::Write(body, &body_str);
+
+  Profile* profile = Profile::FromBrowserContext(browser_context());
+  simple_url_loader_ = network::SimpleURLLoader::Create(std::move(request), net::DefineNetworkTrafficAnnotation("wootz_twitter_login_guest_token", R"(
+      semantics {
+        sender: "Wootz Extension Twitter Login"
+      description: "Logs in to Twitter on behalf of the user using their credentials."
+      trigger: "User initiates a Twitter login via the extension."
+      data: "Twitter username and password, sent to Twitter's login API."
+        destination: WEBSITE
+      }
+      policy {
+        cookies_allowed: YES
+        cookies_store: "user"
+      setting: "This feature is only used when the user explicitly logs in to Twitter via the extension."
+        policy_exception_justification: "Not implemented."
+      }
+  )"));
+  simple_url_loader_->AttachStringForUpload(body_str, "application/json");
+  simple_url_loader_->DownloadToString(
+      profile->GetDefaultStoragePartition()->GetURLLoaderFactoryForBrowserProcess().get(),
+      base::BindOnce(&WootzTwitterLoginFunction::OnLoginFlowResponse, this),
+      1024 * 1024);
+}
+
+void WootzTwitterLoginFunction::OnLoginFlowResponse(std::unique_ptr<std::string> response_body) {
+  LOG(INFO) << "WootzTwitterLoginFunction::OnLoginFlowResponse called";
+  if (!response_body) {
+    LOG(ERROR) << "WootzTwitterLoginFunction: No response body in login flow";
+    Respond(Error("No response from Twitter login flow"));
+    return;
+  }
+  absl::optional<base::Value> parsed = base::JSONReader::Read(*response_body);
+  if (!parsed || !parsed->is_dict()) {
+    LOG(ERROR) << "WootzTwitterLoginFunction: Invalid login flow response (not a dict)";
+    Respond(Error("Invalid login flow response"));
+    return;
+  }
+  const base::Value::Dict& dict = parsed->GetDict();
+  const std::string* flow_token = dict.FindString("flow_token");
+  if (!flow_token) {
+    LOG(ERROR) << "WootzTwitterLoginFunction: No flow_token in response";
+    Respond(Error("No flow_token in response"));
+    return;
+  }
+  flow_token_ = *flow_token;
+
+  // Handle subtasks
+  const base::Value::List* subtasks = dict.FindList("subtasks");
+  if (!subtasks) {
+    LOG(ERROR) << "WootzTwitterLoginFunction: No subtasks in response, assuming login complete";
+    base::Value::Dict result;
+    result.Set("success", true);
+    Respond(WithArguments(std::move(result)));
+    return;
+  }
+  HandleNextSubtask(*subtasks);
+}
+
+void WootzTwitterLoginFunction::HandleNextSubtask(const base::Value::List& subtasks) {
+  if (subtasks.empty()) {
+    LOG(INFO) << "WootzTwitterLoginFunction: No more subtasks, login flow complete";
+    base::Value::Dict result;
+    result.Set("success", true);
+    Respond(WithArguments(std::move(result)));
+    return;
+  }
+  const base::Value& subtask = subtasks[0];
+  if (!subtask.is_dict()) {
+    LOG(ERROR) << "WootzTwitterLoginFunction: Subtask is not a dict";
+    Respond(Error("Invalid subtask format"));
+    return;
+  }
+  const base::Value::Dict& subtask_dict = subtask.GetDict();
+  const std::string* subtask_id = subtask_dict.FindString("subtask_id");
+  if (!subtask_id) {
+    LOG(ERROR) << "WootzTwitterLoginFunction: No subtask_id in subtask";
+    Respond(Error("No subtask_id in subtask"));
+    return;
+  }
+  LOG(INFO) << "WootzTwitterLoginFunction: Handling subtask: " << *subtask_id;
+
+  if (*subtask_id == "LoginEnterUserIdentifierSSO") {
+    SubmitUsername();
+  } else if (*subtask_id == "LoginEnterPassword") {
+    SubmitPassword();
+  } else if (*subtask_id == "LoginTwoFactorAuthChallenge") {
+    SubmitTwoFactor();
+  } else if (*subtask_id == "LoginAcid") {
+    SubmitDuplicationCheck();
+  } else if (*subtask_id == "LoginEnterAlternateIdentifier") {
+    SubmitEmail();
+  } else if (*subtask_id == "AccountDuplicationCheck") {
+    SubmitDuplicationCheck();
+  } else if (*subtask_id == "LoginSuccessSubtask") {
+    base::Value::Dict result;
+    result.Set("success", true);
+    Respond(WithArguments(std::move(result)));
+  } else {
+    LOG(ERROR) << "WootzTwitterLoginFunction: Unknown subtask_id: " << *subtask_id;
+    Respond(Error("Unknown subtask_id: " + *subtask_id));
+  }
+}
+
+void WootzTwitterLoginFunction::SubmitUsername() {
+  LOG(INFO) << "WootzTwitterLoginFunction: Submitting username...";
+  auto request = std::make_unique<network::ResourceRequest>();
+  request->url = GURL("https://api.twitter.com/1.1/onboarding/task.json");
+  request->method = "POST";
+  request->headers.SetHeader("authorization", "Bearer AAAAAAAAAAAAAAAAAAAAAVQODgEAAAAAVHTp76lzh3rFzcHbmHVvQxYYpTw%3DckAlMINMjmCwxUcaXbAN4XqJVdgMJaHqNOFgPMK0zN1qLqLQCF");
+  request->headers.SetHeader("x-guest-token", guest_token_);
+  request->headers.SetHeader("content-type", "application/json");
+  request->headers.SetHeader("x-twitter-auth-type", "OAuth2Client");
+
+  base::Value::Dict body;
+  body.Set("flow_token", flow_token_);
+  base::Value::List subtask_inputs;
+  base::Value::Dict subtask;
+  subtask.Set("subtask_id", "LoginEnterUserIdentifierSSO");
+  base::Value::Dict settings_list;
+  base::Value::List setting_responses;
+  base::Value::Dict setting_response;
+  setting_response.Set("key", "user_identifier");
+  base::Value::Dict response_data;
+  base::Value::Dict text_data;
+  text_data.Set("result", username_);
+  response_data.Set("text_data", std::move(text_data));
+  setting_response.Set("response_data", std::move(response_data));
+  setting_responses.Append(std::move(setting_response));
+  settings_list.Set("setting_responses", std::move(setting_responses));
+  settings_list.Set("link", "next_link");
+  subtask.Set("settings_list", std::move(settings_list));
+  subtask_inputs.Append(std::move(subtask));
+  body.Set("subtask_inputs", std::move(subtask_inputs));
+
+  std::string body_str;
+  base::JSONWriter::Write(body, &body_str);
+
+  Profile* profile = Profile::FromBrowserContext(browser_context());
+  simple_url_loader_ = network::SimpleURLLoader::Create(std::move(request), net::DefineNetworkTrafficAnnotation("wootz_twitter_login_username", R"(
+    semantics { sender: "Wootz Extension Twitter Login" description: "Logs in to Twitter on behalf of the user using their credentials." trigger: "User initiates a Twitter login via the extension." data: "Twitter username and password, sent to Twitter's login API." destination: WEBSITE }
+    policy { cookies_allowed: YES cookies_store: "user" setting: "This feature is only used when the user explicitly logs in to Twitter via the extension." policy_exception_justification: "Not implemented." }
+  )"));
+  simple_url_loader_->AttachStringForUpload(body_str, "application/json");
+  simple_url_loader_->DownloadToString(
+      profile->GetDefaultStoragePartition()->GetURLLoaderFactoryForBrowserProcess().get(),
+      base::BindOnce(&WootzTwitterLoginFunction::OnSubtaskResponse, this),
+      1024 * 1024);
+}
+
+void WootzTwitterLoginFunction::SubmitPassword() {
+  LOG(INFO) << "WootzTwitterLoginFunction: Submitting password...";
+  auto request = std::make_unique<network::ResourceRequest>();
+  request->url = GURL("https://api.twitter.com/1.1/onboarding/task.json");
+  request->method = "POST";
+  request->headers.SetHeader("authorization", "Bearer AAAAAAAAAAAAAAAAAAAAAVQODgEAAAAAVHTp76lzh3rFzcHbmHVvQxYYpTw%3DckAlMINMjmCwxUcaXbAN4XqJVdgMJaHqNOFgPMK0zN1qLqLQCF");
+  request->headers.SetHeader("x-guest-token", guest_token_);
+  request->headers.SetHeader("content-type", "application/json");
+  request->headers.SetHeader("x-twitter-auth-type", "OAuth2Client");
+
+  base::Value::Dict body;
+  body.Set("flow_token", flow_token_);
+  base::Value::List subtask_inputs;
+  base::Value::Dict subtask;
+  subtask.Set("subtask_id", "LoginEnterPassword");
+  base::Value::Dict enter_password;
+  enter_password.Set("password", password_);
+  enter_password.Set("link", "next_link");
+  subtask.Set("enter_password", std::move(enter_password));
+  subtask_inputs.Append(std::move(subtask));
+  body.Set("subtask_inputs", std::move(subtask_inputs));
+
+  std::string body_str;
+  base::JSONWriter::Write(body, &body_str);
+
+  Profile* profile = Profile::FromBrowserContext(browser_context());
+  simple_url_loader_ = network::SimpleURLLoader::Create(std::move(request), net::DefineNetworkTrafficAnnotation("wootz_twitter_login_password", R"(
+    semantics { sender: "Wootz Extension Twitter Login" description: "Logs in to Twitter on behalf of the user using their credentials." trigger: "User initiates a Twitter login via the extension." data: "Twitter username and password, sent to Twitter's login API." destination: WEBSITE }
+    policy { cookies_allowed: YES cookies_store: "user" setting: "This feature is only used when the user explicitly logs in to Twitter via the extension." policy_exception_justification: "Not implemented." }
+  )"));
+  simple_url_loader_->AttachStringForUpload(body_str, "application/json");
+  simple_url_loader_->DownloadToString(
+      profile->GetDefaultStoragePartition()->GetURLLoaderFactoryForBrowserProcess().get(),
+      base::BindOnce(&WootzTwitterLoginFunction::OnSubtaskResponse, this),
+      1024 * 1024);
+}
+
+void WootzTwitterLoginFunction::SubmitTwoFactor() {
+  LOG(INFO) << "WootzTwitterLoginFunction: Submitting 2FA code...";
+  if (two_factor_secret_.empty()) {
+    Respond(Error("2FA required but not provided"));
+    return;
+  }
+  auto request = std::make_unique<network::ResourceRequest>();
+  request->url = GURL("https://api.twitter.com/1.1/onboarding/task.json");
+  request->method = "POST";
+  request->headers.SetHeader("authorization", "Bearer AAAAAAAAAAAAAAAAAAAAAVQODgEAAAAAVHTp76lzh3rFzcHbmHVvQxYYpTw%3DckAlMINMjmCwxUcaXbAN4XqJVdgMJaHqNOFgPMK0zN1qLqLQCF");
+  request->headers.SetHeader("x-guest-token", guest_token_);
+  request->headers.SetHeader("content-type", "application/json");
+  request->headers.SetHeader("x-twitter-auth-type", "OAuth2Client");
+
+  base::Value::Dict body;
+  body.Set("flow_token", flow_token_);
+  base::Value::List subtask_inputs;
+  base::Value::Dict subtask;
+  subtask.Set("subtask_id", "LoginTwoFactorAuthChallenge");
+  base::Value::Dict enter_text;
+  enter_text.Set("link", "next_link");
+  enter_text.Set("user_identifier", username_);
+  enter_text.Set("text", two_factor_secret_);
+  subtask.Set("enter_text", std::move(enter_text));
+  subtask_inputs.Append(std::move(subtask));
+  body.Set("subtask_inputs", std::move(subtask_inputs));
+
+  std::string body_str;
+  base::JSONWriter::Write(body, &body_str);
+
+  Profile* profile = Profile::FromBrowserContext(browser_context());
+  simple_url_loader_ = network::SimpleURLLoader::Create(std::move(request), net::DefineNetworkTrafficAnnotation("wootz_twitter_login_2fa", R"(
+    semantics { sender: "Wootz Extension Twitter Login" description: "Logs in to Twitter on behalf of the user using their credentials." trigger: "User initiates a Twitter login via the extension." data: "Twitter username and password, sent to Twitter's login API." destination: WEBSITE }
+    policy { cookies_allowed: YES cookies_store: "user" setting: "This feature is only used when the user explicitly logs in to Twitter via the extension." policy_exception_justification: "Not implemented." }
+  )"));
+  simple_url_loader_->AttachStringForUpload(body_str, "application/json");
+  simple_url_loader_->DownloadToString(
+      profile->GetDefaultStoragePartition()->GetURLLoaderFactoryForBrowserProcess().get(),
+      base::BindOnce(&WootzTwitterLoginFunction::OnSubtaskResponse, this),
+      1024 * 1024);
+}
+
+void WootzTwitterLoginFunction::SubmitEmail() {
+  LOG(INFO) << "WootzTwitterLoginFunction: Submitting email...";
+  if (email_.empty()) {
+    Respond(Error("Email required but not provided"));
+    return;
+  }
+  auto request = std::make_unique<network::ResourceRequest>();
+  request->url = GURL("https://api.twitter.com/1.1/onboarding/task.json");
+  request->method = "POST";
+  request->headers.SetHeader("authorization", "Bearer AAAAAAAAAAAAAAAAAAAAAVQODgEAAAAAVHTp76lzh3rFzcHbmHVvQxYYpTw%3DckAlMINMjmCwxUcaXbAN4XqJVdgMJaHqNOFgPMK0zN1qLqLQCF");
+  request->headers.SetHeader("x-guest-token", guest_token_);
+  request->headers.SetHeader("content-type", "application/json");
+  request->headers.SetHeader("x-twitter-auth-type", "OAuth2Client");
+
+  base::Value::Dict body;
+  body.Set("flow_token", flow_token_);
+  base::Value::List subtask_inputs;
+  base::Value::Dict subtask;
+  subtask.Set("subtask_id", "LoginEnterAlternateIdentifier");
+  base::Value::Dict enter_text;
+  enter_text.Set("link", "next_link");
+  enter_text.Set("text", email_);
+  subtask.Set("enter_text", std::move(enter_text));
+  subtask_inputs.Append(std::move(subtask));
+  body.Set("subtask_inputs", std::move(subtask_inputs));
+
+  std::string body_str;
+  base::JSONWriter::Write(body, &body_str);
+
+  Profile* profile = Profile::FromBrowserContext(browser_context());
+  simple_url_loader_ = network::SimpleURLLoader::Create(std::move(request), net::DefineNetworkTrafficAnnotation("wootz_twitter_login_email", R"(
+    semantics { sender: "Wootz Extension Twitter Login" description: "Logs in to Twitter on behalf of the user using their credentials." trigger: "User initiates a Twitter login via the extension." data: "Twitter username and password, sent to Twitter's login API." destination: WEBSITE }
+    policy { cookies_allowed: YES cookies_store: "user" setting: "This feature is only used when the user explicitly logs in to Twitter via the extension." policy_exception_justification: "Not implemented." }
+  )"));
+  simple_url_loader_->AttachStringForUpload(body_str, "application/json");
+  simple_url_loader_->DownloadToString(
+      profile->GetDefaultStoragePartition()->GetURLLoaderFactoryForBrowserProcess().get(),
+      base::BindOnce(&WootzTwitterLoginFunction::OnSubtaskResponse, this),
+      1024 * 1024);
+}
+
+void WootzTwitterLoginFunction::SubmitDuplicationCheck() {
+  LOG(INFO) << "WootzTwitterLoginFunction: Submitting duplication check...";
+  auto request = std::make_unique<network::ResourceRequest>();
+  request->url = GURL("https://api.twitter.com/1.1/onboarding/task.json");
+  request->method = "POST";
+  request->headers.SetHeader("authorization", "Bearer AAAAAAAAAAAAAAAAAAAAAVQODgEAAAAAVHTp76lzh3rFzcHbmHVvQxYYpTw%3DckAlMINMjmCwxUcaXbAN4XqJVdgMJaHqNOFgPMK0zN1qLqLQCF");
+  request->headers.SetHeader("x-guest-token", guest_token_);
+  request->headers.SetHeader("content-type", "application/json");
+  request->headers.SetHeader("x-twitter-auth-type", "OAuth2Client");
+
+  base::Value::Dict body;
+  body.Set("flow_token", flow_token_);
+  base::Value::List subtask_inputs;
+  base::Value::Dict subtask;
+  subtask.Set("subtask_id", "AccountDuplicationCheck");
+  base::Value::Dict check_logged_in_account;
+  check_logged_in_account.Set("link", "AccountDuplicationCheck_false");
+  subtask.Set("check_logged_in_account", std::move(check_logged_in_account));
+  subtask_inputs.Append(std::move(subtask));
+  body.Set("subtask_inputs", std::move(subtask_inputs));
+
+  std::string body_str;
+  base::JSONWriter::Write(body, &body_str);
+
+  Profile* profile = Profile::FromBrowserContext(browser_context());
+  simple_url_loader_ = network::SimpleURLLoader::Create(std::move(request), net::DefineNetworkTrafficAnnotation("wootz_twitter_login_duplication", R"(
+    semantics { sender: "Wootz Extension Twitter Login" description: "Logs in to Twitter on behalf of the user using their credentials." trigger: "User initiates a Twitter login via the extension." data: "Twitter username and password, sent to Twitter's login API." destination: WEBSITE }
+    policy { cookies_allowed: YES cookies_store: "user" setting: "This feature is only used when the user explicitly logs in to Twitter via the extension." policy_exception_justification: "Not implemented." }
+  )"));
+  simple_url_loader_->AttachStringForUpload(body_str, "application/json");
+  simple_url_loader_->DownloadToString(
+      profile->GetDefaultStoragePartition()->GetURLLoaderFactoryForBrowserProcess().get(),
+      base::BindOnce(&WootzTwitterLoginFunction::OnSubtaskResponse, this),
+      1024 * 1024);
+}
+
+void WootzTwitterLoginFunction::OnSubtaskResponse(std::unique_ptr<std::string> response_body) {
+  LOG(INFO) << "WootzTwitterLoginFunction::OnSubtaskResponse called";
+  if (!response_body) {
+    LOG(ERROR) << "WootzTwitterLoginFunction: No response body in subtask";
+    Respond(Error("No response from Twitter subtask"));
+    return;
+  }
+  absl::optional<base::Value> parsed = base::JSONReader::Read(*response_body);
+  if (!parsed || !parsed->is_dict()) {
+    LOG(ERROR) << "WootzTwitterLoginFunction: Invalid subtask response (not a dict)";
+    Respond(Error("Invalid subtask response"));
+    return;
+  }
+  const base::Value::Dict& dict = parsed->GetDict();
+  const std::string* flow_token = dict.FindString("flow_token");
+  if (flow_token) {
+    flow_token_ = *flow_token;
+  }
+  const base::Value::List* subtasks = dict.FindList("subtasks");
+  if (!subtasks || subtasks->empty()) {
+    LOG(INFO) << "WootzTwitterLoginFunction: No more subtasks, login flow complete";
+  base::Value::Dict result;
+  result.Set("success", true);
+  Respond(WithArguments(std::move(result)));
+    return;
+  }
+  HandleNextSubtask(*subtasks);
 }
 
 }  // namespace extensions

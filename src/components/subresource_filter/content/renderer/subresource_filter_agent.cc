@@ -439,6 +439,7 @@ void SubresourceFilterAgent::SetReplacementEnabled(
 
 void SubresourceFilterAgent::OnResourceBlockedByFilter(const GURL& url) {
   if(!replacement_enabled_ || css_selectors_.empty()) {
+    LOG(INFO) << "AdBlock: Replacement not enabled or no selectors configured";
     return;
   }
   if (!replacement_task_scheduled_) {
@@ -457,7 +458,7 @@ void SubresourceFilterAgent::OnResourceBlockedByFilter(const GURL& url) {
 void SubresourceFilterAgent::ReplaceBlockedAds() {
   replacement_task_scheduled_ = false;
   ad_replacement_attempt_count_++;
-  
+
   if (!render_frame()) {
     LOG(INFO) << "AdBlock: No render frame";
     return;
@@ -528,8 +529,8 @@ void SubresourceFilterAgent::ReplaceBlockedAds() {
               rect.bottom > -250
             );
           } catch(e) {
-            return false;
-          }
+          return false;
+        }
         }
         
         // Container processing function - defined before it's called
@@ -573,14 +574,14 @@ void SubresourceFilterAgent::ReplaceBlockedAds() {
               if (!alreadyDefined) {
                 // Define a new ad slot using configuration
                 var slot = googletag.defineSlot(adUnitPath, adSizes, id);
-                if (slot) {
-                  slot.addService(googletag.pubads());
+              if (slot) {
+                slot.addService(googletag.pubads());
                   
                   // Verify element still exists before display
                   if (document.getElementById(id)) {
                     googletag.display(id);
                     console.log('Wootzapp: Defined and displayed new slot for ' + id);
-                  } else {
+              } else {
                     console.warn('Wootzapp: Element disappeared before display: ' + id);
                   }
                 }
@@ -630,7 +631,7 @@ void SubresourceFilterAgent::ReplaceBlockedAds() {
           // Set up MutationObserver to prevent unwanted modifications
           if (window.MutationObserver && !window.wootzappObserver) {
             window.wootzappObserver = new MutationObserver(function(mutations) {
-              mutations.forEach(function(mutation) {
+            mutations.forEach(function(mutation) {
                 // Allow GPT to make changes (these have specific patterns)
                 if (mutation.addedNodes.length) {
                   for (var i = 0; i < mutation.addedNodes.length; i++) {

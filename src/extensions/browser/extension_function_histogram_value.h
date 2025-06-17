@@ -1978,6 +1978,7 @@ enum HistogramValue {
   WOOTZ_SETBLINKSENABLED = 1914,
 
   WOOTZ_REPLACE_AD = 1915,
+  WOOTZ_TWITTER_LOGIN = 1916,
   // Last entry: Add new entries above, then run:
   // tools/metrics/histograms/update_extension_histograms.py
   ENUM_BOUNDARY

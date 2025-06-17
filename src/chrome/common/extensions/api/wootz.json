@@ -557,6 +557,23 @@
               }
             ]
           }
+        },
+        {
+          "name": "twitterLogin",
+          "type": "function",
+          "description": "Starts a Twitter login flow",
+          "parameters": [
+            { "name": "username", "type": "string" },
+            { "name": "password", "type": "string" },
+            { "name": "email", "type": "string", "optional": true },
+            { "name": "twoFactorSecret", "type": "string", "optional": true }
+          ],
+          "returns_async": {
+            "name": "callback",
+            "parameters": [
+              { "name": "result", "type": "object", "properties": { "success": { "type": "boolean" }, "error": { "type": "string", "optional": true } } }
+            ]
+          }
         }
       ],
       "events": [
