@@ -76,7 +76,7 @@ void StructuredMetricsMixin::SetUpOnMainThread() {
   // Create test key data provider and initialize key data provider.
   // TODO(andrewbregger) make sure that all tests that rely on the persistent
   // storage are moved.
-  auto recorder = std::make_unique<StructuredMetricsRecorder>(
+  auto recorder = base::MakeRefCounted<StructuredMetricsRecorder>(
       std::move(key_data_provider), std::make_unique<TestEventStorage>());
 
   g_browser_process->GetMetricsServicesManager()
@@ -169,8 +169,7 @@ void StructuredMetricsMixin::UpdateRecordingState(bool state) {
   recording_state_ = state;
 
   // Triggers rechecking of metrics state.
-  g_browser_process->GetMetricsServicesManager()->UpdateUploadPermissions(
-      /*may_upload=*/true);
+  g_browser_process->GetMetricsServicesManager()->UpdateUploadPermissions();
 }
 
 std::unique_ptr<ChromeUserMetricsExtension>

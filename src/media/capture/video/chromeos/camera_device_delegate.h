@@ -5,6 +5,7 @@
 #ifndef MEDIA_CAPTURE_VIDEO_CHROMEOS_CAMERA_DEVICE_DELEGATE_H_
 #define MEDIA_CAPTURE_VIDEO_CHROMEOS_CAMERA_DEVICE_DELEGATE_H_
 
+#include <array>
 #include <memory>
 #include <optional>
 #include <queue>
@@ -14,6 +15,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/threading/sequence_bound.h"
+#include "media/capture/video/chromeos/camera_auto_framing_state_observer.h"
 #include "media/capture/video/chromeos/camera_device_context.h"
 #include "media/capture/video/chromeos/camera_effects_observer.h"
 #include "media/capture/video/chromeos/camera_hal_dispatcher_impl.h"
@@ -185,6 +187,7 @@ class CAPTURE_EXPORT CameraDeviceDelegate final
   base::WeakPtr<CameraDeviceDelegate> GetWeakPtr();
 
   void OnCameraEffectsChanged(cros::mojom::EffectsConfigPtr new_effects);
+  void OnAutoFramingStateChanged(cros::mojom::CameraAutoFramingState state);
 
  private:
   class StreamCaptureInterfaceImpl;
@@ -246,6 +249,7 @@ class CAPTURE_EXPORT CameraDeviceDelegate final
   // OnConstructDefaultStillCaptureRequestSettings triggers
   // |request_manager_| to request a still capture.
   void OnConstructedDefaultStillCaptureRequestSettings(
+      cros::mojom::Camera3RequestTemplate requset_template,
       cros::mojom::CameraMetadataPtr settings);
   // OnConstructedDefaultPortraitModeRequestSettings triggers
   // |request_manager_| to request portrait mode still captures.
@@ -326,6 +330,8 @@ class CAPTURE_EXPORT CameraDeviceDelegate final
 
   // Records current effects that is applied to camera hal server.
   cros::mojom::EffectsConfigPtr current_effects_;
+  std::optional<cros::mojom::CameraAutoFramingState>
+      current_auto_framing_state_;
 
   mojo::Remote<cros::mojom::Camera3DeviceOps> device_ops_;
 
@@ -368,6 +374,8 @@ class CAPTURE_EXPORT CameraDeviceDelegate final
   gfx::Rect active_array_size_;
 
   base::SequenceBound<CrosCameraEffectsObserver> camera_effects_observer_;
+  base::SequenceBound<CrosCameraAutoFramingStateObserver>
+      auto_framing_state_observer_;
 
   base::WeakPtrFactory<CameraDeviceDelegate> weak_ptr_factory_{this};
 };

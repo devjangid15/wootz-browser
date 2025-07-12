@@ -24,6 +24,7 @@
 #include "base/json/json_writer.h"
 #include "base/logging.h"
 #include "base/metrics/user_metrics.h"
+#include "base/notimplemented.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/lock.h"
@@ -37,12 +38,14 @@
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/global_routing_id.h"
 #include "content/public/browser/host_zoom_map.h"
 #include "content/public/browser/media_session.h"
 #include "content/public/browser/message_port_provider.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/permission_controller.h"
+#include "content/public/browser/permission_descriptor_util.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_widget_host.h"
@@ -199,7 +202,7 @@ FrameImplMap& WebContentsToFrameImplMap() {
   return frame_impl_map;
 }
 
-blink::PermissionType FidlPermissionTypeToContentPermissionType(
+std::optional<blink::PermissionType> FidlPermissionTypeToContentPermissionType(
     fuchsia::web::PermissionType fidl_type) {
   switch (fidl_type) {
     case fuchsia::web::PermissionType::MICROPHONE:
@@ -210,6 +213,10 @@ blink::PermissionType FidlPermissionTypeToContentPermissionType(
       return blink::PermissionType::PROTECTED_MEDIA_IDENTIFIER;
     case fuchsia::web::PermissionType::PERSISTENT_STORAGE:
       return blink::PermissionType::DURABLE_STORAGE;
+    case fuchsia::web::PermissionType::NOTIFICATIONS:
+      return blink::PermissionType::NOTIFICATIONS;
+    default:
+      return std::nullopt;
   }
 }
 
@@ -318,7 +325,6 @@ class AudioStreamBrokerFactory final
       const std::string& device_id,
       const media::AudioParameters& params,
       uint32_t shared_memory_count,
-      media::UserInputMonitorBase* user_input_monitor,
       bool enable_agc,
       media::mojom::AudioProcessingConfigPtr processing_config,
       content::AudioStreamBroker::DeleterCallback deleter,
@@ -326,9 +332,8 @@ class AudioStreamBrokerFactory final
           renderer_factory_client) final {
     return base_factory_->CreateAudioInputStreamBroker(
         render_process_id, render_frame_id, device_id, params,
-        shared_memory_count, user_input_monitor, enable_agc,
-        std::move(processing_config), std::move(deleter),
-        std::move(renderer_factory_client));
+        shared_memory_count, enable_agc, std::move(processing_config),
+        std::move(deleter), std::move(renderer_factory_client));
   }
 
   std::unique_ptr<content::AudioStreamBroker> CreateAudioLoopbackStreamBroker(
@@ -349,6 +354,7 @@ class AudioStreamBrokerFactory final
   std::unique_ptr<content::AudioStreamBroker> CreateAudioOutputStreamBroker(
       int render_process_id,
       int render_frame_id,
+      const content::GlobalRenderFrameHostToken& main_frame_token,
       int stream_id,
       const std::string& output_device_id,
       const media::AudioParameters& params,
@@ -364,8 +370,9 @@ class AudioStreamBrokerFactory final
           GetEffectFlagsForRenderUsage(output_usage_.value()));
     }
     return base_factory_->CreateAudioOutputStreamBroker(
-        render_process_id, render_frame_id, stream_id, output_device_id,
-        params_with_effects, group_id, std::move(deleter), std::move(client));
+        render_process_id, render_frame_id, main_frame_token, stream_id,
+        output_device_id, params_with_effects, group_id, std::move(deleter),
+        std::move(client));
   }
 
  private:
@@ -571,6 +578,7 @@ void FrameImpl::ExecuteJavaScriptInternal(std::vector<std::string> origins,
 }
 
 bool FrameImpl::IsWebContentsCreationOverridden(
+    content::RenderFrameHost* opener,
     content::SiteInstance* source_site_instance,
     content::mojom::WindowContainerType window_container_type,
     const GURL& opener_url,
@@ -595,7 +603,7 @@ bool FrameImpl::IsWebContentsCreationOverridden(
   return false;
 }
 
-void FrameImpl::AddNewContents(
+content::WebContents* FrameImpl::AddNewContents(
     content::WebContents* source,
     std::unique_ptr<content::WebContents> new_contents,
     const GURL& target_url,
@@ -615,7 +623,7 @@ void FrameImpl::AddNewContents(
       if (url_request_rewrite_rules_manager_.GetCachedRules()) {
         // There is no support for URL request rules rewriting with popups.
         *was_blocked = true;
-        return;
+        return nullptr;
       }
 
       auto* popup_creation_info =
@@ -645,7 +653,7 @@ void FrameImpl::AddNewContents(
       pending_popups_.emplace_back(popup_frame, std::move(frame_handle),
                                    std::move(popup_frame_creation_info));
       MaybeSendPopup();
-      return;
+      return nullptr;
     }
 
     // These kinds of windows don't produce Frames.
@@ -658,7 +666,7 @@ void FrameImpl::AddNewContents(
     case WindowOpenDisposition::UNKNOWN:
       NOTIMPLEMENTED() << "Dropped new web contents (disposition: "
                        << static_cast<int>(disposition) << ")";
-      return;
+      return nullptr;
   }
 }
 
@@ -798,7 +806,7 @@ void FrameImpl::UpdateRenderFrameZoomLevel(
       content::HostZoomMap::GetForWebContents(web_contents_.get());
   host_zoom_map->SetTemporaryZoomLevel(
       render_frame_host->GetGlobalId(),
-      blink::PageZoomFactorToZoomLevel(page_scale));
+      blink::ZoomFactorToZoomLevel(page_scale));
 }
 
 void FrameImpl::ConnectToAccessibilityBridge() {
@@ -1267,8 +1275,14 @@ void FrameImpl::SetPermissionState(
     return;
   }
 
-  blink::PermissionType type =
+  std::optional<blink::PermissionType> type =
       FidlPermissionTypeToContentPermissionType(fidl_permission.type());
+  if (!type) {
+    LOG(ERROR) << "SetPermissionState() called with invalid permission type: "
+               << static_cast<uint16_t>(fidl_permission.type()) << ".";
+    CloseAndDestroyFrame(ZX_ERR_INVALID_ARGS);
+    return;
+  }
 
   blink::mojom::PermissionStatus state =
       (fidl_state == fuchsia::web::PermissionState::GRANTED)
@@ -1278,8 +1292,8 @@ void FrameImpl::SetPermissionState(
   // TODO(crbug.com/40724536): Remove this once the PermissionManager API is
   // available.
   if (web_origin_string == "*" &&
-      type == blink::PermissionType::PROTECTED_MEDIA_IDENTIFIER) {
-    permission_controller_.SetDefaultPermissionState(type, state);
+      *type == blink::PermissionType::PROTECTED_MEDIA_IDENTIFIER) {
+    permission_controller_.SetDefaultPermissionState(*type, state);
     return;
   }
 
@@ -1292,7 +1306,7 @@ void FrameImpl::SetPermissionState(
     return;
   }
 
-  permission_controller_.SetPermissionState(type, web_origin.value(), state);
+  permission_controller_.SetPermissionState(*type, web_origin.value(), state);
 }
 
 void FrameImpl::GetPrivateMemorySize(GetPrivateMemorySizeCallback callback) {
@@ -1468,11 +1482,13 @@ void FrameImpl::RequestMediaAccessPermission(
     content::MediaResponseCallback callback) {
   DCHECK_EQ(web_contents_.get(), web_contents);
 
-  std::vector<blink::PermissionType> permissions;
+  std::vector<blink::mojom::PermissionDescriptorPtr> permissions;
 
   if (request.audio_type ==
       blink::mojom::MediaStreamType::DEVICE_AUDIO_CAPTURE) {
-    permissions.push_back(blink::PermissionType::AUDIO_CAPTURE);
+    permissions.push_back(content::PermissionDescriptorUtil::
+                              CreatePermissionDescriptorForPermissionType(
+                                  blink::PermissionType::AUDIO_CAPTURE));
   } else if (request.audio_type != blink::mojom::MediaStreamType::NO_SERVICE) {
     std::move(callback).Run(
         blink::mojom::StreamDevicesSet(),
@@ -1482,7 +1498,9 @@ void FrameImpl::RequestMediaAccessPermission(
 
   if (request.video_type ==
       blink::mojom::MediaStreamType::DEVICE_VIDEO_CAPTURE) {
-    permissions.push_back(blink::PermissionType::VIDEO_CAPTURE);
+    permissions.push_back(content::PermissionDescriptorUtil::
+                              CreatePermissionDescriptorForPermissionType(
+                                  blink::PermissionType::VIDEO_CAPTURE));
   } else if (request.video_type != blink::mojom::MediaStreamType::NO_SERVICE) {
     std::move(callback).Run(
         blink::mojom::StreamDevicesSet(),
@@ -1511,10 +1529,10 @@ void FrameImpl::RequestMediaAccessPermission(
   content::PermissionController* permission_controller =
       web_contents_->GetBrowserContext()->GetPermissionController();
   DCHECK(permission_controller);
-
   permission_controller->RequestPermissionsFromCurrentDocument(
       render_frame_host,
-      content::PermissionRequestDescription(permissions, request.user_gesture),
+      content::PermissionRequestDescription(std::move(permissions),
+                                            request.user_gesture),
       base::BindOnce(&HandleMediaPermissionsRequestResult, request,
                      std::move(callback)));
 }
@@ -1532,8 +1550,7 @@ bool FrameImpl::CheckMediaAccessPermission(
       permission = blink::PermissionType::VIDEO_CAPTURE;
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
-      return false;
+      NOTREACHED();
   }
 
   // TODO(crbug.com/40223767): Remove `security_origin`.
@@ -1546,8 +1563,9 @@ bool FrameImpl::CheckMediaAccessPermission(
   DCHECK(permission_controller);
 
   return permission_controller->GetPermissionStatusForCurrentDocument(
-             permission, render_frame_host) ==
-         blink::mojom::PermissionStatus::GRANTED;
+             content::PermissionDescriptorUtil::
+                 CreatePermissionDescriptorForPermissionType(permission),
+             render_frame_host) == blink::mojom::PermissionStatus::GRANTED;
 }
 
 std::unique_ptr<content::AudioStreamBrokerFactory>
@@ -1645,9 +1663,12 @@ void FrameImpl::SetAccessibilityEnabled(bool enabled) {
   if (!enabled) {
     scoped_accessibility_mode_.reset();
   } else if (!scoped_accessibility_mode_) {
+    // Fuchsia a11y only has one consumer, which is the Fuchsia screen reader.
     scoped_accessibility_mode_ =
         content::BrowserAccessibilityState::GetInstance()
-            ->CreateScopedModeForProcess(ui::kAXModeComplete);
+            ->CreateScopedModeForProcess(ui::kAXModeComplete |
+                                         ui::AXMode::kFromPlatform |
+                                         ui::AXMode::kScreenReader);
   }
 }
 

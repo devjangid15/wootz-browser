@@ -17,10 +17,6 @@
 #include "extensions/renderer/bindings/api_binding_types.h"
 #include "v8/include/v8-forward.h"
 
-namespace base {
-class Value;
-}
-
 namespace gin {
 class Arguments;
 }
@@ -81,7 +77,7 @@ class OneTimeMessageHandler {
   // Returns true if the given context has a port with the specified id.
   bool HasPort(ScriptContext* script_context, const PortId& port_id);
 
-  // Initiates a flow to send a message from the given |script_context|. Returns
+  // Initiates a flow to send a message from the given `script_context`. Returns
   // the associated promise if this is a promise based request, otherwise
   // returns an empty promise.
   v8::Local<v8::Promise> SendMessage(
@@ -97,7 +93,7 @@ class OneTimeMessageHandler {
       mojo::PendingAssociatedReceiver<mojom::MessagePortHost>
           message_port_host_receiver);
 
-  // Adds a receiving port port to the given |script_context| in preparation
+  // Adds a receiving port port to the given `script_context` in preparation
   // for receiving a message to post to the onMessage event.
   void AddReceiver(ScriptContext* script_context,
                    const PortId& target_port_id,
@@ -114,7 +110,7 @@ class OneTimeMessageHandler {
           message_port_host_receiver);
 
   // Delivers a message to the port, either the event listener or in response
-  // to the sender, if one exists with the specified |target_port_id|. Returns
+  // to the sender, if one exists with the specified `target_port_id`. Returns
   // true if a message was delivered (i.e., an open channel existed), and false
   // otherwise.
   bool DeliverMessage(ScriptContext* script_context,
@@ -122,7 +118,7 @@ class OneTimeMessageHandler {
                       const PortId& target_port_id);
 
   // Disconnects the port in the context, if one exists with the specified
-  // |target_port_id|. Returns true if a port was disconnected (i.e., an open
+  // `target_port_id`. Returns true if a port was disconnected (i.e., an open
   // channel existed), and false otherwise.
   bool Disconnect(ScriptContext* script_context,
                   const PortId& port_id,
@@ -158,7 +154,7 @@ class OneTimeMessageHandler {
 
   // Triggered when the callback for replying is garbage collected. Used to
   // clean up data that was stored for the callback and for closing the
-  // associated message port. |raw_callback| is a raw pointer to the associated
+  // associated message port. `raw_callback` is a raw pointer to the associated
   // OneTimeMessageCallback, needed for finding and erasing it from the
   // OneTimeMessageContextData.
   void OnResponseCallbackCollected(ScriptContext* script_context,
@@ -167,9 +163,7 @@ class OneTimeMessageHandler {
 
   // Called when the messaging event has been dispatched with the result of the
   // listeners.
-  void OnEventFired(const PortId& port_id,
-                    v8::Local<v8::Context> context,
-                    std::optional<base::Value> result);
+  void OnEventFired(const PortId& port_id, gin::Arguments* arguments);
 
   // The associated bindings system. Outlives this object.
   const raw_ptr<NativeExtensionBindingsSystem> bindings_system_;

@@ -37,8 +37,8 @@ class AffiliatedMatchHelper {
   // Callback to returns the list of affiliated signon_realms (as per defined in
   // PasswordForm) to the caller.
   using AffiliatedRealmsCallback =
-      base::OnceCallback<void(std::vector<std::string> affiliations,
-                              std::vector<std::string> groups)>;
+      base::OnceCallback<void(std::vector<affiliations::Facet> affiliations,
+                              std::vector<affiliations::Facet> groups)>;
 
   using PSLExtensionCallback =
       base::OnceCallback<void(const base::flat_set<std::string>&)>;
@@ -73,7 +73,6 @@ class AffiliatedMatchHelper {
   static bool IsValidWebCredential(const PasswordFormDigest& form);
 
  private:
-
   // Called back by AffiliationService to supply the list of facets
   // affiliated with the Android credential in |form|. Injects affiliation and
   // branding information by setting |affiliated_web_realm|, |app_display_name|

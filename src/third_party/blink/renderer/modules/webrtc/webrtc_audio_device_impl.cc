@@ -11,6 +11,7 @@
 #include "base/trace_event/trace_event.h"
 #include "media/base/audio_bus.h"
 #include "media/base/audio_parameters.h"
+#include "media/base/audio_sample_types.h"
 #include "media/base/audio_timestamp_helper.h"
 #include "media/base/sample_rates.h"
 #include "third_party/blink/public/platform/modules/webrtc/webrtc_logging.h"
@@ -57,8 +58,8 @@ void WebRtcAudioDeviceImpl::RenderData(
     base::TimeDelta audio_delay,
     base::TimeDelta* current_time,
     const media::AudioGlitchInfo& glitch_info) {
-  TRACE_EVENT2("audio", "WebRtcAudioDeviceImpl::RenderData", "sample_rate",
-               sample_rate, "audio_delay_ms", audio_delay.InMilliseconds());
+  TRACE_EVENT("audio", "WebRtcAudioDeviceImpl::RenderData", "sample_rate",
+              sample_rate, "playout_delay (ms)", audio_delay.InMillisecondsF());
   {
     base::AutoLock auto_lock(lock_);
     cumulative_glitch_info_ += glitch_info;

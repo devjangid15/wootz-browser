@@ -15,8 +15,15 @@ namespace chromecast {
 namespace media {
 
 MediaPipelineBackendStarboard::MediaPipelineBackendStarboard(
+    const MediaPipelineDeviceParams& params,
     StarboardVideoPlane* video_plane)
-    : starboard_(GetStarboardApiWrapper()), video_plane_(video_plane) {
+    : starboard_(GetStarboardApiWrapper()),
+      video_plane_(video_plane),
+      is_streaming_(
+          params.sync_type ==
+              MediaPipelineDeviceParams::MediaSyncType::kModeIgnorePts ||
+          params.sync_type == MediaPipelineDeviceParams::MediaSyncType::
+                                  kModeIgnorePtsAndVSync) {
   DCHECK(video_plane_);
   CHECK(base::SequencedTaskRunner::HasCurrentDefault());
   media_task_runner_ = base::SequencedTaskRunner::GetCurrentDefault();
@@ -25,12 +32,16 @@ MediaPipelineBackendStarboard::MediaPipelineBackendStarboard(
           media_task_runner_,
           base::BindRepeating(&MediaPipelineBackendStarboard::OnGeometryChanged,
                               weak_factory_.GetWeakPtr())));
+
+  LOG(INFO) << "Constructed a MediaPipelineBackendStarboard"
+            << (is_streaming_ ? " for streaming" : "");
 }
 
 MediaPipelineBackendStarboard::~MediaPipelineBackendStarboard() {
   DCHECK(media_task_runner_->RunsTasksInCurrentSequence());
   video_plane_->UnregisterCallback(video_plane_callback_token_);
   if (player_) {
+    LOG(INFO) << "Destroying SbPlayer";
     starboard_->DestroyPlayer(player_);
   }
 }
@@ -210,19 +221,51 @@ void MediaPipelineBackendStarboard::OnGeometryChanged(
 void MediaPipelineBackendStarboard::CreatePlayer() {
   DCHECK(media_task_runner_->RunsTasksInCurrentSequence());
 
+  bool has_drm = false;
   StarboardPlayerCreationParam params = {};
   if (audio_decoder_) {
     const std::optional<StarboardAudioSampleInfo>& audio_info =
         audio_decoder_->GetAudioSampleInfo();
     CHECK(audio_info);
     params.audio_sample_info = *audio_info;
+
+    std::optional<EncryptionScheme> encryption_scheme =
+        audio_decoder_->GetEncryptionScheme();
+    if (encryption_scheme.has_value() &&
+        *encryption_scheme != EncryptionScheme::kUnencrypted) {
+      has_drm = true;
+    }
   }
   if (video_decoder_) {
     const std::optional<StarboardVideoSampleInfo>& video_info =
         video_decoder_->GetVideoSampleInfo();
     CHECK(video_info);
     params.video_sample_info = *video_info;
+    if (is_streaming_) {
+      // Note: this is not part of the official starboard API. We are using this
+      // arbitrary string value to inform the starboard impl that they should
+      // prioritize minimizing latency (render the frames as soon as possible).
+      params.video_sample_info.max_video_capabilities = "streaming=1";
+    }
+
+    std::optional<EncryptionScheme> encryption_scheme =
+        video_decoder_->GetEncryptionScheme();
+    if (encryption_scheme.has_value() &&
+        *encryption_scheme != EncryptionScheme::kUnencrypted) {
+      has_drm = true;
+    }
   }
+
+  if (has_drm) {
+    LOG(INFO) << "Content is encrypted. Passing an SbDrmSystem to SbPlayer.";
+    drm_resource_.emplace();
+    params.drm_system = StarboardDrmWrapper::GetInstance().GetDrmSystem();
+  } else {
+    LOG(INFO)
+        << "Content is not encrypted. Passing a null SbDrmSystem to SbPlayer.";
+    params.drm_system = nullptr;
+  }
+
   params.output_mode = kStarboardPlayerOutputModePunchOut;
   player_ =
       starboard_->CreatePlayer(&params,
@@ -337,7 +380,7 @@ void MediaPipelineBackendStarboard::CallOnPlayerError(
     void* player,
     void* context,
     StarboardPlayerError error,
-    const char* message) {
+    std::string message) {
   static_cast<MediaPipelineBackendStarboard*>(context)->OnPlayerError(
       player, error, message);
 }

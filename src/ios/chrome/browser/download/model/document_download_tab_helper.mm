@@ -8,6 +8,7 @@
 #import "base/functional/callback.h"
 #import "base/metrics/histogram_functions.h"
 #import "base/strings/string_number_conversions.h"
+#import "base/strings/string_util.h"
 #import "base/task/sequenced_task_runner.h"
 #import "ios/chrome/browser/download/model/document_download_tab_helper_metrics.h"
 #import "ios/chrome/browser/download/model/download_manager_tab_helper.h"
@@ -78,6 +79,10 @@ DocumentDownloadTabHelper::~DocumentDownloadTabHelper() {
     web_state_->RemoveObserver(this);
     web_state_ = nullptr;
   }
+}
+
+bool DocumentDownloadTabHelper::IsDownloadTaskCreatedByCurrentTabHelper() {
+  return current_task_is_document_download_;
 }
 
 #pragma mark - web::WebStateObserver
@@ -153,12 +158,13 @@ void DocumentDownloadTabHelper::DidFinishNavigation(
   if (!headers) {
     return;
   }
-  std::string content_size;
-  if (!headers->GetNormalizedHeader("Content-Length", &content_size)) {
+  std::optional<std::string> content_size =
+      headers->GetNormalizedHeader("Content-Length");
+  if (!content_size) {
     return;
   }
   int64_t file_size;
-  if (!base::StringToInt64(content_size, &file_size)) {
+  if (!base::StringToInt64(*content_size, &file_size)) {
     return;
   }
   file_size_ = file_size <= 0 ? -1 : file_size;
@@ -179,10 +185,13 @@ void DocumentDownloadTabHelper::PageLoaded(
       (!web_state->ContentIsHTML() &&
        !base::StartsWith(web_state->GetContentsMimeType(), "video/"));
 
-  // Only triggers on http(s) or external file.
+  // Only triggers on http(s).
   GURL url = web_state->GetLastCommittedURL();
-  should_trigger = should_trigger && (url.SchemeIsHTTPOrHTTPS() ||
-                                      url.host() == kChromeUIExternalFileHost);
+  should_trigger = should_trigger && url.SchemeIsHTTPOrHTTPS();
+
+  // Only trigger when download is not restricted.
+  should_trigger = should_trigger &&
+                   !DownloadManagerTabHelper::ShouldRestrictDownload(web_state);
 
   if (should_trigger) {
     base::UmaHistogramEnumeration(kIOSDocumentDownloadMimeType,
@@ -352,5 +361,3 @@ void DocumentDownloadTabHelper::OnPreviousTaskDeleted() {
   }
   AttachFullscreen();
 }
-
-WEB_STATE_USER_DATA_KEY_IMPL(DocumentDownloadTabHelper)

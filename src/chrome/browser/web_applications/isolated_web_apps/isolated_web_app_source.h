@@ -6,13 +6,15 @@
 #define CHROME_BROWSER_WEB_APPLICATIONS_ISOLATED_WEB_APPS_ISOLATED_WEB_APP_SOURCE_H_
 
 #include <iosfwd>
+#include <optional>
 #include <type_traits>
+#include <variant>
 
 #include "base/files/file_path.h"
 #include "base/types/expected.h"
 #include "base/values.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_storage_location.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
+#include "components/web_package/signed_web_bundles/signed_web_bundle_id.h"
 #include "url/origin.h"
 
 namespace web_app {
@@ -60,25 +62,40 @@ class IwaSourceProxy;
 
 class IwaSourceProxy {
  public:
-  explicit IwaSourceProxy(url::Origin proxy_url);
+  // `explicit_bundle_id` will be used as bundle id for this Web App,
+  // instead of randomly generated one. Must be type proxy.
+  explicit IwaSourceProxy(url::Origin proxy_url,
+                          std::optional<web_package::SignedWebBundleId>
+                              explicit_bundle_id = std::nullopt);
   ~IwaSourceProxy();
+
+  IwaSourceProxy(const IwaSourceProxy&);
+  IwaSourceProxy& operator=(const IwaSourceProxy&);
+  IwaSourceProxy(IwaSourceProxy&&);
+  IwaSourceProxy& operator=(IwaSourceProxy&&);
 
   bool operator==(const IwaSourceProxy&) const;
 
   const url::Origin proxy_url() const { return proxy_url_; }
+  const std::optional<web_package::SignedWebBundleId>& explicit_bundle_id()
+      const {
+    return explicit_bundle_id_;
+  }
   bool dev_mode() const { return true; }
 
   base::Value ToDebugValue() const;
 
  private:
   url::Origin proxy_url_;
+  // Optionally a bundle_id can be provided. Otherwise
+  // this IWA would have a randomly generated one.
+  std::optional<web_package::SignedWebBundleId> explicit_bundle_id_;
 };
 std::ostream& operator<<(std::ostream& os, const IwaSourceProxy& source);
 
 enum class IwaSourceBundleModeAndFileOp {
   kDevModeCopy,
   kDevModeMove,
-  kDevModeReference,
 
   kProdModeCopy,
   kProdModeMove,
@@ -90,7 +107,6 @@ std::ostream& operator<<(std::ostream& os,
 enum class IwaSourceBundleDevFileOp {
   kCopy,
   kMove,
-  kReference,
 };
 std::ostream& operator<<(std::ostream& os, IwaSourceBundleDevFileOp file_op);
 
@@ -100,18 +116,6 @@ enum class IwaSourceBundleProdFileOp {
   // References are not allowed outside of dev mode.
 };
 std::ostream& operator<<(std::ostream& os, IwaSourceBundleProdFileOp file_op);
-
-// TODO(crbug.com/40286084): Currently, we do not copy/move bundles installed in
-// dev mode (via CLI or dev mode UI) into the profile directory, but instead
-// just reference them. This is because, ideally, we'd like the browser to use
-// an updated bundle as soon as the user generates a new bundle. However, our
-// bundle reading code is currently not able to deal with bundles that mutate
-// while the browser is running, which causes the bundle reading code to produce
-// garbage when the bundle is modified. We could either fix the bundle reading
-// code for unowned dev-mode bundles, or change this to move/copy the bundle
-// instead.
-inline constexpr IwaSourceBundleDevFileOp kDefaultBundleDevFileOp =
-    IwaSourceBundleDevFileOp::kReference;
 
 namespace internal {
 
@@ -295,7 +299,7 @@ std::ostream& operator<<(std::ostream& os,
 
 class IwaSource {
  public:
-  using Variant = absl::variant<IwaSourceBundle, IwaSourceProxy>;
+  using Variant = std::variant<IwaSourceBundle, IwaSourceProxy>;
 
   template <typename V>
   // NOLINTNEXTLINE(google-explicit-constructor)
@@ -328,7 +332,7 @@ class IwaSourceWithMode {
  public:
   friend class IwaSource;
 
-  using Variant = absl::variant<IwaSourceBundleWithMode, IwaSourceProxy>;
+  using Variant = std::variant<IwaSourceBundleWithMode, IwaSourceProxy>;
 
   static IwaSourceWithMode FromStorageLocation(
       const base::FilePath& profile_dir,
@@ -374,12 +378,12 @@ class IwaSourceDevMode {
  public:
   friend class IwaSourceWithMode;
 
-  using Variant = absl::variant<IwaSourceBundleDevMode, IwaSourceProxy>;
+  using Variant = std::variant<IwaSourceBundleDevMode, IwaSourceProxy>;
 
   // Attempt to convert the provided `storage_location` into an instance of
   // `IwaSourceDevMode`. Will fail with an unexpected if the storage location is
   // not a dev mode storage location.
-  static base::expected<IwaSourceDevMode, absl::monostate> FromStorageLocation(
+  static base::expected<IwaSourceDevMode, std::monostate> FromStorageLocation(
       const base::FilePath& profile_dir,
       const IsolatedWebAppStorageLocation& storage_location);
 
@@ -417,12 +421,12 @@ class IwaSourceProdMode {
 
   // Even though there is just one type in the variant, we use a variant for
   // consistency.
-  using Variant = absl::variant<IwaSourceBundleProdMode>;
+  using Variant = std::variant<IwaSourceBundleProdMode>;
 
   // Attempt to convert the provided `storage_location` into an instance of
   // `IwaSourceProdMode`. Will fail with an unexpected if the storage location
   // is not a prod mode storage location.
-  static base::expected<IwaSourceProdMode, absl::monostate> FromStorageLocation(
+  static base::expected<IwaSourceProdMode, std::monostate> FromStorageLocation(
       const base::FilePath& profile_dir,
       const IsolatedWebAppStorageLocation& storage_location);
 
@@ -460,7 +464,7 @@ class IwaSourceWithModeAndFileOp {
   friend class IwaSourceWithMode;
 
   using Variant =
-      absl::variant<IwaSourceBundleWithModeAndFileOp, IwaSourceProxy>;
+      std::variant<IwaSourceBundleWithModeAndFileOp, IwaSourceProxy>;
 
   template <typename V>
   // NOLINTNEXTLINE(google-explicit-constructor)
@@ -498,7 +502,7 @@ class IwaSourceDevModeWithFileOp {
   friend class IwaSourceWithModeAndFileOp;
 
   using Variant =
-      absl::variant<IwaSourceBundleDevModeWithFileOp, IwaSourceProxy>;
+      std::variant<IwaSourceBundleDevModeWithFileOp, IwaSourceProxy>;
 
   template <typename V>
   // NOLINTNEXTLINE(google-explicit-constructor)
@@ -531,7 +535,7 @@ class IwaSourceProdModeWithFileOp {
 
   // Even though there is just one type in the variant, we use a variant for
   // consistency.
-  using Variant = absl::variant<IwaSourceBundleProdModeWithFileOp>;
+  using Variant = std::variant<IwaSourceBundleProdModeWithFileOp>;
 
   template <typename V>
   // NOLINTNEXTLINE(google-explicit-constructor)

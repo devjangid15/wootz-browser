@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.toolbar;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.Context;
 import android.text.SpannableStringBuilder;
 import android.text.TextUtils;
@@ -12,8 +14,6 @@ import android.util.LruCache;
 import androidx.annotation.ColorInt;
 import androidx.annotation.ColorRes;
 import androidx.annotation.DrawableRes;
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.annotation.StringRes;
 import androidx.annotation.VisibleForTesting;
 
@@ -22,8 +22,9 @@ import org.jni_zero.NativeMethods;
 
 import org.chromium.base.ObserverList;
 import org.chromium.base.TraceEvent;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
-import org.chromium.chrome.browser.layouts.LayoutStateProvider;
+import org.chromium.build.annotations.EnsuresNonNullIf;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.omnibox.ChromeAutocompleteSchemeClassifier;
 import org.chromium.chrome.browser.omnibox.LocationBarDataProvider;
 import org.chromium.chrome.browser.omnibox.NewTabPageDelegate;
@@ -31,17 +32,20 @@ import org.chromium.chrome.browser.omnibox.SearchEngineUtils;
 import org.chromium.chrome.browser.omnibox.UrlBarData;
 import org.chromium.chrome.browser.omnibox.styles.OmniboxResourceProvider;
 import org.chromium.chrome.browser.paint_preview.TabbedPaintPreview;
+import org.chromium.chrome.browser.pdf.PdfUtils;
+import org.chromium.chrome.browser.pdf.PdfUtils.PdfPageType;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TrustedCdn;
+import org.chromium.chrome.browser.theme.SurfaceColorUpdateUtils;
 import org.chromium.chrome.browser.theme.ThemeUtils;
 import org.chromium.chrome.browser.ui.theme.BrandedColorScheme;
-import org.chromium.components.browser_ui.styles.ChromeColors;
 import org.chromium.components.dom_distiller.core.DomDistillerUrlUtils;
 import org.chromium.components.embedder_support.util.UrlConstants;
 import org.chromium.components.embedder_support.util.UrlUtilities;
 import org.chromium.components.metrics.OmniboxEventProtos.OmniboxEventProto.PageClassification;
 import org.chromium.components.omnibox.AutocompleteSchemeClassifier;
+import org.chromium.components.omnibox.OmniboxFeatures;
 import org.chromium.components.omnibox.OmniboxUrlEmphasizer;
 import org.chromium.components.omnibox.SecurityStatusIcon;
 import org.chromium.components.security_state.ConnectionSecurityLevel;
@@ -52,12 +56,13 @@ import org.chromium.url.GURL;
 import java.util.Objects;
 
 /** Provides a way of accessing toolbar data and state. */
+@NullMarked
 public class LocationBarModel implements ToolbarDataProvider, LocationBarDataProvider {
     private static final int LRU_CACHE_SIZE = 10;
 
     static class SpannableDisplayTextCacheKey {
-        @NonNull private final String mUrl;
-        @NonNull private final String mDisplayText;
+        private final String mUrl;
+        private final String mDisplayText;
         private final int mSecurityLevel;
         private final int mNonEmphasizedColor;
         private final int mEmphasizedColor;
@@ -65,8 +70,8 @@ public class LocationBarModel implements ToolbarDataProvider, LocationBarDataPro
         private final int mSecureColor;
 
         private SpannableDisplayTextCacheKey(
-                @NonNull String url,
-                @NonNull String displayText,
+                String url,
+                String displayText,
                 int securityLevel,
                 int nonEmphasizedColor,
                 int emphasizedColor,
@@ -133,35 +138,33 @@ public class LocationBarModel implements ToolbarDataProvider, LocationBarDataPro
 
     private final Context mContext;
     private final NewTabPageDelegate mNtpDelegate;
-    private final @NonNull UrlFormatter mUrlFormatter;
-    private final @NonNull OfflineStatus mOfflineStatus;
+    private final UrlFormatter mUrlFormatter;
+    private final OfflineStatus mOfflineStatus;
     // Always null if optimizations are disabled. Otherwise, non-null and unchanging following
     // native init. Always tied to the original profile which is safe because no underlying
     // services have an incognito-specific instance.
-    @Nullable private AutocompleteSchemeClassifier mChromeAutocompleteSchemeClassifier;
-    @Nullable private Profile mProfile;
+    private @Nullable AutocompleteSchemeClassifier mChromeAutocompleteSchemeClassifier;
+    private @Nullable Profile mProfile;
     private boolean mInitializedProfileDependentFeatures;
 
-    @Nullable
-    private LruCache<SpannableDisplayTextCacheKey, SpannableStringBuilder>
+    private @Nullable LruCache<SpannableDisplayTextCacheKey, SpannableStringBuilder>
             mSpannableDisplayTextCache;
 
-    private Tab mTab;
+    private @Nullable Tab mTab;
     private int mPrimaryColor;
-    private LayoutStateProvider mLayoutStateProvider;
 
-    private boolean mIsIncognito;
+    private boolean mIsIncognitoBranded;
+    private boolean mIsOffTheRecord;
     private boolean mIsUsingBrandColor;
-    private boolean mShouldShowOmniboxInOverviewMode;
-    private boolean mIsShowingStartSurface;
 
     private long mNativeLocationBarModelAndroid;
-    private ObserverList<LocationBarDataProvider.Observer> mLocationBarDataObservers =
+    private final ObserverList<LocationBarDataProvider.Observer> mLocationBarDataObservers =
+            new ObserverList<>();
+    private final ObserverList<ToolbarDataProvider.Observer> mToolbarDataObservers =
             new ObserverList<>();
     protected GURL mVisibleGurl = GURL.emptyGURL();
     protected String mFormattedFullUrl;
     protected String mUrlForDisplay;
-    private boolean mOmniboxUpdatedConnectionSecurityIndicatorsEnabled;
 
     // notifyUrlChanged and notifySecurityStateChanged are usually called 3 times across a same
     // document navigation. The first call is usually necessary, which updates the UrlBar to reflect
@@ -184,22 +187,20 @@ public class LocationBarModel implements ToolbarDataProvider, LocationBarDataPro
     public LocationBarModel(
             Context context,
             NewTabPageDelegate newTabPageDelegate,
-            @NonNull UrlFormatter urlFormatter,
-            @NonNull OfflineStatus offlineStatus) {
+            UrlFormatter urlFormatter,
+            OfflineStatus offlineStatus) {
         mContext = context;
         mNtpDelegate = newTabPageDelegate;
         mUrlFormatter = urlFormatter;
         mOfflineStatus = offlineStatus;
-        mPrimaryColor = ChromeColors.getDefaultThemeColor(context, false);
+        mPrimaryColor =
+                SurfaceColorUpdateUtils.getDefaultThemeColor(context, /* isIncognito= */ false);
         mUrlForDisplay = "";
         mFormattedFullUrl = "";
     }
 
     /** Handle any initialization that must occur after native has been initialized. */
     public void initializeWithNative() {
-        mOmniboxUpdatedConnectionSecurityIndicatorsEnabled =
-                ChromeFeatureList.isEnabled(
-                        ChromeFeatureList.OMNIBOX_UPDATED_CONNECTION_SECURITY_INDICATORS);
         mNativeLocationBarModelAndroid = LocationBarModelJni.get().init(LocationBarModel.this);
         mSpannableDisplayTextCache = new LruCache<>(LRU_CACHE_SIZE);
     }
@@ -209,12 +210,14 @@ public class LocationBarModel implements ToolbarDataProvider, LocationBarDataPro
         assert mProfile != null;
         mInitializedProfileDependentFeatures = true;
 
+        assumeNonNull(getProfile());
         mChromeAutocompleteSchemeClassifier =
                 new ChromeAutocompleteSchemeClassifier(getProfile().getOriginalProfile());
         recalculateFormattedUrls();
     }
 
     /** Destroys the native LocationBarModel. */
+    @SuppressWarnings("NullAway")
     public void destroy() {
         if (mChromeAutocompleteSchemeClassifier != null) {
             mChromeAutocompleteSchemeClassifier.destroy();
@@ -229,7 +232,7 @@ public class LocationBarModel implements ToolbarDataProvider, LocationBarDataPro
      * @return The currently active WebContents being used by the Toolbar.
      */
     @CalledByNative
-    private WebContents getActiveWebContents() {
+    private @Nullable WebContents getActiveWebContents() {
         if (!hasTab()) return null;
         return mTab.getWebContents();
     }
@@ -241,34 +244,42 @@ public class LocationBarModel implements ToolbarDataProvider, LocationBarDataPro
      * @param profile The profile associated with the currently selected model, which must match the
      *     passed in tab if non-null.
      */
-    public void setTab(@Nullable Tab tab, @NonNull Profile profile) {
+    public void setTab(@Nullable Tab tab, Profile profile) {
         assert tab == null || tab.getProfile() == profile;
         assert profile != null;
 
+        boolean isTabChanging = mTab != tab;
+        Tab previousTab = mTab;
         mTab = tab;
         mProfile = profile;
         performProfileDependentInitializationIfRequired();
 
-        boolean isIncognito = profile.isOffTheRecord();
+        boolean isOffTheRecord = profile.isOffTheRecord();
+        boolean isIncognitoBranded = profile.isIncognitoBranded();
 
-        if (mIsIncognito != isIncognito) {
-            mIsIncognito = isIncognito;
+        if (mIsOffTheRecord != isOffTheRecord || mIsIncognitoBranded != isIncognitoBranded) {
+            mIsOffTheRecord = isOffTheRecord;
+            mIsIncognitoBranded = isIncognitoBranded;
             notifyIncognitoStateChanged();
         }
 
         updateUsingBrandColor();
         notifyTitleChanged();
-        notifyUrlChanged();
+        if (isTabChanging) {
+            notifyTabChanged(previousTab);
+        }
+        notifyUrlChanged(isTabChanging);
         notifyPrimaryColorChanged();
         notifySecurityStateChanged();
     }
 
     @Override
-    public Tab getTab() {
+    public @Nullable Tab getTab() {
         return hasTab() ? mTab : null;
     }
 
     @Override
+    @EnsuresNonNullIf("mTab")
     public boolean hasTab() {
         // TODO(crbug.com/40730536): Remove the isInitialized() and isDestroyed checks when
         // we no longer wait for TAB_CLOSED events to remove this tab.  Otherwise there is a chance
@@ -287,6 +298,16 @@ public class LocationBarModel implements ToolbarDataProvider, LocationBarDataPro
     }
 
     @Override
+    public void addToolbarDataProviderObserver(ToolbarDataProvider.Observer observer) {
+        mToolbarDataObservers.addObserver(observer);
+    }
+
+    @Override
+    public void removeToolbarDataProviderObserver(ToolbarDataProvider.Observer observer) {
+        mToolbarDataObservers.removeObserver(observer);
+    }
+
+    @Override
     // TODO(crbug.com/40218072): migrate to GURL.
     @Deprecated
     public String getCurrentUrl() {
@@ -295,27 +316,17 @@ public class LocationBarModel implements ToolbarDataProvider, LocationBarDataPro
 
     @Override
     public GURL getCurrentGurl() {
-        if (isInOverviewAndShowingOmnibox()) {
-            return UrlConstants.ntpGurl();
-        }
-
         return mVisibleGurl;
     }
 
     /**
      * Reterived updated cached values for the current URL.
+     *
      * @return whether the URL value has changed.
      */
     @VisibleForTesting
     boolean updateVisibleGurl() {
         try (TraceEvent te = TraceEvent.scoped("LocationBarModel.updateVisibleGurl")) {
-            if (isInOverviewAndShowingOmnibox()) {
-                mFormattedFullUrl = "";
-                mUrlForDisplay = "";
-                mVisibleGurl = UrlConstants.ntpGurl();
-                return true;
-            }
-
             GURL gurl = getUrlOfVisibleNavigationEntry();
             if (!gurl.equals(mVisibleGurl)) {
                 mVisibleGurl = gurl;
@@ -326,14 +337,21 @@ public class LocationBarModel implements ToolbarDataProvider, LocationBarDataPro
         return false;
     }
 
-    public void notifyUrlChanged() {
-        if ((mIsInSameDocNav && mAlreadyUpdatedUrlBarForSameDocNav) || !updateVisibleGurl()) {
+    public void notifyTabChanged(@Nullable Tab previousTab) {
+        for (LocationBarDataProvider.Observer observer : mLocationBarDataObservers) {
+            observer.onTabChanged(previousTab);
+        }
+    }
+
+    public void notifyUrlChanged(boolean isTabChanging) {
+        if (((mIsInSameDocNav && mAlreadyUpdatedUrlBarForSameDocNav) || !updateVisibleGurl())
+                && !isTabChanging) {
             return;
         }
 
-        // Url has changed, propagate it.
+        // Url or tab has changed, propagate it.
         for (LocationBarDataProvider.Observer observer : mLocationBarDataObservers) {
-            observer.onUrlChanged();
+            observer.onUrlChanged(isTabChanging);
         }
 
         mAlreadyUpdatedUrlBarForSameDocNav = mIsInSameDocNav;
@@ -351,7 +369,7 @@ public class LocationBarModel implements ToolbarDataProvider, LocationBarDataPro
     }
 
     void notifyNtpStartedLoading() {
-        for (Observer observer : mLocationBarDataObservers) {
+        for (LocationBarDataProvider.Observer observer : mLocationBarDataObservers) {
             observer.onNtpStartedLoading();
         }
     }
@@ -366,7 +384,7 @@ public class LocationBarModel implements ToolbarDataProvider, LocationBarDataPro
             }
 
             GURL gurl = getCurrentGurl();
-            if (!UrlBarData.shouldShowUrl(gurl, isIncognito())) {
+            if (!UrlBarData.shouldShowUrl(gurl, isOffTheRecord())) {
                 return UrlBarData.EMPTY;
             }
 
@@ -410,72 +428,80 @@ public class LocationBarModel implements ToolbarDataProvider, LocationBarDataPro
         return buildUrlBarData(url, isOfflinePage, displayText, displayText);
     }
 
-    private UrlBarData buildUrlBarData(
+    @VisibleForTesting
+    UrlBarData buildUrlBarData(
             GURL url, boolean isOfflinePage, String displayText, String editingText) {
-        SpannableStringBuilder spannableDisplayText = null;
-        if (mNativeLocationBarModelAndroid != 0
-                && displayText != null
-                && displayText.length() > 0
-                && shouldEmphasizeUrl()) {
-            final @BrandedColorScheme int brandedColorScheme =
-                    OmniboxResourceProvider.getBrandedColorScheme(
-                            mContext, isIncognito(), getPrimaryColor());
-            final @ColorInt int nonEmphasizedColor =
-                    OmniboxResourceProvider.getUrlBarSecondaryTextColor(
-                            mContext, brandedColorScheme);
-            final @ColorInt int emphasizedColor =
-                    OmniboxResourceProvider.getUrlBarPrimaryTextColor(mContext, brandedColorScheme);
-            final @ColorInt int dangerColor =
-                    OmniboxResourceProvider.getUrlBarDangerColor(mContext, brandedColorScheme);
-            final @ColorInt int secureColor =
-                    OmniboxResourceProvider.getUrlBarSecureColor(mContext, brandedColorScheme);
+        if (mNativeLocationBarModelAndroid == 0
+                || TextUtils.isEmpty(displayText)
+                || !shouldEmphasizeUrl()) {
+            return UrlBarData.forUrl(url);
+        }
 
-            AutocompleteSchemeClassifier autocompleteSchemeClassifier;
-            int securityLevel = getSecurityLevel(getTab(), isOfflinePage);
-            SpannableDisplayTextCacheKey cacheKey =
-                    new SpannableDisplayTextCacheKey(
-                            url.getSpec(),
-                            displayText,
-                            securityLevel,
-                            nonEmphasizedColor,
-                            emphasizedColor,
-                            dangerColor,
-                            secureColor);
-            SpannableStringBuilder cachedSpannableDisplayText =
-                    mSpannableDisplayTextCache.get(cacheKey);
-            autocompleteSchemeClassifier = mChromeAutocompleteSchemeClassifier;
+        return UrlBarData.forUrlAndText(
+                url,
+                getOrCreateUrlBarDataStyledDisplayText(url, displayText, isOfflinePage),
+                editingText);
+    }
 
-            if (cachedSpannableDisplayText != null) {
-                return UrlBarData.forUrlAndText(url, cachedSpannableDisplayText, editingText);
-            } else {
-                spannableDisplayText = new SpannableStringBuilder(displayText);
-                OmniboxUrlEmphasizer.emphasizeUrl(
-                        spannableDisplayText,
-                        autocompleteSchemeClassifier,
-                        getSecurityLevel(),
-                        shouldEmphasizeHttpsScheme(),
+    @VisibleForTesting
+    CharSequence getOrCreateUrlBarDataStyledDisplayText(
+            GURL url, String displayText, boolean isOfflinePage) {
+        final @BrandedColorScheme int brandedColorScheme =
+                OmniboxResourceProvider.getBrandedColorScheme(
+                        mContext, isIncognitoBranded(), getPrimaryColor());
+        final @ColorInt int nonEmphasizedColor =
+                OmniboxResourceProvider.getUrlBarSecondaryTextColor(mContext, brandedColorScheme);
+        final @ColorInt int emphasizedColor =
+                OmniboxResourceProvider.getUrlBarPrimaryTextColor(mContext, brandedColorScheme);
+        final @ColorInt int dangerColor =
+                OmniboxResourceProvider.getUrlBarDangerColor(mContext, brandedColorScheme);
+        final @ColorInt int secureColor =
+                OmniboxResourceProvider.getUrlBarSecureColor(mContext, brandedColorScheme);
+
+        int securityLevel = getSecurityLevel(getTab(), isOfflinePage, isReaderModePage());
+        SpannableDisplayTextCacheKey cacheKey =
+                new SpannableDisplayTextCacheKey(
+                        url.getSpec(),
+                        displayText,
+                        securityLevel,
                         nonEmphasizedColor,
                         emphasizedColor,
                         dangerColor,
                         secureColor);
-                mSpannableDisplayTextCache.put(cacheKey, spannableDisplayText);
-            }
+        assumeNonNull(mSpannableDisplayTextCache);
+        SpannableStringBuilder cachedSpannableDisplayText =
+                mSpannableDisplayTextCache.get(cacheKey);
+
+        if (cachedSpannableDisplayText == null) {
+            assumeNonNull(mChromeAutocompleteSchemeClassifier);
+            cachedSpannableDisplayText = new SpannableStringBuilder(displayText);
+            OmniboxUrlEmphasizer.emphasizeUrl(
+                    cachedSpannableDisplayText,
+                    mChromeAutocompleteSchemeClassifier,
+                    getSecurityLevel(),
+                    shouldEmphasizeHttpsScheme(),
+                    nonEmphasizedColor,
+                    emphasizedColor,
+                    dangerColor,
+                    secureColor);
+            mSpannableDisplayTextCache.put(cacheKey, cachedSpannableDisplayText);
         }
-        return UrlBarData.forUrlAndText(url, spannableDisplayText, editingText);
+        return cachedSpannableDisplayText;
     }
 
     /**
-     * @return True if the displayed URL should be emphasized, false if the displayed text
-     *         already has formatting for emphasis applied.
+     * @return True if the displayed URL should be emphasized, false if the displayed text already
+     *     has formatting for emphasis applied.
      */
-    private boolean shouldEmphasizeUrl() {
+    @VisibleForTesting
+    boolean shouldEmphasizeUrl() {
         // If the toolbar shows the publisher URL, it applies its own formatting for emphasis.
         if (mTab == null) return true;
 
         return TrustedCdn.getPublisherUrl(mTab) == null;
     }
 
-    LruCache<SpannableDisplayTextCacheKey, SpannableStringBuilder> getCacheForTesting() {
+    @Nullable LruCache<SpannableDisplayTextCacheKey, SpannableStringBuilder> getCacheForTesting() {
         return mSpannableDisplayTextCache;
     }
 
@@ -484,14 +510,15 @@ public class LocationBarModel implements ToolbarDataProvider, LocationBarDataPro
      */
     @VisibleForTesting
     public boolean shouldEmphasizeHttpsScheme() {
-        return !isUsingBrandColor() && !isIncognito();
+        return !isUsingBrandColor() && !isIncognitoBranded();
     }
 
     @Override
     public String getTitle() {
-        if (!hasTab()) return "";
+        Tab tab = getTab();
+        if (tab == null) return "";
 
-        String title = getTab().getTitle();
+        String title = tab.getTitle();
         return TextUtils.isEmpty(title) ? title : title.trim();
     }
 
@@ -503,55 +530,37 @@ public class LocationBarModel implements ToolbarDataProvider, LocationBarDataPro
 
     @Override
     public boolean isIncognito() {
-        return mIsIncognito;
+        return mIsOffTheRecord;
+    }
+
+    @Override
+    public boolean isIncognitoBranded() {
+        return mIsIncognitoBranded;
+    }
+
+    @Override
+    public boolean isOffTheRecord() {
+        return mIsOffTheRecord;
     }
 
     private void notifyIncognitoStateChanged() {
         for (LocationBarDataProvider.Observer observer : mLocationBarDataObservers) {
             observer.onIncognitoStateChanged();
         }
-    }
 
-    /**
-     * Returns whether the location bar is showing and the app is in overview mode. "Overview mode"
-     * here is a catchall for "UI steady state without a selected tab." In practice, there are only
-     * two possible scenarios for overview mode: the start surface and the tab switcher, the latter
-     * of which does not show the omnibox. This effectively means that this method only returns true
-     * when the start surface homepage is showing.
-     */
-    @Override
-    public boolean isInOverviewAndShowingOmnibox() {
-        if (!mShouldShowOmniboxInOverviewMode) return false;
-
-        return mLayoutStateProvider != null && mIsShowingStartSurface;
-    }
-
-    /**
-     * @return Whether the location bar should show when in overview mode.
-     */
-    @Override
-    public boolean shouldShowLocationBarInOverviewMode() {
-        return mShouldShowOmniboxInOverviewMode;
-    }
-
-    @Override
-    public Profile getProfile() {
-        return mProfile;
-    }
-
-    public void setLayoutStateProvider(LayoutStateProvider layoutStateProvider) {
-        mLayoutStateProvider = layoutStateProvider;
-    }
-
-    public void setShouldShowOmniboxInOverviewMode(boolean shouldShowOmniboxInOverviewMode) {
-        if (mShouldShowOmniboxInOverviewMode != shouldShowOmniboxInOverviewMode) {
-            mShouldShowOmniboxInOverviewMode = shouldShowOmniboxInOverviewMode;
-            notifyPrimaryColorChanged();
+        for (ToolbarDataProvider.Observer observer : mToolbarDataObservers) {
+            observer.onIncognitoStateChanged();
         }
+    }
+
+    @Override
+    public @Nullable Profile getProfile() {
+        return mProfile;
     }
 
     /**
      * Sets the primary color and changes the state for isUsingBrandColor.
+     *
      * @param color The primary color for the current tab.
      */
     public void setPrimaryColor(int color) {
@@ -562,25 +571,22 @@ public class LocationBarModel implements ToolbarDataProvider, LocationBarDataPro
 
     private void updateUsingBrandColor() {
         mIsUsingBrandColor =
-                !isIncognito()
+                !isIncognitoBranded()
                         && mPrimaryColor
-                                != ChromeColors.getDefaultThemeColor(mContext, isIncognito())
+                                != SurfaceColorUpdateUtils.getDefaultThemeColor(
+                                        mContext, isIncognitoBranded())
                         && hasTab()
                         && !mTab.isNativePage();
     }
 
     @Override
     public int getPrimaryColor() {
-        return isInOverviewAndShowingOmnibox()
-                ? ChromeColors.getDefaultThemeColor(mContext, isIncognito())
-                : mPrimaryColor;
+        return mPrimaryColor;
     }
 
     @Override
     public boolean isUsingBrandColor() {
-        // If the overview is visible, force use of primary color, which is also overridden when the
-        // overview is visible.
-        return isInOverviewAndShowingOmnibox() || mIsUsingBrandColor;
+        return mIsUsingBrandColor;
     }
 
     public void notifyPrimaryColorChanged() {
@@ -590,51 +596,53 @@ public class LocationBarModel implements ToolbarDataProvider, LocationBarDataPro
     }
 
     @Override
+    @EnsuresNonNullIf("mTab")
     public boolean isOfflinePage() {
-        // Start Surface homepage is not bond with a tab and mTab is kept as the previous tab if
-        // homepage is shown. |!isInOverviewAndShowingOmnibox()| is added here to make sure Start
-        // Surface homepage is not regarded as offline.
-        return hasTab() && mOfflineStatus.isOfflinePage(mTab) && !isInOverviewAndShowingOmnibox();
+        return hasTab() && mOfflineStatus.isOfflinePage(mTab);
     }
 
     @Override
+    @EnsuresNonNullIf("mTab")
     public boolean isPaintPreview() {
-        // Start Surface homepage is not bound with a tab and mTab is kept as the previous tab if
-        // the homepage is shown. This is added here to make sure Start Surface homepage is not
-        // regarded as a paint preview.
-        if (isInOverviewAndShowingOmnibox()) return false;
         return hasTab() && TabbedPaintPreview.get(mTab).isShowing();
+    }
+
+    private int getPdfPageType() {
+        if (!hasTab()) {
+            return 0;
+        }
+        return PdfUtils.getPdfPageType(mTab.getNativePage());
+    }
+
+    private boolean isReaderModePage() {
+        if (!hasTab()) return false;
+        return DomDistillerUrlUtils.isDistilledPage(assumeNonNull(getTab()).getUrl());
     }
 
     @Override
     public int getSecurityLevel() {
-        return getSecurityLevel(getTab(), isOfflinePage());
+        return getSecurityLevel(getTab(), isOfflinePage(), isReaderModePage());
     }
 
     @Override
-    public int getPageClassification(boolean isFocusedFromFakebox, boolean isPrefetch) {
+    public int getPageClassification(boolean isPrefetch) {
         if (mNativeLocationBarModelAndroid == 0) return PageClassification.INVALID_SPEC_VALUE;
 
-        // Provide NTP as page class in overview mode (when Start Surface is enabled). No call
-        // to the backend necessary or possible, since there is no tab or navigation entry.
-        if (isInOverviewAndShowingOmnibox()) return PageClassification.NTP_VALUE;
-
         return LocationBarModelJni.get()
-                .getPageClassification(
-                        mNativeLocationBarModelAndroid,
-                        LocationBarModel.this,
-                        isFocusedFromFakebox,
-                        isPrefetch);
+                .getPageClassification(mNativeLocationBarModelAndroid, isPrefetch);
     }
 
     @Override
     public @DrawableRes int getSecurityIconResource(boolean isTablet) {
         boolean isOfflinePage = isOfflinePage();
+        boolean isReaderModePage = isReaderModePage();
         return getSecurityIconResource(
-                getSecurityLevel(getTab(), isOfflinePage),
+                getSecurityLevel(getTab(), isOfflinePage, isReaderModePage),
                 !isTablet,
                 isOfflinePage,
-                isPaintPreview());
+                isPaintPreview(),
+                isReaderModePage,
+                getPdfPageType());
     }
 
     @Override
@@ -644,8 +652,8 @@ public class LocationBarModel implements ToolbarDataProvider, LocationBarDataPro
 
     @VisibleForTesting
     @ConnectionSecurityLevel
-    int getSecurityLevel(Tab tab, boolean isOfflinePage) {
-        if (tab == null || isOfflinePage || isInOverviewAndShowingOmnibox()) {
+    int getSecurityLevel(@Nullable Tab tab, boolean isOfflinePage, boolean isReaderModePage) {
+        if (tab == null || isOfflinePage) {
             return ConnectionSecurityLevel.NONE;
         }
 
@@ -654,7 +662,7 @@ public class LocationBarModel implements ToolbarDataProvider, LocationBarDataPro
         if (publisherUrl != null) {
             assert getSecurityLevelFromStateModel(tab.getWebContents())
                     != ConnectionSecurityLevel.DANGEROUS;
-            return (publisherUrl.getScheme().equals(UrlConstants.HTTPS_SCHEME))
+            return publisherUrl.getScheme().equals(UrlConstants.HTTPS_SCHEME)
                     ? ConnectionSecurityLevel.SECURE
                     : ConnectionSecurityLevel.WARNING;
         }
@@ -663,7 +671,7 @@ public class LocationBarModel implements ToolbarDataProvider, LocationBarDataPro
 
     @VisibleForTesting
     @ConnectionSecurityLevel
-    int getSecurityLevelFromStateModel(WebContents webContents) {
+    int getSecurityLevelFromStateModel(@Nullable WebContents webContents) {
         int securityLevel = SecurityStateModel.getSecurityLevelForWebContents(webContents);
         return securityLevel;
     }
@@ -674,7 +682,9 @@ public class LocationBarModel implements ToolbarDataProvider, LocationBarDataPro
             int securityLevel,
             boolean isSmallDevice,
             boolean isOfflinePage,
-            boolean isPaintPreview) {
+            boolean isPaintPreview,
+            boolean isReaderModePage,
+            int pdfPageType) {
         // Paint Preview appears on top of WebContents and shows a visual representation of the page
         // that has been previously stored locally.
         if (isPaintPreview) return R.drawable.omnibox_info;
@@ -683,6 +693,22 @@ public class LocationBarModel implements ToolbarDataProvider, LocationBarDataPro
         // on a slow connection. In this case, the previews UI takes precedence.
         if (isOfflinePage) {
             return R.drawable.ic_offline_pin_24dp;
+        }
+
+        // Reader mode is when chrome is viewing distilled content. In this case, a reader mode icon
+        // is shown.
+        if (isReaderModePage) {
+            return R.drawable.ic_reader_mode_24dp;
+        }
+
+        // Pdf page is a native page used to render downloaded pdf files.
+        // Show warning icon for pdf from insecure source (e.g. mixed content download).
+        if (pdfPageType == PdfPageType.TRANSIENT_INSECURE) {
+            return R.drawable.omnibox_not_secure_warning;
+        }
+        // Show info icon for other pdf pages.
+        if (pdfPageType == PdfPageType.TRANSIENT_SECURE || pdfPageType == PdfPageType.LOCAL) {
+            return R.drawable.omnibox_info;
         }
 
         // Return early if native initialization hasn't been done yet.
@@ -695,39 +721,40 @@ public class LocationBarModel implements ToolbarDataProvider, LocationBarDataPro
         boolean skipIconForNeutralState =
                 (mProfile != null
                                 && !SearchEngineUtils.getForProfile(mProfile)
-                                        .shouldShowSearchEngineLogo())
-                        || mNtpDelegate.isCurrentlyVisible()
-                        || isInOverviewAndShowingOmnibox();
+                                        .shouldShowSearchEngineLogo()
+                                && !OmniboxFeatures.sOmniboxMobileParityUpdate.isEnabled())
+                        || mNtpDelegate.isCurrentlyVisible();
 
         return SecurityStatusIcon.getSecurityIconResource(
                 securityLevel,
                 isSmallDevice,
                 skipIconForNeutralState,
-                mOmniboxUpdatedConnectionSecurityIndicatorsEnabled);
+                /* useLockIconForSecureState= */ false);
     }
 
     @Override
     public @ColorRes int getSecurityIconColorStateList() {
         final @ColorInt int color = getPrimaryColor();
         final @BrandedColorScheme int brandedColorScheme =
-                OmniboxResourceProvider.getBrandedColorScheme(mContext, isIncognito(), color);
+                OmniboxResourceProvider.getBrandedColorScheme(
+                        mContext, isIncognitoBranded(), color);
 
         // Assign red color to security icon if the page shows security warning.
         return getSecurityIconColorWithSecurityLevel(
-                getSecurityLevel(), brandedColorScheme, isIncognito());
+                getSecurityLevel(), brandedColorScheme, isIncognitoBranded());
     }
 
     /**
-     * Get the color for the security icon for different security levels.
-     * If we are using dark background (dark mode or incognito mode), we should return light red.
-     * If we are using light background (light mode, but not LIGHT_BRANDED_THEME), we should return
-     * dark red. The default brand color will be returned if no change is needed.
+     * Get the color for the security icon for different security levels. If we are using dark
+     * background (dark mode or incognito mode), we should return light red. If we are using light
+     * background (light mode, but not LIGHT_BRANDED_THEME), we should return dark red. The default
+     * brand color will be returned if no change is needed.
      *
      * @param connectionSecurityLevel The connection security level for the current website.
      * @param brandedColorScheme The branded color scheme for the omnibox.
      * @param isIncognito Whether the tab is in Incognito mode.
      * @return The color resource for the security icon, returns -1 if doe snot need to change
-     *         color.
+     *     color.
      */
     @VisibleForTesting
     protected @ColorRes int getSecurityIconColorWithSecurityLevel(
@@ -794,6 +821,7 @@ public class LocationBarModel implements ToolbarDataProvider, LocationBarDataPro
                 .getURLForDisplay(mNativeLocationBarModelAndroid, LocationBarModel.this);
     }
 
+    @SuppressWarnings("NullAway")
     protected GURL getUrlOfVisibleNavigationEntry() {
         if (mNativeLocationBarModelAndroid == 0) return GURL.emptyGURL();
         if (mNtpDelegate.isCurrentlyVisible()) {
@@ -805,15 +833,10 @@ public class LocationBarModel implements ToolbarDataProvider, LocationBarDataPro
                         mNativeLocationBarModelAndroid, LocationBarModel.this);
     }
 
-    /**
-     * Set whether the start surface is showing or not and notify changes.
-     *
-     * @param isShowingStartSurface Whether Start surface layout is showing or not.
-     */
-    public void updateForNonStaticLayout(boolean isShowingStartSurface) {
-        mIsShowingStartSurface = isShowingStartSurface;
+    /** Notify changes for non static layout. */
+    public void updateForNonStaticLayout() {
         notifyTitleChanged();
-        notifyUrlChanged();
+        notifyUrlChanged(false);
         notifyPrimaryColorChanged();
         notifySecurityStateChanged();
     }
@@ -861,11 +884,7 @@ public class LocationBarModel implements ToolbarDataProvider, LocationBarDataPro
         GURL getUrlOfVisibleNavigationEntry(
                 long nativeLocationBarModelAndroid, LocationBarModel caller);
 
-        int getPageClassification(
-                long nativeLocationBarModelAndroid,
-                LocationBarModel caller,
-                boolean isFocusedFromFakebox,
-                boolean isPrefetch);
+        int getPageClassification(long nativeLocationBarModelAndroid, boolean isPrefetch);
     }
 
     public void onPageLoadStopped() {

@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/notimplemented.h"
 #include "build/build_config.h"
 #include "content/browser/renderer_host/render_frame_proxy_host.h"
 #include "content/browser/renderer_host/render_widget_host_view_child_frame.h"
@@ -102,12 +103,11 @@ gfx::Rect WebContentsViewChildFrame::GetContainerBounds() const {
 }
 
 void WebContentsViewChildFrame::SetInitialFocus() {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 gfx::Rect WebContentsViewChildFrame::GetViewBounds() const {
-  NOTREACHED_IN_MIGRATION();
-  return gfx::Rect();
+  NOTREACHED();
 }
 
 void WebContentsViewChildFrame::CreateView(gfx::NativeView context) {
@@ -149,37 +149,32 @@ void WebContentsViewChildFrame::OnCapturerCountChanged() {}
 
 void WebContentsViewChildFrame::FullscreenStateChanged(bool is_fullscreen) {}
 
-void WebContentsViewChildFrame::UpdateWindowControlsOverlay(
-    const gfx::Rect& bounding_rect) {}
-
 BackForwardTransitionAnimationManager*
 WebContentsViewChildFrame::GetBackForwardTransitionAnimationManager() {
   return nullptr;
 }
 
+void WebContentsViewChildFrame::DestroyBackForwardTransitionAnimationManager() {
+}
+
 void WebContentsViewChildFrame::RestoreFocus() {
-  NOTREACHED_IN_MIGRATION();
+  NOTIMPLEMENTED();
 }
 
 void WebContentsViewChildFrame::Focus() {
-  NOTREACHED_IN_MIGRATION();
+  NOTIMPLEMENTED();
 }
 
 void WebContentsViewChildFrame::StoreFocus() {
-  NOTREACHED_IN_MIGRATION();
+  NOTIMPLEMENTED();
 }
 
 void WebContentsViewChildFrame::FocusThroughTabTraversal(bool reverse) {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 DropData* WebContentsViewChildFrame::GetDropData() const {
-  NOTREACHED_IN_MIGRATION();
-  return nullptr;
-}
-
-void WebContentsViewChildFrame::TransferDragSecurityInfo(WebContentsView*) {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void WebContentsViewChildFrame::UpdateDragOperation(
@@ -192,19 +187,19 @@ void WebContentsViewChildFrame::UpdateDragOperation(
 
 void WebContentsViewChildFrame::GotFocus(
     RenderWidgetHostImpl* render_widget_host) {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void WebContentsViewChildFrame::TakeFocus(bool reverse) {
   // This is handled in RenderFrameHostImpl::TakeFocus we shouldn't
   // end up here.
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void WebContentsViewChildFrame::ShowContextMenu(
     RenderFrameHost& render_frame_host,
     const ContextMenuParams& params) {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 #if BUILDFLAG(USE_EXTERNAL_POPUP_MENU)
@@ -212,7 +207,6 @@ void WebContentsViewChildFrame::ShowPopupMenu(
     RenderFrameHost* render_frame_host,
     mojo::PendingRemote<blink::mojom::PopupMenuClient> popup_client,
     const gfx::Rect& bounds,
-    int item_height,
     double item_font_size,
     int selected_item,
     std::vector<blink::mojom::MenuItemPtr> menu_items,
@@ -221,7 +215,7 @@ void WebContentsViewChildFrame::ShowPopupMenu(
 #if BUILDFLAG(IS_MAC)
   NoOpPopupMenuHelperDelegate delegate;
   PopupMenuHelper helper(&delegate, render_frame_host, std::move(popup_client));
-  helper.ShowPopupMenu(bounds, item_height, item_font_size, selected_item,
+  helper.ShowPopupMenu(bounds, item_font_size, selected_item,
                        std::move(menu_items), right_aligned,
                        allow_multiple_selection);
 #endif  // BUILDFLAG(IS_MAC)

@@ -4,18 +4,18 @@
 
 #include "components/plus_addresses/webdata/plus_address_sync_bridge.h"
 
+#include <algorithm>
 #include <memory>
 #include <optional>
 
 #include "base/check.h"
 #include "base/notreached.h"
-#include "base/ranges/algorithm.h"
 #include "components/affiliations/core/browser/affiliation_utils.h"
 #include "components/plus_addresses/plus_address_types.h"
 #include "components/plus_addresses/webdata/plus_address_sync_util.h"
 #include "components/plus_addresses/webdata/plus_address_table.h"
-#include "components/sync/base/model_type.h"
-#include "components/sync/model/client_tag_based_model_type_processor.h"
+#include "components/sync/base/data_type.h"
+#include "components/sync/model/client_tag_based_data_type_processor.h"
 #include "components/sync/model/entity_change.h"
 #include "components/sync/model/in_memory_metadata_change_list.h"
 #include "components/sync/model/mutable_data_batch.h"
@@ -28,17 +28,17 @@
 namespace plus_addresses {
 
 PlusAddressSyncBridge::PlusAddressSyncBridge(
-    std::unique_ptr<syncer::ModelTypeChangeProcessor> change_processor,
+    std::unique_ptr<syncer::DataTypeLocalChangeProcessor> change_processor,
     scoped_refptr<WebDatabaseBackend> db_backend,
     DataChangedBySyncCallback notify_data_changed_by_sync)
-    : ModelTypeSyncBridge(std::move(change_processor)),
+    : DataTypeSyncBridge(std::move(change_processor)),
       db_backend_(std::move(db_backend)),
       notify_data_changed_by_sync_(std::move(notify_data_changed_by_sync)) {
   CHECK(db_backend_);
   // Initializing the database from disk can fail.
   if (!db_backend_->database()) {
-    ModelTypeSyncBridge::change_processor()->ReportError(
-        {FROM_HERE, "Failed to initialize database."});
+    DataTypeSyncBridge::change_processor()->ReportError(
+        {FROM_HERE, syncer::ModelError::Type::kPlusAddressDatabaseInitFailed});
     return;
   }
   CHECK(GetPlusAddressTable());
@@ -46,12 +46,11 @@ PlusAddressSyncBridge::PlusAddressSyncBridge(
   auto metadata = std::make_unique<syncer::MetadataBatch>();
   if (!GetPlusAddressTable()->GetAllSyncMetadata(syncer::PLUS_ADDRESS,
                                                  *metadata)) {
-    ModelTypeSyncBridge::change_processor()->ReportError(
-        {FROM_HERE, "Failed to read PLUS_ADDRESS metadata."});
+    DataTypeSyncBridge::change_processor()->ReportError(
+        {FROM_HERE, syncer::ModelError::Type::kPlusAddressMetadataReadFailed});
     return;
   }
-  ModelTypeSyncBridge::change_processor()->ModelReadyToSync(
-      std::move(metadata));
+  DataTypeSyncBridge::change_processor()->ModelReadyToSync(std::move(metadata));
 }
 
 PlusAddressSyncBridge::~PlusAddressSyncBridge() = default;
@@ -76,7 +75,9 @@ PlusAddressSyncBridge::ApplyIncrementalSyncChanges(
     syncer::EntityChangeList entity_changes) {
   sql::Transaction transaction(db_backend_->database()->GetSQLConnection());
   if (!transaction.Begin()) {
-    return syncer::ModelError(FROM_HERE, "Failed to begin transaction.");
+    return syncer::ModelError(
+        FROM_HERE, syncer::ModelError::Type::
+                       kPlusAddressTransactionBeginFailedOnIncrementalSync);
   }
 
   std::vector<PlusAddressDataChange> profile_changes;
@@ -89,7 +90,8 @@ PlusAddressSyncBridge::ApplyIncrementalSyncChanges(
         PlusProfile profile = PlusProfileFromEntityData(change->data());
         if (!GetPlusAddressTable()->AddOrUpdatePlusProfile(profile)) {
           return syncer::ModelError(
-              FROM_HERE, "Failed to add/update profile in database.");
+              FROM_HERE,
+              syncer::ModelError::Type::kPlusAddressAddOrUpdateProfileFailed);
         }
         // When a plus address entry is updated, `profile_changes` will contain
         // both a REMOVE and ADD change for the old and new profiles
@@ -106,8 +108,9 @@ PlusAddressSyncBridge::ApplyIncrementalSyncChanges(
         std::optional<PlusProfile> profile =
             GetPlusAddressTable()->GetPlusProfileForId(change->storage_key());
         if (!GetPlusAddressTable()->RemovePlusProfile(change->storage_key())) {
-          return syncer::ModelError(FROM_HERE,
-                                    "Failed to remove profile in database.");
+          return syncer::ModelError(
+              FROM_HERE,
+              syncer::ModelError::Type::kPlusAddressRemoveProfileFailed);
         }
         if (profile) {
           profile_changes.emplace_back(PlusAddressDataChange::Type::kRemove,
@@ -123,7 +126,9 @@ PlusAddressSyncBridge::ApplyIncrementalSyncChanges(
   }
 
   if (!transaction.Commit()) {
-    return syncer::ModelError(FROM_HERE, "Failed to commit transaction.");
+    return syncer::ModelError(
+        FROM_HERE, syncer::ModelError::Type::
+                       kPlusAddressTransactionCommitFailedOnIncrementalSync);
   }
   notify_data_changed_by_sync_.Run(std::move(profile_changes));
   return std::nullopt;
@@ -134,7 +139,8 @@ void PlusAddressSyncBridge::ApplyDisableSyncChanges(
   sql::Transaction transaction(db_backend_->database()->GetSQLConnection());
   if (!transaction.Begin()) {
     change_processor()->ReportError(
-        {FROM_HERE, "Failed to begin transaction."});
+        {FROM_HERE, syncer::ModelError::Type::
+                        kPlusAddressTransactionBeginFailedOnDisableSync});
   }
 
   std::vector<PlusAddressDataChange> profile_changes;
@@ -145,7 +151,7 @@ void PlusAddressSyncBridge::ApplyDisableSyncChanges(
 
   if (!GetPlusAddressTable()->ClearPlusProfiles()) {
     change_processor()->ReportError(
-        {FROM_HERE, "Failed to remove profiles from database."});
+        {FROM_HERE, syncer::ModelError::Type::kPlusAddressClearProfilesFailed});
     return;
   }
   // `TransferMetadataChanges()` returns an optional<ModelError>.
@@ -156,19 +162,21 @@ void PlusAddressSyncBridge::ApplyDisableSyncChanges(
 
   if (!transaction.Commit()) {
     change_processor()->ReportError(
-        {FROM_HERE, "Failed to commit transaction."});
+        {FROM_HERE, syncer::ModelError::Type::
+                        kPlusAddressTransactionCommitFailedOnDisableSync});
     return;
   }
   notify_data_changed_by_sync_.Run(std::move(profile_changes));
 }
 
-void PlusAddressSyncBridge::GetData(StorageKeyList storage_keys,
-                                    DataCallback callback) {
-  // PLUS_ADDRESS is read-only, so `GetData()` is not needed.
-  NOTREACHED_IN_MIGRATION();
+std::unique_ptr<syncer::DataBatch> PlusAddressSyncBridge::GetDataForCommit(
+    StorageKeyList storage_keys) {
+  // PLUS_ADDRESS is read-only, so `GetDataForCommit()` is not needed.
+  NOTREACHED();
 }
 
-void PlusAddressSyncBridge::GetAllDataForDebugging(DataCallback callback) {
+std::unique_ptr<syncer::DataBatch>
+PlusAddressSyncBridge::GetAllDataForDebugging() {
   auto batch = std::make_unique<syncer::MutableDataBatch>();
   for (const PlusProfile& profile : GetPlusAddressTable()->GetPlusProfiles()) {
     auto entity = std::make_unique<syncer::EntityData>(
@@ -176,7 +184,7 @@ void PlusAddressSyncBridge::GetAllDataForDebugging(DataCallback callback) {
     std::string storage_key = GetStorageKey(*entity);
     batch->Put(storage_key, std::move(entity));
   }
-  std::move(callback).Run(std::move(batch));
+  return batch;
 }
 
 bool PlusAddressSyncBridge::IsEntityDataValid(
@@ -193,12 +201,12 @@ bool PlusAddressSyncBridge::IsEntityDataValid(
 }
 
 std::string PlusAddressSyncBridge::GetClientTag(
-    const syncer::EntityData& entity_data) {
+    const syncer::EntityData& entity_data) const {
   return GetStorageKey(entity_data);
 }
 
 std::string PlusAddressSyncBridge::GetStorageKey(
-    const syncer::EntityData& entity_data) {
+    const syncer::EntityData& entity_data) const {
   return entity_data.specifics.plus_address().profile_id();
 }
 
@@ -211,7 +219,7 @@ PlusAddressSyncBridge::TransferMetadataChanges(
     std::unique_ptr<syncer::MetadataChangeList> metadata_change_list) {
   syncer::SyncMetadataStoreChangeList sync_metadata_store_change_list(
       GetPlusAddressTable(), syncer::PLUS_ADDRESS,
-      base::BindRepeating(&syncer::ModelTypeChangeProcessor::ReportError,
+      base::BindRepeating(&syncer::DataTypeLocalChangeProcessor::ReportError,
                           change_processor()->GetWeakPtr()));
   static_cast<syncer::InMemoryMetadataChangeList*>(metadata_change_list.get())
       ->TransferChangesTo(&sync_metadata_store_change_list);

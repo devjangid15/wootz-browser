@@ -11,6 +11,7 @@
 #include <string>
 #include <utility>
 
+#include "base/containers/contains.h"
 #include "base/functional/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/time/default_clock.h"
@@ -56,6 +57,16 @@ const char
 constexpr char kObsoleteFederatedIdentityActiveSesssionExceptionsPref[] =
     "profile.content_settings.exceptions.fedcm_active_session";
 
+#if !BUILDFLAG(IS_IOS)
+// This setting was accidentally bound to a UI surface intended for a different
+// setting (https://crbug.com/364820109). It should not have been settable
+// except via enterprise policy, so it is temporarily cleaned up here to revert
+// it to its default value.
+// TODO(https://crbug.com/367181093): clean this up.
+constexpr char kBug364820109AlreadyWorkedAroundPref[] =
+    "profile.did_work_around_bug_364820109_exceptions";
+#endif  // !BUILDFLAG(IS_IOS)
+
 }  // namespace
 
 // ////////////////////////////////////////////////////////////////////////////
@@ -92,6 +103,10 @@ void PrefProvider::RegisterProfilePrefs(
       kObsoleteGetDisplayMediaSetAutoSelectAllScreensAllowedForUrlsExceptionsPref);
   registry->RegisterListPref(
       kObsoleteFederatedIdentityActiveSesssionExceptionsPref);
+#if !BUILDFLAG(IS_IOS)
+  // TODO(https://crbug.com/367181093): clean this up.
+  registry->RegisterBooleanPref(kBug364820109AlreadyWorkedAroundPref, false);
+#endif  // !BUILDFLAG(IS_IOS)
 }
 
 PrefProvider::PrefProvider(PrefService* prefs,
@@ -220,13 +235,7 @@ bool PrefProvider::SetWebsiteSetting(
   // permission has been set by the One Time Provider, therefore we reset a
   // potentially existing Allow Always setting.
   if (constraints.session_model() == mojom::SessionModel::ONE_TIME) {
-    DCHECK(
-#if !BUILDFLAG(IS_ANDROID)
-        content_type == ContentSettingsType::CAMERA_PAN_TILT_ZOOM ||
-#endif
-        content_type == ContentSettingsType::GEOLOCATION ||
-        content_type == ContentSettingsType::MEDIASTREAM_MIC ||
-        content_type == ContentSettingsType::MEDIASTREAM_CAMERA);
+    DCHECK(base::Contains(GetTypesWithTemporaryGrantsInHcsm(), content_type));
     in_value = base::Value();
   }
 
@@ -236,7 +245,8 @@ bool PrefProvider::SetWebsiteSetting(
   metadata.SetFromConstraints(constraints);
   GetPref(content_type)
       ->SetWebsiteSetting(primary_pattern, secondary_pattern,
-                          std::move(in_value), metadata, partition_key);
+                          std::move(in_value), std::move(metadata),
+                          partition_key);
   return true;
 }
 
@@ -405,7 +415,7 @@ void PrefProvider::ShutdownOnUIThread() {
 
 ContentSettingsPref* PrefProvider::GetPref(ContentSettingsType type) const {
   auto it = content_settings_prefs_.find(type);
-  DCHECK(it != content_settings_prefs_.end());
+  CHECK(it != content_settings_prefs_.end());
   return it->second.get();
 }
 
@@ -431,9 +441,14 @@ void PrefProvider::DiscardOrMigrateObsoletePreferences() {
   prefs_->ClearPref(
       kObsoleteGetDisplayMediaSetAutoSelectAllScreensAllowedForUrlsExceptionsPref);
   prefs_->ClearPref(kObsoleteFederatedIdentityActiveSesssionExceptionsPref);
+
+#if !BUILDFLAG(IS_IOS)
+  // TODO(https://crbug.com/367181093): clean this up.
+  prefs_->ClearPref(kBug364820109AlreadyWorkedAroundPref);
+#endif  // !BUILDFLAG(IS_IOS)
 }
 
-void PrefProvider::SetClockForTesting(base::Clock* clock) {
+void PrefProvider::SetClockForTesting(const base::Clock* clock) {
   clock_ = clock;
   for (auto& pref : content_settings_prefs_) {
     pref.second->SetClockForTesting(clock);  // IN-TEST

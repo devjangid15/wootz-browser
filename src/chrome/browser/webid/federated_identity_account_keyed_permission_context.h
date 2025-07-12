@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "base/memory/raw_ptr.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/permissions/object_permission_context_base.h"
 #include "components/webid/federated_identity_data_model.h"
@@ -59,13 +60,20 @@ class FederatedIdentityAccountKeyedPermissionContext
                      const net::SchemefulSite& identity_provider);
 
   // Returns whether there is an existing permission for the
-  // (relying_party_requester, relying_party_embedder, identity_provider,
-  // account_id) tuple. `account_id` can be omitted to represent "sharing
-  // permission for any account".
+  // (relying_party_requester, relying_party_embedder, identity_provider) tuple.
   bool HasPermission(const url::Origin& relying_party_requester,
                      const url::Origin& relying_party_embedder,
-                     const url::Origin& identity_provider,
-                     const std::optional<std::string>& account_id);
+                     const url::Origin& identity_provider);
+
+  // Returns the last time when `account_id` was used via FedCM on the
+  // (relying_party_requester, relying_party_embedder, identity_provider). If
+  // there is no known last time, returns nullopt. If the `account_id` was known
+  // to be used but a timestamp is not known, returns 0.
+  std::optional<base::Time> GetLastUsedTimestamp(
+      const url::Origin& relying_party_requester,
+      const url::Origin& relying_party_embedder,
+      const url::Origin& identity_provider,
+      const std::string& account_id);
 
   // Grants permission for the (relying_party_requester, relying_party_embedder,
   // identity_provider, account_id) tuple.

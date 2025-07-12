@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 #include "net/websockets/websocket_stream.h"
 
 #include <algorithm>
@@ -18,6 +19,7 @@
 #include "base/metrics/histogram_samples.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
+#include "base/strings/string_view_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
@@ -40,12 +42,13 @@
 #include "net/socket/socket_test_util.h"
 #include "net/spdy/spdy_test_util_common.h"
 #include "net/ssl/ssl_info.h"
+#include "net/storage_access_api/status.h"
 #include "net/test/cert_test_util.h"
 #include "net/test/gtest_util.h"
 #include "net/test/test_data_directory.h"
-#include "net/third_party/quiche/src/quiche/spdy/core/http2_header_block.h"
-#include "net/third_party/quiche/src/quiche/spdy/core/spdy_protocol.h"
-#include "net/third_party/quiche/src/quiche/spdy/test_tools/spdy_test_utils.h"
+#include "net/third_party/quiche/src/quiche/common/http/http_header_block.h"
+#include "net/third_party/quiche/src/quiche/http2/core/spdy_protocol.h"
+#include "net/third_party/quiche/src/quiche/http2/test_tools/spdy_test_utils.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context.h"
@@ -119,26 +122,16 @@ static IsolationInfo CreateIsolationInfo() {
                                origin, SiteForCookies::FromOrigin(origin));
 }
 
-class WebSocketStreamCreateTest
-    : public TestWithParam<std::tuple<HandshakeStreamType, bool>>,
-      public WebSocketStreamCreateTestBase {
+class WebSocketStreamCreateTest : public TestWithParam<HandshakeStreamType>,
+                                  public WebSocketStreamCreateTestBase {
  protected:
   WebSocketStreamCreateTest()
-      : stream_type_(std::get<HandshakeStreamType>(GetParam())),
-        spdy_util_(/*use_priority_header=*/true) {
+      : stream_type_(GetParam()), spdy_util_(/*use_priority_header=*/true) {
     // Make sure these tests all pass with connection partitioning enabled. The
     // disabled case is less interesting, and is tested more directly at lower
     // layers.
-    if (PriorityHeaderEnabled()) {
-      feature_list_.InitWithFeatures(
-          {features::kPartitionConnectionsByNetworkIsolationKey,
-           net::features::kPriorityHeader},
-          {});
-    } else {
-      feature_list_.InitWithFeatures(
-          {features::kPartitionConnectionsByNetworkIsolationKey},
-          {net::features::kPriorityHeader});
-    }
+    feature_list_.InitAndEnableFeature(
+        features::kPartitionConnectionsByNetworkIsolationKey);
   }
 
   ~WebSocketStreamCreateTest() override {
@@ -159,7 +152,7 @@ class WebSocketStreamCreateTest
     ssl_data->ssl_info.cert =
         ImportCertFromFile(GetTestCertsDirectory(), "wildcard.pem");
     if (stream_type_ == HTTP2_HANDSHAKE_STREAM)
-      ssl_data->next_proto = kProtoHTTP2;
+      ssl_data->next_proto = NextProto::kProtoHTTP2;
     ASSERT_TRUE(ssl_data->ssl_info.cert.get());
     url_request_context_host_.AddSSLSocketDataProvider(std::move(ssl_data));
   }
@@ -188,7 +181,8 @@ class WebSocketStreamCreateTest
       const WebSocketExtraHeaders& send_additional_request_headers,
       const WebSocketExtraHeaders& extra_request_headers,
       const WebSocketExtraHeaders& extra_response_headers,
-      bool has_storage_access = false) {
+      StorageAccessApiStatus storage_access_api_status =
+          StorageAccessApiStatus::kNone) {
     const GURL socket_url(url);
     const std::string socket_host = GetHostAndOptionalPort(socket_url);
     const std::string socket_path = socket_url.path();
@@ -202,7 +196,7 @@ class WebSocketStreamCreateTest
               WebSocketExtraHeadersToString(extra_response_headers)) +
               additional_data_);
       CreateAndConnectStream(socket_url, sub_protocols, Origin(),
-                             SiteForCookies(), has_storage_access,
+                             SiteForCookies(), storage_access_api_status,
                              CreateIsolationInfo(),
                              WebSocketExtraHeadersToHttpRequestHeaders(
                                  send_additional_request_headers),
@@ -248,12 +242,11 @@ class WebSocketStreamCreateTest
 
     // First request.  This is necessary, because a WebSockets request currently
     // does not open a new HTTP/2 connection, it only uses an existing one.
-    const char* const kExtraRequestHeaders[] = {
+    std::string_view kExtraRequestHeaders[] = {
         "user-agent",      "",        "accept-encoding", "gzip, deflate",
         "accept-language", "en-us,fr"};
-    frames_.push_back(spdy_util_.ConstructSpdyGet(
-        kExtraRequestHeaders, std::size(kExtraRequestHeaders) / 2, 1,
-        DEFAULT_PRIORITY));
+    frames_.push_back(
+        spdy_util_.ConstructSpdyGet(kExtraRequestHeaders, 1, DEFAULT_PRIORITY));
     AddWrite(&frames_.back());
 
     // SETTINGS ACK frame sent by the server in response to the client's
@@ -262,7 +255,8 @@ class WebSocketStreamCreateTest
     AddRead(&frames_.back());
 
     // Response headers to first request.
-    frames_.push_back(spdy_util_.ConstructSpdyGetReply(nullptr, 0, 1));
+    frames_.push_back(spdy_util_.ConstructSpdyGetReply(
+        base::span<const std::string_view>(), 1));
     AddRead(&frames_.back());
 
     // Response body to first request.
@@ -273,7 +267,7 @@ class WebSocketStreamCreateTest
     spdy_util_.UpdateWithStreamDestruction(1);
 
     // WebSocket request.
-    spdy::Http2HeaderBlock request_headers = WebSocketHttp2Request(
+    quiche::HttpHeaderBlock request_headers = WebSocketHttp2Request(
         socket_path, socket_host, kOrigin, extra_request_headers);
     frames_.push_back(spdy_util_.ConstructSpdyHeaders(
         3, std::move(request_headers), DEFAULT_PRIORITY, false));
@@ -286,20 +280,19 @@ class WebSocketStreamCreateTest
     } else {
       // Response to WebSocket request.
       std::vector<std::string> extra_response_header_keys;
-      std::vector<const char*> extra_response_headers_vector;
+      std::vector<std::string_view> extra_response_headers_vector;
       for (const auto& extra_header : extra_response_headers) {
         // Save a lowercase copy of the header key.
         extra_response_header_keys.push_back(
             base::ToLowerASCII(extra_header.first));
         // Save a pointer to this lowercase copy.
         extra_response_headers_vector.push_back(
-            extra_response_header_keys.back().c_str());
+            extra_response_header_keys.back());
         // Save a pointer to the original header value provided by the caller.
-        extra_response_headers_vector.push_back(extra_header.second.c_str());
+        extra_response_headers_vector.push_back(extra_header.second);
       }
       frames_.push_back(spdy_util_.ConstructSpdyReplyError(
-          http2_response_status_, extra_response_headers_vector.data(),
-          extra_response_headers_vector.size() / 2, 3));
+          http2_response_status_, extra_response_headers_vector, 3));
       AddRead(&frames_.back());
 
       // WebSocket data received.
@@ -338,7 +331,7 @@ class WebSocketStreamCreateTest
     EXPECT_FALSE(request->is_pending());
 
     CreateAndConnectStream(socket_url, sub_protocols, Origin(),
-                           SiteForCookies(), has_storage_access,
+                           SiteForCookies(), storage_access_api_status,
                            CreateIsolationInfo(),
                            WebSocketExtraHeadersToHttpRequestHeaders(
                                send_additional_request_headers),
@@ -353,7 +346,8 @@ class WebSocketStreamCreateTest
       const WebSocketExtraHeaders& send_additional_request_headers,
       const WebSocketExtraHeaders& extra_request_headers,
       const std::string& response_body,
-      bool has_storage_access = false) {
+      StorageAccessApiStatus storage_access_api_status =
+          StorageAccessApiStatus::kNone) {
     ASSERT_EQ(BASIC_HANDSHAKE_STREAM, stream_type_);
 
     const GURL socket_url(url);
@@ -366,7 +360,7 @@ class WebSocketStreamCreateTest
                                  extra_request_headers),
         response_body);
     CreateAndConnectStream(socket_url, sub_protocols, Origin(),
-                           SiteForCookies(), has_storage_access,
+                           SiteForCookies(), storage_access_api_status,
                            CreateIsolationInfo(),
                            WebSocketExtraHeadersToHttpRequestHeaders(
                                send_additional_request_headers),
@@ -380,7 +374,8 @@ class WebSocketStreamCreateTest
       std::string_view url,
       const std::vector<std::string>& sub_protocols,
       const std::string& extra_response_headers,
-      bool has_storage_access = false) {
+      StorageAccessApiStatus storage_access_api_status =
+          StorageAccessApiStatus::kNone) {
     ASSERT_EQ(BASIC_HANDSHAKE_STREAM, stream_type_);
 
     const GURL socket_url(url);
@@ -393,7 +388,7 @@ class WebSocketStreamCreateTest
                                  /*extra_headers=*/{}),
         WebSocketStandardResponse(extra_response_headers));
     CreateAndConnectStream(socket_url, sub_protocols, Origin(),
-                           SiteForCookies(), has_storage_access,
+                           SiteForCookies(), storage_access_api_status,
                            CreateIsolationInfo(), HttpRequestHeaders(),
                            nullptr);
   }
@@ -404,26 +399,25 @@ class WebSocketStreamCreateTest
       const std::vector<std::string>& sub_protocols,
       const HttpRequestHeaders& additional_headers,
       std::unique_ptr<SequencedSocketData> socket_data,
-      bool has_storage_access = false) {
+      StorageAccessApiStatus storage_access_api_status =
+          StorageAccessApiStatus::kNone) {
     ASSERT_EQ(BASIC_HANDSHAKE_STREAM, stream_type_);
 
     AddRawExpectations(std::move(socket_data));
     CreateAndConnectStream(GURL(url), sub_protocols, Origin(), SiteForCookies(),
-                           has_storage_access, CreateIsolationInfo(),
+                           storage_access_api_status, CreateIsolationInfo(),
                            additional_headers, std::move(timer_));
   }
 
-  bool PriorityHeaderEnabled() const { return std::get<bool>(GetParam()); }
-
  private:
   void AddWrite(const spdy::SpdySerializedFrame* frame) {
-    writes_.emplace_back(ASYNC, frame->data(), frame->size(),
-                         sequence_number_++);
+    std::string_view frame_view(*frame);
+    writes_.emplace_back(ASYNC, sequence_number_++, frame_view);
   }
 
   void AddRead(const spdy::SpdySerializedFrame* frame) {
-    reads_.emplace_back(ASYNC, frame->data(), frame->size(),
-                        sequence_number_++);
+    std::string_view frame_view(*frame);
+    reads_.emplace_back(ASYNC, sequence_number_++, frame_view);
   }
 
  protected:
@@ -451,16 +445,14 @@ class WebSocketStreamCreateTest
 
 INSTANTIATE_TEST_SUITE_P(All,
                          WebSocketStreamCreateTest,
-                         testing::Combine(Values(BASIC_HANDSHAKE_STREAM),
-                                          testing::Bool()));
+                         Values(BASIC_HANDSHAKE_STREAM));
 
 using WebSocketMultiProtocolStreamCreateTest = WebSocketStreamCreateTest;
 
 INSTANTIATE_TEST_SUITE_P(All,
                          WebSocketMultiProtocolStreamCreateTest,
-                         testing::Combine(Values(BASIC_HANDSHAKE_STREAM,
-                                                 HTTP2_HANDSHAKE_STREAM),
-                                          testing::Bool()));
+                         Values(BASIC_HANDSHAKE_STREAM,
+                                HTTP2_HANDSHAKE_STREAM));
 
 // There are enough tests of the Sec-WebSocket-Extensions header that they
 // deserve their own test fixture.
@@ -482,9 +474,8 @@ class WebSocketStreamCreateExtensionTest
 
 INSTANTIATE_TEST_SUITE_P(All,
                          WebSocketStreamCreateExtensionTest,
-                         testing::Combine(Values(BASIC_HANDSHAKE_STREAM,
-                                                 HTTP2_HANDSHAKE_STREAM),
-                                          testing::Bool()));
+                         Values(BASIC_HANDSHAKE_STREAM,
+                                HTTP2_HANDSHAKE_STREAM));
 
 // Common code to construct expectations for authentication tests that receive
 // the auth challenge on one connection and then create a second connection to
@@ -506,10 +497,10 @@ class CommonAuthTestHelper {
     response1_ = std::move(response1);
     request2_ = std::move(request2);
     response2_ = std::move(response2);
-    writes_[0] = MockWrite(SYNCHRONOUS, 0, request1_.c_str());
-    reads_[0] = MockRead(SYNCHRONOUS, 1, response1_.c_str());
-    writes_[1] = MockWrite(SYNCHRONOUS, 2, request2_.c_str());
-    reads_[1] = MockRead(SYNCHRONOUS, 3, response2_.c_str());
+    writes_[0] = MockWrite(SYNCHRONOUS, 0, request1_);
+    reads_[0] = MockRead(SYNCHRONOUS, 1, response1_);
+    writes_[1] = MockWrite(SYNCHRONOUS, 2, request2_);
+    reads_[1] = MockRead(SYNCHRONOUS, 3, response2_);
     reads_[2] = MockRead(SYNCHRONOUS, OK, 4);  // Close connection
 
     return BuildSocketData(reads_, writes_);
@@ -569,8 +560,7 @@ class WebSocketStreamCreateBasicAuthTest : public WebSocketStreamCreateTest {
 
 INSTANTIATE_TEST_SUITE_P(All,
                          WebSocketStreamCreateBasicAuthTest,
-                         testing::Combine(Values(BASIC_HANDSHAKE_STREAM),
-                                          testing::Bool()));
+                         Values(BASIC_HANDSHAKE_STREAM));
 
 class WebSocketStreamCreateDigestAuthTest : public WebSocketStreamCreateTest {
  protected:
@@ -582,8 +572,7 @@ class WebSocketStreamCreateDigestAuthTest : public WebSocketStreamCreateTest {
 
 INSTANTIATE_TEST_SUITE_P(All,
                          WebSocketStreamCreateDigestAuthTest,
-                         testing::Combine(Values(BASIC_HANDSHAKE_STREAM),
-                                          testing::Bool()));
+                         Values(BASIC_HANDSHAKE_STREAM));
 
 const char WebSocketStreamCreateBasicAuthTest::kUnauthorizedResponse[] =
     "HTTP/1.1 401 Unauthorized\r\n"
@@ -745,7 +734,7 @@ TEST_P(WebSocketStreamCreateTest, HandshakeOverrideHeaders) {
 
 TEST_P(WebSocketStreamCreateTest, OmitsHasStorageAccess) {
   CreateAndConnectStandard("ws://www.example.org/", NoSubProtocols(), {}, {},
-                           {}, /*has_storage_access=*/false);
+                           {}, StorageAccessApiStatus::kNone);
   WaitUntilConnectDone();
 
   EXPECT_THAT(
@@ -756,7 +745,7 @@ TEST_P(WebSocketStreamCreateTest, OmitsHasStorageAccess) {
 
 TEST_P(WebSocketStreamCreateTest, PlumbsHasStorageAccess) {
   CreateAndConnectStandard("ws://www.example.org/", NoSubProtocols(), {}, {},
-                           {}, /*has_storage_access=*/true);
+                           {}, StorageAccessApiStatus::kAccessViaAPI);
   WaitUntilConnectDone();
 
   CookieSettingOverrides expected_overrides;
@@ -935,8 +924,7 @@ TEST_P(WebSocketStreamCreateExtensionTest, PerMessageDeflateInflates) {
   ASSERT_THAT(rv, IsOk());
   ASSERT_EQ(1U, frames.size());
   ASSERT_EQ(5U, frames[0]->header.payload_length);
-  EXPECT_EQ(std::string("Hello"),
-            std::string(frames[0]->payload, frames[0]->header.payload_length));
+  EXPECT_EQ("Hello", base::as_string_view(frames[0]->payload));
 }
 
 // Unknown extension in the response is rejected
@@ -1421,7 +1409,7 @@ TEST_P(WebSocketStreamCreateTest, CancellationDuringRead) {
   std::string request = WebSocketStandardRequest(
       "/", "www.example.org", Origin(), /*send_additional_request_headers=*/{},
       /*extra_headers=*/{});
-  MockWrite writes[] = {MockWrite(ASYNC, 0, request.c_str())};
+  MockWrite writes[] = {MockWrite(ASYNC, 0, request)};
   MockRead reads[] = {
       MockRead(SYNCHRONOUS, ERR_IO_PENDING, 1),
   };
@@ -1477,7 +1465,7 @@ TEST_P(WebSocketStreamCreateTest, NoResponse) {
   std::string request = WebSocketStandardRequest(
       "/", "www.example.org", Origin(), /*send_additional_request_headers=*/{},
       /*extra_headers=*/{});
-  MockWrite writes[] = {MockWrite(ASYNC, request.data(), request.size(), 0)};
+  MockWrite writes[] = {MockWrite(ASYNC, request, 0)};
   MockRead reads[] = {MockRead(ASYNC, 0, 1)};
   std::unique_ptr<SequencedSocketData> socket_data(
       BuildSocketData(reads, writes));
@@ -1586,12 +1574,12 @@ TEST_P(WebSocketStreamCreateBasicAuthTest, SuccessfulConnectionReuse) {
       {{"Authorization", "Basic Zm9vOmJhcg=="}}, /*extra_headers=*/{});
   std::string response2 = WebSocketStandardResponse(std::string());
   MockWrite writes[] = {
-      MockWrite(SYNCHRONOUS, 0, request1.c_str()),
-      MockWrite(SYNCHRONOUS, 2, request2.c_str()),
+      MockWrite(SYNCHRONOUS, 0, request1),
+      MockWrite(SYNCHRONOUS, 2, request2),
   };
   MockRead reads[3] = {
-      MockRead(SYNCHRONOUS, 1, response1.c_str()),
-      MockRead(SYNCHRONOUS, 3, response2.c_str()),
+      MockRead(SYNCHRONOUS, 1, response1),
+      MockRead(SYNCHRONOUS, 3, response2),
       MockRead(SYNCHRONOUS, ERR_IO_PENDING, 4),
   };
   CreateAndConnectRawExpectations("ws://foo:bar@www.example.org/",
@@ -1670,7 +1658,7 @@ TEST_P(WebSocketMultiProtocolStreamCreateTest, Incomplete) {
         "/", "www.example.org", Origin(),
         /*send_additional_request_headers=*/{}, /*extra_headers=*/{});
     MockRead reads[] = {MockRead(ASYNC, ERR_IO_PENDING, 0)};
-    MockWrite writes[] = {MockWrite(ASYNC, 1, request.c_str())};
+    MockWrite writes[] = {MockWrite(ASYNC, 1, request)};
     CreateAndConnectRawExpectations("wss://www.example.org/", NoSubProtocols(),
                                     HttpRequestHeaders(),
                                     BuildSocketData(reads, writes));
@@ -1746,7 +1734,7 @@ TEST_P(WebSocketStreamCreateTest, HandleErrConnectionClosed) {
       MockRead(SYNCHRONOUS, 1, kTruncatedResponse),
       MockRead(SYNCHRONOUS, ERR_CONNECTION_CLOSED, 2),
   };
-  MockWrite writes[] = {MockWrite(SYNCHRONOUS, 0, request.c_str())};
+  MockWrite writes[] = {MockWrite(SYNCHRONOUS, 0, request)};
   std::unique_ptr<SequencedSocketData> socket_data(
       BuildSocketData(reads, writes));
   socket_data->set_connect_data(MockConnect(SYNCHRONOUS, OK));
@@ -1851,10 +1839,10 @@ TEST_P(WebSocketStreamCreateTest, HandleConnectionCloseInFirstSegment) {
   std::string response = WebSocketStandardResponse(std::string()) + "\x88" +
                          static_cast<char>(close_body.size()) + close_body;
   MockRead reads[] = {
-      MockRead(SYNCHRONOUS, response.data(), response.size(), 1),
+      MockRead(SYNCHRONOUS, 1, response),
       MockRead(SYNCHRONOUS, ERR_CONNECTION_CLOSED, 2),
   };
-  MockWrite writes[] = {MockWrite(SYNCHRONOUS, 0, request.c_str())};
+  MockWrite writes[] = {MockWrite(SYNCHRONOUS, 0, request)};
   std::unique_ptr<SequencedSocketData> socket_data(
       BuildSocketData(reads, writes));
   socket_data->set_connect_data(MockConnect(SYNCHRONOUS, OK));
@@ -1863,16 +1851,17 @@ TEST_P(WebSocketStreamCreateTest, HandleConnectionCloseInFirstSegment) {
   WaitUntilConnectDone();
   ASSERT_TRUE(stream_);
 
-  std::vector<std::unique_ptr<WebSocketFrame>> frames;
-  TestCompletionCallback callback1;
-  int rv1 = stream_->ReadFrames(&frames, callback1.callback());
-  rv1 = callback1.GetResult(rv1);
-  ASSERT_THAT(rv1, IsOk());
-  ASSERT_EQ(1U, frames.size());
-  EXPECT_EQ(frames[0]->header.opcode, WebSocketFrameHeader::kOpCodeClose);
-  EXPECT_TRUE(frames[0]->header.final);
-  EXPECT_EQ(close_body,
-            std::string(frames[0]->payload, frames[0]->header.payload_length));
+  {
+    std::vector<std::unique_ptr<WebSocketFrame>> frames;
+    TestCompletionCallback callback1;
+    int rv1 = stream_->ReadFrames(&frames, callback1.callback());
+    rv1 = callback1.GetResult(rv1);
+    ASSERT_THAT(rv1, IsOk());
+    ASSERT_EQ(1U, frames.size());
+    EXPECT_EQ(frames[0]->header.opcode, WebSocketFrameHeader::kOpCodeClose);
+    EXPECT_TRUE(frames[0]->header.final);
+    EXPECT_EQ(close_body, base::as_string_view(frames[0]->payload));
+  }
 
   std::vector<std::unique_ptr<WebSocketFrame>> empty_frames;
   TestCompletionCallback callback2;

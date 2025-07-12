@@ -33,7 +33,7 @@ constexpr char kURL2[] = "http://youtube.com/";
 constexpr char kSiteMutedEvent[] = "Media.SiteMuted";
 constexpr char kSiteMutedReason[] = "MuteReason";
 #if !BUILDFLAG(IS_ANDROID)
-constexpr char kChromeURL[] = "wootzapp://dino";
+constexpr char kChromeURL[] = "chrome://dino";
 constexpr char kExtensionId[] = "extensionid";
 #endif
 
@@ -63,6 +63,11 @@ class SoundContentSettingObserverTest : public ChromeRenderViewHostTestHarness {
     test_ukm_recorder_ = std::make_unique<ukm::TestAutoSetUkmRecorder>();
 
     NavigateAndCommit(GURL(kURL1));
+  }
+
+  void TearDown() override {
+    host_content_settings_map_ = nullptr;
+    ChromeRenderViewHostTestHarness::TearDown();
   }
 
  protected:
@@ -104,12 +109,12 @@ class SoundContentSettingObserverTest : public ChromeRenderViewHostTestHarness {
 // TabMutedReason does not exist on Android.
 #if !BUILDFLAG(IS_ANDROID)
   void SetMuteStateForReason(bool state, TabMutedReason reason) {
-    chrome::SetTabAudioMuted(web_contents(), state, reason, kExtensionId);
+    SetTabAudioMuted(web_contents(), state, reason, kExtensionId);
   }
 #endif
 
  private:
-  raw_ptr<HostContentSettingsMap, DanglingUntriaged> host_content_settings_map_;
+  raw_ptr<HostContentSettingsMap> host_content_settings_map_;
   std::unique_ptr<ukm::TestUkmRecorder> test_ukm_recorder_;
   base::test::ScopedFeatureList scoped_feature_list_;
 };

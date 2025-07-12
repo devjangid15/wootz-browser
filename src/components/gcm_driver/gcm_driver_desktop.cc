@@ -1058,7 +1058,7 @@ void GCMDriverDesktop::GetInstanceIDDataFinished(
     const std::string& instance_id,
     const std::string& extra_data) {
   auto iter = get_instance_id_data_callbacks_.find(app_id);
-  DCHECK(iter != get_instance_id_data_callbacks_.end());
+  CHECK(iter != get_instance_id_data_callbacks_.end());
 
   base::queue<GetInstanceIDDataCallback>& callbacks = iter->second;
   std::move(callbacks.front()).Run(instance_id, extra_data);

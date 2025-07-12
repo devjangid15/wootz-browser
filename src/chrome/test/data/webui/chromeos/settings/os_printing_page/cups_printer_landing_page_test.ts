@@ -4,15 +4,16 @@
 
 import 'chrome://os-settings/lazy_load.js';
 
-import {CupsPrinterInfo, CupsPrintersBrowserProxyImpl, CupsPrintersEntryManager, PrinterListEntry, PrinterSettingsUserAction, PrinterStatusReason, PrinterStatusSeverity, PrinterType, SettingsCupsEditPrinterDialogElement, SettingsCupsEnterprisePrintersElement, SettingsCupsNearbyPrintersElement, SettingsCupsPrintersElement, SettingsCupsPrintersEntryElement, SettingsCupsSavedPrintersElement} from 'chrome://os-settings/lazy_load.js';
-import {CrInputElement, CrSearchableDropDownElement, CrToastElement, Router, routes, settingMojom} from 'chrome://os-settings/os_settings.js';
+import type {CupsPrinterInfo, PrinterListEntry, SettingsCupsEditPrinterDialogElement, SettingsCupsEnterprisePrintersElement, SettingsCupsNearbyPrintersElement, SettingsCupsPrintersElement, SettingsCupsPrintersEntryElement, SettingsCupsSavedPrintersElement} from 'chrome://os-settings/lazy_load.js';
+import {CupsPrintersBrowserProxyImpl, CupsPrintersEntryManager, PrinterSettingsUserAction, PrinterStatusReason, PrinterStatusSeverity, PrinterType} from 'chrome://os-settings/lazy_load.js';
+import type {CrInputElement, CrSearchableDropDownElement, CrToastElement} from 'chrome://os-settings/os_settings.js';
+import {Router, routes, settingMojom} from 'chrome://os-settings/os_settings.js';
 import {OncMojo} from 'chrome://resources/ash/common/network/onc_mojo.js';
 import {webUIListenerCallback} from 'chrome://resources/js/cr.js';
-import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {getDeepActiveElement} from 'chrome://resources/js/util.js';
-import {NetworkStateProperties} from 'chrome://resources/mojo/chromeos/services/network_config/public/mojom/cros_network_config.mojom-webui.js';
+import type {NetworkStateProperties} from 'chrome://resources/mojo/chromeos/services/network_config/public/mojom/cros_network_config.mojom-webui.js';
 import {ConnectionStateType, NetworkType} from 'chrome://resources/mojo/chromeos/services/network_config/public/mojom/network_types.mojom-webui.js';
-import {IronIconElement} from 'chrome://resources/polymer/v3_0/iron-icon/iron-icon.js';
+import type {IronIconElement} from 'chrome://resources/polymer/v3_0/iron-icon/iron-icon.js';
 import {flush} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 import {assertEquals, assertFalse, assertNotReached, assertNull, assertStringContains, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import {isVisible} from 'chrome://webui-test/chromeos/test_util.js';
@@ -404,6 +405,15 @@ suite('CupsSavedPrintersTests', () => {
     addressField.value = expectedAddress;
     addressField.dispatchEvent(
         new CustomEvent('input', {bubbles: true, composed: true}));
+
+    // Managed printer PPD textbox should be hidden.
+    const managedPrinterPPD =
+        editDialog.shadowRoot!.querySelector<HTMLElement>('#managedPrinterPPD');
+    assertTrue(!!managedPrinterPPD);
+    const parentElement = managedPrinterPPD.parentElement;
+    assertTrue(!!parentElement);
+    assertTrue(parentElement.hidden);
+
     const cancelButton =
         editDialog.shadowRoot!.querySelector<HTMLButtonElement>(
             '.cancel-button');
@@ -642,9 +652,6 @@ suite('CupsSavedPrintersTests', () => {
   // Verify the printer statuses received from the 'local-printers-updated'
   // event are added to the printer status cache.
   test('LocalPrintersUpdatedPrinterStatusCache', async () => {
-    loadTimeData.overrideValues({
-      isLocalPrinterObservingEnabled: true,
-    });
     createCupsPrinterPage([]);
     await flushTasks();
     const element =
@@ -700,10 +707,6 @@ suite('CupsSavedPrintersTests', () => {
     assertTrue(printerStatusReasonCache.has(id1));
     assertTrue(printerStatusReasonCache.has(id2));
     assertFalse(printerStatusReasonCache.has(id3));
-
-    // This verifies that no printer status query timers are scheduled when the
-    // "local-printer-observing" flag is enabled.
-    assertEquals(0, savedPrintersElement.getTimeoutIdsForTesting().length);
   });
 
   test('ShowMoreButtonIsInitiallyHiddenAndANewPrinterIsAdded', async () => {
@@ -1630,7 +1633,7 @@ suite('CupsEnterprisePrintersTests', () => {
   // Verifies that enterprise printers are not editable.
   test('EnterprisePrinterDialog', async () => {
     createCupsPrinterPage([
-      createCupsPrinterInfo('test1', '1', 'id1', true),
+      createCupsPrinterInfo('test1', '1', 'id1', true, '/foo/bar/bazppd'),
     ]);
     await cupsPrintersBrowserProxy.whenCalled('getCupsEnterprisePrintersList');
     // Wait for enterprise printers to populate.
@@ -1642,12 +1645,14 @@ suite('CupsEnterprisePrintersTests', () => {
     const enterprisePrinterEntries:
         NodeListOf<SettingsCupsPrintersEntryElement> =
             getPrinterEntries(enterprisePrintersElement);
+
     // Users are not allowed to remove enterprise printers.
     const removeButton =
         enterprisePrintersElement.shadowRoot!.querySelector<HTMLButtonElement>(
             '#removeButton');
     assertTrue(!!removeButton);
     assertTrue(removeButton.disabled);
+
     const button = enterprisePrinterEntries[0]!.shadowRoot!
                        .querySelector<HTMLButtonElement>('.icon-more-vert');
     assertTrue(!!button);
@@ -1682,6 +1687,7 @@ suite('CupsEnterprisePrintersTests', () => {
             '#printerPPDManufacturer');
     assertTrue(!!printerPPDManufacturer);
     assertTrue(printerPPDManufacturer.readonly);
+
     // The "specify PDD" section should be hidden.
     const browseButton =
         editDialog.shadowRoot!.querySelector<HTMLButtonElement>(
@@ -1690,10 +1696,29 @@ suite('CupsEnterprisePrintersTests', () => {
     const parentElement = browseButton.parentElement;
     assertTrue(!!parentElement);
     assertTrue(parentElement.hidden);
+
+    // Managed printer PPD textbox should be visible.
+    const managedPrinterPPD =
+        editDialog.shadowRoot!.querySelector<CrInputElement>(
+            '#managedPrinterPPD');
+    assertTrue(!!managedPrinterPPD);
+    assertFalse(managedPrinterPPD.hidden);
+    assertEquals('bazppd', managedPrinterPPD.value);
+
+    // View printer PPD button should be visible. Help text should be hidden.
     const ppdLabel =
         editDialog.shadowRoot!.querySelector<HTMLElement>('#ppdLabel');
     assertTrue(!!ppdLabel);
-    assertTrue(ppdLabel.hidden);
+    assertFalse(ppdLabel.hidden);
+    const ppdButton =
+        editDialog.shadowRoot!.querySelector<HTMLElement>('.ppd-button');
+    assertTrue(!!ppdButton);
+    assertFalse(ppdButton.hidden);
+    const localizedLink =
+        editDialog.shadowRoot!.querySelector<HTMLElement>('localized-link');
+    assertTrue(!!localizedLink);
+    assertTrue(localizedLink.hidden);
+
     // Save and Cancel buttons should be hidden. Close button should be
     // visible.
     const cancelButton =

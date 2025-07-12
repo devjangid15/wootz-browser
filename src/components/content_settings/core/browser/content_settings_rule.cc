@@ -43,7 +43,7 @@ bool ConcatenationIterator::HasNext() const {
 
 std::unique_ptr<Rule> ConcatenationIterator::Next() {
   auto current_iterator = iterators_.begin();
-  DCHECK(current_iterator != iterators_.end());
+  CHECK(current_iterator != iterators_.end());
   DCHECK((*current_iterator)->HasNext());
   std::unique_ptr<Rule> next_rule = (*current_iterator)->Next();
   if (!(*current_iterator)->HasNext()) {

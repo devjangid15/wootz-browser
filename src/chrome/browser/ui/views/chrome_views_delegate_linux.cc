@@ -16,6 +16,7 @@
 #include "ui/base/ui_base_features.h"
 #include "ui/linux/linux_ui.h"
 #include "ui/ozone/public/ozone_platform.h"
+#include "ui/views/widget/widget_delegate.h"
 
 namespace {
 
@@ -64,6 +65,10 @@ NativeWidgetType GetNativeWidgetTypeForInitParams(
     return NativeWidgetType::DESKTOP_NATIVE_WIDGET_AURA;
   }
 
+  if (params.delegate && params.delegate->use_desktop_widget_override()) {
+    return NativeWidgetType::DESKTOP_NATIVE_WIDGET_AURA;
+  }
+
   return (params.parent &&
           params.type != views::Widget::InitParams::TYPE_MENU &&
           params.type != views::Widget::InitParams::TYPE_TOOLTIP)
@@ -93,8 +98,9 @@ bool ChromeViewsDelegate::WindowManagerProvidesTitleBar(bool maximized) {
   //
   // TODO(thomasanderson,crbug.com/784010): Consider using the
   // _UNITY_SHELL wm hint when support for Ubuntu Trusty is dropped.
-  if (!maximized)
+  if (!maximized) {
     return false;
+  }
   static bool is_desktop_environment_unity = IsDesktopEnvironmentUnity();
   return is_desktop_environment_unity;
 }

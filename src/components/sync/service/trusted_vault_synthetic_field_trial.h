@@ -8,7 +8,11 @@
 #include <iosfwd>
 #include <string>
 
-#include "components/sync/protocol/nigori_specifics.pb.h"
+class GaiaId;
+
+namespace sync_pb {
+class TrustedVaultAutoUpgradeExperimentGroup;
+}  // namespace sync_pb
 
 namespace syncer {
 
@@ -25,9 +29,7 @@ class TrustedVaultAutoUpgradeSyntheticFieldTrialGroup {
   // Constructs an instance from a protobuf. Returns an invalid instance,
   // detectable via `is_valid()`, if the input is invalid.
   static TrustedVaultAutoUpgradeSyntheticFieldTrialGroup FromProto(
-      sync_pb::NigoriSpecifics::AutoUpgradeDebugInfo::AutoUpgradeExperimentGroup
-          group,
-      int cohort_id);
+      const sync_pb::TrustedVaultAutoUpgradeExperimentGroup& group);
 
   // Constructs an invalid value.
   TrustedVaultAutoUpgradeSyntheticFieldTrialGroup();

@@ -13,6 +13,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.BaseJUnit4ClassRunner;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.DisabledTest;
@@ -21,7 +22,6 @@ import org.chromium.base.test.util.UrlUtils;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.browser.WebContentsObserver;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.content_shell_apk.ContentShellActivity;
 import org.chromium.content_shell_apk.ContentShellActivityTestRule;
 
@@ -38,7 +38,8 @@ public class WebContentsObserverAndroidTest {
                     "<html><head></head><body>didFirstVisuallyNonEmptyPaint test</body></html>");
 
     private static class TestWebContentsObserver extends WebContentsObserver {
-        private CallbackHelper mDidFirstVisuallyNonEmptyPaintCallbackHelper = new CallbackHelper();
+        private final CallbackHelper mDidFirstVisuallyNonEmptyPaintCallbackHelper =
+                new CallbackHelper();
 
         public TestWebContentsObserver(WebContents webContents) {
             super(webContents);
@@ -67,7 +68,7 @@ public class WebContentsObserverAndroidTest {
     @DisabledTest(message = "crbug.com/411931")
     public void testDidFirstVisuallyNonEmptyPaint() throws Throwable {
         TestWebContentsObserver observer =
-                TestThreadUtils.runOnUiThreadBlocking(
+                ThreadUtils.runOnUiThreadBlocking(
                         new Callable<TestWebContentsObserver>() {
                             @Override
                             public TestWebContentsObserver call() {

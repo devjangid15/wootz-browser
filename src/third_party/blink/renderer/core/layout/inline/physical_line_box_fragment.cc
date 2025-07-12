@@ -20,7 +20,6 @@ namespace {
 
 struct SameSizeAsPhysicalLineBoxFragment : PhysicalFragment {
   FontHeight metrics;
-  FontHeight intrinsic_metrics;
 };
 
 ASSERT_SIZE(PhysicalLineBoxFragment, SameSizeAsPhysicalLineBoxFragment);
@@ -45,10 +44,7 @@ PhysicalLineBoxFragment::PhysicalLineBoxFragment(
                        builder->GetWritingMode(),
                        kFragmentLineBox,
                        builder->line_box_type_),
-      metrics_(builder->metrics_),
-      intrinsic_metrics_(builder->intrinsic_metrics_.IsEmpty()
-                             ? builder->metrics_
-                             : builder->intrinsic_metrics_) {
+      metrics_(builder->metrics_) {
   // A line box must have a metrics unless it's an empty line box.
   DCHECK(!metrics_.IsEmpty() || IsEmptyLineBox());
   base_direction_ = static_cast<unsigned>(builder->base_direction_);
@@ -69,18 +65,11 @@ PhysicalLineBoxFragment::PhysicalLineBoxFragment(
 
 PhysicalLineBoxFragment::~PhysicalLineBoxFragment() = default;
 
-void PhysicalLineBoxFragment::Dispose() {}
-
 FontHeight PhysicalLineBoxFragment::BaselineMetrics() const {
   // TODO(kojii): Computing other baseline types than the used one is not
   // implemented yet.
   // TODO(kojii): We might need locale/script to look up OpenType BASE table.
   return metrics_;
-}
-
-bool PhysicalLineBoxFragment::HasSoftWrapToNextLine() const {
-  const auto* break_token = To<InlineBreakToken>(GetBreakToken());
-  return break_token && !break_token->IsForcedBreak();
 }
 
 void PhysicalLineBoxFragment::TraceAfterDispatch(Visitor* visitor) const {

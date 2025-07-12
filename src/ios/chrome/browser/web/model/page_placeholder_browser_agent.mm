@@ -6,32 +6,29 @@
 
 #import "base/check.h"
 #import "base/check_op.h"
-#import "ios/chrome/browser/sessions/session_restoration_service.h"
-#import "ios/chrome/browser/sessions/session_restoration_service_factory.h"
+#import "ios/chrome/browser/sessions/model/session_restoration_service.h"
+#import "ios/chrome/browser/sessions/model/session_restoration_service_factory.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
 #import "ios/chrome/browser/shared/model/url/chrome_url_constants.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
+#import "ios/chrome/browser/tabs/model/features.h"
 #import "ios/chrome/browser/web/model/page_placeholder_tab_helper.h"
 #import "ios/web/public/web_state.h"
 
-BROWSER_USER_DATA_KEY_IMPL(PagePlaceholderBrowserAgent)
-
 PagePlaceholderBrowserAgent::PagePlaceholderBrowserAgent(Browser* browser)
-    : browser_(browser) {
+    : BrowserUserData(browser) {
   // All the BrowserAgent are attached to the Browser during the creation,
   // the WebStateList must be empty at this point.
   DCHECK(browser_->GetWebStateList()->empty())
       << "PagePlaceholderBrowserAgent created for a Browser with a non-empty "
          "WebStateList.";
 
-  ChromeBrowserState* browser_state = browser_->GetBrowserState();
+  ProfileIOS* profile = browser_->GetProfile();
   session_restoration_service_observation_.Observe(
-      SessionRestorationServiceFactory::GetForBrowserState(browser_state));
+      SessionRestorationServiceFactory::GetForProfile(profile));
 }
 
-PagePlaceholderBrowserAgent::~PagePlaceholderBrowserAgent() {
-  browser_ = nullptr;
-}
+PagePlaceholderBrowserAgent::~PagePlaceholderBrowserAgent() = default;
 
 #pragma mark - Public
 
@@ -85,10 +82,99 @@ void PagePlaceholderBrowserAgent::SessionRestorationFinished(
 
   // Setup the placeholder for the restored tabs if necessary.
   for (web::WebState* web_state : restored_web_states) {
-    const GURL& visible_url = web_state->GetVisibleURL();
-    if (visible_url.is_valid() && visible_url != kChromeUINewTabURL) {
-      PagePlaceholderTabHelper::FromWebState(web_state)
-          ->AddPlaceholderForNextNavigation();
+    AddPlaceholderToWebState(web_state);
+  }
+}
+
+void PagePlaceholderBrowserAgent::WebStateListDidChange(
+    WebStateList* web_state_list,
+    const WebStateListChange& change,
+    const WebStateListStatus& status) {
+  CHECK(CreateTabHelperOnlyForRealizedWebStates());
+  switch (change.type()) {
+    case WebStateListChange::Type::kStatusOnly:
+      // Nothing to do.
+      break;
+
+    case WebStateListChange::Type::kDetach:
+      StopObservingWebState(
+          change.As<WebStateListChangeDetach>().detached_web_state());
+      break;
+
+    case WebStateListChange::Type::kMove:
+      // Nothing do do.
+      break;
+
+    case WebStateListChange::Type::kReplace:
+      StopObservingWebState(
+          change.As<WebStateListChangeReplace>().replaced_web_state());
+      break;
+
+    case WebStateListChange::Type::kInsert:
+      // Nothing to do.
+      break;
+
+    case WebStateListChange::Type::kGroupCreate:
+      // Nothing to do.
+      break;
+
+    case WebStateListChange::Type::kGroupVisualDataUpdate:
+      // Nothing to do.
+      break;
+
+    case WebStateListChange::Type::kGroupMove:
+      // Nothing to do.
+      break;
+
+    case WebStateListChange::Type::kGroupDelete:
+      // Nothing to do.
+      break;
+  }
+}
+
+void PagePlaceholderBrowserAgent::WebStateRealized(web::WebState* web_state) {
+  CHECK(CreateTabHelperOnlyForRealizedWebStates());
+  AddPlaceholderToWebState(web_state);
+  StopObservingWebState(web_state);
+}
+
+void PagePlaceholderBrowserAgent::WebStateDestroyed(web::WebState* web_state) {
+  CHECK(CreateTabHelperOnlyForRealizedWebStates());
+  StopObservingWebState(web_state);
+}
+
+void PagePlaceholderBrowserAgent::StartObservingWebState(
+    web::WebState* web_state) {
+  CHECK(CreateTabHelperOnlyForRealizedWebStates());
+  if (!web_state_observations_.IsObservingAnySource()) {
+    web_state_list_observation_.Observe(browser_->GetWebStateList());
+  }
+  web_state_observations_.AddObservation(web_state);
+}
+
+void PagePlaceholderBrowserAgent::StopObservingWebState(
+    web::WebState* web_state) {
+  CHECK(CreateTabHelperOnlyForRealizedWebStates());
+  if (web_state_observations_.IsObservingSource(web_state)) {
+    web_state_observations_.RemoveObservation(web_state);
+    if (!web_state_observations_.IsObservingAnySource()) {
+      web_state_list_observation_.Reset();
     }
+  }
+}
+
+void PagePlaceholderBrowserAgent::AddPlaceholderToWebState(
+    web::WebState* web_state) {
+  if (CreateTabHelperOnlyForRealizedWebStates()) {
+    if (!web_state->IsRealized()) {
+      StartObservingWebState(web_state);
+      return;
+    }
+  }
+
+  const GURL& visible_url = web_state->GetVisibleURL();
+  if (visible_url.is_valid() && visible_url != kChromeUINewTabURL) {
+    PagePlaceholderTabHelper::FromWebState(web_state)
+        ->AddPlaceholderForNextNavigation();
   }
 }

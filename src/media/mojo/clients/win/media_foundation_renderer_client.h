@@ -87,9 +87,9 @@ class MediaFoundationRendererClient
   void SetPlaybackRate(double playback_rate) override;
   void SetVolume(float volume) override;
   base::TimeDelta GetMediaTime() override;
-  void OnSelectedVideoTracksChanged(
-      const std::vector<DemuxerStream*>& enabled_tracks,
-      base::OnceClosure change_completed_cb) override;
+  void OnTracksChanged(DemuxerStream::Type track_type,
+                       DemuxerStream* enabled_track,
+                       base::OnceClosure change_completed_cb) override;
   void OnExternalVideoFrameRequest() override;
   RendererType GetRendererType() override;
 
@@ -158,10 +158,7 @@ class MediaFoundationRendererClient
   std::unique_ptr<DCOMPTextureWrapper> dcomp_texture_wrapper_;
   ObserveOverlayStateCB observe_overlay_state_cb_;
 
-  // Found dangling on `win-rel` in
-  // `virtual/media-foundation-for-clear-dcomp/external/wpt/media-source/
-  // dedicated-worker/mediasource-worker-detach-element.html`
-  raw_ptr<VideoRendererSink, DanglingUntriaged> sink_ = nullptr;
+  raw_ptr<VideoRendererSink> sink_ = nullptr;
 
   mojo::Remote<RendererExtension> renderer_extension_;
 

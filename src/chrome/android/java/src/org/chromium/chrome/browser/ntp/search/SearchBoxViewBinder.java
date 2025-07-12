@@ -14,13 +14,18 @@ import android.widget.TextView;
 
 import androidx.core.widget.ImageViewCompat;
 
+import com.airbnb.lottie.LottieAnimationView;
+
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.R;
+import org.chromium.components.omnibox.OmniboxFeatures;
 import org.chromium.ui.base.ViewUtils;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
 
 /** Responsible for building and setting properties on the search box on new tab page. */
+@NullMarked
 class SearchBoxViewBinder
         implements PropertyModelChangeProcessor.ViewBinder<PropertyModel, View, PropertyKey> {
     @Override
@@ -28,6 +33,8 @@ class SearchBoxViewBinder
         ImageView voiceSearchButton =
                 view.findViewById(org.chromium.chrome.R.id.voice_search_button);
         ImageView lensButton = view.findViewById(org.chromium.chrome.R.id.lens_camera_button);
+        LottieAnimationView composeplateButton =
+                view.findViewById(org.chromium.chrome.R.id.composeplate_button);
         View searchBoxContainer = view;
         final TextView searchBoxTextView = searchBoxContainer.findViewById(R.id.search_box_text);
 
@@ -37,10 +44,13 @@ class SearchBoxViewBinder
         } else if (SearchBoxProperties.ALPHA == propertyKey) {
             searchBoxContainer.setAlpha(model.get(SearchBoxProperties.ALPHA));
             // Disable the search box contents if it is the process of being animated away.
-            ViewUtils.setEnabledRecursive(
-                    searchBoxContainer, searchBoxContainer.getAlpha() == 1.0f);
-        } else if (SearchBoxProperties.BACKGROUND == propertyKey) {
-            searchBoxContainer.setBackground(model.get(SearchBoxProperties.BACKGROUND));
+            // If the DSE icon is always visible on the NTP, we need to leave the container enabled
+            // (even though it will have alpha 0) because it, not the omnibox, will handle click
+            // events until the omnibox is "pinned" to the top.
+            if (!OmniboxFeatures.sOmniboxMobileParityUpdate.isEnabled()) {
+                ViewUtils.setEnabledRecursive(
+                        searchBoxContainer, searchBoxContainer.getAlpha() == 1.0f);
+            }
         } else if (SearchBoxProperties.VOICE_SEARCH_COLOR_STATE_LIST == propertyKey) {
             ImageViewCompat.setImageTintList(
                     voiceSearchButton,
@@ -55,6 +65,10 @@ class SearchBoxViewBinder
                     model.get(SearchBoxProperties.VOICE_SEARCH_VISIBILITY)
                             ? View.VISIBLE
                             : View.GONE);
+        } else if (SearchBoxProperties.COMPOSEPLATE_BUTTON_VISIBILITY == propertyKey) {
+            ((SearchBoxContainerView) view)
+                    .setComposeplateButtonVisibility(
+                            model.get(SearchBoxProperties.COMPOSEPLATE_BUTTON_VISIBILITY));
         } else if (SearchBoxProperties.LENS_VISIBILITY == propertyKey) {
             lensButton.setVisibility(
                     model.get(SearchBoxProperties.LENS_VISIBILITY) ? View.VISIBLE : View.GONE);
@@ -87,9 +101,9 @@ class SearchBoxViewBinder
         } else if (SearchBoxProperties.VOICE_SEARCH_CLICK_CALLBACK == propertyKey) {
             voiceSearchButton.setOnClickListener(
                     model.get(SearchBoxProperties.VOICE_SEARCH_CLICK_CALLBACK));
-        } else if (SearchBoxProperties.SEARCH_BOX_HINT_COLOR == propertyKey) {
-            searchBoxTextView.setHintTextColor(
-                    model.get(SearchBoxProperties.SEARCH_BOX_HINT_COLOR));
+        } else if (SearchBoxProperties.COMPOSEPLATE_BUTTON_CLICK_CALLBACK == propertyKey) {
+            composeplateButton.setOnClickListener(
+                    model.get(SearchBoxProperties.COMPOSEPLATE_BUTTON_CLICK_CALLBACK));
         } else if (SearchBoxProperties.SEARCH_BOX_HEIGHT == propertyKey) {
             ViewGroup.LayoutParams lp = searchBoxContainer.getLayoutParams();
             lp.height = model.get(SearchBoxProperties.SEARCH_BOX_HEIGHT);
@@ -111,41 +125,9 @@ class SearchBoxViewBinder
             searchBoxTextView.setTextSize(
                     TypedValue.COMPLEX_UNIT_SP,
                     model.get(SearchBoxProperties.SEARCH_BOX_TEXT_SIZE));
-        } else if (SearchBoxProperties.BUTTONS_HEIGHT == propertyKey) {
-            int height = model.get(SearchBoxProperties.BUTTONS_HEIGHT);
-            ViewGroup.LayoutParams layoutParams = voiceSearchButton.getLayoutParams();
-            if (layoutParams != null) {
-                layoutParams.height = height;
-                voiceSearchButton.setLayoutParams(layoutParams);
-            }
-
-            layoutParams = lensButton.getLayoutParams();
-            if (layoutParams != null) {
-                layoutParams.height = height;
-                lensButton.setLayoutParams(layoutParams);
-            }
-
-        } else if (SearchBoxProperties.BUTTONS_WIDTH == propertyKey) {
-            int width = model.get(SearchBoxProperties.BUTTONS_WIDTH);
-            ViewGroup.LayoutParams layoutParams = voiceSearchButton.getLayoutParams();
-            if (layoutParams != null) {
-                layoutParams.width = width;
-                voiceSearchButton.setLayoutParams(layoutParams);
-            }
-
-            layoutParams = lensButton.getLayoutParams();
-            if (layoutParams != null) {
-                layoutParams.width = width;
-                lensButton.setLayoutParams(layoutParams);
-            }
-
-        } else if (SearchBoxProperties.LENS_BUTTON_LEFT_MARGIN == propertyKey) {
-            MarginLayoutParams marginLayoutParams =
-                    (MarginLayoutParams) lensButton.getLayoutParams();
-            if (marginLayoutParams != null) {
-                marginLayoutParams.leftMargin =
-                        model.get(SearchBoxProperties.LENS_BUTTON_LEFT_MARGIN);
-            }
+        } else if (SearchBoxProperties.COMPOSEPLATE_BUTTON_ICON_RAW_RES_ID == propertyKey) {
+            composeplateButton.setAnimation(
+                    model.get(SearchBoxProperties.COMPOSEPLATE_BUTTON_ICON_RAW_RES_ID));
         } else {
             assert false : "Unhandled property detected in SearchBoxViewBinder!";
         }

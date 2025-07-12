@@ -5,7 +5,6 @@
 package org.chromium.chrome.browser.tab;
 
 import static org.chromium.base.test.util.Restriction.RESTRICTION_TYPE_NON_LOW_END_DEVICE;
-import static org.chromium.ui.test.util.UiRestriction.RESTRICTION_TYPE_TABLET;
 
 import android.os.SystemClock;
 
@@ -14,29 +13,33 @@ import androidx.test.filters.LargeTest;
 import org.hamcrest.Matchers;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Criteria;
 import org.chromium.base.test.util.CriteriaHelper;
+import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.base.test.util.UrlUtils;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.compositor.overlays.strip.StripLayoutTab;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
+import org.chromium.chrome.browser.tabmodel.TabClosureParams;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelUtils;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
-import org.chromium.chrome.test.batch.BlankCTATabInitialStateRule;
+import org.chromium.chrome.test.transit.AutoResetCtaTransitTestRule;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.page.WebPageStation;
 import org.chromium.chrome.test.util.TabStripUtils;
 import org.chromium.content_public.browser.test.util.DOMUtils;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
+import org.chromium.ui.base.DeviceFormFactor;
+import org.chromium.ui.util.MotionEventUtils;
 
 import java.util.concurrent.TimeoutException;
 
@@ -45,13 +48,9 @@ import java.util.concurrent.TimeoutException;
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 @Batch(Batch.PER_CLASS)
 public class UndoIntegrationTest {
-    @ClassRule
-    public static ChromeTabbedActivityTestRule sActivityTestRule =
-            new ChromeTabbedActivityTestRule();
-
     @Rule
-    public BlankCTATabInitialStateRule mBlankCTATabInitialStateRule =
-            new BlankCTATabInitialStateRule(sActivityTestRule, false);
+    public AutoResetCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.fastAutoResetCtaActivityRule();
 
     private static final String WINDOW_OPEN_BUTTON_URL =
             UrlUtils.encodeHtmlDataUri(
@@ -73,20 +72,17 @@ public class UndoIntegrationTest {
         SnackbarManager.setDurationForTesting(1500);
     }
 
-    /**
-     * Test that a tab that is closing can't open other windows.
-     *
-     * @throws TimeoutException
-     */
+    /** Test that a tab that is closing can't open other windows. */
     @Test
     @LargeTest
     @Restriction(RESTRICTION_TYPE_NON_LOW_END_DEVICE)
+    @DisabledTest(message = "https://crbug.com/373950522")
     public void testAddNewContentsFromClosingTab() throws TimeoutException {
         // Load in a new tab as Chrome will close if the last tab is closed.
-        sActivityTestRule.loadUrlInNewTab(WINDOW_OPEN_BUTTON_URL);
+        mActivityTestRule.startOnWebPage(WINDOW_OPEN_BUTTON_URL);
 
         final TabModel model =
-                sActivityTestRule.getActivity().getTabModelSelector().getCurrentModel();
+                mActivityTestRule.getActivity().getTabModelSelector().getCurrentModel();
         final Tab tab = TabModelUtils.getCurrentTab(model);
 
         // Click on the link that will trigger a delayed window popup. If this resolves it will open
@@ -94,10 +90,13 @@ public class UndoIntegrationTest {
         DOMUtils.clickNode(tab.getWebContents(), "link");
 
         // Attempt to close the tab, which will delay closing until the undo timeout goes away.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     Assert.assertEquals("Model should have two tabs", 2, model.getCount());
-                    TabModelUtils.closeTabById(model, tab.getId(), true);
+                    model.getTabRemover()
+                            .closeTabs(
+                                    TabClosureParams.closeTab(tab).allowUndo(true).build(),
+                                    /* allowDialog= */ false);
                     Assert.assertTrue("Tab was not marked as closing", tab.isClosing());
                     Assert.assertTrue(
                             "Tab is not actually closing", model.isClosurePending(tab.getId()));
@@ -111,7 +110,7 @@ public class UndoIntegrationTest {
                 });
 
         // Validate that the model doesn't contain the original tab or any newly opened tabs.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     Assert.assertFalse(
                             "Model is still waiting to close the tab",
@@ -126,15 +125,16 @@ public class UndoIntegrationTest {
     // Regression test for crbug/1465745.
     @Test
     @LargeTest
-    @Restriction(RESTRICTION_TYPE_TABLET)
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     public void testTabletCloseTabAndCommitDoesNotCrash() {
-        final ChromeTabbedActivity cta = sActivityTestRule.getActivity();
-        sActivityTestRule.loadUrlInNewTab("about:blank");
+        WebPageStation secondPage =
+                mActivityTestRule.startOnBlankPage().openFakeLinkToWebPage("about:blank");
+        final ChromeTabbedActivity cta = secondPage.getActivity();
         TabStripUtils.settleDownCompositor(
                 TabStripUtils.getStripLayoutHelperManager(cta).getStripLayoutHelper(false));
 
-        TabModel model = cta.getTabModelSelector().getModel(/* isIncognito= */ false);
-        TestThreadUtils.runOnUiThreadBlocking(
+        TabModel model = cta.getTabModelSelector().getModel(/* incognito= */ false);
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     closeTabViaButton(cta, model.getTabAt(1).getId());
                     closeTabViaButton(cta, model.getTabAt(0).getId());
@@ -145,7 +145,8 @@ public class UndoIntegrationTest {
 
     private void closeTabViaButton(ChromeTabbedActivity cta, int tabId) {
         final StripLayoutTab tab =
-                TabStripUtils.findStripLayoutTab(cta, /* isIncognito= */ false, tabId);
-        tab.getCloseButton().handleClick(SystemClock.uptimeMillis());
+                TabStripUtils.findStripLayoutTab(cta, /* incognito= */ false, tabId);
+        tab.getCloseButton()
+                .handleClick(SystemClock.uptimeMillis(), MotionEventUtils.MOTION_EVENT_BUTTON_NONE);
     }
 }

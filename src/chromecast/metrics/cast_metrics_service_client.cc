@@ -30,7 +30,7 @@
 #include "components/metrics/metrics_state_manager.h"
 #include "components/metrics/net/net_metrics_log_uploader.h"
 #include "components/metrics/persistent_synthetic_trial_observer.h"
-#include "components/metrics/url_constants.h"
+#include "components/metrics/server_urls.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
@@ -56,7 +56,7 @@ const char kClientIdName[] = "Client ID";
 
 const struct ChannelMap {
   const char* chromecast_channel;
-  const ::metrics::SystemProfileProto::Channel WOOTZAPP_CHANNEL;
+  const ::metrics::SystemProfileProto::Channel chrome_channel;
 } kMetricsChannelMap[] = {
     {"canary-channel", ::metrics::SystemProfileProto::CHANNEL_CANARY},
     {"dev-channel", ::metrics::SystemProfileProto::CHANNEL_DEV},
@@ -73,7 +73,7 @@ const struct ChannelMap {
 
   for (const auto& channel_map : kMetricsChannelMap) {
     if (channel_name.compare(channel_map.chromecast_channel) == 0)
-      return channel_map.WOOTZAPP_CHANNEL;
+      return channel_map.chrome_channel;
   }
 
   // Any non-empty channel name is considered beta channel
@@ -179,8 +179,7 @@ bool CastMetricsServiceClient::GetBrand(std::string* brand_code) {
     case CastSysInfo::BUILD_PRODUCTION:
       return ::metrics::SystemProfileProto::CHANNEL_STABLE;
   }
-  NOTREACHED_IN_MIGRATION();
-  return ::metrics::SystemProfileProto::CHANNEL_UNKNOWN;
+  NOTREACHED();
 #else
   // Use the system (or signed) release channel here to avoid the noise in the
   // metrics caused by the virtual channel which could be temporary or
@@ -240,7 +239,7 @@ GURL CastMetricsServiceClient::GetMetricsServerUrl() {
   }
   // Note: This uses the old metrics service URL because some server-side
   // provisioning is needed to support the extra Cast traffic on the new URL.
-  return GURL(::metrics::kOldMetricsServerUrl);
+  return ::metrics::GetCastMetricsServerUrl();
 }
 
 std::unique_ptr<::metrics::MetricsLogUploader>

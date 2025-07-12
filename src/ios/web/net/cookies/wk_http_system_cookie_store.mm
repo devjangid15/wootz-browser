@@ -4,9 +4,14 @@
 
 #import "ios/web/net/cookies/wk_http_system_cookie_store.h"
 
+#import <objc/runtime.h>
+
 #import "base/functional/bind.h"
 #import "base/functional/callback_helpers.h"
 #import "base/ios/block_types.h"
+#import "base/memory/weak_ptr.h"
+#import "base/scoped_observation.h"
+#import "base/sequence_checker.h"
 #import "base/task/bind_post_task.h"
 #import "base/task/sequenced_task_runner.h"
 #import "ios/net/cookies/cookie_creation_time_manager.h"
@@ -14,11 +19,249 @@
 #import "ios/web/net/cookies/crw_wk_http_cookie_store.h"
 #import "ios/web/public/thread/web_task_traits.h"
 #import "ios/web/public/thread/web_thread.h"
-#import "ios/web/web_state/ui/wk_web_view_configuration_provider.h"
 #import "net/base/apple/url_conversions.h"
 #import "net/cookies/canonical_cookie.h"
+#import "net/cookies/cookie_access_params.h"
 #import "net/cookies/cookie_constants.h"
 #import "url/gurl.h"
+
+namespace {
+
+// Some aliases for callbacks, blocks and SequencedTaskRunner to make the
+// Objective-C wrapper using those types easier to read.
+
+using NoParamCallback = base::OnceCallback<void(void)>;
+using CookiesCallback = base::OnceCallback<void(NSArray<NSHTTPCookie*>*)>;
+
+using NoParamBlock = void (^)(void);
+using CookiesBlock = void (^)(NSArray<NSHTTPCookie*>*);
+
+using ScopedSequencedTaskRunnerPtr = scoped_refptr<base::SequencedTaskRunner>;
+
+// Invokes -deleteCookie:completionHandler: on `cookie_store`.
+void DeleteCookieImpl(CRWWKHTTPCookieStore* cookie_store,
+                      NSHTTPCookie* cookie,
+                      NoParamBlock block) {
+  [cookie_store deleteCookie:cookie completionHandler:block];
+}
+
+// Invokes -setCookie:completionHandler: on `cookie_store`.
+void InsertCookieImpl(CRWWKHTTPCookieStore* cookie_store,
+                      NSHTTPCookie* cookie,
+                      NoParamBlock block) {
+  [cookie_store setCookie:cookie completionHandler:block];
+}
+
+// Invokes -clearCookies: on `cookie_store`.
+void ClearCookiesImpl(CRWWKHTTPCookieStore* cookie_store, NoParamBlock block) {
+  [cookie_store clearCookies:block];
+}
+
+// Invokes -getAllCookies: on `cookie_store`.
+void FetchCookiesImpl(CRWWKHTTPCookieStore* cookie_store, CookiesBlock block) {
+  if (cookie_store) {
+    [cookie_store getAllCookies:block];
+  } else {
+    block(@[]);
+  }
+}
+
+}  // namespace
+
+// Represents a pending operation that can be cancelled.
+//
+// The cancellation or the invocation must happen on the same sequence,
+// but it is safe to keep reference to those objects and pass them from
+// sequence to sequence until invoked.
+@protocol WKHTTPSystemCookieStoreCancelableTask
+
+- (void)cancel;
+
+@end
+
+// Helper class that converts callbacks to blocks that weakly retain the
+// callback (i.e. the callback can be destroyed before running the block
+// which will then be a no-op).
+//
+// The WKHTTPSystemCookieStore lives on the IO sequence and delegate its
+// job to CRWWKHTTPCookieStore which lives on the UI sequence. There is
+// needs to be able to send blocks to CRWWKHTTPCookieStore but they must
+// be cancelled if not completed when the IO sequence is destroyed.
+//
+// The implementation uses a WKHTTPSystemCookieStoreCancelableTask to
+// store the callback and a block with a weak reference to the task is
+// returned. This instance keeps a list of all pending tasks, remove them
+// when invoked, which allows to cancel them by resetting their callback.
+//
+// Additionally, the code ensure that the cancellation and the invocation
+// runs on the same sequence since the implementation is sequence-affine.
+@interface WKHTTPSystemCookieStoreCancelableTaskHelper
+    : NSObject <WKHTTPSystemCookieStoreCancelableTask>
+
+- (instancetype)initWithTaskRunner:(ScopedSequencedTaskRunnerPtr)taskRunner
+    NS_DESIGNATED_INITIALIZER;
+
+- (instancetype)init NS_UNAVAILABLE;
+
+- (NoParamBlock)wrapNoParamCallback:(NoParamCallback)callback;
+- (CookiesBlock)wrapCookiesCallback:(CookiesCallback)callback;
+
+@end
+
+// Used to wrap a base::OnceCallback<void()> allowing it to be cancelled.
+@interface WKHTTPSystemCookieStoreCancelableTaskNoParam
+    : NSObject <WKHTTPSystemCookieStoreCancelableTask>
+
+- (instancetype)initWithCallback:(NoParamCallback)completion
+    NS_DESIGNATED_INITIALIZER;
+
+- (instancetype)init NS_UNAVAILABLE;
+
+- (void)invoke;
+
+@end
+
+// Used to wrap a base::OnceCallback<void(NSArray<NSHTTPCookie*>*)> allowing
+// it to be cancelled.
+@interface WKHTTPSystemCookieStoreCancelableTaskCookies
+    : NSObject <WKHTTPSystemCookieStoreCancelableTask>
+
+- (instancetype)initWithCallback:(CookiesCallback)completion
+    NS_DESIGNATED_INITIALIZER;
+
+- (instancetype)init NS_UNAVAILABLE;
+
+- (void)invoke:(NSArray<NSHTTPCookie*>*)cookies;
+
+@end
+
+@implementation WKHTTPSystemCookieStoreCancelableTaskHelper {
+  scoped_refptr<base::SequencedTaskRunner> _taskRunner;
+  NSMutableArray<NSObject<WKHTTPSystemCookieStoreCancelableTask>*>* _tasks;
+  SEQUENCE_CHECKER(_sequenceChecker);
+}
+
+- (instancetype)initWithTaskRunner:(ScopedSequencedTaskRunnerPtr)taskRunner {
+  if ((self = [super init])) {
+    _taskRunner = taskRunner;
+    _tasks = [[NSMutableArray alloc] init];
+    DETACH_FROM_SEQUENCE(_sequenceChecker);
+  }
+  return self;
+}
+
+- (void)dealloc {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(_sequenceChecker);
+  [self cancel];
+}
+
+- (void)cancel {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(_sequenceChecker);
+  for (NSObject<WKHTTPSystemCookieStoreCancelableTask>* task in _tasks) {
+    [task cancel];
+  }
+  _tasks = nil;
+}
+
+- (void)insertTask:(NSObject<WKHTTPSystemCookieStoreCancelableTask>*)task {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(_sequenceChecker);
+  [_tasks addObject:task];
+}
+
+- (void)removeTask:(NSObject<WKHTTPSystemCookieStoreCancelableTask>*)task {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(_sequenceChecker);
+  [_tasks removeObject:task];
+}
+
+- (NoParamBlock)wrapNoParamCallback:(NoParamCallback)callback {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(_sequenceChecker);
+  WKHTTPSystemCookieStoreCancelableTaskNoParam* task =
+      [[WKHTTPSystemCookieStoreCancelableTaskNoParam alloc]
+          initWithCallback:std::move(callback)];
+  [self insertTask:task];
+
+  __weak __typeof(task) weakTask = task;
+  __weak __typeof(self) weakSelf = self;
+  NoParamBlock block = ^{
+    [weakTask invoke];
+    [weakSelf removeTask:weakTask];
+  };
+
+  return base::CallbackToBlock(
+      base::BindPostTask(_taskRunner, base::BindOnce(block)));
+}
+
+- (CookiesBlock)wrapCookiesCallback:(CookiesCallback)callback {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(_sequenceChecker);
+  WKHTTPSystemCookieStoreCancelableTaskCookies* task =
+      [[WKHTTPSystemCookieStoreCancelableTaskCookies alloc]
+          initWithCallback:std::move(callback)];
+  [self insertTask:task];
+
+  __weak __typeof(task) weakTask = task;
+  __weak __typeof(self) weakSelf = self;
+  CookiesBlock block = ^(NSArray<NSHTTPCookie*>* cookies) {
+    [weakTask invoke:cookies];
+    [weakSelf removeTask:weakTask];
+  };
+
+  return base::CallbackToBlock(
+      base::BindPostTask(_taskRunner, base::BindOnce(block)));
+}
+
+@end
+
+@implementation WKHTTPSystemCookieStoreCancelableTaskNoParam {
+  NoParamCallback _callback;
+  SEQUENCE_CHECKER(_sequenceChecker);
+}
+
+- (instancetype)initWithCallback:(NoParamCallback)callback {
+  if ((self = [super init])) {
+    _callback = std::move(callback);
+  }
+  return self;
+}
+
+- (void)invoke {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(_sequenceChecker);
+  if (!_callback.is_null()) {
+    std::move(_callback).Run();
+  }
+}
+
+- (void)cancel {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(_sequenceChecker);
+  _callback = NoParamCallback{};
+}
+
+@end
+
+@implementation WKHTTPSystemCookieStoreCancelableTaskCookies {
+  CookiesCallback _callback;
+  SEQUENCE_CHECKER(_sequenceChecker);
+}
+
+- (instancetype)initWithCallback:(CookiesCallback)callback {
+  if ((self = [super init])) {
+    _callback = std::move(callback);
+  }
+  return self;
+}
+
+- (void)invoke:(NSArray<NSHTTPCookie*>*)cookies {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(_sequenceChecker);
+  if (!_callback.is_null()) {
+    std::move(_callback).Run(cookies);
+  }
+}
+
+- (void)cancel {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(_sequenceChecker);
+  _callback = CookiesCallback{};
+}
+
+@end
 
 namespace web {
 namespace {
@@ -35,8 +278,9 @@ bool ShouldIncludeForRequestUrl(NSHTTPCookie* cookie, const GURL& url) {
   // to support cookieOptions this function can be modified to support that.
   std::unique_ptr<net::CanonicalCookie> canonical_cookie =
       net::CanonicalCookieFromSystemCookie(cookie, base::Time());
-  if (!canonical_cookie)
+  if (!canonical_cookie) {
     return false;
+  }
   // Cookies handled by this method are app specific cookies, so it's safe to
   // use strict same site context.
   net::CookieOptions options = net::CookieOptions::MakeAllInclusive();
@@ -47,10 +291,13 @@ bool ShouldIncludeForRequestUrl(NSHTTPCookie* cookie, const GURL& url) {
   // legacy (where cookies that don't have a specific same-site access policy
   // and not secure will not be included), and legacy mode.
   cookie_access_semantics = net::CookieAccessSemantics::UNKNOWN;
+  net::CookieScopeSemantics cookie_scope_semantics =
+      net::CookieScopeSemantics::UNKNOWN;
 
   // No extra trustworthy URLs.
   bool delegate_treats_url_as_trustworthy = false;
   net::CookieAccessParams params = {cookie_access_semantics,
+                                    cookie_scope_semantics,
                                     delegate_treats_url_as_trustworthy};
   return canonical_cookie->IncludeForRequestURL(url, options, params)
       .status.IsInclude();
@@ -87,7 +334,7 @@ base::OnceClosure ChainClosure(base::OnceClosure one, base::OnceClosure two) {
 
 }  // namespace
 
-#pragma mark - SystemCookieStore::Helper
+#pragma mark - WKHTTPSystemCookieStore::Helper
 
 // Class wrapping a WKHTTPCookieStore and providing C++ based API to
 // sends requests while dealing with the fact that WKHTTPCookieStore
@@ -100,7 +347,12 @@ base::OnceClosure ChainClosure(base::OnceClosure one, base::OnceClosure two) {
 // fail but this won't crash).
 class WKHTTPSystemCookieStore::Helper {
  public:
-  explicit Helper(WKHTTPCookieStore* cookie_store);
+  explicit Helper(CRWWKHTTPCookieStore* crw_cookie_store);
+
+  Helper(const Helper&) = delete;
+  Helper& operator=(const Helper&) = delete;
+
+  ~Helper();
 
   // Type of the callbacks used by the different methods.
   using DeleteCookieCallback = base::OnceCallback<void()>;
@@ -126,91 +378,93 @@ class WKHTTPSystemCookieStore::Helper {
   // is deleted, the callback will still be invoked with an empty array.
   void FetchCookies(FetchCookiesCallback callback);
 
-  void SetCookieStore(WKHTTPCookieStore* cookie_store);
-
  private:
-  __strong CRWWKHTTPCookieStore* crw_cookie_store_ = nil;
+  SEQUENCE_CHECKER(sequence_checker_);
+
+  // The TaskRunner used to post message to the CRWWKHTTPCookieStore
+  // and the helper object used to ensure the callback are destroyed
+  // when the IO thread stops.
   scoped_refptr<base::SequencedTaskRunner> ui_task_runner_;
-  scoped_refptr<base::SequencedTaskRunner> io_task_runner_;
+  __strong WKHTTPSystemCookieStoreCancelableTaskHelper* helper_ = nil;
+
+  // The CRWWKHTTPCookieStore used to store the cookies. Should only
+  // be accessed on the UI sequence (thus by posting tasks on the
+  // `ui_task_runner_`). Must not be converted to a strong reference
+  // on the IO thread.
+  __weak CRWWKHTTPCookieStore* crw_cookie_store_ = nil;
 };
 
-WKHTTPSystemCookieStore::Helper::Helper(WKHTTPCookieStore* cookie_store)
-    : ui_task_runner_(web::GetUIThreadTaskRunner({})),
-      io_task_runner_(web::GetIOThreadTaskRunner({})) {
-  crw_cookie_store_ = [[CRWWKHTTPCookieStore alloc] init];
-  crw_cookie_store_.HTTPCookieStore = cookie_store;
+WKHTTPSystemCookieStore::Helper::Helper(CRWWKHTTPCookieStore* crw_cookie_store)
+    : ui_task_runner_(base::SequencedTaskRunner::GetCurrentDefault()) {
+  scoped_refptr<base::SequencedTaskRunner> io_task_runner =
+      web::GetIOThreadTaskRunner({});
+
+  crw_cookie_store_ = crw_cookie_store;
+
+  helper_ = [[WKHTTPSystemCookieStoreCancelableTaskHelper alloc]
+      initWithTaskRunner:io_task_runner];
+
+  // The object is created on the UI sequence but then moves to the IO
+  // sequence. Detach from the current sequence, it will be reattached
+  // when the first method is called on the IO sequence.
+  DETACH_FROM_SEQUENCE(sequence_checker_);
+}
+
+WKHTTPSystemCookieStore::Helper::~Helper() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  [helper_ cancel];
 }
 
 void WKHTTPSystemCookieStore::Helper::DeleteCookie(
     NSHTTPCookie* cookie,
     DeleteCookieCallback callback) {
-  // Convert the callback to a block and ensure it is invoked on the IO thread.
-  void (^completion)() = base::CallbackToBlock(
-      base::BindPostTask(io_task_runner_, std::move(callback)));
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  __weak CRWWKHTTPCookieStore* weak_cookie_store = crw_cookie_store_;
-  ui_task_runner_->PostTask(FROM_HERE, base::BindOnce(^{
-                              [weak_cookie_store deleteCookie:cookie
-                                            completionHandler:completion];
-                            }));
+  // Convert the callback to a block and ensure it is invoked on the IO thread.
+  NoParamBlock block = [helper_ wrapNoParamCallback:std::move(callback)];
+  ui_task_runner_->PostTask(
+      FROM_HERE,
+      base::BindOnce(&::DeleteCookieImpl, crw_cookie_store_, cookie, block));
 }
 
 void WKHTTPSystemCookieStore::Helper::InsertCookie(
     NSHTTPCookie* cookie,
     InsertCookieCallback callback) {
-  // Convert the callback to a block and ensure it is invoked on the IO thread.
-  void (^completion)() = base::CallbackToBlock(
-      base::BindPostTask(io_task_runner_, std::move(callback)));
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  __weak CRWWKHTTPCookieStore* weak_cookie_store = crw_cookie_store_;
-  ui_task_runner_->PostTask(FROM_HERE, base::BindOnce(^{
-                              [weak_cookie_store setCookie:cookie
-                                         completionHandler:completion];
-                            }));
+  // Convert the callback to a block and ensure it is invoked on the IO thread.
+  NoParamBlock block = [helper_ wrapNoParamCallback:std::move(callback)];
+  ui_task_runner_->PostTask(
+      FROM_HERE,
+      base::BindOnce(&::InsertCookieImpl, crw_cookie_store_, cookie, block));
 }
 
 void WKHTTPSystemCookieStore::Helper::ClearCookies(
     ClearCookiesCallback callback) {
-  // Convert the callback to a block and ensure it is invoked on the IO thread.
-  void (^completion)() = base::CallbackToBlock(
-      base::BindPostTask(io_task_runner_, std::move(callback)));
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  __weak CRWWKHTTPCookieStore* weak_cookie_store = crw_cookie_store_;
-  ui_task_runner_->PostTask(FROM_HERE, base::BindOnce(^{
-                              [weak_cookie_store clearCookies:completion];
-                            }));
+  // Convert the callback to a block and ensure it is invoked on the IO thread.
+  NoParamBlock block = [helper_ wrapNoParamCallback:std::move(callback)];
+  ui_task_runner_->PostTask(
+      FROM_HERE, base::BindOnce(&::ClearCookiesImpl, crw_cookie_store_, block));
 }
 
 void WKHTTPSystemCookieStore::Helper::FetchCookies(
     FetchCookiesCallback callback) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
   // Convert the callback to a block and ensure it is invoked on the IO thread.
-  void (^completion)(NSArray<NSHTTPCookie*>*) = base::CallbackToBlock(
-      base::BindPostTask(io_task_runner_, std::move(callback)));
-
-  __weak CRWWKHTTPCookieStore* weak_cookie_store = crw_cookie_store_;
-  ui_task_runner_->PostTask(FROM_HERE, base::BindOnce(^{
-                              if (weak_cookie_store) {
-                                [weak_cookie_store getAllCookies:completion];
-                              } else {
-                                // If the store is nil, return an empty list.
-                                completion(@[]);
-                              }
-                            }));
+  CookiesBlock block = [helper_ wrapCookiesCallback:std::move(callback)];
+  ui_task_runner_->PostTask(
+      FROM_HERE, base::BindOnce(&::FetchCookiesImpl, crw_cookie_store_, block));
 }
 
-void WKHTTPSystemCookieStore::Helper::SetCookieStore(
-    WKHTTPCookieStore* cookie_store) {
-  crw_cookie_store_.HTTPCookieStore = cookie_store;
-}
-
-#pragma mark - SystemCookieStore
+#pragma mark - WKHTTPSystemCookieStore
 
 WKHTTPSystemCookieStore::WKHTTPSystemCookieStore(
-    WKWebViewConfigurationProvider* config_provider) {
-  helper_ = std::make_unique<Helper>(config_provider->GetWebViewConfiguration()
-                                         .websiteDataStore.httpCookieStore);
-
-  config_provider->AddObserver(this);
+    CRWWKHTTPCookieStore* cookie_store) {
+  helper_ = std::make_unique<Helper>(cookie_store);
+  DETACH_FROM_SEQUENCE(sequence_checker_);
 }
 
 WKHTTPSystemCookieStore::~WKHTTPSystemCookieStore() = default;
@@ -218,6 +472,7 @@ WKHTTPSystemCookieStore::~WKHTTPSystemCookieStore() = default;
 void WKHTTPSystemCookieStore::GetCookiesForURLAsync(
     const GURL& url,
     SystemCookieCallbackForCookies callback) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   helper_->FetchCookies(
       base::BindOnce(&WKHTTPSystemCookieStore::FilterAndSortCookies,
                      creation_time_manager_->GetWeakPtr(), url)
@@ -226,11 +481,13 @@ void WKHTTPSystemCookieStore::GetCookiesForURLAsync(
 
 void WKHTTPSystemCookieStore::GetAllCookiesAsync(
     SystemCookieCallbackForCookies callback) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   GetCookiesForURLAsync(GURL(), std::move(callback));
 }
 
 void WKHTTPSystemCookieStore::DeleteCookieAsync(NSHTTPCookie* cookie,
                                                 SystemCookieCallback callback) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   base::OnceClosure closure =
       base::BindOnce(&net::CookieCreationTimeManager::DeleteCreationTime,
                      creation_time_manager_->GetWeakPtr(), cookie);
@@ -241,8 +498,9 @@ void WKHTTPSystemCookieStore::DeleteCookieAsync(NSHTTPCookie* cookie,
 
 void WKHTTPSystemCookieStore::SetCookieAsync(
     NSHTTPCookie* cookie,
-    const base::Time* optional_creation_time,
+    std::optional<base::Time> optional_creation_time,
     SystemCookieCallback callback) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   const base::Time creation_time =
       optional_creation_time ? *optional_creation_time : base::Time::Now();
 
@@ -255,6 +513,7 @@ void WKHTTPSystemCookieStore::SetCookieAsync(
 }
 
 void WKHTTPSystemCookieStore::ClearStoreAsync(SystemCookieCallback callback) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   base::OnceClosure closure =
       base::BindOnce(&net::CookieCreationTimeManager::Clear,
                      creation_time_manager_->GetWeakPtr());
@@ -265,15 +524,8 @@ void WKHTTPSystemCookieStore::ClearStoreAsync(SystemCookieCallback callback) {
 NSHTTPCookieAcceptPolicy WKHTTPSystemCookieStore::GetCookieAcceptPolicy() {
   // TODO(crbug.com/41341295): Make sure there is no other way to return
   // WKHTTPCookieStore Specific cookieAcceptPolicy.
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return [[NSHTTPCookieStorage sharedHTTPCookieStorage] cookieAcceptPolicy];
-}
-
-#pragma mark WKWebViewConfigurationProviderObserver implementation
-
-void WKHTTPSystemCookieStore::DidCreateNewConfiguration(
-    WKWebViewConfigurationProvider* provider,
-    WKWebViewConfiguration* new_config) {
-  helper_->SetCookieStore(new_config.websiteDataStore.httpCookieStore);
 }
 
 #pragma mark private methods

@@ -19,6 +19,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.profiles.ProfileManager;
@@ -30,7 +31,6 @@ import org.chromium.components.omnibox.OmniboxUrlEmphasizer.UrlEmphasisColorSpan
 import org.chromium.components.omnibox.OmniboxUrlEmphasizer.UrlEmphasisSecurityErrorSpan;
 import org.chromium.components.omnibox.OmniboxUrlEmphasizer.UrlEmphasisSpan;
 import org.chromium.components.security_state.ConnectionSecurityLevel;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 import java.util.Arrays;
 import java.util.Comparator;
@@ -49,7 +49,7 @@ public class OmniboxUrlEmphasizerTest {
 
     @Before
     public void setUp() {
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mProfile = ProfileManager.getLastUsedRegularProfile();
                     mChromeAutocompleteSchemeClassifier =
@@ -65,8 +65,8 @@ public class OmniboxUrlEmphasizerTest {
 
     /** Convenience class for testing a URL emphasized by OmniboxUrlEmphasizer.emphasizeUrl(). */
     private static class EmphasizedUrlSpanHelper {
-        UrlEmphasisSpan mSpan;
-        Spannable mParent;
+        final UrlEmphasisSpan mSpan;
+        final Spannable mParent;
 
         private EmphasizedUrlSpanHelper(UrlEmphasisSpan span, Spannable parent) {
             mSpan = span;
@@ -148,7 +148,7 @@ public class OmniboxUrlEmphasizerTest {
         EmphasizedUrlSpanHelper[] spans = EmphasizedUrlSpanHelper.getSpansForEmphasizedUrl(url);
         Arrays.sort(
                 spans,
-                new Comparator<EmphasizedUrlSpanHelper>() {
+                new Comparator<>() {
                     @Override
                     public int compare(EmphasizedUrlSpanHelper o1, EmphasizedUrlSpanHelper o2) {
                         return o1.getStartIndex() - o2.getStartIndex();

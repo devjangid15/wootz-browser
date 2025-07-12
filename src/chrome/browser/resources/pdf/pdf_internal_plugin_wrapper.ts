@@ -2,8 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import {FormFieldFocusType} from './constants.js';
 import type {PinchEventDetail} from './gesture_detector.js';
 import {GestureDetector} from './gesture_detector.js';
+import {convertFormFocusChangeMessage} from './message_converter.js';
 import type {SwipeDirection} from './swipe_detector.js';
 import {SwipeDetector} from './swipe_detector.js';
 
@@ -25,14 +27,15 @@ if (parentOrigin === 'chrome-untrusted://print') {
 
 // Plugin-to-parent message handlers. All messages are passed through, but some
 // messages may affect this frame, too.
-let isFormFieldFocused = false;
+let isFormFieldFocused: boolean = false;
 plugin.addEventListener('message', e => {
   const message = (e as MessageEvent).data;
   switch (message.type) {
     case 'formFocusChange':
       // TODO(crbug.com/40810904): Ideally, the plugin would just consume
       // interesting keyboard events first.
-      isFormFieldFocused = (message as {focused: boolean}).focused;
+      const focusedData = convertFormFocusChangeMessage(message);
+      isFormFieldFocused = focusedData.focused !== FormFieldFocusType.NONE;
       break;
   }
 
@@ -157,6 +160,21 @@ function relaySwipe(e: Event): void {
 const swipeDetector = new SwipeDetector(plugin);
 swipeDetector.getEventTarget().addEventListener('swipe', relaySwipe);
 
+// <if expr="enable_pdf_ink2">
+document.addEventListener('pointerdown', e => {
+  // Only forward left click.
+  if (e.button !== 0) {
+    return;
+  }
+
+  channel.port1.postMessage({
+    type: 'sendClickEvent',
+    x: e.clientX,
+    y: e.clientY,
+  });
+});
+// </if>
+
 document.addEventListener('keydown', e => {
   // Only forward potential shortcut keys.
   switch (e.key) {
@@ -183,6 +201,10 @@ document.addEventListener('keydown', e => {
       }
       return;
 
+    // <if expr="enable_pdf_ink2">
+    case 'Enter':
+      // Enter is used to create new text annotations.
+    // </if>
     case 'Escape':
     case 'Tab':
       // Print Preview is interested in Escape and Tab.

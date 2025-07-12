@@ -4,37 +4,39 @@
 
 package org.chromium.chrome.browser.tab;
 
-import androidx.annotation.Nullable;
-
 import org.chromium.base.Callback;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.base.WindowAndroid;
 
 /**
- * Builds {@link Tab} using builder pattern. All Tab classes should be instantiated
- * through this builder.
+ * Builds {@link Tab} using builder pattern. All Tab classes should be instantiated through this
+ * builder.
  */
+@NullMarked
 public class TabBuilder {
     private final Profile mProfile;
 
     private int mId = Tab.INVALID_TAB_ID;
-    private Tab mParent;
-    private TabResolver mTabResolver;
-    private WindowAndroid mWindow;
-    private Integer mLaunchType;
-    private Integer mCreationType;
+    private @Nullable Tab mParent;
+    private @Nullable TabResolver mTabResolver;
+    private @Nullable WindowAndroid mWindow;
+    // Should not be null when build() is called.
+    private @Nullable @TabLaunchType Integer mLaunchType;
+    private @Nullable @TabCreationState Integer mCreationType;
     private boolean mFromFrozenState;
-    private LoadUrlParams mLoadUrlParams;
-    private String mTitle;
+    private @Nullable LoadUrlParams mLoadUrlParams;
+    private @Nullable String mTitle;
 
-    private WebContents mWebContents;
-    private TabDelegateFactory mDelegateFactory;
+    private @Nullable WebContents mWebContents;
+    private @Nullable TabDelegateFactory mDelegateFactory;
     private boolean mInitiallyHidden;
     private boolean mInitializeRenderer;
-    private TabState mTabState;
-    private Callback<Tab> mPreInitializeAction;
+    private @Nullable TabState mTabState;
+    private @Nullable Callback<Tab> mPreInitializeAction;
 
     public TabBuilder(Profile profile) {
         mProfile = profile;
@@ -52,10 +54,11 @@ public class TabBuilder {
 
     /**
      * Sets the tab from which the new one is opened.
+     *
      * @param parent The parent Tab.
      * @return {@link TabBuilder} creating the Tab.
      */
-    public TabBuilder setParent(Tab parent) {
+    public TabBuilder setParent(@Nullable Tab parent) {
         mParent = parent;
         return this;
     }
@@ -93,8 +96,6 @@ public class TabBuilder {
     /**
      * Sets a flag indicating to initialize renderer during WebContents creation.
      *
-     * @param boolean initializeRenderer to initialize renderer or not.
-     *
      * @return {@link TabBuilder} creating the Tab.
      */
     public TabBuilder setInitializeRenderer(boolean initializeRenderer) {
@@ -103,22 +104,24 @@ public class TabBuilder {
     }
 
     /**
-     * Sets a {@link WebContents} object to be used on the Tab. If not set, a new one
-     * will be created.
+     * Sets a {@link WebContents} object to be used on the Tab. If not set, a new one will be
+     * created.
+     *
      * @param webContents {@link WebContents} object.
      * @return {@link TabBuilder} creating the Tab.
      */
-    public TabBuilder setWebContents(WebContents webContents) {
+    public TabBuilder setWebContents(@Nullable WebContents webContents) {
         mWebContents = webContents;
         return this;
     }
 
     /**
      * Sets a {@link TabDelegateFactory} object.
+     *
      * @param delegateFactory The factory delegated to create various Tab-related objects.
      * @return {@link TabBuilder} creating the Tab.
      */
-    public TabBuilder setDelegateFactory(TabDelegateFactory delegateFactory) {
+    public TabBuilder setDelegateFactory(@Nullable TabDelegateFactory delegateFactory) {
         mDelegateFactory = delegateFactory;
         return this;
     }
@@ -155,6 +158,8 @@ public class TabBuilder {
     }
 
     public Tab build() {
+        assert mLaunchType != null : "TabBuilder#setLaunchType() must be called.";
+
         // Pre-condition check
         if (mCreationType != null) {
             if (!mFromFrozenState) {
@@ -186,6 +191,7 @@ public class TabBuilder {
 
         // Initializes Tab. Its user data objects are also initialized through the event
         // |onInitialized| of TabObserver they register.
+        assert mDelegateFactory != null;
         tab.initialize(
                 parent,
                 mCreationType,
@@ -214,7 +220,7 @@ public class TabBuilder {
         return this;
     }
 
-    private TabBuilder setTitle(String title) {
+    private TabBuilder setTitle(@Nullable String title) {
         mTitle = title;
         return this;
     }

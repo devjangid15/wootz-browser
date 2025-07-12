@@ -27,6 +27,10 @@
 class Profile;
 class PrefService;
 
+namespace invalidation {
+class InvalidationListener;
+}  // namespace invalidation
+
 namespace policy {
 class CloudPolicyClient;
 }  // namespace policy
@@ -52,6 +56,9 @@ struct FailedWorkerInfo {
   ~FailedWorkerInfo();
   FailedWorkerInfo(const FailedWorkerInfo&);
   FailedWorkerInfo& operator=(const FailedWorkerInfo&);
+
+  // The ID of the certificate provisioning process.
+  std::string process_id;
   // The state the worker had prior to switching to the failed state
   // (CertProvisioningWorkerState::kFailed).
   CertProvisioningWorkerState state_before_failure =
@@ -116,8 +123,7 @@ class CertProvisioningSchedulerImpl
   static std::unique_ptr<CertProvisioningScheduler>
   CreateDeviceCertProvisioningScheduler(
       policy::CloudPolicyClient* cloud_policy_client,
-      policy::AffiliatedInvalidationServiceProvider*
-          invalidation_service_provider);
+      invalidation::InvalidationListener* invalidation_listener);
 
   CertProvisioningSchedulerImpl(
       CertScope cert_scope,
@@ -147,6 +153,7 @@ class CertProvisioningSchedulerImpl
   // its final state.
   // Public so it can be called from tests.
   void OnProfileFinished(CertProfile profile,
+                         std::string process_id,
                          CertProvisioningWorkerState state);
 
   // Called when any state visible from the outside has changed.

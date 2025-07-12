@@ -20,8 +20,8 @@
 #include "components/password_manager/core/browser/password_form.h"
 #include "components/password_manager/core/browser/password_manager_client.h"
 #include "components/password_manager/core/browser/password_manager_util.h"
-#include "components/password_manager/core/browser/password_store_signin_notifier.h"
-#include "components/password_manager/core/common/password_manager_features.h"
+#include "components/password_manager/core/browser/password_reuse_detector.h"
+#include "components/password_manager/core/browser/password_reuse_manager_signin_notifier.h"
 #include "components/prefs/pref_service.h"
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
 #include "components/signin/public/base/consent_level.h"
@@ -50,10 +50,6 @@ constexpr char kLoginAccountIdentifier[] = "Login.accountIdentifier";
 constexpr char kLoginHashedPassword[] = "Login.hashedPassword";
 constexpr char kLoginSalt[] = "Login.salt";
 #endif
-
-bool IsPasswordReuseDetectionEnabled() {
-  return base::FeatureList::IsEnabled(features::kPasswordReuseDetectionEnabled);
-}
 
 // Represents a single CheckReuse() request. Implements functionality to
 // listen to reuse events and propagate them to |consumer| on the sequence on
@@ -123,19 +119,15 @@ PasswordReuseManagerImpl::PasswordReuseManagerImpl() = default;
 PasswordReuseManagerImpl::~PasswordReuseManagerImpl() = default;
 
 void PasswordReuseManagerImpl::Shutdown() {
-  if (profile_store_) {
-    profile_store_->RemoveObserver(this);
-    profile_store_.reset();
-  }
-  if (account_store_) {
-    account_store_->RemoveObserver(this);
-    profile_store_.reset();
-  }
-  if (identity_manager_) {
-    identity_manager_->RemoveObserver(this);
-  }
-  if (notifier_)
+  profile_store_observation_.Reset();
+  profile_store_.reset();
+  account_store_observation_.Reset();
+  account_store_.reset();
+  identity_manager_observation_.Reset();
+  identity_manager_ = nullptr;
+  if (notifier_) {
     notifier_->UnsubscribeFromSigninEvents();
+  }
 
   if (reuse_detector_) {
     background_task_runner_->DeleteSoon(FROM_HERE, std::move(reuse_detector_));
@@ -158,14 +150,11 @@ void PasswordReuseManagerImpl::Init(
 #if BUILDFLAG(IS_ANDROID)
   if (shared_pref_delegate) {
     shared_pref_delegate_ = std::move(shared_pref_delegate);
-    identity_manager_->AddObserver(this);
+    identity_manager_observation_.Observe(identity_manager_);
   }
 #endif
   main_task_runner_ = base::SequencedTaskRunner::GetCurrentDefault();
   DCHECK(main_task_runner_);
-
-  if (!IsPasswordReuseDetectionEnabled())
-    return;
 
   background_task_runner_ = base::ThreadPool::CreateSequencedTaskRunner(
       {base::MayBlock(), base::TaskPriority::USER_VISIBLE});
@@ -194,8 +183,9 @@ void PasswordReuseManagerImpl::Init(
 
 void PasswordReuseManagerImpl::ReportMetrics(const std::string& username) {
   DCHECK(main_task_runner_->RunsTasksInCurrentSequence());
-  if (username.empty())
+  if (username.empty()) {
     return;
+  }
 
   auto hash_password_state =
       hash_password_manager_.HasPasswordHash(username,
@@ -220,7 +210,7 @@ void PasswordReuseManagerImpl::CheckReuse(
 }
 
 void PasswordReuseManagerImpl::PreparePasswordHashData(
-    metrics_util::SignInState sign_in_state_for_metrics) {
+    std::optional<metrics_util::SignInState> sign_in_state_for_metrics) {
   DCHECK(main_task_runner_->RunsTasksInCurrentSequence());
   SchedulePasswordHashUpdate(sign_in_state_for_metrics);
   ScheduleEnterprisePasswordURLUpdate();
@@ -285,8 +275,9 @@ void PasswordReuseManagerImpl::ClearGaiaPasswordHash(
   DCHECK(main_task_runner_->RunsTasksInCurrentSequence());
   hash_password_manager_.ClearSavedPasswordHash(username,
                                                 /*is_gaia_password=*/true);
-  if (!reuse_detector_)
+  if (!reuse_detector_) {
     return;
+  }
   ScheduleTask(base::BindOnce(&PasswordReuseDetector::ClearGaiaPasswordHash,
                               base::Unretained(reuse_detector_.get()),
                               username));
@@ -295,8 +286,9 @@ void PasswordReuseManagerImpl::ClearGaiaPasswordHash(
 void PasswordReuseManagerImpl::ClearAllGaiaPasswordHash() {
   DCHECK(main_task_runner_->RunsTasksInCurrentSequence());
   hash_password_manager_.ClearAllPasswordHash(/* is_gaia_password= */ true);
-  if (!reuse_detector_)
+  if (!reuse_detector_) {
     return;
+  }
   ScheduleTask(base::BindOnce(&PasswordReuseDetector::ClearAllGaiaPasswordHash,
                               base::Unretained(reuse_detector_.get())));
 }
@@ -304,8 +296,9 @@ void PasswordReuseManagerImpl::ClearAllGaiaPasswordHash() {
 void PasswordReuseManagerImpl::ClearAllEnterprisePasswordHash() {
   DCHECK(main_task_runner_->RunsTasksInCurrentSequence());
   hash_password_manager_.ClearAllPasswordHash(/* is_gaia_password= */ false);
-  if (!reuse_detector_)
+  if (!reuse_detector_) {
     return;
+  }
   ScheduleTask(
       base::BindOnce(&PasswordReuseDetector::ClearAllEnterprisePasswordHash,
                      base::Unretained(reuse_detector_.get())));
@@ -314,8 +307,9 @@ void PasswordReuseManagerImpl::ClearAllEnterprisePasswordHash() {
 void PasswordReuseManagerImpl::ClearAllNonGmailPasswordHash() {
   DCHECK(main_task_runner_->RunsTasksInCurrentSequence());
   hash_password_manager_.ClearAllNonGmailPasswordHash();
-  if (!reuse_detector_)
+  if (!reuse_detector_) {
     return;
+  }
   ScheduleTask(
       base::BindOnce(&PasswordReuseDetector::ClearAllNonGmailPasswordHash,
                      base::Unretained(reuse_detector_.get())));
@@ -329,8 +323,8 @@ PasswordReuseManagerImpl::RegisterStateCallbackOnHashPasswordManager(
   return hash_password_manager_.RegisterStateCallback(callback);
 }
 
-void PasswordReuseManagerImpl::SetPasswordStoreSigninNotifier(
-    std::unique_ptr<PasswordStoreSigninNotifier> notifier) {
+void PasswordReuseManagerImpl::SetPasswordReuseManagerSigninNotifier(
+    std::unique_ptr<PasswordReuseManagerSigninNotifier> notifier) {
   DCHECK(main_task_runner_->RunsTasksInCurrentSequence());
   DCHECK(!notifier_);
   DCHECK(notifier);
@@ -352,10 +346,11 @@ void PasswordReuseManagerImpl::SchedulePasswordHashUpdate(
   std::vector<PasswordHashData> gaia_password_hash_list;
   std::vector<PasswordHashData> enterprise_password_hash_list;
   for (PasswordHashData& password_hash : protected_password_data_list) {
-    if (password_hash.is_gaia_password)
+    if (password_hash.is_gaia_password) {
       gaia_password_hash_list.push_back(std::move(password_hash));
-    else
+    } else {
       enterprise_password_hash_list.push_back(std::move(password_hash));
+    }
   }
 
   if (sign_in_state_for_metrics) {
@@ -376,15 +371,17 @@ void PasswordReuseManagerImpl::SchedulePasswordHashUpdate(
 void PasswordReuseManagerImpl::ScheduleEnterprisePasswordURLUpdate() {
   DCHECK(main_task_runner_->RunsTasksInCurrentSequence());
 
-  if (!prefs_)
+  if (!prefs_) {
     return;
+  }
   std::vector<GURL> enterprise_login_urls;
   safe_browsing::GetPasswordProtectionLoginURLsPref(*prefs_,
                                                     &enterprise_login_urls);
   GURL enterprise_change_password_url =
       safe_browsing::GetPasswordProtectionChangePasswordURLPref(*prefs_);
-  if (!reuse_detector_)
+  if (!reuse_detector_) {
     return;
+  }
   ScheduleTask(base::BindOnce(&PasswordReuseDetector::UseEnterprisePasswordURLs,
                               base::Unretained(reuse_detector_.get()),
                               std::move(enterprise_login_urls),
@@ -392,11 +389,11 @@ void PasswordReuseManagerImpl::ScheduleEnterprisePasswordURLUpdate() {
 }
 
 void PasswordReuseManagerImpl::RequestLoginsFromStores() {
-  profile_store_->AddObserver(this);
+  profile_store_observation_.Observe(profile_store_.get());
   profile_store_->GetAutofillableLogins(
       /*consumer=*/weak_ptr_factory_.GetWeakPtr());
   if (account_store_) {
-    account_store_->AddObserver(this);
+    account_store_observation_.Observe(account_store_.get());
     account_store_->GetAutofillableLogins(
         /*consumer=*/weak_ptr_factory_.GetWeakPtr());
     // base::Unretained() is safe because `this` outlives the subscription.
@@ -410,8 +407,9 @@ void PasswordReuseManagerImpl::RequestLoginsFromStores() {
 void PasswordReuseManagerImpl::OnGetPasswordStoreResults(
     std::vector<std::unique_ptr<PasswordForm>> results) {
   DCHECK(main_task_runner_->RunsTasksInCurrentSequence());
-  if (!reuse_detector_)
+  if (!reuse_detector_) {
     return;
+  }
   ScheduleTask(base::BindOnce(&PasswordReuseDetector::OnGetPasswordStoreResults,
                               base::Unretained(reuse_detector_.get()),
                               std::move(results)));
@@ -461,20 +459,28 @@ void PasswordReuseManagerImpl::OnPrimaryAccountChanged(
     // On Android, check if there are any gaia credentials saved for this user.
     auto saved_creds = shared_pref_delegate_->GetCredentials("");
     if (saved_creds.empty()) {
+      metrics_util::LogSharedPrefCredentialsAccessOutcome(
+          metrics_util::SharedPrefCredentialsAccessOutcome::kNoCredentials);
       return;
     }
     auto parsed_json = base::JSONReader::ReadAndReturnValueWithError(
         saved_creds, base::JSON_ALLOW_TRAILING_COMMAS);
     if (!parsed_json.has_value()) {
       LOG(ERROR) << "Error parsing JSON: " << parsed_json.error().message;
+      metrics_util::LogSharedPrefCredentialsAccessOutcome(
+          metrics_util::SharedPrefCredentialsAccessOutcome::kParseError);
       return;
     }
     if (!parsed_json->is_list()) {
       LOG(ERROR) << "Error parsing JSON: Expected a list but got non-list.";
+      metrics_util::LogSharedPrefCredentialsAccessOutcome(
+          metrics_util::SharedPrefCredentialsAccessOutcome::kBadType);
       return;
     }
     auto& saved_creds_list = parsed_json->GetList();
     if (saved_creds_list.empty()) {
+      metrics_util::LogSharedPrefCredentialsAccessOutcome(
+          metrics_util::SharedPrefCredentialsAccessOutcome::kEmptyCredentials);
       return;
     }
     for (size_t i = 0; i < saved_creds_list.size(); i++) {
@@ -485,6 +491,8 @@ void PasswordReuseManagerImpl::OnPrimaryAccountChanged(
       if (identity_manager_
               ->GetPrimaryAccountInfo(signin::ConsentLevel::kSignin)
               .email == *account_id) {
+        metrics_util::LogSharedPrefCredentialsAccessOutcome(
+            metrics_util::SharedPrefCredentialsAccessOutcome::kLoginMatch);
         PasswordHashData password_hash_data;
         password_hash_data.username = gaia::CanonicalizeEmail(*account_id);
         password_hash_data.length = 8;  // Min size for gaia passwords is 8.
@@ -502,6 +510,9 @@ void PasswordReuseManagerImpl::OnPrimaryAccountChanged(
         shared_pref_delegate_->SetCredentials(
             base::WriteJson(saved_creds_list).value());
         break;
+      } else {
+        metrics_util::LogSharedPrefCredentialsAccessOutcome(
+            metrics_util::SharedPrefCredentialsAccessOutcome::kLoginMismatch);
       }
     }
   }
@@ -511,9 +522,6 @@ void PasswordReuseManagerImpl::OnPrimaryAccountChanged(
 void PasswordReuseManagerImpl::MaybeSavePasswordHash(
     const PasswordForm* submitted_form,
     PasswordManagerClient* client) {
-  if (!base::FeatureList::IsEnabled(features::kPasswordReuseDetectionEnabled)) {
-    return;
-  }
   // When |username_value| is empty, it's not clear whether the submitted
   // credentials are really Gaia or enterprise credentials. Don't save
   // password hash in that case.
@@ -534,7 +542,7 @@ void PasswordReuseManagerImpl::MaybeSavePasswordHash(
   }
 
   if (password_manager_util::IsLoggingActive(client)) {
-    BrowserSavePasswordProgressLogger logger(client->GetLogManager());
+    BrowserSavePasswordProgressLogger logger(client->GetCurrentLogManager());
     logger.LogMessage(
         autofill::SavePasswordProgressLogger::STRING_SAVE_PASSWORD_HASH);
   }

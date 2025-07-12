@@ -13,6 +13,8 @@
 #include <utility>
 
 #include "base/check.h"
+#include "ui/base/metadata/base_type_conversion.h"
+#include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/views/views_export.h"
 
@@ -72,8 +74,8 @@ class VIEWS_EXPORT SizeBound {
   std::string ToString() const;
 
  private:
-  friend constexpr bool operator==(const SizeBound& lhs, const SizeBound& rhs);
-  friend constexpr bool operator!=(const SizeBound& lhs, const SizeBound& rhs);
+  friend constexpr bool operator==(const SizeBound&,
+                                   const SizeBound&) = default;
 
   // nullopt represents "unbounded".
   std::optional<int> bound_;
@@ -100,12 +102,6 @@ constexpr bool operator<=(const SizeBound& lhs, const SizeBound& rhs) {
 }
 constexpr bool operator>=(const SizeBound& lhs, const SizeBound& rhs) {
   return !(lhs < rhs);
-}
-constexpr bool operator==(const SizeBound& lhs, const SizeBound& rhs) {
-  return lhs.bound_ == rhs.bound_;
-}
-constexpr bool operator!=(const SizeBound& lhs, const SizeBound& rhs) {
-  return lhs.bound_ != rhs.bound_;
 }
 
 // Stores an optional width and height upper bound. Used when calculating the
@@ -138,7 +134,13 @@ class VIEWS_EXPORT SizeBounds {
   // specified amounts.
   void Enlarge(int width, int height);
 
+  // Shrink the SizeBounds by the given `insets`.
+  SizeBounds Inset(const gfx::Insets& inset) const;
+
   std::string ToString() const;
+
+  friend constexpr bool operator==(const SizeBounds&,
+                                   const SizeBounds&) = default;
 
  private:
   SizeBound width_;
@@ -151,13 +153,6 @@ constexpr SizeBounds::SizeBounds(const gfx::Size& size)
     : width_(size.width()), height_(size.height()) {}
 constexpr SizeBounds::SizeBounds(const SizeBounds&) = default;
 constexpr SizeBounds::SizeBounds(SizeBounds&&) = default;
-constexpr bool operator==(const SizeBounds& lhs, const SizeBounds& rhs) {
-  return std::tie(lhs.width(), lhs.height()) ==
-         std::tie(rhs.width(), rhs.height());
-}
-constexpr bool operator!=(const SizeBounds& lhs, const SizeBounds& rhs) {
-  return !(lhs == rhs);
-}
 constexpr bool operator<(const SizeBounds& lhs, const SizeBounds& rhs) {
   return std::tie(lhs.height(), lhs.width()) <
          std::tie(rhs.height(), rhs.width());
@@ -176,5 +171,8 @@ void PrintTo(const SizeBounds& size_bounds, ::std::ostream* os);
 void PrintTo(LayoutOrientation layout_orientation, ::std::ostream* os);
 
 }  // namespace views
+
+EXPORT_ENUM_CONVERTERS(views::LayoutAlignment, VIEWS_EXPORT)
+EXPORT_ENUM_CONVERTERS(views::LayoutOrientation, VIEWS_EXPORT)
 
 #endif  // UI_VIEWS_LAYOUT_LAYOUT_TYPES_H_

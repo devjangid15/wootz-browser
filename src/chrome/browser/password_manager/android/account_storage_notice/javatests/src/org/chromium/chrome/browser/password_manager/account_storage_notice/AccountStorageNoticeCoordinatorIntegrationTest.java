@@ -13,9 +13,12 @@ import static androidx.test.espresso.matcher.ViewMatchers.withText;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
+import static org.chromium.chrome.browser.password_manager.account_storage_notice.AccountStorageNoticeCoordinator.CLOSE_REASON_METRIC;
+
 import androidx.test.espresso.Espresso;
 import androidx.test.filters.MediumTest;
 
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -25,25 +28,25 @@ import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 import org.mockito.quality.Strictness;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.CriteriaHelper;
-import org.chromium.base.test.util.Features.EnableFeatures;
-import org.chromium.base.test.util.JniMocker;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
+import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
+import org.chromium.chrome.browser.password_manager.account_storage_notice.AccountStorageNoticeCoordinator.CloseReason;
 import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.profiles.ProfileManager;
-import org.chromium.chrome.browser.settings.SettingsLauncherImpl;
-import org.chromium.chrome.browser.sync.SyncServiceFactory;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
-import org.chromium.chrome.test.util.browser.signin.SigninTestRule;
+import org.chromium.chrome.test.util.ChromeRenderTestRule;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController.SheetState;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetControllerProvider;
 import org.chromium.components.user_prefs.UserPrefs;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
+
+import java.io.IOException;
 
 /**
  * Tests that verify AccountStorageNoticeCoordinator's interaction with the view, e.g. click
@@ -54,16 +57,18 @@ import org.chromium.content_public.browser.test.util.TestThreadUtils;
 @Batch(Batch.PER_CLASS)
 @CommandLineFlags.Add(ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE)
 @RunWith(ChromeJUnit4ClassRunner.class)
-@EnableFeatures(ChromeFeatureList.ENABLE_PASSWORDS_ACCOUNT_STORAGE_FOR_NON_SYNCING_USERS)
 public class AccountStorageNoticeCoordinatorIntegrationTest {
-    @Rule public SigninTestRule mSigninTestRule = new SigninTestRule();
-
     @Rule public ChromeTabbedActivityTestRule mActivityRule = new ChromeTabbedActivityTestRule();
 
     @Rule
-    public final MockitoRule mMockitoRule = MockitoJUnit.rule().strictness(Strictness.STRICT_STUBS);
+    public final ChromeRenderTestRule mRenderTestRule =
+            ChromeRenderTestRule.Builder.withPublicCorpus()
+                    .setBugComponent(ChromeRenderTestRule.Component.SERVICES_SYNC)
+                    .setRevision(1)
+                    .build();
 
-    @Rule public JniMocker mJniMocker = new JniMocker();
+    @Rule
+    public final MockitoRule mMockitoRule = MockitoJUnit.rule().strictness(Strictness.STRICT_STUBS);
 
     @Mock private AccountStorageNoticeCoordinator.Natives mJniMock;
 
@@ -76,14 +81,39 @@ public class AccountStorageNoticeCoordinatorIntegrationTest {
 
     @Before
     public void setUp() {
-        mJniMocker.mock(AccountStorageNoticeCoordinatorJni.TEST_HOOKS, mJniMock);
+        AccountStorageNoticeCoordinatorJni.setInstanceForTesting(mJniMock);
         mActivityRule.startMainActivityOnBlankPage();
-        mSigninTestRule.addTestAccountThenSignin();
-        TestThreadUtils.runOnUiThreadBlocking(
+    }
+
+    @Test
+    @MediumTest
+    @Feature({"RenderTest"})
+    public void testView() throws IOException {
+        AccountStorageNoticeCoordinator coordinator = createCoordinator();
+        waitSheetVisible(true);
+
+        mRenderTestRule.render(
+                coordinator.getBottomSheetViewForTesting(), "account_storage_notice_view");
+    }
+
+    @Test
+    @MediumTest
+    public void testMarksShown() {
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    // Tests are batched, so reset the pref, otherwise the notice only shows once.
+                    // Tests are batched, so the pref might have been set by a previous one.
                     UserPrefs.get(ProfileManager.getLastUsedRegularProfile())
                             .clearPref(Pref.ACCOUNT_STORAGE_NOTICE_SHOWN);
+                });
+
+        createCoordinator();
+        waitSheetVisible(true);
+
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    Assert.assertTrue(
+                            UserPrefs.get(ProfileManager.getLastUsedRegularProfile())
+                                    .getBoolean(Pref.ACCOUNT_STORAGE_NOTICE_SHOWN));
                 });
     }
 
@@ -106,6 +136,9 @@ public class AccountStorageNoticeCoordinatorIntegrationTest {
         createCoordinator();
         waitSheetVisible(true);
         verify(mJniMock, never()).onClosed(NATIVE_OBSERVER_PTR);
+        HistogramWatcher.newBuilder()
+                .expectIntRecord(CLOSE_REASON_METRIC, CloseReason.USER_CLICKED_GOT_IT)
+                .build();
 
         onView(withText(R.string.passwords_account_storage_notice_button_text)).perform(click());
 
@@ -113,8 +146,8 @@ public class AccountStorageNoticeCoordinatorIntegrationTest {
         verify(mJniMock).onClosed(NATIVE_OBSERVER_PTR);
     }
 
-    // TODO(crbug.com/338576301): Add test clicking on settings link. There seems to be some
-    // limitation on ViewUtils.clickOnClickableSpan().
+    // TODO(crbug.com/346747486): Add test clicking on settings link. There seems to be some
+    // limitation on ViewUtils.clickOnClickableSpan(). Test the metric too.
 
     @Test
     @MediumTest
@@ -122,6 +155,9 @@ public class AccountStorageNoticeCoordinatorIntegrationTest {
         createCoordinator();
         waitSheetVisible(true);
         verify(mJniMock, never()).onClosed(NATIVE_OBSERVER_PTR);
+        HistogramWatcher.newBuilder()
+                .expectIntRecord(CLOSE_REASON_METRIC, CloseReason.USER_DISMISSED)
+                .build();
 
         Espresso.pressBack();
 
@@ -135,8 +171,11 @@ public class AccountStorageNoticeCoordinatorIntegrationTest {
         AccountStorageNoticeCoordinator coordinator = createCoordinator();
         waitSheetVisible(true);
         verify(mJniMock, never()).onClosed(NATIVE_OBSERVER_PTR);
+        HistogramWatcher.newBuilder()
+                .expectIntRecord(CLOSE_REASON_METRIC, CloseReason.EMBEDDER_REQUESTED)
+                .build();
 
-        TestThreadUtils.runOnUiThreadBlocking(() -> coordinator.hideImmediatelyIfShowing());
+        ThreadUtils.runOnUiThreadBlocking(() -> coordinator.hideImmediatelyIfShowing());
 
         waitSheetVisible(false);
         verify(mJniMock).onClosed(NATIVE_OBSERVER_PTR);
@@ -148,25 +187,27 @@ public class AccountStorageNoticeCoordinatorIntegrationTest {
         AccountStorageNoticeCoordinator coordinator = createCoordinator();
         waitSheetVisible(true);
         verify(mJniMock, never()).onClosed(NATIVE_OBSERVER_PTR);
+        HistogramWatcher.newBuilder()
+                .expectIntRecord(CLOSE_REASON_METRIC, CloseReason.EMBEDDER_REQUESTED)
+                .build();
 
-        TestThreadUtils.runOnUiThreadBlocking(() -> coordinator.setObserver(0));
-        TestThreadUtils.runOnUiThreadBlocking(() -> coordinator.hideImmediatelyIfShowing());
+        ThreadUtils.runOnUiThreadBlocking(() -> coordinator.setObserver(0));
+        ThreadUtils.runOnUiThreadBlocking(() -> coordinator.hideImmediatelyIfShowing());
 
         waitSheetVisible(false);
         verify(mJniMock, never()).onClosed(NATIVE_OBSERVER_PTR);
     }
 
     private AccountStorageNoticeCoordinator createCoordinator() {
-        return TestThreadUtils.runOnUiThreadBlockingNoException(
+        return ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     Profile profile = ProfileManager.getLastUsedRegularProfile();
+                    // The logic for when to show the coordinator is tested in the UnitTest.java.
+                    // Tests here only care about the UI interaction.
                     AccountStorageNoticeCoordinator coordinator =
-                            AccountStorageNoticeCoordinator.create(
-                                    SyncServiceFactory.getForProfile(
-                                            ProfileManager.getLastUsedRegularProfile()),
-                                    UserPrefs.get(profile),
+                            AccountStorageNoticeCoordinator.createAndShow(
                                     mActivityRule.getActivity().getWindowAndroid(),
-                                    new SettingsLauncherImpl());
+                                    UserPrefs.get(profile));
                     coordinator.setObserver(NATIVE_OBSERVER_PTR);
                     return coordinator;
                 });

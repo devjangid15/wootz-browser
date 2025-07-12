@@ -7,7 +7,6 @@
 #include <string_view>
 #include <utility>
 
-#include "base/cpu_reduction_experiment.h"
 #include "base/metrics/histogram.h"
 #include "base/strings/strcat.h"
 
@@ -75,7 +74,7 @@ void PredictionMetricsHandler::AddRealEvent(const gfx::PointF& pos,
       if (events_queue_[i].time_stamp == time_stamp)
         event_exists = true;
     }
-    // DCHECK(event_exists); // wootz turn off for emulator
+    DCHECK(event_exists);
     return;
   }
 

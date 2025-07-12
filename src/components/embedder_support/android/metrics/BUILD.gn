@@ -29,6 +29,7 @@ static_library("metrics") {
     "//components/metrics:content",
     "//components/metrics:net",
     "//components/metrics:ui",
+    "//components/metrics/dwa",
     "//components/prefs",
     "//components/ukm",
     "//components/variations:variations",
@@ -49,7 +50,7 @@ java_cpp_features("java_features_srcjar") {
   # External code should depend on ":java" instead.
   visibility = [ ":*" ]
   sources = [ "features.cc" ]
-  template = "java_templates/AndroidMetricsFeatures.java.tmpl"
+  class_name = "org.chromium.components.metrics.AndroidMetricsFeatures"
 }
 
 android_library("java") {

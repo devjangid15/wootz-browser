@@ -2,23 +2,32 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "ash/constants/ash_features.h"
+#include "ash/display/screen_orientation_controller.h"
+#include "ash/shell.h"
 #include "ash/webui/demo_mode_app_ui/demo_mode_app_untrusted_ui.h"
 #include "ash/webui/demo_mode_app_ui/url_constants.h"
 #include "ash/webui/web_applications/test/sandboxed_web_ui_test_base.h"
+#include "ash/wm/tablet_mode/tablet_mode_controller.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
+#include "base/memory/discardable_memory_allocator.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/bind.h"
 #include "base/test/gmock_callback_support.h"
 #include "base/test/metrics/user_action_tester.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
+#include "base/test/test_discardable_memory_allocator.h"
 #include "base/threading/thread_checker_impl.h"
 #include "chrome/browser/apps/app_service/app_launch_params.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
 #include "chrome/browser/apps/app_service/publishers/app_publisher.h"
 #include "chrome/browser/ash/login/demo_mode/demo_session.h"
 #include "chrome/browser/ash/login/test/device_state_mixin.h"
+#include "chrome/browser/ash/login/test/scoped_policy_update.h"
+#include "chrome/browser/ash/policy/core/device_local_account.h"
 #include "chrome/browser/ash/system_web_apps/apps/chrome_demo_mode_app_delegate.h"
 #include "chrome/browser/ash/system_web_apps/system_web_app_manager.h"
 #include "chrome/browser/ash/system_web_apps/test_support/system_web_app_integration_test.h"
@@ -28,6 +37,7 @@
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
+#include "ui/display/test/display_manager_test_api.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_observer.h"
 
@@ -49,12 +59,17 @@ const char kEmptyHtml[] = "<head></head><body></body>";
 
 const char kFakeAppId[] = "fake_app_id";
 
+constexpr char kAccountIdEmail[] = "public-session@test.com";
+
 // Base class that sets everything up for the Demo Mode SWA to run, except for
 // putting the device in Demo Mode itself. This is used to verify that the app
 // cannot run outside of Demo Mode.
 class DemoModeAppIntegrationTestBase : public ash::SystemWebAppIntegrationTest {
  public:
-  DemoModeAppIntegrationTestBase() = default;
+  DemoModeAppIntegrationTestBase() {
+    base::DiscardableMemoryAllocator::SetInstance(
+        &discardable_memory_allocator_);
+  }
 
  protected:
   void SetUpOnMainThread() override {
@@ -77,15 +92,47 @@ class DemoModeAppIntegrationTestBase : public ash::SystemWebAppIntegrationTest {
 
   base::ScopedTempDir component_dir_;
   base::HistogramTester histogram_tester_;
+
+ private:
+  base::TestDiscardableMemoryAllocator discardable_memory_allocator_;
 };
 
 class DemoModeAppIntegrationTest : public DemoModeAppIntegrationTestBase {
  public:
   using DemoModeAppIntegrationTestBase::DemoModeAppIntegrationTestBase;
+  DemoModeAppIntegrationTest() {
+    scoped_feature_list_.InitWithFeatures(
+        /*enabled_features=*/{features::kDemoModeAppLandscapeLocked},
+        /*disabled_features=*/{});
+  }
 
  protected:
   // ash::SystemWebAppIntegrationTest:
   void SetUp() override {
+    std::unique_ptr<ScopedDevicePolicyUpdate> device_policy_update =
+        device_state_.RequestDevicePolicyUpdate();
+
+    enterprise_management::DeviceLocalAccountsProto* const
+        device_local_accounts = device_policy_update->policy_payload()
+                                    ->mutable_device_local_accounts();
+    enterprise_management::DeviceLocalAccountInfoProto* const account =
+        device_local_accounts->add_account();
+    account->set_account_id(kAccountIdEmail);
+    account->set_type(enterprise_management::DeviceLocalAccountInfoProto::
+                          ACCOUNT_TYPE_PUBLIC_SESSION);
+    device_local_accounts->set_auto_login_id(kAccountIdEmail);
+    device_policy_update.reset();
+
+    // Populate device_local_account policy cache with empty proto so policy
+    // isn't marked as missing for the user, which causes
+    // ExistingUserController::LoginAsPublicSession to wait endlessly on the
+    // policy to be available. In browsertests, the device_local_account_policy
+    // is never loaded again after initial device policy storage, likely because
+    // policy fetches fail.
+    std::unique_ptr<ScopedUserPolicyUpdate> device_local_account_policy_update =
+        device_state_.RequestDeviceLocalAccountPolicyUpdate(kAccountIdEmail);
+    device_local_account_policy_update.reset();
+
     // Need to set demo config before SystemWebAppManager is created.
     DemoSession::SetDemoConfigForTesting(DemoSession::DemoModeConfig::kOnline);
     DemoModeAppIntegrationTestBase::SetUp();
@@ -96,8 +143,9 @@ class DemoModeAppIntegrationTest : public DemoModeAppIntegrationTestBase {
   // enough that IsDeviceInDemoMode() returns true during SystemWebAppManager
   // creation. Device ownership also needs to be established early in startup,
   // and DeviceStateMixin also sets the owner key.
-  DeviceStateMixin device_state_mixin_{
+  DeviceStateMixin device_state_{
       &mixin_host_, ash::DeviceStateMixin::State::OOBE_COMPLETED_DEMO_MODE};
+  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 // Class that waits for, then asserts, that a widget has entered or exited
@@ -342,11 +390,17 @@ IN_PROC_BROWSER_TEST_P(DemoModeAppIntegrationTest,
                       content::EXECUTE_SCRIPT_DEFAULT_OPTIONS, 1));
 }
 
+// Launch the demo mode web app from the component content, and verify that
+// the orientation is locked to landscape.
 IN_PROC_BROWSER_TEST_P(DemoModeAppIntegrationTest,
                        LaunchWebAppFromComponentContent) {
   base::ScopedAllowBlockingForTesting allow_blocking;
 
-  // Configure WebUI to serve HTML/JS invoking LaunchApp Mojo API
+  // Configure WebUI to serve HTML/JS invoking LaunchApp Mojo API, which calls
+  // DemoModeUntrustedPageHandler::LaunchApp(app_id) ->
+  // ChromeDemoModeAppDelegate::LaunchApp(app_id) ->
+  // AppServiceProxyBase::Launch(app_id, 0, apps::LaunchSource::kFromOtherApp)
+  // in its call hierarchy.
   const std::string kTestJs = content::JsReplace(
       "import {pageHandler} from './page_handler.js'; "
       "document.addEventListener('DOMContentLoaded', () => {"
@@ -362,10 +416,16 @@ IN_PROC_BROWSER_TEST_P(DemoModeAppIntegrationTest,
 
   // Launch SWA
   WaitForTestSystemAppInstall();
+  // There should be no DemoMode.AppLaunchSource recorded at the start.
+  histogram_tester_.ExpectTotalCount("DemoMode.AppLaunchSource", 0);
+
   apps::AppLaunchParams params =
       LaunchParamsForApp(ash::SystemWebAppType::DEMO_MODE);
   params.override_url = GURL(ash::kChromeUntrustedUIDemoModeAppURL +
                              file_path.BaseName().MaybeAsASCII());
+  // The launch source of the demo mode app should be kFromChromeInternal in
+  // demo session.
+  params.launch_source = apps::LaunchSource::kFromChromeInternal;
 
   // Assert that AppServiceProxy::Launch is called by using a mock AppPublisher.
   // We mock here instead of testing that an actual app is launched due to this
@@ -374,11 +434,65 @@ IN_PROC_BROWSER_TEST_P(DemoModeAppIntegrationTest,
   base::RunLoop run_loop;
   MockWebAppPublisher mock_web_app_publisher(
       apps::AppServiceProxyFactory::GetForProfile(profile));
+  // We expect the call hierarchy described in the comments of `kTestJs` will
+  // be gone through by verifying the last function
+  // Launch(app_id, 0, apps::LaunchSource::kFromOtherApp) is called.
   EXPECT_CALL(mock_web_app_publisher,
               Launch(kFakeAppId, 0, apps::LaunchSource::kFromOtherApp, _))
       .WillOnce(base::test::RunClosure(run_loop.QuitClosure()));
+  // Launch the mock demo mode app.
   LaunchApp(std::move(params));
   run_loop.Run();
+
+  // Since we launched the fake app using the LaunchApp Mojo API, we expect to
+  // see one count in AppLaunchSource::kDemoModeApp, but no others.
+  histogram_tester_.ExpectTotalCount("DemoMode.AppLaunchSource", 1);
+  histogram_tester_.ExpectBucketCount(
+      "DemoMode.AppLaunchSource", DemoSession::AppLaunchSource::kDemoModeApp,
+      1);
+
+  // Set up the display.
+  display::test::DisplayManagerTestApi(Shell::Get()->display_manager())
+      .SetFirstDisplayAsInternalDisplay();
+  ash::ScreenOrientationController* screen_orientation_controller =
+      ash::Shell::Get()->screen_orientation_controller();
+
+  // Enable the tablet mode to allow the auto rotation and the screen
+  // orientation lock.
+  auto* tablet_mode_controller = Shell::Get()->tablet_mode_controller();
+  tablet_mode_controller->SetEnabledForTest(true);
+  EXPECT_TRUE(tablet_mode_controller->is_in_tablet_physical_state());
+  EXPECT_TRUE(screen_orientation_controller->IsAutoRotationAllowed());
+
+  // Since we locked the orientation of the app to landscape, the current
+  // rotation should be the default 0 degree (kLandscapePrimary).
+  EXPECT_TRUE(screen_orientation_controller->rotation_locked());
+  EXPECT_EQ(chromeos::OrientationType::kLandscapePrimary,
+            screen_orientation_controller->GetCurrentOrientation());
+
+  // We locked the orientation of the app, but we did not lock the orientation
+  // of the device.
+  EXPECT_FALSE(screen_orientation_controller->user_rotation_locked());
+
+  // Simulate rotating device to portrait.
+  screen_orientation_controller->SetLockToRotation(display::Display::ROTATE_90);
+
+  // The app orientation is locked to landscape so remains unchanged.
+  EXPECT_EQ(chromeos::OrientationType::kLandscapePrimary,
+            screen_orientation_controller->GetCurrentOrientation());
+  // Since we locked the device to 90 degrees, the device rotation is locked.
+  EXPECT_TRUE(screen_orientation_controller->user_rotation_locked());
+
+  // Simulate rotating device to upside-down landscape.
+  screen_orientation_controller->SetLockToRotation(
+      display::Display::ROTATE_180);
+
+  // The app orientation is changed to 180 degrees (kLandscapeSecondary), which
+  // is still locked in landscape.
+  EXPECT_EQ(chromeos::OrientationType::kLandscapeSecondary,
+            screen_orientation_controller->GetCurrentOrientation());
+  // Since we locked the device to 180 degrees, the device rotation is locked.
+  EXPECT_TRUE(screen_orientation_controller->user_rotation_locked());
 }
 
 // Test that the Demo Mode Highlight App has a minimum window size of 800 pixels
@@ -389,10 +503,10 @@ IN_PROC_BROWSER_TEST_P(DemoModeAppIntegrationTest, DemoModeAppMinWindowSize) {
   EXPECT_EQ(system_app->GetMinimumWindowSize(), gfx::Size(800, 600));
 }
 
-INSTANTIATE_SYSTEM_WEB_APP_MANAGER_TEST_SUITE_GUEST_SESSION_P(
+INSTANTIATE_SYSTEM_WEB_APP_MANAGER_TEST_SUITE_REGULAR_PROFILE_P(
     DemoModeAppIntegrationTestBase);
 
-INSTANTIATE_SYSTEM_WEB_APP_MANAGER_TEST_SUITE_GUEST_SESSION_P(
+INSTANTIATE_SYSTEM_WEB_APP_MANAGER_TEST_SUITE_REGULAR_PROFILE_P(
     DemoModeAppIntegrationTest);
 
 }  // namespace

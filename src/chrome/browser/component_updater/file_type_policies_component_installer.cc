@@ -21,8 +21,6 @@
 #include "components/component_updater/component_updater_paths.h"
 #include "components/safe_browsing/content/common/file_type_policies.h"
 
-using component_updater::ComponentUpdateService;
-
 namespace {
 
 const base::FilePath::CharType kFileTypePoliciesBinaryPbFileName[] =
@@ -111,9 +109,8 @@ base::FilePath FileTypePoliciesComponentInstallerPolicy::GetRelativeInstallDir()
 
 void FileTypePoliciesComponentInstallerPolicy::GetHash(
     std::vector<uint8_t>* hash) const {
-  hash->assign(kFileTypePoliciesPublicKeySHA256,
-               kFileTypePoliciesPublicKeySHA256 +
-                   std::size(kFileTypePoliciesPublicKeySHA256));
+  hash->assign(std::begin(kFileTypePoliciesPublicKeySHA256),
+               std::end(kFileTypePoliciesPublicKeySHA256));
 }
 
 std::string FileTypePoliciesComponentInstallerPolicy::GetName() const {

@@ -110,7 +110,6 @@ class WebSettings {
   virtual void SetRequireTransientActivationForGetDisplayMedia(bool) = 0;
   virtual void SetRequireTransientActivationForShowFileOrDirectoryPicker(
       bool) = 0;
-  virtual void SetRequireTransientActivationForHtmlFullscreen(bool) = 0;
   virtual void SetAutoZoomFocusedEditableToLegibleScale(bool) = 0;
   virtual void SetCaretBrowsingEnabled(bool) = 0;
   virtual void SetClobberUserAgentInitialScaleQuirk(bool) = 0;
@@ -129,6 +128,7 @@ class WebSettings {
   virtual void SetDontSendKeyEventsToJavascript(bool) = 0;
   virtual void SetDoubleTapToZoomEnabled(bool) = 0;
   virtual void SetDownloadableBinaryFontsEnabled(bool) = 0;
+  virtual void SetDynamicSafeAreaInsetsEnabled(bool) = 0;
   virtual void SetEditingBehavior(mojom::EditingBehavior) = 0;
   virtual void SetEnableScrollAnimator(bool) = 0;
   virtual void SetPrefersReducedMotion(bool) = 0;
@@ -141,6 +141,8 @@ class WebSettings {
                                     UScriptCode = USCRIPT_COMMON) = 0;
   virtual void SetMathFontFamily(const WebString&,
                                  UScriptCode = USCRIPT_COMMON) = 0;
+  // Osaka font should be represented as "Osaka", not "Osaka-Mono" in the
+  // first argument.
   virtual void SetFixedFontFamily(const WebString&,
                                   UScriptCode = USCRIPT_COMMON) = 0;
   virtual void SetNetworkQuietTimeout(double timeout) = 0;
@@ -218,8 +220,8 @@ class WebSettings {
   virtual void SetSyncXHRInDocumentsEnabled(bool) = 0;
   // TODO(https://crbug.com/1163644): Remove once Chrome Apps are deprecated.
   virtual void SetTargetBlankImpliesNoOpenerEnabledWillBeRemoved(bool) = 0;
-  // TODO(https://crbug.com/1172495): Remove once Chrome Apps are deprecated.
-  virtual void SetAllowNonEmptyNavigatorPlugins(bool) = 0;
+  // TODO(https://crbug.com/404106817): Remove once Chrome Apps are deprecated.
+  virtual void SetIgnorePermissionForDeviceChangedEvent(bool) = 0;
   virtual void SetTextAreasAreResizable(bool) = 0;
   virtual void SetTextAutosizingEnabled(bool) = 0;
   virtual void SetAccessibilityFontScaleFactor(float) = 0;
@@ -269,6 +271,7 @@ class WebSettings {
   virtual void SetLazyLoadingImageMarginPx4G(int) = 0;
   virtual void SetForceDarkModeEnabled(bool) = 0;
   virtual void SetInForcedColors(bool) = 0;
+  virtual void SetIsForcedColorsDisabled(bool) = 0;
   virtual void SetPreferredRootScrollbarColorScheme(
       blink::mojom::PreferredColorScheme) = 0;
   virtual void SetPreferredColorScheme(blink::mojom::PreferredColorScheme) = 0;
@@ -281,6 +284,7 @@ class WebSettings {
   virtual void SetModalContextMenu(bool) = 0;
   virtual void SetRequireTransientActivationAndAuthorizationForSubAppsAPIs(
       bool) = 0;
+  virtual void SetRootScrollbarThemeColor(std::optional<SkColor>) = 0;
 
  protected:
   ~WebSettings() = default;

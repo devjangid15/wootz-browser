@@ -18,16 +18,14 @@
 #include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/task_manager/providers/task.h"
 #include "chrome/browser/task_manager/sampling/shared_sampler.h"
 #include "chrome/browser/task_manager/sampling/task_group_sampler.h"
 #include "chrome/browser/task_manager/task_manager_observer.h"
-#include "components/nacl/common/buildflags.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/task_manager/sampling/arc_shared_sampler.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 namespace gpu {
 struct VideoMemoryUsageStats;
@@ -35,15 +33,13 @@ struct VideoMemoryUsageStats;
 
 namespace task_manager {
 
-class CrosapiTaskProviderAsh;
-
 // A mask for refresh flags that are not supported by VM tasks.
-constexpr int kUnsupportedVMRefreshFlags =
+inline constexpr int kUnsupportedVMRefreshFlags =
     REFRESH_TYPE_CPU | REFRESH_TYPE_SWAPPED_MEM | REFRESH_TYPE_GPU_MEMORY |
     REFRESH_TYPE_V8_MEMORY | REFRESH_TYPE_SQLITE_MEMORY |
     REFRESH_TYPE_WEBCACHE_STATS | REFRESH_TYPE_NETWORK_USAGE |
-    REFRESH_TYPE_NACL | REFRESH_TYPE_IDLE_WAKEUPS | REFRESH_TYPE_HANDLES |
-    REFRESH_TYPE_START_TIME | REFRESH_TYPE_CPU_TIME | REFRESH_TYPE_PRIORITY |
+    REFRESH_TYPE_IDLE_WAKEUPS | REFRESH_TYPE_HANDLES | REFRESH_TYPE_START_TIME |
+    REFRESH_TYPE_CPU_TIME | REFRESH_TYPE_PRIORITY |
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_MAC)
     REFRESH_TYPE_FD_COUNT |
 #endif
@@ -61,9 +57,6 @@ class TaskGroup {
       bool is_running_in_vm,
       const base::RepeatingClosure& on_background_calculations_done,
       const scoped_refptr<SharedSampler>& shared_sampler,
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-      CrosapiTaskProviderAsh* crosapi_task_provider,
-#endif
       const scoped_refptr<base::SequencedTaskRunner>& blocking_pool_runner);
   TaskGroup(const TaskGroup&) = delete;
   TaskGroup& operator=(const TaskGroup&) = delete;
@@ -89,9 +82,9 @@ class TaskGroup {
   // process represented by this TaskGroup have completed.
   bool AreBackgroundCalculationsDone() const;
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   void SetArcSampler(ArcSharedSampler* sampler);
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   const base::ProcessHandle& process_handle() const { return process_handle_; }
   const base::ProcessId& process_id() const { return process_id_; }
@@ -113,8 +106,6 @@ class TaskGroup {
   void set_footprint_bytes(int64_t footprint) { memory_footprint_ = footprint; }
   int64_t footprint_bytes() const { return memory_footprint_; }
 #if BUILDFLAG(IS_CHROMEOS)
-  // Calculates swapped memory for Lacros too, so that we don't have to
-  // re-calculate it in ash.
   int64_t swapped_bytes() const { return swapped_mem_bytes_; }
   void set_swapped_bytes(int64_t swapped_bytes) {
     swapped_mem_bytes_ = swapped_bytes;
@@ -145,13 +136,6 @@ class TaskGroup {
   int64_t hard_faults_per_second() const { return hard_faults_per_second_; }
 #endif  // BUILDFLAG(IS_WIN)
 
-#if BUILDFLAG(ENABLE_NACL)
-  int nacl_debug_stub_port() const { return nacl_debug_stub_port_; }
-  void set_nacl_debug_stub_port(int stub_port) {
-    nacl_debug_stub_port_ = stub_port;
-  }
-#endif  // BUILDFLAG(ENABLE_NACL)
-
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_MAC)
   int open_fd_count() const { return open_fd_count_; }
   void set_open_fd_count(int open_fd_count) { open_fd_count_ = open_fd_count; }
@@ -167,11 +151,6 @@ class TaskGroup {
 
   void RefreshWindowsHandles();
 
-#if BUILDFLAG(ENABLE_NACL)
-  // |child_process_unique_id| see Task::GetChildProcessUniqueID().
-  void RefreshNaClDebugStubPort(int child_process_unique_id);
-  void OnRefreshNaClDebugStubPortDone(int port);
-#endif
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_MAC)
   void OnOpenFdCountRefreshDone(int open_fd_count);
 #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_MAC)
@@ -184,10 +163,10 @@ class TaskGroup {
   void OnSamplerRefreshDone(
       std::optional<SharedSampler::SamplingResult> results);
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   void OnArcSamplerRefreshDone(
       std::optional<ArcSharedSampler::MemoryFootprintBytes> results);
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   void OnBackgroundRefreshTypeFinished(int64_t finished_refresh_type);
 
@@ -203,11 +182,10 @@ class TaskGroup {
   scoped_refptr<TaskGroupSampler> worker_thread_sampler_;
 
   scoped_refptr<SharedSampler> shared_sampler_;
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   // Shared sampler that retrieves memory footprint for all ARC processes.
   raw_ptr<ArcSharedSampler> arc_shared_sampler_;           // Not owned
-  raw_ptr<CrosapiTaskProviderAsh> crosapi_task_provider_;  // Not owned
-#endif                                             // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   // Lists the Tasks in this TaskGroup.
   // Tasks are not owned by the TaskGroup. They're owned by the TaskProviders.
@@ -241,9 +219,6 @@ class TaskGroup {
   int64_t user_peak_handles_;
   int64_t hard_faults_per_second_;
 #endif  // BUILDFLAG(IS_WIN)
-#if BUILDFLAG(ENABLE_NACL)
-  int nacl_debug_stub_port_;
-#endif  // BUILDFLAG(ENABLE_NACL)
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_MAC)
   // The number of file descriptors currently open by the process.
   int open_fd_count_;

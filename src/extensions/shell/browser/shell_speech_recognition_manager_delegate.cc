@@ -28,10 +28,10 @@ ShellSpeechRecognitionManagerDelegate::
 ~ShellSpeechRecognitionManagerDelegate() {
 }
 
-#if !BUILDFLAG(IS_FUCHSIA) && !BUILDFLAG(IS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
 void ShellSpeechRecognitionManagerDelegate::BindSpeechRecognitionContext(
     mojo::PendingReceiver<media::mojom::SpeechRecognitionContext> receiver) {}
-#endif  // !BUILDFLAG(IS_FUCHSIA) && !BUILDFLAG(IS_ANDROID)
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 void ShellSpeechRecognitionManagerDelegate::OnRecognitionStart(int session_id) {
 }
@@ -88,12 +88,6 @@ ShellSpeechRecognitionManagerDelegate::GetEventListener() {
   return this;
 }
 
-bool ShellSpeechRecognitionManagerDelegate::FilterProfanities(
-    int render_process_id) {
-  // TODO(zork): Determine where this preference should come from.
-  return true;
-}
-
 // static
 void ShellSpeechRecognitionManagerDelegate::CheckRenderFrameType(
     base::OnceCallback<void(bool ask_user, bool is_allowed)> callback,
@@ -107,10 +101,8 @@ void ShellSpeechRecognitionManagerDelegate::CheckRenderFrameType(
   bool check_permission = false;
 
   if (render_frame_host) {
-    WebContents* web_contents =
-        WebContents::FromRenderFrameHost(render_frame_host);
     extensions::mojom::ViewType view_type =
-        extensions::GetViewType(web_contents);
+        extensions::GetViewType(render_frame_host);
 
     if (view_type == extensions::mojom::ViewType::kAppWindow ||
         view_type == extensions::mojom::ViewType::kExtensionBackgroundPage) {

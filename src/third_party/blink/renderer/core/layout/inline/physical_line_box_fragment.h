@@ -50,12 +50,6 @@ class CORE_EXPORT PhysicalLineBoxFragment final : public PhysicalFragment {
 
   const FontHeight& Metrics() const { return metrics_; }
 
-  // Different from `Metrics()`, which can be affected by properties such as
-  // `line-height`, `IntrinsicMetrics()` describes content's inherent size.
-  // Properties such as `text-box-edge` contribute to the determination of
-  // inherent size.
-  const FontHeight& IntrinsicMetrics() const { return intrinsic_metrics_; }
-
   // The base direction of this line. Also known as the paragraph direction.
   // This may be different from the direction of the container box when
   // first-line style is used, or when 'unicode-bidi: plaintext' is used.
@@ -66,25 +60,14 @@ class CORE_EXPORT PhysicalLineBoxFragment final : public PhysicalFragment {
   // Compute the baseline metrics for this linebox.
   FontHeight BaselineMetrics() const;
 
-  // Whether the content soft-wraps to the next line.
-  bool HasSoftWrapToNextLine() const;
-
   // Returns the |LayoutObject| of the container. |GetLayoutObject()| returns
   // |nullptr| because line boxes do not have corresponding |LayoutObject|.
   const LayoutObject* ContainerLayoutObject() const {
     return layout_object_.Get();
   }
 
- protected:
-  friend class PhysicalFragment;
-  void Dispose();
-
  private:
   FontHeight metrics_;
-
-  // The intrinsic content size. It might be affected by `text-box-edge`
-  // property.
-  FontHeight intrinsic_metrics_;
 };
 
 template <>

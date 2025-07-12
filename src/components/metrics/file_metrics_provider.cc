@@ -2,10 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "components/metrics/file_metrics_provider.h"
 
 #include <stddef.h>
 
+#include <array>
 #include <memory>
 #include <string_view>
 #include <vector>
@@ -30,6 +36,7 @@
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
 #include "base/time/time.h"
+#include "components/metrics/fre_source_trial.h"
 #include "components/metrics/metrics_features.h"
 #include "components/metrics/metrics_log.h"
 #include "components/metrics/metrics_pref_names.h"
@@ -57,10 +64,25 @@ struct SourceOptions {
   bool is_read_only;
 };
 
+// Representation of the amount of files for a source of type
+// SOURCE_HISTOGRAMS_ATOMIC_DIR. Used for fre_source_trial.
+enum FRELimitResult {
+  // There's only one file (from the current run).
+  kFirstFile = 0,
+
+  // Contains multiple files from different sessions.
+  kMultipleFiles = 1,
+
+  // The amount of files exceeds the limit.
+  kExceedsLimit = 2,
+
+  kMaxValue = kExceedsLimit,
+};
+
 // Opening a file typically requires at least these flags.
 constexpr int STD_OPEN = base::File::FLAG_OPEN | base::File::FLAG_READ;
 
-constexpr SourceOptions kSourceOptions[] = {
+constexpr auto kSourceOptions = std::to_array<SourceOptions>({
     // SOURCE_HISTOGRAMS_ATOMIC_FILE
     {
         // Ensure that no other process reads this at the same time.
@@ -84,7 +106,7 @@ constexpr SourceOptions kSourceOptions[] = {
         base::MemoryMappedFile::READ_WRITE,
         false,
     },
-};
+});
 
 void DeleteFileWhenPossible(const base::FilePath& path) {
   // Open (with delete) and then immediately close the file by going out of
@@ -93,6 +115,92 @@ void DeleteFileWhenPossible(const base::FilePath& path) {
   // of the delete task.
   base::File file(path, base::File::FLAG_OPEN | base::File::FLAG_READ |
                             base::File::FLAG_DELETE_ON_CLOSE);
+}
+
+// Checks whether a given path is a PMA (Persistent Memory Allocator) file.
+// TODO(crbug.com/429516571): Avoid IsDirectory() and Extension() checks by
+// using the parameters in base::FileEnumerator().
+bool IsPMAFile(const base::FilePath& file_path,
+               const base::FileEnumerator::FileInfo& file_info) {
+  if (file_info.IsDirectory()) {
+    return false;
+  }
+
+  // Check if it's temporary file
+  base::FilePath::CharType first_character =
+      file_path.BaseName().value().front();
+  if (first_character == FILE_PATH_LITERAL('.') ||
+      first_character == FILE_PATH_LITERAL('_')) {
+    return false;
+  }
+
+  // Check non-PMA extension.
+  if (file_path.Extension() !=
+      base::PersistentMemoryAllocator::kFileExtension) {
+    return false;
+  }
+
+  return true;
+}
+
+// Clients should not delete the sources of type
+// FileMetricsProvider::SOURCE_HISTOGRAMS_ATOMIC_DIR if it's FRE, since the user
+// may not have opted in to metrics reporting yet. If the client is not FRE, the
+// user has already opted in to metrics reporting, so it's safe to delete the
+// source.
+// For now, only clients with trial enabled may return true. The rest of the
+// clients will always return false.
+bool ShouldKeepSourceWhenMetricsDisabled(
+    const FileMetricsProvider::Params& params,
+    bool is_fre) {
+  return params.type == FileMetricsProvider::SOURCE_HISTOGRAMS_ATOMIC_DIR &&
+         is_fre && fre_source_trial::IsEnabled();
+}
+
+// Ensures that a given directory path has at most max_source_files amount
+// of files. If the number of files exceeds the limit, the older files will be
+// deleted first.
+void LimitAmountOfFiles(const base::FilePath& path) {
+  if (!base::DirectoryExists(path)) {
+    return;
+  }
+  base::flat_map<base::Time, base::FilePath> found_files;
+
+  // Find all files under the directory.
+  base::FileEnumerator file_iter(path, /*recursive=*/false,
+                                 base::FileEnumerator::FILES);
+  for (base::FilePath file_path = file_iter.Next(); !file_path.empty();
+       file_path = file_iter.Next()) {
+    base::FileEnumerator::FileInfo file_info = file_iter.GetInfo();
+    if (!IsPMAFile(file_path, file_info)) {
+      continue;
+    }
+
+    base::Time modified_time = file_info.GetLastModifiedTime();
+    found_files.emplace(modified_time, file_path);
+  }
+
+  size_t file_count = found_files.size();
+
+  // Record the number of files found.
+  FRELimitResult fre_limit_files_amount = FRELimitResult::kFirstFile;
+  if (file_count > FileMetricsProvider::kMaxSourceFilesInFRE) {
+    fre_limit_files_amount = FRELimitResult::kExceedsLimit;
+  } else if (file_count > 1) {
+    fre_limit_files_amount = FRELimitResult::kMultipleFiles;
+  }
+  base::UmaHistogramEnumeration("UMA.FileMetricsProvider.FRELimitResult",
+                                fre_limit_files_amount);
+
+  // Delete the older files to have at most
+  // FileMetricsProvider::kMaxSourceFilesInFRE.
+  for (const auto& file : found_files) {
+    if (file_count <= FileMetricsProvider::kMaxSourceFilesInFRE) {
+      break;
+    }
+    base::DeleteFile(file.second);
+    --file_count;
+  }
 }
 
 }  // namespace
@@ -124,7 +232,7 @@ struct FileMetricsProvider::SourceInfo {
   SourceInfo(const SourceInfo&) = delete;
   SourceInfo& operator=(const SourceInfo&) = delete;
 
-  ~SourceInfo() {}
+  ~SourceInfo() = default;
 
   struct FoundFile {
     base::FilePath path;
@@ -183,8 +291,8 @@ FileMetricsProvider::Params::Params(const base::FilePath& path,
 
 FileMetricsProvider::Params::~Params() = default;
 
-FileMetricsProvider::FileMetricsProvider(PrefService* local_state)
-    : pref_service_(local_state) {
+FileMetricsProvider::FileMetricsProvider(PrefService* local_state, bool is_fre)
+    : pref_service_(local_state), is_fre_(is_fre) {
   base::StatisticsRecorder::RegisterHistogramProvider(
       weak_factory_.GetWeakPtr());
 }
@@ -199,6 +307,16 @@ void FileMetricsProvider::RegisterSource(const Params& params,
   DCHECK_GT(std::size(kSourceOptions), static_cast<size_t>(params.type));
 
   if (!metrics_reporting_enabled) {
+    if (ShouldKeepSourceWhenMetricsDisabled(params, is_fre_)) {
+      // Keep the SOURCE_HISTOGRAMS_ATOMIC_DIR sources on the FRE. Limit the
+      // amount of files there are in the dir.
+      base::ThreadPool::PostTask(
+          FROM_HERE,
+          {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
+           base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
+          base::BindOnce(LimitAmountOfFiles, params.path));
+      return;
+    }
     // When metrics reporting is not enabled, existing files should be deleted,
     // since they won't be getting deleted as part of the upload flow.
     if (params.type == SOURCE_HISTOGRAMS_ATOMIC_DIR ||
@@ -238,9 +356,8 @@ void FileMetricsProvider::RegisterSource(const Params& params,
 }
 
 // static
-void FileMetricsProvider::RegisterSourcePrefs(
-    PrefRegistrySimple* prefs,
-    const std::string_view prefs_key) {
+void FileMetricsProvider::RegisterSourcePrefs(PrefRegistrySimple* prefs,
+                                              std::string_view prefs_key) {
   prefs->RegisterInt64Pref(
       metrics::prefs::kMetricsLastSeenPrefix + std::string(prefs_key), 0);
 }
@@ -281,22 +398,7 @@ bool FileMetricsProvider::LocateNextFileInDirectory(SourceInfo* source) {
          found_file.path = file_iter.Next()) {
       found_file.info = file_iter.GetInfo();
 
-      // Ignore directories.
-      if (found_file.info.IsDirectory()) {
-        continue;
-      }
-
-      // Ignore temporary files.
-      base::FilePath::CharType first_character =
-          found_file.path.BaseName().value().front();
-      if (first_character == FILE_PATH_LITERAL('.') ||
-          first_character == FILE_PATH_LITERAL('_')) {
-        continue;
-      }
-
-      // Ignore non-PMA (Persistent Memory Allocator) files.
-      if (found_file.path.Extension() !=
-          base::PersistentMemoryAllocator::kFileExtension) {
+      if (!IsPMAFile(found_file.path, found_file.info)) {
         continue;
       }
 
@@ -498,7 +600,7 @@ FileMetricsProvider::AccessResult FileMetricsProvider::CheckAndMapMetricSource(
     if (amount != kTestSize)
       return ACCESS_RESULT_INVALID_CONTENTS;
 
-    char zeros[kTestSize] = {0};
+    char zeros[kTestSize] = {};
     file.Write(0, zeros, kTestSize);
     file.Flush();
 
@@ -661,7 +763,7 @@ FileMetricsProvider::AccessResult FileMetricsProvider::HandleFilterSource(
       // Touch the file with the current timestamp making it (presumably) the
       // newest file in the directory.
       base::Time now = base::Time::Now();
-      base::TouchFile(path, /*accessed=*/now, /*modified=*/now);
+      base::TouchFile(path, /*last_accessed=*/now, /*last_modified=*/now);
       if (action == FILTER_ACTIVE_THIS_PID)
         return ACCESS_RESULT_THIS_PID;
       return ACCESS_RESULT_FILTER_TRY_LATER;
@@ -681,10 +783,7 @@ FileMetricsProvider::AccessResult FileMetricsProvider::HandleFilterSource(
       return ACCESS_RESULT_FILTER_SKIP_FILE;
   }
 
-  // Code never gets here but some compilers don't realize that and so complain
-  // that "not all control paths return a value".
-  NOTREACHED_IN_MIGRATION();
-  return ACCESS_RESULT_SUCCESS;
+  NOTREACHED();
 }
 
 /* static */
@@ -761,7 +860,7 @@ void FileMetricsProvider::AppendToSamplesCountPref(
 
 // static
 size_t FileMetricsProvider::CollectFileMetadataFromSource(SourceInfo* source) {
-  base::HistogramBase::Count samples_count = 0;
+  base::HistogramBase::Count32 samples_count = 0;
   base::PersistentHistogramAllocator::Iterator it{source->allocator.get()};
   std::unique_ptr<base::HistogramBase> histogram;
   while ((histogram = it.GetNext()) != nullptr) {

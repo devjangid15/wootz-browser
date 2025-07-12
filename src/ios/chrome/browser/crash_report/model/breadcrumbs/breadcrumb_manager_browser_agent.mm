@@ -17,7 +17,7 @@
 #import "ios/chrome/browser/overlays/model/public/web_content_area/java_script_confirm_dialog_overlay.h"
 #import "ios/chrome/browser/overlays/model/public/web_content_area/java_script_prompt_dialog_overlay.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/model/web_state_list/tab_group_range.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
 
@@ -38,27 +38,21 @@ const char kBreadcrumbOverlayJsAlert[] = "#js-alert";
 const char kBreadcrumbOverlayJsConfirm[] = "#js-confirm";
 const char kBreadcrumbOverlayJsPrompt[] = "#js-prompt";
 
-BROWSER_USER_DATA_KEY_IMPL(BreadcrumbManagerBrowserAgent)
-
 BreadcrumbManagerBrowserAgent::BreadcrumbManagerBrowserAgent(Browser* browser)
-    : browser_(browser) {
-  browser_->AddObserver(this);
+    : BrowserUserData(browser) {
   browser_->GetWebStateList()->AddObserver(this);
 
   overlay_observation_.Observe(
       OverlayPresenter::FromBrowser(browser, OverlayModality::kWebContentArea));
 }
 
-BreadcrumbManagerBrowserAgent::~BreadcrumbManagerBrowserAgent() = default;
-
-void BreadcrumbManagerBrowserAgent::BrowserDestroyed(Browser* browser) {
+BreadcrumbManagerBrowserAgent::~BreadcrumbManagerBrowserAgent() {
   browser_->GetWebStateList()->RemoveObserver(this);
-  browser_->RemoveObserver(this);
 }
 
 void BreadcrumbManagerBrowserAgent::PlatformLogEvent(const std::string& event) {
   BreadcrumbManagerKeyedServiceFactory::GetInstance()
-      ->GetForBrowserState(browser_->GetBrowserState())
+      ->GetForProfile(browser_->GetProfile())
       ->AddEvent(event);
 }
 
@@ -188,7 +182,7 @@ void BreadcrumbManagerBrowserAgent::WillShowOverlay(OverlayPresenter* presenter,
   } else if (request->GetConfig<alert_overlays::AlertRequest>()) {
     event.push_back(kBreadcrumbOverlayAlert);
   } else {
-    NOTREACHED_IN_MIGRATION();  // Missing breadcrumbs for the dialog.
+    NOTREACHED();  // Missing breadcrumbs for the dialog.
   }
 
   if (!initial_presentation) {

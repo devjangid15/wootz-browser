@@ -12,6 +12,7 @@
 #include "ash/wm/float/float_controller.h"
 #include "ash/wm/pip/pip_controller.h"
 #include "ash/wm/screen_pinning_controller.h"
+#include "ash/wm/snap_group/snap_group_controller.h"
 #include "ash/wm/splitview/split_view_metrics_controller.h"
 #include "ash/wm/window_positioning_utils.h"
 #include "ash/wm/window_state_delegate.h"
@@ -41,6 +42,7 @@ namespace ash {
 namespace {
 
 using ::chromeos::WindowStateType;
+using enum WindowSnapGrouping;
 
 // When a window that has restore bounds at least as large as a work area is
 // unmaximized, inset the bounds slightly so that they are not exactly the same.
@@ -53,8 +55,9 @@ constexpr char kSnapWindowDeviceOrientationHistogramName[] =
     "Ash.Window.Snap.DeviceOrientation";
 
 gfx::Size GetWindowMaximumSize(aura::Window* window) {
-  return window->delegate() ? window->delegate()->GetMaximumSize()
-                            : gfx::Size();
+  return window->delegate()
+             ? window->delegate()->GetMaximumSize().value_or(gfx::Size())
+             : gfx::Size();
 }
 
 // Moves the window to the specified display if necessary.
@@ -132,6 +135,17 @@ bool ShouldEnterNextState(WindowStateType current_state,
     return true;
   }
   return false;
+}
+
+GroupedWindowStateType Grouped(chromeos::WindowStateType type) {
+  switch (type) {
+    case chromeos::WindowStateType::kPrimarySnapped:
+      return GroupedWindowStateType::kPrimarySnapped;
+    case chromeos::WindowStateType::kSecondarySnapped:
+      return GroupedWindowStateType::kSecondarySnapped;
+    default:
+      NOTREACHED() << "invalid type for grouping";
+  }
 }
 
 }  // namespace
@@ -270,7 +284,7 @@ void DefaultState::HandleWorkspaceEvents(WindowState* window_state,
       return;
     }
     default:
-      NOTREACHED_IN_MIGRATION() << "Unknown event:" << event->type();
+      NOTREACHED() << "Unknown event:" << event->type();
   }
 }
 
@@ -289,10 +303,16 @@ void DefaultState::HandleCompoundEvents(WindowState* window_state,
       gfx::Rect work_area =
           screen_util::GetDisplayWorkAreaBoundsInParent(window);
       // Maximize vertically if:
+      // - The window is resizable and maximizable
       // - The window does not have a max height defined.
       // - The window is floated or has the normal state type. Snapped windows
       //   are excluded because they are already maximized vertically and
       //   reverting to the restored bounds looks weird.
+      if (!window_state->CanResize() || !window_state->CanMaximize()) {
+        wm::AnimateWindow(window_state->window(),
+                          wm::WINDOW_ANIMATION_TYPE_BOUNCE);
+        return;
+      }
       if (GetWindowMaximumSize(window).height() != 0)
         return;
       if (!window_state->IsNormalStateType() && !window_state->IsFloated())
@@ -310,8 +330,14 @@ void DefaultState::HandleCompoundEvents(WindowState* window_state,
     }
     case WM_EVENT_TOGGLE_HORIZONTAL_MAXIMIZE: {
       // Maximize horizontally if:
+      // - The window is resizable and maximizable
       // - The window does not have a max width defined.
       // - The window is snapped or floated or has the normal state type.
+      if (!window_state->CanResize() || !window_state->CanMaximize()) {
+        wm::AnimateWindow(window_state->window(),
+                          wm::WINDOW_ANIMATION_TYPE_BOUNCE);
+        return;
+      }
       if (GetWindowMaximumSize(window).width() != 0)
         return;
       if (!window_state->IsNormalOrSnapped() && !window_state->IsFloated())
@@ -344,8 +370,7 @@ void DefaultState::HandleCompoundEvents(WindowState* window_state,
       CycleSnap(window_state, event->type());
       return;
     default:
-      NOTREACHED_IN_MIGRATION() << "Unknown event:" << event->type();
-      break;
+      NOTREACHED() << "Unknown event:" << event->type();
   }
 }
 
@@ -358,8 +383,7 @@ void DefaultState::HandleBoundsEvents(WindowState* window_state,
       SetBounds(window_state, set_bounds_event);
     } break;
     default:
-      NOTREACHED_IN_MIGRATION() << "Unknown event:" << event->type();
-      break;
+      NOTREACHED() << "Unknown event:" << event->type();
   }
 }
 
@@ -368,6 +392,7 @@ void DefaultState::HandleTransitionEvents(WindowState* window_state,
   WindowStateType current_state_type = window_state->GetStateType();
   WindowStateType next_state_type =
       GetStateForTransitionEvent(window_state, event);
+
   if (event->IsPinEvent()) {
     // If there already is a pinned window, it is not allowed to set it
     // to this window.
@@ -381,15 +406,30 @@ void DefaultState::HandleTransitionEvents(WindowState* window_state,
   }
 
   const WMEventType type = event->type();
+
   // Not all windows can be floated.
   if (type == WM_EVENT_FLOAT &&
       !chromeos::wm::CanFloatWindow(window_state->window())) {
     return;
   }
 
-  if (type == WM_EVENT_SNAP_PRIMARY || type == WM_EVENT_SNAP_SECONDARY) {
-    HandleWindowSnapping(window_state, type,
-                         event->AsSnapEvent()->snap_action_source());
+  if (IsSnappedWindowStateType(next_state_type) && window_state->CanSnap()) {
+    WMEventType snap_event_type;
+    WindowSnapActionSource snap_action_source;
+    if (event->IsSnapEvent()) {
+      snap_action_source = event->AsSnapEvent()->snap_action_source();
+      snap_event_type = type;
+    } else {
+      CHECK(type == WM_EVENT_RESTORE ||
+            type == WM_EVENT_NORMAL && window_state->window()->GetProperty(
+                                           aura::client::kIsRestoringKey));
+      snap_action_source = WindowSnapActionSource::kSnapByWindowStateRestore;
+      snap_event_type = next_state_type == WindowStateType::kPrimarySnapped
+                            ? WM_EVENT_SNAP_PRIMARY
+                            : WM_EVENT_SNAP_SECONDARY;
+    }
+    window_state->RecordWindowSnapActionSource(snap_action_source);
+    HandleWindowSnapping(window_state, snap_event_type, snap_action_source);
   }
 
   if (next_state_type == current_state_type && window_state->IsSnapped()) {
@@ -402,20 +442,6 @@ void DefaultState::HandleTransitionEvents(WindowState* window_state,
                                        *window_state->snap_ratio());
     window_state->SetBoundsDirectAnimated(snapped_bounds);
     return;
-  }
-
-  if (IsSnappedWindowStateType(next_state_type)) {
-    const bool is_restoring =
-        window_state->window()->GetProperty(aura::client::kIsRestoringKey) ||
-        type == WM_EVENT_RESTORE;
-    if (is_restoring) {
-      window_state->RecordWindowSnapActionSource(
-          WindowSnapActionSource::kSnapByWindowStateRestore);
-    } else {
-      CHECK(event->IsSnapEvent());
-      window_state->RecordWindowSnapActionSource(
-          event->AsSnapEvent()->snap_action_source());
-    }
   }
 
   std::optional<chromeos::FloatStartLocation> float_start_location =
@@ -482,16 +508,23 @@ void DefaultState::EnterToNextState(
     return;
   }
 
+  auto* snap_group_controller = SnapGroupController::Get();
+  auto* window = window_state->window();
+
   const bool is_previous_normal_type =
       window_state->IsNonVerticalOrHorizontalMaximizedNormalState();
-  WindowStateType previous_state_type = state_type_;
-  state_type_ = next_state_type;
+  const WindowStateType previous_state_type = state_type_;
+  const ExtendedWindowStateType ext_previous_state_type =
+      (snap_group_controller &&
+       snap_group_controller->GetSnapGroupForGivenWindow(window))
+          ? Grouped(previous_state_type)
+          : ExtendedWindowStateType(previous_state_type);
 
+  state_type_ = next_state_type;
   window_state->UpdateWindowPropertiesFromStateType();
   window_state->NotifyPreStateTypeChange(previous_state_type);
 
   auto* const float_controller = Shell::Get()->float_controller();
-  auto* window = window_state->window();
   if (state_type_ == WindowStateType::kFloated) {
     DCHECK_EQ(next_state_type, WindowStateType::kFloated);
     // Add window to float container.
@@ -531,14 +564,14 @@ void DefaultState::EnterToNextState(
                           float_start_location);
     UpdateMinimizedState(window_state, previous_state_type);
   }
-  window_state->NotifyPostStateTypeChange(previous_state_type);
+  window_state->NotifyPostStateTypeChange(ext_previous_state_type);
 
   if (!restore_bounds_in_screen.IsEmpty()) {
     // Set the restore bounds back after unminimize the window to normal state.
     // Usually normal state window should have no restore bounds unless it was
     // horizontal/vertical maximized before minimize.
     window_state->SetRestoreBoundsInScreen(restore_bounds_in_screen);
-  } else if (window_state->window_state_restore_history().empty()) {
+  } else if (window_state->IsRestoreHistoryEmpty()) {
     // Clear the restore bounds when restore history stack has been cleared to
     // keep them consistent. Do this after window state updates as restore
     // history stack will be updated during the process.

@@ -10,20 +10,17 @@
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "chrome/browser/ui/views/page_action/page_action_controller.h"
+#include "chrome/browser/ui/views/web_apps/web_app_modal_dialog_delegate.h"
 #include "chrome/browser/ui/web_applications/web_app_dialogs.h"
 #include "chrome/browser/web_applications/web_app_install_info.h"
-#include "content/public/browser/web_contents_observer.h"
 #include "ui/base/interaction/element_identifier.h"
+#include "ui/base/interaction/element_tracker.h"
 #include "ui/base/models/dialog_model.h"
+#include "ui/views/controls/button/button.h"
 #include "ui/views/widget/widget.h"
-#include "ui/views/widget/widget_observer.h"
 
 class PrefService;
-
-namespace content {
-class Page;
-class WebContents;
-}  // namespace content
 
 namespace feature_engagement {
 class Tracker;
@@ -32,6 +29,14 @@ class Tracker;
 namespace webapps {
 class MlInstallOperationTracker;
 }  // namespace webapps
+
+namespace views {
+class Widget;
+}  // namespace views
+
+namespace gfx {
+class Rect;
+}  // namespace gfx
 
 namespace web_app {
 
@@ -55,10 +60,20 @@ inline constexpr int kIconSize = 32;
 // result in a weird filename), it only restricts what we suggest as titles.
 std::u16string NormalizeSuggestedAppTitle(const std::u16string& title);
 
-class WebAppInstallDialogDelegate : public ui::DialogModelDelegate,
-                                    public content::WebContentsObserver {
+// For some browser windows that are smaller in size, the install dialog's
+// current size is smaller than the preferred size, leading to important
+// security information being occluded. This function performs the comparison
+// between the sizes and prevents that from happening.
+// This serves as a stop-gap fix for crbug.com/384962294.
+// TODO(crbug.com/346974105): Remove once tab modal dialogs can be sized
+// irrespective of the size of the browser window triggering it.
+bool IsWidgetCurrentSizeSmallerThanPreferredSize(views::Widget* widget);
+
+class WebAppInstallDialogDelegate : public WebAppModalDialogDelegate {
  public:
   DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kDiyAppsDialogOkButtonId);
+  DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kPwaInstallDialogInstallButton);
+  DECLARE_CLASS_CUSTOM_ELEMENT_EVENT_TYPE(kInstalledPWAEventId);
 
   WebAppInstallDialogDelegate(
       content::WebContents* web_contents,
@@ -76,6 +91,10 @@ class WebAppInstallDialogDelegate : public ui::DialogModelDelegate,
   void OnCancel();
   void OnClose();
 
+  // This is called when the dialog has been either accepted, cancelled, closed
+  // or destroyed without an user-action.
+  void OnDestroyed();
+
   // Takes care of enabling or disabling the dialog model's OK button for DIY
   // apps based on changes in the text field, and also keeps track of the text
   // field's contents.
@@ -86,18 +105,17 @@ class WebAppInstallDialogDelegate : public ui::DialogModelDelegate,
     return weak_ptr_factory_.GetWeakPtr();
   }
 
-  // content::WebContentsObserver:
-  void OnVisibilityChanged(content::Visibility visibility) override;
-  void WebContentsDestroyed() override;
-  void PrimaryPageChanged(content::Page& page) override;
+  // views::WidgetObserver overrides:
+  void OnWidgetBoundsChanged(views::Widget* widget,
+                             const gfx::Rect& new_bounds) override;
+  // WebAppModalDialogDelegate overrides:
+  void CloseDialogAsIgnored() override;
 
  private:
-  void CloseDialogAsIgnored();
   void MeasureIphOnDialogClose();
   void MeasureAcceptUserActionsForInstallDialog();
   void MeasureCancelUserActionsForInstallDialog();
 
-  raw_ptr<content::WebContents> web_contents_;
   std::unique_ptr<WebAppInstallInfo> install_info_;
   std::unique_ptr<webapps::MlInstallOperationTracker> install_tracker_;
   AppInstallationAcceptanceCallback callback_;
@@ -106,6 +124,14 @@ class WebAppInstallDialogDelegate : public ui::DialogModelDelegate,
   raw_ptr<feature_engagement::Tracker> tracker_;
   InstallDialogType dialog_type_;
   std::u16string text_field_contents_;
+  bool received_user_response_ = false;
+
+  // Ensures the corresponding page action is highlighted, if any.
+  // If the new page actions framework is enabled, then a
+  // `ScopedPageActionActivity` is used.
+  const std::optional<std::variant<views::Button::ScopedAnchorHighlight,
+                                   page_actions::ScopedPageActionActivity>>
+      page_action_highlight_;
 
   base::WeakPtrFactory<WebAppInstallDialogDelegate> weak_ptr_factory_{this};
 };

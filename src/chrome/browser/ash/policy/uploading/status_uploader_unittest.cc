@@ -21,6 +21,7 @@
 #include "chrome/browser/ash/policy/status_collector/device_status_collector.h"
 #include "chrome/browser/ash/settings/scoped_testing_cros_settings.h"
 #include "chrome/browser/ash/settings/stub_cros_settings_provider.h"
+#include "chromeos/ash/components/policy/device_local_account/device_local_account_type.h"
 #include "chromeos/ash/components/settings/cros_settings_names.h"
 #include "chromeos/dbus/power/power_manager_client.h"
 #include "chromeos/dbus/tpm_manager/tpm_manager_client.h"
@@ -61,7 +62,7 @@ class MockDeviceStatusCollector : public DeviceStatusCollector {
   std::unique_ptr<DeviceLocalAccount> GetAutoLaunchedKioskSessionInfo()
       override {
     return std::make_unique<DeviceLocalAccount>(
-        DeviceLocalAccount::TYPE_KIOSK_APP,
+        DeviceLocalAccountType::kKioskApp,
         policy::DeviceLocalAccount::EphemeralMode::kUnset, "account_id",
         "app_id", "update_url");
   }
@@ -165,7 +166,7 @@ class StatusUploaderTest : public testing::Test {
   }
 
   void MockUserInput() {
-    ui::MouseEvent e(ui::ET_MOUSE_PRESSED, gfx::Point(), gfx::Point(),
+    ui::MouseEvent e(ui::EventType::kMousePressed, gfx::Point(), gfx::Point(),
                      ui::EventTimeForNow(), 0, 0);
     const ui::PlatformEvent& native_event = &e;
     ui::UserActivityDetector::Get()->DidProcessEvent(native_event);

@@ -6,12 +6,11 @@
 #define CHROME_BROWSER_SSL_HTTPS_UPGRADES_INTERCEPTOR_H_
 
 #include <memory>
-
-#include "base/memory/weak_ptr.h"
-#include "base/sequence_checker.h"
-// #include "chrome/browser/ssl/https_first_mode_settings_tracker.h"
 #include <optional>
 
+#include "base/memory/raw_ptr.h"
+#include "base/memory/weak_ptr.h"
+#include "base/sequence_checker.h"
 #include "chrome/browser/ssl/https_only_mode_tab_helper.h"
 #include "components/security_interstitials/core/https_only_mode_metrics.h"
 #include "content/public/browser/url_loader_request_interceptor.h"
@@ -49,10 +48,10 @@ class HttpsUpgradesInterceptor : public content::URLLoaderRequestInterceptor,
                                  public network::mojom::URLLoader {
  public:
   static std::unique_ptr<HttpsUpgradesInterceptor> MaybeCreateInterceptor(
-      int frame_tree_node_id,
+      content::FrameTreeNodeId frame_tree_node_id,
       content::NavigationUIData* navigation_ui_data_);
 
-  HttpsUpgradesInterceptor(int frame_tree_node_id,
+  HttpsUpgradesInterceptor(content::FrameTreeNodeId frame_tree_node_id,
                            bool http_interstitial_enabled,
                            content::NavigationUIData* navigation_ui_data_);
   ~HttpsUpgradesInterceptor() override;
@@ -97,8 +96,6 @@ class HttpsUpgradesInterceptor : public content::URLLoaderRequestInterceptor,
       const std::optional<GURL>& new_url) override {}
   void SetPriority(net::RequestPriority priority,
                    int intra_priority_value) override {}
-  void PauseReadingBodyFromNet() override {}
-  void ResumeReadingBodyFromNet() override {}
 
   // Returns a RequestHandler callback that can be passed to the underlying
   // LoaderCallback to serve an artificial redirect to `new_url`.
@@ -118,7 +115,7 @@ class HttpsUpgradesInterceptor : public content::URLLoaderRequestInterceptor,
   void OnConnectionClosed();
 
   // Used to access the WebContents for the navigation.
-  int frame_tree_node_id_;
+  content::FrameTreeNodeId frame_tree_node_id_;
 
   // Controls whether we are upgrading and falling back with an interstitial
   // before proceeding with the HTTP navigation. This reflects the general

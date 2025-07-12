@@ -67,7 +67,8 @@ class COMPONENT_EXPORT(GLOBAL_MEDIA_CONTROLS) MediaSessionNotificationItem
       const std::string& source_name,
       const std::optional<base::UnguessableToken>& source_id,
       mojo::Remote<media_session::mojom::MediaController> controller,
-      media_session::mojom::MediaSessionInfoPtr session_info);
+      media_session::mojom::MediaSessionInfoPtr session_info,
+      bool always_hidden);
   MediaSessionNotificationItem(const MediaSessionNotificationItem&) = delete;
   MediaSessionNotificationItem& operator=(const MediaSessionNotificationItem&) =
       delete;
@@ -140,6 +141,8 @@ class COMPONENT_EXPORT(GLOBAL_MEDIA_CONTROLS) MediaSessionNotificationItem
 
   bool frozen() const { return frozen_; }
 
+  std::optional<std::string> device_name() const { return device_name_; }
+
   // Returns nullptr if `remote_playback_disabled` is true in `session_info_` or
   // the media duration is too short.
   media_session::mojom::RemotePlaybackMetadataPtr GetRemotePlaybackMetadata()
@@ -153,6 +156,10 @@ class COMPONENT_EXPORT(GLOBAL_MEDIA_CONTROLS) MediaSessionNotificationItem
  private:
   FRIEND_TEST_ALL_PREFIXES(MediaSessionNotificationItemTest,
                            GetSessionMetadata);
+#if !BUILDFLAG(IS_CHROMEOS)
+  FRIEND_TEST_ALL_PREFIXES(MediaSessionNotificationItemTest,
+                           GetSessionMetadataForUpdatedUI);
+#endif
   FRIEND_TEST_ALL_PREFIXES(MediaSessionNotificationItemTest,
                            GetMediaSessionActions);
   FRIEND_TEST_ALL_PREFIXES(MediaSessionNotificationItemTest,
@@ -251,6 +258,9 @@ class COMPONENT_EXPORT(GLOBAL_MEDIA_CONTROLS) MediaSessionNotificationItem
   // True if we're currently frozen and the frozen view contains non-null
   // artwork.
   bool frozen_with_artwork_ = false;
+
+  // True if the notification item should always be hidden.
+  const bool always_hidden_;
 
   // The value is true if we're currently frozen and the frozen view contains
   // non-null artwork at the chapter index.

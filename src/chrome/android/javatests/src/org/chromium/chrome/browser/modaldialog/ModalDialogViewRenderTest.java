@@ -14,6 +14,7 @@ import android.graphics.drawable.Drawable;
 import android.text.TextUtils;
 import android.view.ContextThemeWrapper;
 import android.view.LayoutInflater;
+import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.FrameLayout;
@@ -24,26 +25,31 @@ import android.widget.TextView;
 import androidx.annotation.ColorInt;
 import androidx.test.filters.MediumTest;
 
+import org.junit.After;
+import org.junit.BeforeClass;
+import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.ThreadUtils;
+import org.chromium.base.test.BaseActivityTestRule;
 import org.chromium.base.test.params.ParameterAnnotations;
 import org.chromium.base.test.params.ParameterSet;
 import org.chromium.base.test.params.ParameterizedRunner;
 import org.chromium.base.test.util.Batch;
+import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.test.ChromeJUnit4RunnerDelegate;
 import org.chromium.chrome.test.R;
 import org.chromium.components.browser_ui.modaldialog.ModalDialogTestUtils;
 import org.chromium.components.browser_ui.modaldialog.ModalDialogView;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.ui.UiUtils;
 import org.chromium.ui.modaldialog.ModalDialogProperties;
 import org.chromium.ui.modaldialog.ModalDialogProperties.ButtonType;
 import org.chromium.ui.modaldialog.ModalDialogProperties.ModalDialogButtonSpec;
 import org.chromium.ui.modelutil.PropertyModel;
-import org.chromium.ui.test.util.BlankUiTestActivityTestCase;
+import org.chromium.ui.test.util.BlankUiTestActivity;
 import org.chromium.ui.test.util.NightModeTestUtils;
 import org.chromium.ui.test.util.RenderTestRule;
 
@@ -55,10 +61,16 @@ import java.util.List;
 @RunWith(ParameterizedRunner.class)
 @ParameterAnnotations.UseRunnerDelegate(ChromeJUnit4RunnerDelegate.class)
 @Batch(Batch.PER_CLASS)
-public class ModalDialogViewRenderTest extends BlankUiTestActivityTestCase {
+public class ModalDialogViewRenderTest {
     @ParameterAnnotations.ClassParameter
     private static final List<ParameterSet> sClassParams =
             new NightModeTestUtils.NightModeParams().getParameters();
+
+    @ClassRule
+    public static BaseActivityTestRule<BlankUiTestActivity> sActivityTestRule =
+            new BaseActivityTestRule<>(BlankUiTestActivity.class);
+
+    private static Activity sActivity;
 
     private final @ColorInt int mFakeBgColor;
 
@@ -86,16 +98,29 @@ public class ModalDialogViewRenderTest extends BlankUiTestActivityTestCase {
         mRenderTestRule.setNightModeEnabled(nightModeEnabled);
     }
 
-    @Override
-    public void tearDownTest() throws Exception {
+    @BeforeClass
+    public static void setupSuite() {
+        sActivity = sActivityTestRule.launchActivity(null);
+    }
+
+    // This helper function waits until the view is rendered trying to prevent flakiness.
+    private void waitForViewToBeRendered(View view) {
+        CriteriaHelper.pollUiThread(
+                () -> {
+                    return view.isShown() && view.getWidth() > 0 && view.getHeight() > 0;
+                },
+                "View not rendered: " + view.getClass().getSimpleName());
+    }
+
+    @After
+    public void tearDown() throws Exception {
         NightModeTestUtils.tearDownNightModeForBlankUiTestActivity();
-        super.tearDownTest();
     }
 
     private void setUpViews(int style, boolean forceWrapContentHeight) {
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    Activity activity = getActivity();
+                    Activity activity = sActivity;
                     mResources = activity.getResources();
                     mModelBuilder = new PropertyModel.Builder(ModalDialogProperties.ALL_KEYS);
 
@@ -141,7 +166,7 @@ public class ModalDialogViewRenderTest extends BlankUiTestActivityTestCase {
                 /* forceWrapContentHeight= */ true);
         final Drawable icon =
                 UiUtils.getTintedDrawable(
-                        getActivity(), R.drawable.ic_add, R.color.default_icon_color_tint_list);
+                        sActivity, R.drawable.ic_add, R.color.default_icon_color_tint_list);
         createModel(
                 mModelBuilder
                         .with(ModalDialogProperties.TITLE, mResources, R.string.title)
@@ -152,7 +177,7 @@ public class ModalDialogViewRenderTest extends BlankUiTestActivityTestCase {
     @Test
     @MediumTest
     @Feature({"ModalDialog", "RenderTest"})
-    public void testRender_TitleAndMessage() throws IOException {
+    public void testRender_TitleAndMessage_Legacy() throws IOException {
         setUpViews(
                 R.style.ThemeOverlay_BrowserUI_ModalDialog_TextPrimaryButton,
                 /* forceWrapContentHeight= */ true);
@@ -168,7 +193,85 @@ public class ModalDialogViewRenderTest extends BlankUiTestActivityTestCase {
                                 ModalDialogProperties.NEGATIVE_BUTTON_TEXT,
                                 mResources,
                                 R.string.cancel));
+        waitForViewToBeRendered(mModalDialogView);
         mRenderTestRule.render(mModalDialogView, "title_and_message");
+    }
+
+    @Test
+    @MediumTest
+    @Feature({"ModalDialog", "RenderTest"})
+    public void testRender_TitleAndMessage() throws IOException {
+        setUpViews(
+                R.style.ThemeOverlay_BrowserUI_ModalDialog_TextPrimaryButton,
+                /* forceWrapContentHeight= */ true);
+        final var paragraphs = new java.util.ArrayList<CharSequence>();
+        paragraphs.add(TextUtils.join("\n", Collections.nCopies(100, "Message")));
+        createModel(
+                mModelBuilder
+                        .with(ModalDialogProperties.TITLE, mResources, R.string.title)
+                        .with(ModalDialogProperties.MESSAGE_PARAGRAPHS, paragraphs)
+                        .with(ModalDialogProperties.POSITIVE_BUTTON_TEXT, mResources, R.string.ok)
+                        .with(ModalDialogProperties.POSITIVE_BUTTON_DISABLED, true)
+                        .with(
+                                ModalDialogProperties.NEGATIVE_BUTTON_TEXT,
+                                mResources,
+                                R.string.cancel));
+        waitForViewToBeRendered(mModalDialogView);
+        mRenderTestRule.render(mModalDialogView, "title_and_message");
+    }
+
+    @Test
+    @MediumTest
+    @Feature({"ModalDialog", "RenderTest"})
+    public void testRender_TwoMessageParagraphs_Legacy() throws IOException {
+        final String paragraph1 = "This is the first paragraph of the message.";
+        final String paragraph2 =
+                "This is the second paragraph of the message, which is a bit longer to see how it"
+                        + " wraps.";
+
+        setUpViews(
+                R.style.ThemeOverlay_BrowserUI_ModalDialog_TextPrimaryButton,
+                /* forceWrapContentHeight= */ true);
+        createModel(
+                mModelBuilder
+                        .with(ModalDialogProperties.TITLE, mResources, R.string.title)
+                        .with(ModalDialogProperties.MESSAGE_PARAGRAPH_1, paragraph1)
+                        .with(ModalDialogProperties.MESSAGE_PARAGRAPH_2, paragraph2)
+                        .with(ModalDialogProperties.POSITIVE_BUTTON_TEXT, mResources, R.string.ok)
+                        .with(
+                                ModalDialogProperties.NEGATIVE_BUTTON_TEXT,
+                                mResources,
+                                R.string.cancel));
+        waitForViewToBeRendered(mModalDialogView);
+        mRenderTestRule.render(mModalDialogView, "modal_dialog_two_paragraphs");
+    }
+
+    @Test
+    @MediumTest
+    @Feature({"ModalDialog", "RenderTest"})
+    public void testRender_TwoMessageParagraphs() throws IOException {
+        final String paragraph1 = "This is the first paragraph of the message.";
+        final String paragraph2 =
+                "This is the second paragraph of the message, which is a bit longer to see how it"
+                        + " wraps.";
+
+        setUpViews(
+                R.style.ThemeOverlay_BrowserUI_ModalDialog_TextPrimaryButton,
+                /* forceWrapContentHeight= */ true);
+        final var paragraphs = new java.util.ArrayList<CharSequence>();
+        paragraphs.add(paragraph1);
+        paragraphs.add(paragraph2);
+        createModel(
+                mModelBuilder
+                        .with(ModalDialogProperties.TITLE, mResources, R.string.title)
+                        .with(ModalDialogProperties.MESSAGE_PARAGRAPHS, paragraphs)
+                        .with(ModalDialogProperties.POSITIVE_BUTTON_TEXT, mResources, R.string.ok)
+                        .with(
+                                ModalDialogProperties.NEGATIVE_BUTTON_TEXT,
+                                mResources,
+                                R.string.cancel));
+        waitForViewToBeRendered(mModalDialogView);
+        mRenderTestRule.render(mModalDialogView, "modal_dialog_two_paragraphs");
     }
 
     @Test
@@ -223,7 +326,7 @@ public class ModalDialogViewRenderTest extends BlankUiTestActivityTestCase {
             sb.append(i).append("\n");
         }
         sb.append(100);
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mCustomTextView1.setText(sb.toString());
                     mCustomScrollView.addView(mCustomTextView1);
@@ -248,7 +351,7 @@ public class ModalDialogViewRenderTest extends BlankUiTestActivityTestCase {
             sb.append(i).append("\n");
         }
         sb.append(100);
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mCustomTextView1.setText(sb.toString());
                     mCustomScrollView.addView(mCustomTextView1);
@@ -283,7 +386,7 @@ public class ModalDialogViewRenderTest extends BlankUiTestActivityTestCase {
             sb.append(i).append("\n");
         }
         sb.append(100);
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mCustomTextView1.setText(sb.toString());
                     mCustomFrameLayout.addView(mCustomTextView1);
@@ -319,6 +422,58 @@ public class ModalDialogViewRenderTest extends BlankUiTestActivityTestCase {
                         .with(ModalDialogProperties.CUSTOM_BUTTON_BAR_VIEW, mCustomButtonBar)
                         .with(ModalDialogProperties.POSITIVE_BUTTON_TEXT, mResources, R.string.ok));
         mRenderTestRule.render(mModalDialogView, "custom_button_bar_view");
+    }
+
+    @Test
+    @MediumTest
+    @Feature({"ModalDialog", "RenderTest"})
+    public void testRender_Checkbox_Unchecked() throws IOException {
+        setUpViews(
+                R.style.ThemeOverlay_BrowserUI_ModalDialog_TextPrimaryButton,
+                /* forceWrapContentHeight= */ true);
+        createModel(
+                mModelBuilder
+                        .with(ModalDialogProperties.TITLE, mResources, R.string.title)
+                        .with(
+                                ModalDialogProperties.MESSAGE_PARAGRAPH_1,
+                                "This dialog has a checkbox below.")
+                        .with(
+                                ModalDialogProperties.CHECKBOX_TEXT,
+                                mResources.getString(R.string.dont_ask_again))
+                        .with(ModalDialogProperties.CHECKBOX_CHECKED, false)
+                        .with(ModalDialogProperties.POSITIVE_BUTTON_TEXT, mResources, R.string.ok)
+                        .with(
+                                ModalDialogProperties.NEGATIVE_BUTTON_TEXT,
+                                mResources,
+                                R.string.cancel));
+        waitForViewToBeRendered(mModalDialogView);
+        mRenderTestRule.render(mModalDialogView, "checkbox_unchecked");
+    }
+
+    @Test
+    @MediumTest
+    @Feature({"ModalDialog", "RenderTest"})
+    public void testRender_Checkbox_Checked() throws IOException {
+        setUpViews(
+                R.style.ThemeOverlay_BrowserUI_ModalDialog_TextPrimaryButton,
+                /* forceWrapContentHeight= */ true);
+        createModel(
+                mModelBuilder
+                        .with(ModalDialogProperties.TITLE, mResources, R.string.title)
+                        .with(
+                                ModalDialogProperties.MESSAGE_PARAGRAPH_1,
+                                "This dialog has a checkbox below that is checked by default.")
+                        .with(
+                                ModalDialogProperties.CHECKBOX_TEXT,
+                                mResources.getString(R.string.dont_ask_again))
+                        .with(ModalDialogProperties.CHECKBOX_CHECKED, true)
+                        .with(ModalDialogProperties.POSITIVE_BUTTON_TEXT, mResources, R.string.ok)
+                        .with(
+                                ModalDialogProperties.NEGATIVE_BUTTON_TEXT,
+                                mResources,
+                                R.string.cancel));
+        waitForViewToBeRendered(mModalDialogView);
+        mRenderTestRule.render(mModalDialogView, "checkbox_checked");
     }
 
     @Test

@@ -15,8 +15,6 @@
 #include "base/observer_list.h"
 #include "components/variations/synthetic_trials.h"
 
-class SingleClientNigoriSyncTest;
-
 namespace metrics {
 class MetricsServiceAccessor;
 }  // namespace metrics
@@ -25,18 +23,12 @@ namespace content {
 class SyntheticTrialSyncer;
 }  // namespace content
 
-namespace tpcd::experiment {
-class ExperimentManagerImplBrowserTest;
-}  // namespace tpcd::experiment
-
 namespace variations {
 
 struct ActiveGroupId;
 class FieldTrialsProvider;
 class FieldTrialsProviderTest;
-class LimitedEntropySyntheticTrial;
 class SyntheticTrialRegistryTest;
-class LimitedEntropyRandomizationBrowserTest;
 
 namespace internal {
 COMPONENT_EXPORT(VARIATIONS) BASE_DECLARE_FEATURE(kExternalExperimentAllowlist);
@@ -78,16 +70,17 @@ class COMPONENT_EXPORT(VARIATIONS) SyntheticTrialRegistry {
   void RegisterExternalExperiments(const std::vector<int>& experiment_ids,
                                    OverrideMode mode);
 
+  // Exposed publicly for testing purposes, it returns a full list of synthetic
+  // field trials that are either in the past or specify |kCurrentLog| as
+  // |annotation_mode|.
+  std::vector<ActiveGroupId> GetCurrentSyntheticFieldTrialsForTest() const;
+
  private:
   friend metrics::MetricsServiceAccessor;
-  friend LimitedEntropySyntheticTrial;
   friend FieldTrialsProvider;
   friend FieldTrialsProviderTest;
-  friend ::SingleClientNigoriSyncTest;
   friend SyntheticTrialRegistryTest;
-  friend ::tpcd::experiment::ExperimentManagerImplBrowserTest;
   friend content::SyntheticTrialSyncer;
-  friend LimitedEntropyRandomizationBrowserTest;
   FRIEND_TEST_ALL_PREFIXES(SyntheticTrialRegistryTest, RegisterSyntheticTrial);
   FRIEND_TEST_ALL_PREFIXES(SyntheticTrialRegistryTest,
                            GetSyntheticFieldTrialsOlderThanSuffix);
@@ -95,8 +88,6 @@ class COMPONENT_EXPORT(VARIATIONS) SyntheticTrialRegistry {
                            GetSyntheticFieldTrialActiveGroups);
   FRIEND_TEST_ALL_PREFIXES(SyntheticTrialRegistryTest, NotifyObserver);
   FRIEND_TEST_ALL_PREFIXES(VariationsCrashKeysTest, BasicFunctionality);
-  FRIEND_TEST_ALL_PREFIXES(LimitedEntropyRandomizationBrowserTest,
-                           MANUAL_SyntheticTrialAndStudyRegistrationSubTest);
 
   // Registers a field trial name and group to be used to annotate UMA and UKM
   // reports with a particular Chrome configuration state.

@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "cc/trees/property_tree.h"
+
 #include <stddef.h>
 
 #include <algorithm>
@@ -11,6 +13,7 @@
 #include <vector>
 
 #include "base/check_op.h"
+#include "base/debug/crash_logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/numerics/checked_math.h"
@@ -21,7 +24,6 @@
 #include "cc/trees/compositor_commit_data.h"
 #include "cc/trees/effect_node.h"
 #include "cc/trees/layer_tree_impl.h"
-#include "cc/trees/property_tree.h"
 #include "cc/trees/scroll_node.h"
 #include "cc/trees/transform_node.h"
 #include "cc/trees/viewport_property_ids.h"
@@ -34,12 +36,6 @@
 
 namespace cc {
 
-void AnimationUpdateOnMissingPropertyNodeUMALog(bool missing_property_node) {
-  UMA_HISTOGRAM_BOOLEAN(
-      "Compositing.Renderer.AnimationUpdateOnMissingPropertyNode",
-      missing_property_node);
-}
-
 AnchorPositionScrollData::AnchorPositionScrollData() = default;
 AnchorPositionScrollData::~AnchorPositionScrollData() = default;
 AnchorPositionScrollData::AnchorPositionScrollData(
@@ -47,6 +43,9 @@ AnchorPositionScrollData::AnchorPositionScrollData(
 
 bool AnchorPositionScrollData::operator==(
     const AnchorPositionScrollData& other) const = default;
+
+bool StickyPositionNodeData::operator==(
+    const StickyPositionNodeData& other) const = default;
 
 template <typename T>
 PropertyTree<T>::PropertyTree(PropertyTrees* property_trees)
@@ -94,6 +93,17 @@ int PropertyTree<T>::Insert(const T& tree_node, int parent_id) {
 }
 
 template <typename T>
+void PropertyTree<T>::RemoveNodes(size_t n) {
+  CHECK_LE(n, nodes_.size());
+  nodes_.resize(nodes_.size() - n);
+
+  const int upper_bound = base::checked_cast<int>(nodes_.size());
+  base::EraseIf(element_id_to_node_index_, [upper_bound](const auto& entry) {
+    return entry.second >= upper_bound;
+  });
+}
+
+template <typename T>
 void PropertyTree<T>::clear() {
   needs_update_ = false;
   nodes_.clear();
@@ -114,6 +124,13 @@ bool PropertyTree<T>::operator==(const PropertyTree<T>& other) const {
   return nodes() == other.nodes() && needs_update() == other.needs_update() &&
          element_id_to_node_index() == other.element_id_to_node_index();
 }
+
+template <typename T>
+std::string PropertyTree<T>::ToString() const {
+  base::trace_event::TracedValueJSON value;
+  AsValueInto(&value);
+  return value.ToFormattedJSON();
+}
 #endif
 
 template <typename T>
@@ -125,6 +142,7 @@ void PropertyTree<T>::AsValueInto(base::trace_event::TracedValue* value) const {
     value->EndDictionary();
   }
   value->EndArray();
+  value->SetBooleanWithCopiedName("needs_update", needs_update_);
 }
 
 template class PropertyTree<TransformNode>;
@@ -140,6 +158,11 @@ int TransformTree::Insert(const TransformNode& tree_node, int parent_id) {
   return node_id;
 }
 
+void TransformTree::RemoveNodes(size_t n) {
+  PropertyTree<TransformNode>::RemoveNodes(n);
+  cached_data_.resize(cached_data_.size() - n);
+}
+
 void TransformTree::clear() {
   PropertyTree<TransformNode>::clear();
 
@@ -147,6 +170,7 @@ void TransformTree::clear() {
   device_scale_factor_ = 1.f;
   device_transform_scale_factor_ = 1.f;
   nodes_affected_by_outer_viewport_bounds_delta_.clear();
+  nodes_affected_by_safe_area_inset_bottom_.clear();
   cached_data_.clear();
   cached_data_.push_back(TransformCachedNodeData());
   sticky_position_data_.clear();
@@ -169,15 +193,13 @@ bool TransformTree::OnTransformAnimated(ElementId element_id,
   // TODO(crbug.com/40828469): Remove this when we no longer animate
   // non-existent nodes.
   if (!node) {
-    AnimationUpdateOnMissingPropertyNodeUMALog(true);
     return false;
   }
-  AnimationUpdateOnMissingPropertyNodeUMALog(false);
   if (node->local == transform)
     return false;
   node->local = transform;
   node->needs_local_transform_update = true;
-  node->transform_changed = true;
+  node->SetTransformChanged(DamageReason::kUntracked);
   property_trees()->set_changed(true);
   set_needs_update(true);
   return true;
@@ -187,7 +209,7 @@ void TransformTree::ResetChangeTracking() {
   for (int id = kContentsRootPropertyNodeId; id < static_cast<int>(size());
        ++id) {
     TransformNode* node = Node(id);
-    node->transform_changed = false;
+    node->ClearTransformChanged();
   }
 }
 
@@ -389,7 +411,7 @@ gfx::Vector2dF TransformTree::StickyPositionOffset(TransformNode* node) {
   // We need the scroll offset from the transform tree, not the scroll tree.
   // Tracking the scroll tree here would make sticky elements run "ahead" of a
   // main-repainted scroll.
-  gfx::PointF scroll_position = transform_node->scroll_offset;
+  gfx::PointF scroll_position = transform_node->scroll_offset();
   if (transform_node->scrolls) {
     // The scroll position does not include snapping which shifts the scroll
     // offset to align to a pixel boundary, we need to manually include it here.
@@ -507,7 +529,8 @@ gfx::Vector2dF TransformTree::StickyPositionOffset(TransformNode* node) {
       ancestor_sticky_box_offset + ancestor_containing_block_offset +
       sticky_offset;
 
-  // return
+  sticky_offset += constraint.pixel_snap_offset;
+
   return gfx::ToRoundedVector2d(sticky_offset);
 }
 
@@ -554,7 +577,7 @@ gfx::Vector2dF TransformTree::AnchorPositionOffset(
       // We don't ever expect that an anchor node or any of its scrolling
       // containers should have an invalid transform_id.
       DCHECK(container_transform_id != kInvalidPropertyNodeId);
-      accumulated_offset += transform_node->scroll_offset.OffsetFromOrigin();
+      accumulated_offset += transform_node->scroll_offset().OffsetFromOrigin();
       // TODO(crbug.com/325613705): Should we consider snap_amount here?
     } else if (TransformNode* container_transform =
                    property_trees()
@@ -606,7 +629,7 @@ void TransformTree::UndoOverscroll(
 
   const TransformNode* overscroll_node = Node(transform_id);
   const gfx::Vector2dF overscroll_offset =
-      overscroll_node->scroll_offset.OffsetFromOrigin();
+      overscroll_node->scroll_offset().OffsetFromOrigin();
   if (overscroll_offset.IsZero())
     return;
 
@@ -636,20 +659,26 @@ void TransformTree::UpdateLocalTransform(
                         node->post_translation.y() + node->origin.y(),
                         node->origin.z());
 
-  gfx::Vector2dF position_adjustment;
+  float y_adjustment = 0.f;
   if (node->moved_by_outer_viewport_bounds_delta_y) {
-    position_adjustment.set_y(
-        property_trees()->outer_viewport_container_bounds_delta().y());
+    y_adjustment +=
+        property_trees()->outer_viewport_container_bounds_delta().y();
   }
+  if (node->moved_by_safe_area_bottom) {
+    y_adjustment +=
+        property_trees()->transform_delta_by_safe_area_inset_bottom();
+  }
+  gfx::Vector2dF position_adjustment(0.f, y_adjustment);
+
   if (node->should_undo_overscroll)
     UndoOverscroll(node, position_adjustment, viewport_property_ids);
   transform.Translate(position_adjustment -
-                      node->scroll_offset.OffsetFromOrigin());
+                      node->scroll_offset().OffsetFromOrigin());
   transform.Translate(StickyPositionOffset(node));
   if (node->anchor_position_scroll_data_id >= 0) {
     transform.Translate(AnchorPositionOffset(node, node->id - 1, update_data));
     // Make sure the damage rect is tracked.
-    node->transform_changed = true;
+    node->SetTransformChanged(DamageReason::kUntracked);
   }
   transform.PreConcat(node->local);
   transform.Translate3d(gfx::Point3F() - node->origin);
@@ -734,8 +763,9 @@ void TransformTree::UpdateSnapping(TransformNode* node) {
 void TransformTree::UpdateTransformChanged(TransformNode* node,
                                            TransformNode* parent_node) {
   DCHECK(parent_node);
-  if (parent_node->transform_changed)
-    node->transform_changed = true;
+  if (parent_node->transform_changed()) {
+    node->CopyTransformChangedFrom(*parent_node);
+  }
 }
 
 void TransformTree::UpdateNodeAndAncestorsAreAnimatedOrInvertible(
@@ -825,6 +855,25 @@ bool TransformTree::HasNodesAffectedByOuterViewportBoundsDelta() const {
   return !nodes_affected_by_outer_viewport_bounds_delta_.empty();
 }
 
+void TransformTree::NeedTransformUpdateForSafeAreaInsetBottom() {
+  if (nodes_affected_by_safe_area_inset_bottom_.empty()) {
+    return;
+  }
+
+  set_needs_update(true);
+  for (int i : nodes_affected_by_safe_area_inset_bottom_) {
+    Node(i)->needs_local_transform_update = true;
+  }
+}
+
+void TransformTree::AddNodeAffectedBySafeAreaInsetBottom(int node_id) {
+  nodes_affected_by_safe_area_inset_bottom_.push_back(node_id);
+}
+
+bool TransformTree::HasNodesAffectedBySafeAreaBottom() const {
+  return !nodes_affected_by_safe_area_inset_bottom_.empty();
+}
+
 const gfx::Transform& TransformTree::FromScreen(int node_id) const {
   DCHECK(static_cast<int>(cached_data_.size()) > node_id);
   return cached_data_[node_id].from_screen;
@@ -891,6 +940,11 @@ int EffectTree::Insert(const EffectNode& tree_node, int parent_id) {
   return node_id;
 }
 
+void EffectTree::RemoveNodes(size_t n) {
+  PropertyTree<EffectNode>::RemoveNodes(n);
+  render_surfaces_.resize(render_surfaces_.size() - n);
+}
+
 void EffectTree::clear() {
   PropertyTree<EffectNode>::clear();
   render_surfaces_.clear();
@@ -952,11 +1006,11 @@ void EffectTree::UpdateEffectChanged(EffectNode* node,
 }
 
 void EffectTree::UpdateHasFilters(EffectNode* node, EffectNode* parent_node) {
-  node->node_or_ancestor_has_filters =
-      !node->filters.IsEmpty() || node->has_potential_filter_animation;
+  node->lcd_text_disallowed_by_filter =
+      node->has_potential_filter_animation || !node->filters.AllowsLCDText();
   if (parent_node) {
-    node->node_or_ancestor_has_filters |=
-        parent_node->node_or_ancestor_has_filters;
+    node->lcd_text_disallowed_by_filter |=
+        parent_node->lcd_text_disallowed_by_filter;
   }
 }
 
@@ -1026,6 +1080,19 @@ void EffectTree::UpdateSurfaceContentsScale(EffectNode* effect_node) {
   effect_node->surface_contents_scale = gfx::ComputeTransform2dScaleComponents(
       transform_tree.ToScreen(transform_node->id), layer_scale_factor);
 
+  // To avoid seams we apply only scale as draw transform instead of raster
+  // content transform.
+  if (effect_node->render_surface_reason ==
+      RenderSurfaceReason::k2DScaleTransformWithCompositedDescendants) {
+    // We raster at closest positive integer scale and then apply the rest as
+    // the draw transform, e.g scale 3.5 will rastered at 4 and 0.875 (3.5/4)
+    // will be applied as draw transform.
+    effect_node->surface_contents_scale.set_x(
+        std::ceil(std::abs(effect_node->surface_contents_scale.x())));
+    effect_node->surface_contents_scale.set_y(
+        std::ceil(std::abs(effect_node->surface_contents_scale.y())));
+  }
+
   // If surface contents scale changes, draw transforms are no longer valid.
   // Invalidates the draw transform cache and updates the clip for the surface.
   if (old_scale != effect_node->surface_contents_scale) {
@@ -1039,10 +1106,8 @@ bool EffectTree::OnOpacityAnimated(ElementId id, float opacity) {
   // TODO(crbug.com/40828469): Remove this when we no longer animate
   // non-existent nodes.
   if (!node) {
-    AnimationUpdateOnMissingPropertyNodeUMALog(true);
     return false;
   }
-  AnimationUpdateOnMissingPropertyNodeUMALog(false);
   if (node->opacity == opacity)
     return false;
   node->opacity = opacity;
@@ -1058,10 +1123,8 @@ bool EffectTree::OnFilterAnimated(ElementId id,
   // TODO(crbug.com/40828469): Remove this when we no longer animate
   // non-existent nodes.
   if (!node) {
-    AnimationUpdateOnMissingPropertyNodeUMALog(true);
     return false;
   }
-  AnimationUpdateOnMissingPropertyNodeUMALog(false);
   if (node->filters == filters)
     return false;
   node->filters = filters;
@@ -1078,10 +1141,8 @@ bool EffectTree::OnBackdropFilterAnimated(
   // TODO(crbug.com/40828469): Remove this when we no longer animate
   // non-existent nodes.
   if (!node) {
-    AnimationUpdateOnMissingPropertyNodeUMALog(true);
     return false;
   }
-  AnimationUpdateOnMissingPropertyNodeUMALog(false);
   if (node->backdrop_filters == backdrop_filters)
     return false;
   node->backdrop_filters = backdrop_filters;
@@ -1121,6 +1182,8 @@ void EffectTree::UpdateClosestAncestorSharedElement(EffectNode* node,
 void EffectTree::AddCopyRequest(
     int node_id,
     std::unique_ptr<viz::CopyOutputRequest> request) {
+  EffectNode* effect_node = Node(node_id);
+  effect_node->has_copy_request = true;
   copy_requests_.insert(std::make_pair(node_id, std::move(request)));
 }
 
@@ -1442,7 +1505,18 @@ ScrollTree::~ScrollTree() = default;
 
 ScrollTree& ScrollTree::operator=(const ScrollTree& from) {
   PropertyTree::operator=(from);
+  scrolling_contents_cull_rects_ = from.scrolling_contents_cull_rects_;
   currently_scrolling_node_id_ = kInvalidPropertyNodeId;
+
+  // Remove obsolete overscroll amounts.
+  // TODO(crbug.com/430266889): If we have an entry in the map whose node has
+  // been removed, there must either be an active overscroll on this node
+  // or an ongoing animation of overscroll on this node which should also be
+  // cleaned up.
+  base::EraseIf(elastic_overscroll_, [&](const auto& pair) {
+    return FindNodeFromElementId(pair.first) == nullptr;
+  });
+
   // Maps for ScrollOffsets/SyncedScrollOffsets are intentionally omitted here
   // since we can not directly copy them. Pushing of these updates from main
   // currently depends on Layer properties for scroll offset animation changes
@@ -1475,8 +1549,14 @@ void ScrollTree::CopyCompleteTreeState(const ScrollTree& other) {
 }
 #endif  // DCHECK_IS_ON()
 
-bool ScrollTree::CanRealizeScrollsOnCompositor(const ScrollNode& node) const {
+bool ScrollTree::CanRealizeScrollsOnActiveTree(const ScrollNode& node) const {
   return node.transform_id != kInvalidPropertyNodeId && node.is_composited &&
+         GetMainThreadRepaintReasons(node) ==
+             MainThreadScrollingReason::kNotScrollingOnMain;
+}
+
+bool ScrollTree::CanRealizeScrollsOnPendingTree(const ScrollNode& node) const {
+  return node.transform_id != kInvalidPropertyNodeId && !node.is_composited &&
          GetMainThreadRepaintReasons(node) ==
              MainThreadScrollingReason::kNotScrollingOnMain;
 }
@@ -1488,10 +1568,11 @@ bool ScrollTree::ShouldRealizeScrollsOnMain(const ScrollNode& node) const {
 }
 
 uint32_t ScrollTree::GetMainThreadRepaintReasons(const ScrollNode& node) const {
-  // kPopupNoThreadedInput is not a repaint reason so should be excluded.
-  uint32_t reasons = node.main_thread_scrolling_reasons &
-                     ~MainThreadScrollingReason::kPopupNoThreadedInput;
-  CHECK(MainThreadScrollingReason::AreRepaintReasons(reasons));
+  uint32_t reasons = node.main_thread_repaint_reasons;
+  if (!MainThreadScrollingReason::AreRepaintReasons(reasons)) {
+    SCOPED_CRASH_KEY_NUMBER("NotRepaint", "reasons", reasons);
+    NOTREACHED();
+  }
   return reasons;
 }
 
@@ -1567,8 +1648,10 @@ void ScrollTree::OnScrollOffsetAnimated(ElementId id,
                scroll_offset.x(), "y", scroll_offset.y());
   ScrollNode* scroll_node = Node(scroll_tree_index);
   if (SetScrollOffset(id,
-                      ClampScrollOffsetToLimits(scroll_offset, *scroll_node)))
-    layer_tree_impl->DidUpdateScrollOffset(id);
+                      ClampScrollOffsetToLimits(scroll_offset, *scroll_node))) {
+    layer_tree_impl->DidUpdateScrollOffset(
+        id, /*pushed_from_main_or_pending_tree=*/false);
+  }
   layer_tree_impl->DidAnimateScrollOffset();
 }
 
@@ -1651,14 +1734,19 @@ const gfx::PointF ScrollTree::current_scroll_offset(ElementId id) const {
 gfx::PointF ScrollTree::GetScrollOffsetForScrollTimeline(
     const ScrollNode& scroll_node) const {
   gfx::PointF offset = current_scroll_offset(scroll_node.element_id);
-  if (!property_trees()->is_main_thread() &&
-      !CanRealizeScrollsOnCompositor(scroll_node)) {
-    // Ignore compositor scroll delta if the scroll can't be realized on
-    // compositor because the delta has not been realized yet.
+  if (!property_trees()->is_main_thread()) {
     if (const SyncedScrollOffset* synced_offset =
             GetSyncedScrollOffset(scroll_node.element_id)) {
-      offset = property_trees()->is_active() ? synced_offset->ActiveBase()
-                                             : synced_offset->PendingBase();
+      // Ignore compositor scroll delta if the scroll can't be realized on the
+      // corresponding tree because the delta has not been realized yet.
+      if (property_trees()->is_active()) {
+        if (!CanRealizeScrollsOnActiveTree(scroll_node)) {
+          offset = synced_offset->ActiveBase();
+        }
+      } else if (!CanRealizeScrollsOnActiveTree(scroll_node) &&
+                 !CanRealizeScrollsOnPendingTree(scroll_node)) {
+        offset = synced_offset->PendingBase();
+      }
     }
   }
 
@@ -1839,8 +1927,10 @@ void ScrollTree::PushScrollUpdatesFromMainThread(
     if (property_trees()->is_active())
       needs_scroll_update |= synced_scroll_offset->PushPendingToActive();
 
-    if (needs_scroll_update)
-      sync_tree->DidUpdateScrollOffset(id);
+    if (needs_scroll_update) {
+      sync_tree->DidUpdateScrollOffset(
+          id, /*pushed_from_main_or_pending_tree=*/true);
+    }
   }
 }
 
@@ -1858,8 +1948,10 @@ void ScrollTree::PushScrollUpdatesFromPendingTree(
   for (auto map_entry :
        pending_property_trees->scroll_tree().synced_scroll_offset_map_) {
     synced_scroll_offset_map_[map_entry.first] = map_entry.second;
-    if (map_entry.second->PushPendingToActive())
-      active_tree->DidUpdateScrollOffset(map_entry.first);
+    if (map_entry.second->PushPendingToActive()) {
+      active_tree->DidUpdateScrollOffset(
+          map_entry.first, /*pushed_from_main_or_pending_tree=*/true);
+    }
   }
 }
 
@@ -1895,11 +1987,56 @@ bool ScrollTree::SetScrollOffset(ElementId id,
   }
 
   if (property_trees()->is_active()) {
-    DCHECK(GetSyncedScrollOffset(id));
-    return GetSyncedScrollOffset(id)->SetCurrent(scroll_offset);
+    if (auto* synced_scroll_offset = GetSyncedScrollOffset(id)) {
+      return synced_scroll_offset->SetCurrent(scroll_offset);
+    }
   }
 
   return false;
+}
+
+bool ScrollTree::SetElasticOverscroll(
+    const ScrollNode& scroll_node,
+    const gfx::Vector2dF& elastic_overscroll) {
+  if (elastic_overscroll.IsZero()) {
+    auto it = elastic_overscroll_.find(scroll_node.element_id);
+    if (it == elastic_overscroll_.end()) {
+      return false;
+    }
+    elastic_overscroll_.erase(it);
+    return true;
+  }
+  gfx::Vector2dF& current_overscroll =
+      elastic_overscroll_[scroll_node.element_id];
+  bool changed = current_overscroll != elastic_overscroll;
+  current_overscroll = elastic_overscroll;
+  return changed;
+}
+
+gfx::Vector2dF ScrollTree::GetElasticOverscroll(
+    const ScrollNode& scroll_node) const {
+  auto it = elastic_overscroll_.find(scroll_node.element_id);
+  if (it == elastic_overscroll_.end()) {
+    return gfx::Vector2dF();
+  }
+  return it->second;
+}
+
+void ScrollTree::SetScrollingContentsCullRect(ElementId id,
+                                              const gfx::Rect& cull_rect) {
+  scrolling_contents_cull_rects_[id] = cull_rect;
+}
+
+void ScrollTree::ClearScrollingContentsCullRect(ElementId id) {
+  scrolling_contents_cull_rects_.erase(id);
+}
+
+const gfx::Rect* ScrollTree::ScrollingContentsCullRect(ElementId id) const {
+  auto it = scrolling_contents_cull_rects_.find(id);
+  if (it == scrolling_contents_cull_rects_.end()) {
+    return nullptr;
+  }
+  return &it->second;
 }
 
 SyncedScrollOffset* ScrollTree::GetOrCreateSyncedScrollOffsetForTesting(
@@ -1966,8 +2103,11 @@ gfx::Vector2dF ScrollTree::ScrollBy(const ScrollNode& scroll_node,
   gfx::PointF old_offset = current_scroll_offset(scroll_node.element_id);
   gfx::PointF new_offset =
       ClampScrollOffsetToLimits(old_offset + adjusted_scroll, scroll_node);
-  if (SetScrollOffset(scroll_node.element_id, new_offset))
-    layer_tree_impl->DidUpdateScrollOffset(scroll_node.element_id);
+  if (SetScrollOffset(scroll_node.element_id, new_offset)) {
+    layer_tree_impl->DidUpdateScrollOffset(
+        scroll_node.element_id,
+        /*pushed_from_main_or_pending_tree=*/false);
+  }
 
   TRACE_EVENT_END("input", /* ScrollTree::ScrollBy */
                   "old_offset", old_offset, "new_offset", new_offset);
@@ -2016,6 +2156,10 @@ PropertyTreesCachedData::~PropertyTreesCachedData() = default;
 
 PropertyTreesChangeState::PropertyTreesChangeState() = default;
 PropertyTreesChangeState::~PropertyTreesChangeState() = default;
+PropertyTreesChangeState::PropertyTreesChangeState(PropertyTreesChangeState&&) =
+    default;
+PropertyTreesChangeState& PropertyTreesChangeState::operator=(
+    PropertyTreesChangeState&&) = default;
 
 PropertyTrees::PropertyTrees(const ProtectedSequenceSynchronizer& synchronizer)
     : synchronizer_(synchronizer),
@@ -2028,7 +2172,8 @@ PropertyTrees::PropertyTrees(const ProtectedSequenceSynchronizer& synchronizer)
       full_tree_damaged_(false),
       is_main_thread_(true),
       is_active_(false),
-      sequence_number_(0) {}
+      sequence_number_(0),
+      transform_delta_by_safe_area_inset_bottom_(0) {}
 
 PropertyTrees::~PropertyTrees() = default;
 
@@ -2062,6 +2207,8 @@ PropertyTrees& PropertyTrees::operator=(const PropertyTrees& from) {
       from.inner_viewport_container_bounds_delta());
   SetOuterViewportContainerBoundsDelta(
       from.outer_viewport_container_bounds_delta());
+  SetTransformDeltaBySafeAreaInsetBottom(
+      from.transform_delta_by_safe_area_inset_bottom());
   transform_tree_mutable().SetPropertyTrees(this);
   effect_tree_mutable().SetPropertyTrees(this);
   clip_tree_mutable().SetPropertyTrees(this);
@@ -2111,6 +2258,15 @@ void PropertyTrees::SetOuterViewportContainerBoundsDelta(
 
   outer_viewport_container_bounds_delta_.Write(synchronizer()) = bounds_delta;
   transform_tree_mutable().UpdateOuterViewportContainerBoundsDelta();
+}
+
+void PropertyTrees::SetTransformDeltaBySafeAreaInsetBottom(float delta) {
+  if (transform_delta_by_safe_area_inset_bottom() == delta) {
+    return;
+  }
+
+  transform_delta_by_safe_area_inset_bottom_.Write(synchronizer()) = delta;
+  transform_tree_mutable().NeedTransformUpdateForSafeAreaInsetBottom();
 }
 
 bool PropertyTrees::ElementIsAnimatingChanged(
@@ -2167,9 +2323,6 @@ bool PropertyTrees::ElementIsAnimatingChanged(
       case TargetProperty::OPACITY:
         if (EffectNode* effect_node =
                 effect_tree_mutable().FindNodeFromElementId(element_id)) {
-          if (mask.currently_running[property])
-            effect_node->is_currently_animating_opacity =
-                state.currently_running[property];
           if (mask.potentially_animating[property]) {
             effect_node->has_potential_opacity_animation =
                 state.potentially_animating[property];
@@ -2185,9 +2338,6 @@ bool PropertyTrees::ElementIsAnimatingChanged(
       case TargetProperty::FILTER:
         if (EffectNode* effect_node =
                 effect_tree_mutable().FindNodeFromElementId(element_id)) {
-          if (mask.currently_running[property])
-            effect_node->is_currently_animating_filter =
-                state.currently_running[property];
           if (mask.potentially_animating[property])
             effect_node->has_potential_filter_animation =
                 state.potentially_animating[property];
@@ -2202,9 +2352,6 @@ bool PropertyTrees::ElementIsAnimatingChanged(
       case TargetProperty::BACKDROP_FILTER:
         if (EffectNode* effect_node =
                 effect_tree_mutable().FindNodeFromElementId(element_id)) {
-          if (mask.currently_running[property])
-            effect_node->is_currently_animating_backdrop_filter =
-                state.currently_running[property];
           if (mask.potentially_animating[property])
             effect_node->has_potential_backdrop_filter_animation =
                 state.potentially_animating[property];
@@ -2223,6 +2370,7 @@ bool PropertyTrees::ElementIsAnimatingChanged(
   }
   return updated_transform;
 }
+#undef DCHECK_NODE_EXISTENCE
 
 void PropertyTrees::MaximumAnimationScaleChanged(ElementId element_id,
                                                  float maximum_scale) {
@@ -2259,8 +2407,9 @@ void PropertyTrees::GetChangedNodes(std::vector<int>& effect_nodes,
   }
   for (int id = kContentsRootPropertyNodeId;
        id < static_cast<int>(transform_tree().size()); ++id) {
-    if (transform_tree().Node(id)->transform_changed)
+    if (transform_tree().Node(id)->transform_changed()) {
       transform_nodes.push_back(id);
+    }
   }
 }
 
@@ -2268,10 +2417,13 @@ void PropertyTrees::ApplyChangedNodes(
     const std::vector<int>& changed_effect_nodes,
     const std::vector<int>& changed_transform_nodes) {
   if (changed_effect_nodes.size() || changed_transform_nodes.size()) {
-    for (int i : changed_effect_nodes)
+    for (int i : changed_effect_nodes) {
       effect_tree_mutable().Node(i)->effect_changed = true;
-    for (int i : changed_transform_nodes)
-      transform_tree_mutable().Node(i)->transform_changed = true;
+    }
+    for (int i : changed_transform_nodes) {
+      transform_tree_mutable().Node(i)->SetTransformChanged(
+          DamageReason::kUntracked);
+    }
     UpdateChangeTracking();
   }
 }
@@ -2477,13 +2629,13 @@ bool PropertyTrees::GetFromTarget(int transform_id,
 
 DrawTransformData& PropertyTrees::FetchDrawTransformsDataFromCache(
     int transform_id,
-    int dest_id) const {
+    int effect_id) const {
   for (auto& transform_data : cached_data_.draw_transforms[transform_id]) {
     // We initialize draw_transforms with 1 element vectors when
     // ResetCachedData, so if we hit an invalid target id, it means it's the
     // first time we compute draw transforms after reset.
-    if (transform_data.target_id == dest_id ||
-        transform_data.target_id == kInvalidPropertyNodeId) {
+    if (transform_data.effect_id == effect_id ||
+        transform_data.effect_id == kInvalidPropertyNodeId) {
       return transform_data;
     }
   }
@@ -2491,7 +2643,7 @@ DrawTransformData& PropertyTrees::FetchDrawTransformsDataFromCache(
   cached_data_.draw_transforms[transform_id].push_back(DrawTransformData());
   DrawTransformData& data = cached_data_.draw_transforms[transform_id].back();
   data.update_number = kInvalidUpdateNumber;
-  data.target_id = dest_id;
+  data.effect_id = effect_id;
   return data;
 }
 
@@ -2523,10 +2675,10 @@ DrawTransforms& PropertyTrees::GetDrawTransforms(int transform_id,
   int dest_id = effect_node->transform_id;
 
   DrawTransformData& data =
-      FetchDrawTransformsDataFromCache(transform_id, dest_id);
+      FetchDrawTransformsDataFromCache(transform_id, effect_id);
 
   DCHECK(data.update_number != cached_data_.transform_tree_update_number ||
-         data.target_id != kInvalidPropertyNodeId);
+         data.effect_id != kInvalidPropertyNodeId);
   if (data.update_number == cached_data_.transform_tree_update_number)
     return data.transforms;
 
@@ -2566,7 +2718,7 @@ DrawTransforms& PropertyTrees::GetDrawTransforms(int transform_id,
   if (!already_computed_inverse)
     data.transforms.to_valid = true;
   data.update_number = cached_data_.transform_tree_update_number;
-  data.target_id = dest_id;
+  data.effect_id = effect_id;
   data.transforms.from_target = from_target;
   data.transforms.to_target = target_space_transform;
   return data.transforms;
@@ -2584,7 +2736,7 @@ void PropertyTrees::ResetCachedData() {
   for (auto& draw_transforms_for_id : cached_data_.draw_transforms) {
     draw_transforms_for_id.resize(1);
     draw_transforms_for_id[0].update_number = kInvalidUpdateNumber;
-    draw_transforms_for_id[0].target_id = kInvalidPropertyNodeId;
+    draw_transforms_for_id[0].effect_id = kInvalidPropertyNodeId;
   }
 }
 

@@ -2,17 +2,23 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/gpu/vaapi/test/h264_decoder.h"
 
+#include <va/va.h>
+
+#include <algorithm>
+
 #include "base/notreached.h"
-#include "base/ranges/algorithm.h"
 #include "media/base/subsample_entry.h"
 #include "media/gpu/macros.h"
 #include "media/gpu/vaapi/test/h264_dpb.h"
 #include "media/gpu/vaapi/test/video_decoder.h"
-#include "media/video/h264_parser.h"
-
-#include <va/va.h>
+#include "media/parsers/h264_parser.h"
 
 namespace media::vaapi_test {
 
@@ -91,7 +97,7 @@ bool FillH264PictureFromSliceHeader(const H264SPS* sps,
       break;
 
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
   return true;
 }
@@ -492,11 +498,7 @@ bool H264Decoder::InitCurrPicture(const H264SliceHeader* slice_hdr) {
   // process after this picture is decoded, store required data for that
   // purpose.
   if (slice_hdr->adaptive_ref_pic_marking_mode_flag) {
-    static_assert(sizeof(curr_picture_->ref_pic_marking) ==
-                      sizeof(slice_hdr->ref_pic_marking),
-                  "Array sizes of ref pic marking do not match.");
-    memcpy(curr_picture_->ref_pic_marking, slice_hdr->ref_pic_marking,
-           sizeof(curr_picture_->ref_pic_marking));
+    curr_picture_->ref_pic_marking = slice_hdr->ref_pic_marking;
   }
 
   curr_picture_->visible_rect = visible_rect_;
@@ -575,8 +577,9 @@ void H264Decoder::ConstructReferencePicListsB() {
 
   // If lists identical, swap first two entries in RefPicList1 (spec 8.2.4.2.3)
   if (ref_pic_list_b1_.size() > 1 &&
-      base::ranges::equal(ref_pic_list_b0_, ref_pic_list_b1_))
+      std::ranges::equal(ref_pic_list_b0_, ref_pic_list_b1_)) {
     std::swap(ref_pic_list_b1_[0], ref_pic_list_b1_[1]);
+  }
 }
 
 void H264Decoder::UpdatePicNums(int frame_num) {
@@ -888,12 +891,12 @@ bool H264Decoder::ModifyReferencePicList(const H264SliceHeader* slice_hdr,
     ref_pic_list_modification_flag_lX =
         slice_hdr->ref_pic_list_modification_flag_l0;
     num_ref_idx_lX_active_minus1 = slice_hdr->num_ref_idx_l0_active_minus1;
-    list_mod = slice_hdr->ref_list_l0_modifications;
+    list_mod = slice_hdr->ref_list_l0_modifications.data();
   } else {
     ref_pic_list_modification_flag_lX =
         slice_hdr->ref_pic_list_modification_flag_l1;
     num_ref_idx_lX_active_minus1 = slice_hdr->num_ref_idx_l1_active_minus1;
-    list_mod = slice_hdr->ref_list_l1_modifications;
+    list_mod = slice_hdr->ref_list_l1_modifications.data();
   }
 
   // Resize the list to the size requested in the slice header.
@@ -905,8 +908,7 @@ bool H264Decoder::ModifyReferencePicList(const H264SliceHeader* slice_hdr,
   size_t original_size = ref_pic_listx->size();
   ref_pic_listx->resize(num_ref_idx_lX_active_minus1 + 1);
   for (int i = original_size; i < num_ref_idx_lX_active_minus1 + 1; i++) {
-    scoped_refptr<H264Picture> nonref_pic =
-        base::WrapRefCounted(new H264Picture(nullptr));
+    auto nonref_pic = base::MakeRefCounted<H264Picture>(nullptr);
     LOG_ASSERT(InitNonexistingPicture(nonref_pic, 0, false));
     (*ref_pic_listx)[i] = nonref_pic;
   }
@@ -1170,7 +1172,7 @@ bool H264Decoder::HandleMemoryManagementOps(scoped_refptr<H264Picture> pic) {
 
       default:
         // Would indicate a bug in parser.
-        NOTREACHED_IN_MIGRATION();
+        NOTREACHED();
     }
   }
 

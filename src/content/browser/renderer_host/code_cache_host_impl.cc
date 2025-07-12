@@ -109,6 +109,7 @@ void DidGenerateCacheableMetadataInCacheStorageOnUI(
 
   mojo::Remote<blink::mojom::CacheStorage> remote;
   network::CrossOriginEmbedderPolicy cross_origin_embedder_policy;
+  network::DocumentIsolationPolicy document_isolation_policy;
 
   storage::mojom::CacheStorageControl* cache_storage_control =
       cache_storage_control_for_testing
@@ -118,6 +119,7 @@ void DidGenerateCacheableMetadataInCacheStorageOnUI(
 
   cache_storage_control->AddReceiver(
       cross_origin_embedder_policy, mojo::NullRemote(),
+      document_isolation_policy, mojo::NullRemote(),
       storage::BucketLocator::ForDefaultBucket(code_cache_storage_key),
       storage::mojom::CacheStorageOwner::kCacheAPI,
       remote.BindNewPipeAndPassReceiver());
@@ -131,14 +133,14 @@ void DidGenerateCacheableMetadataInCacheStorageOnUI(
           [](const GURL& url, base::Time expected_response_time,
              mojo_base::BigBuffer data, int64_t trace_id,
              mojo::Remote<blink::mojom::CacheStorage> preserve_remote_lifetime,
-             blink::mojom::OpenResultPtr result) {
-            if (result->is_status()) {
+             blink::mojom::CacheStorage::OpenResult result) {
+            if (!result.has_value()) {
               // Silently ignore errors.
               return;
             }
 
             mojo::AssociatedRemote<blink::mojom::CacheStorageCache> remote;
-            remote.Bind(std::move(result->get_cache()));
+            remote.Bind(std::move(result.value()));
             remote->WriteSideData(
                 url, expected_response_time, std::move(data), trace_id,
                 base::BindOnce(
@@ -265,14 +267,14 @@ void CodeCacheHostImpl::FetchCachedCode(blink::mojom::CodeCacheType cache_type,
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   GeneratedCodeCache* code_cache = GetCodeCache(cache_type);
   if (!code_cache) {
-    std::move(callback).Run(base::Time(), std::vector<uint8_t>());
+    std::move(callback).Run(base::Time(), {});
     return;
   }
 
   std::optional<GURL> secondary_key =
       GetSecondaryKeyForCodeCache(url, render_process_id_, Operation::kRead);
   if (!secondary_key) {
-    std::move(callback).Run(base::Time(), std::vector<uint8_t>());
+    std::move(callback).Run(base::Time(), {});
     return;
   }
 
@@ -356,6 +358,12 @@ void CodeCacheHostImpl::OnReceiveCachedCode(
     base::UmaHistogramTimes("SiteIsolatedCodeCache.JS.FetchCodeCache",
                             base::TimeTicks::Now() - start_time);
   }
+
+  if (data.size() > 0) {
+    base::UmaHistogramCustomCounts("SiteIsolatedCodeCache.DataSize",
+                                   data.size(), 1, 10000000, 100);
+  }
+
   std::move(callback).Run(response_time, std::move(data));
 }
 

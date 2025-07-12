@@ -5,7 +5,7 @@
 package org.chromium.chrome.browser.customtabs.features;
 
 import android.content.Context;
-import android.os.Build;
+import android.graphics.Color;
 import android.view.Window;
 
 import androidx.annotation.Nullable;
@@ -26,9 +26,26 @@ public class CustomTabNavigationBarController {
 
     private CustomTabNavigationBarController() {}
 
-    /** Sets the navigation bar color and navigation divider color according to intent extras. */
+    /**
+     * Sets the navigation bar color and navigation divider color according to intent extras, or
+     * whether CCT is drawing edge to edge
+     *
+     * @param window The activity window.
+     * @param intentDataProvider The {@link BrowserServicesIntentDataProvider} used in CCT.
+     * @param context The current Android context.
+     * @param isEdgeToEdge Whether CCT is drawing edge to edge.
+     */
     public static void update(
-            Window window, BrowserServicesIntentDataProvider intentDataProvider, Context context) {
+            Window window,
+            BrowserServicesIntentDataProvider intentDataProvider,
+            Context context,
+            boolean isEdgeToEdge) {
+        // When drawing edge to edge, always use transparent color for the navigation bar.
+        if (isEdgeToEdge) {
+            updateBarColor(window, Color.TRANSPARENT, false, false);
+            return;
+        }
+
         Integer navigationBarColor = intentDataProvider.getColorProvider().getNavigationBarColor();
         Integer navigationBarDividerColor =
                 intentDataProvider.getColorProvider().getNavigationBarDividerColor();
@@ -43,17 +60,13 @@ public class CustomTabNavigationBarController {
         }
         // PCCT is deemed incapable of system dark button support due to the way it implements
         // partial height (window coordinate translation). We do the darkening ourselves.
-        boolean supportsDarkButtons =
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-                        && !intentDataProvider.isPartialCustomTab();
+        boolean supportsDarkButtons = !intentDataProvider.isPartialCustomTab();
         boolean needsDarkButtons =
                 navigationBarColor != null
                         && !ColorUtils.shouldUseLightForegroundOnBackground(navigationBarColor);
 
         updateBarColor(window, navigationBarColor, supportsDarkButtons, needsDarkButtons);
 
-        // navigationBarDividerColor can only be set in Android P+
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return;
         Integer dividerColor =
                 getDividerColor(
                         context, navigationBarColor, navigationBarDividerColor, needsDarkButtons);

@@ -19,13 +19,14 @@ export class FakeReadingMode {
   backgroundColor: number = 0;
   lineSpacing: number = 0;
   letterSpacing: number = 0;
+  imagesEnabled: boolean = false;
 
   // The current color theme value.
   colorTheme: number = 0;
 
   // Current audio settings values.
   speechRate: number = 1;
-  highlightGranularity: number = 1;
+  highlightGranularity: number = 0;
 
   // Enum values for various visual theme changes.
   standardLineSpacing: number = 0;
@@ -39,19 +40,34 @@ export class FakeReadingMode {
   darkTheme: number = 8;
   yellowTheme: number = 9;
   blueTheme: number = 10;
-  highlightOn: number = 0;
+
+  // Enum values for highlight granularity.
+  autoHighlighting: number = 0;
+  wordHighlighting: number = 1;
+  phraseHighlighting: number = 2;
+  sentenceHighlighting: number = 3;
+  noHighlighting: number = 4;
+
+  // Enum values for speech stop sources.
+  pauseButtonStopSource: number = 30;
+  keyboardShortcutStopSource: number = 31;
+  engineInterruptStopSource: number = 32;
+  engineErrorStopSource: number = 33;
+  contentFinishedStopSource: number = 34;
+  unexpectedUpdateContentStopSource: number = 35;
 
   // Whether the WebUI toolbar feature flag is enabled.
   isWebUIToolbarVisible: boolean = true;
 
   // Whether the Read Aloud feature flag is enabled.
-  isReadAloudEnabled: boolean = false;
+  isReadAloudEnabled: boolean = true;
 
   // Returns true if the webpage corresponds to a Google Doc.
   isGoogleDocs: boolean = false;
 
   // Fonts supported by the browser's preferred language.
   supportedFonts: string[] = ['roboto'];
+  allFonts: string[] = [];
 
   // The base language code that should be used for speech synthesis voices.
   baseLanguageForSpeech: string = '';
@@ -63,7 +79,17 @@ export class FakeReadingMode {
   // TTS voice language preferences saved in database
   savedLanguagePref: Set<string> = new Set<string>();
 
+  // If the speech tree has been initialized.
+  isSpeechTreeInitialized: boolean = false;
+
   private maxNodeId: number = 5;
+
+  fetchedImages: number[] = [];
+
+  // Returns whether the reading highlight is currently on.
+  isHighlightOn(): boolean {
+    return this.highlightGranularity !== this.noHighlighting;
+  }
 
   // Returns the stored user voice preference for the current language.
   getStoredVoice(): string {
@@ -135,8 +161,14 @@ export class FakeReadingMode {
   // shortcuts.
   onCopy() {}
 
+  // Ping that the user muted or unmuted this tab.
+  onTabMuteStateChange(_muted: boolean) {}
+
   // Called when speech is paused or played.
-  onSpeechPlayingStateChanged(_paused: boolean) {}
+  onIsSpeechActiveChanged(_isSpeechActive: boolean) {}
+
+  // Called when the audio for speech actually starts or stops.
+  onIsAudioCurrentlyPlayingChanged(_isAudioCurrentlyPlaying: boolean) {}
 
   // Called when the Read Anything panel is scrolled.
   onScroll(_onSelection: boolean) {}
@@ -146,14 +178,8 @@ export class FakeReadingMode {
   onLinkClicked(_nodeId: number) {}
 
   // Called when the line spacing is changed via the webui toolbar.
-  onStandardLineSpacing() {
-    this.lineSpacing = this.standardLineSpacing;
-  }
-  onLooseLineSpacing() {
-    this.lineSpacing = this.looseLineSpacing;
-  }
-  onVeryLooseLineSpacing() {
-    this.lineSpacing = this.veryLooseLineSpacing;
+  onLineSpacingChange(value: number) {
+    this.lineSpacing = value;
   }
 
   // Called when a user makes a font size change via the webui toolbar.
@@ -164,9 +190,13 @@ export class FakeReadingMode {
     this.fontSize = 0;
   }
 
+  onHighlightGranularityChanged(value: number) {
+    this.highlightGranularity = value;
+  }
+
   // Called when a user toggles a switch in the language menu
   onLanguagePrefChange(lang: string, enabled: boolean) {
-    if(enabled) {
+    if (enabled) {
       this.savedLanguagePref.add(lang);
     } else {
       this.savedLanguagePref.delete(lang);
@@ -179,32 +209,24 @@ export class FakeReadingMode {
     this.linksEnabled = !this.linksEnabled;
   }
 
+  // Called when a user toggles images via the webui toolbar.
+  onImagesEnabledToggled() {
+    this.imagesEnabled = !this.imagesEnabled;
+  }
+
   // Called when the letter spacing is changed via the webui toolbar.
-  onStandardLetterSpacing() {
-    this.letterSpacing = this.standardLetterSpacing;
-  }
-  onWideLetterSpacing() {
-    this.letterSpacing = this.wideLetterSpacing;
-  }
-  onVeryWideLetterSpacing() {
-    this.letterSpacing = this.veryWideLetterSpacing;
+  onLetterSpacingChange(value: number) {
+    this.letterSpacing = value;
   }
 
   // Called when the color theme is changed via the webui toolbar.
-  onDefaultTheme() {
-    this.colorTheme = this.defaultTheme;
+  onThemeChange(value: number) {
+    this.colorTheme = value;
   }
-  onLightTheme() {
-    this.colorTheme = this.lightTheme;
-  }
-  onDarkTheme() {
-    this.colorTheme = this.darkTheme;
-  }
-  onYellowTheme() {
-    this.colorTheme = this.yellowTheme;
-  }
-  onBlueTheme() {
-    this.colorTheme = this.blueTheme;
+
+  // Returns the css name of the given font, or the default if it's not valid.
+  getValidatedFontName(font: string) {
+    return font;
   }
 
   // Called when the font is changed via the webui toolbar.
@@ -223,12 +245,16 @@ export class FakeReadingMode {
   // Called when a tracked count-based metric is incremented.
   incrementMetricCount(_metric: string) {}
 
+  // Log when speech stops and why.
+  logSpeechStop(_source: number) {}
+
   // Called when the highlight granularity is changed via the webui toolbar.
   turnedHighlightOn() {
-    this.highlightGranularity = 1;
+    this.highlightGranularity = this.autoHighlighting;
   }
+
   turnedHighlightOff() {
-    this.highlightGranularity = 0;
+    this.highlightGranularity = this.noHighlighting;
   }
 
   // Returns the actual spacing value to use based on the given lineSpacing
@@ -261,6 +287,16 @@ export class FakeReadingMode {
 
   sendGetVoicePackInfoRequest(_: string) {}
 
+  // Sends an async request to install a Natural voice pack for a
+  // specific language. The response is sent back to the UI via
+  // updateVoicePackStatus()
+  // TODO(crbug.com/377697173) Rename `VoicePack` to `Voice`
+  sendInstallVoicePackRequest(_language: string) {}
+
+  // Sends an async request to uninstall a Natural voice for a specific
+  // language.
+  sendUninstallVoiceRequest(_language: string) {}
+
   // Set the content. Used by tests only.
   // SnapshotLite is a data structure which resembles an AXTreeUpdate. E.g.:
   //   const axTree = {
@@ -278,7 +314,9 @@ export class FakeReadingMode {
   //       },
   //     ],
   //   };
-  setContentForTesting(_snapshotLite: Object, _contentNodeIds: number[]) {}
+  setContentForTesting(_snapshotLite: Object, contentNodeIds: number[]) {
+    this.isSpeechTreeInitialized = contentNodeIds.length > 0;
+  }
 
   // Set the theme. Used by tests only.
   setThemeForTesting(
@@ -316,11 +354,9 @@ export class FakeReadingMode {
   // toolbar and are ready to consume.
   updateTheme() {}
 
-  // Called with the response of sendGetVoicePackInfoRequest()
+  // Called with the response of sendGetVoicePackInfoRequest() or
+  // sendInstallVoicePackRequest()
   updateVoicePackStatus(_lang: string, _status: string) {}
-
-  // Called with the response of sendInstallVoicePackRequest()
-  updateVoicePackStatusFromInstallResponse() {}
 
   // Ping that the theme choices of the user have been retrieved from
   // preferences and can be used to set up the page.
@@ -362,6 +398,20 @@ export class FakeReadingMode {
   // refer to the previous granularity.
   movePositionToPreviousGranularity(): void {}
 
+  // Signal that the page language has changed.
+  languageChanged(): void {}
+
+  // Gets the accessible text boundary for the given string
+  getAccessibleBoundary(_text: string, _maxSpeechLength: number): number {
+    return 0;
+  }
+
+  // Requests the image in the form of bitmap. onImageDownloaded will be
+  // called when the image has been downloaded.
+  requestImageData(nodeId: number): void {
+    this.fetchedImages.push(nodeId);
+  }
+
   // Returns the index of the next sentence of the given text, such that the
   // next sentence is equivalent to text.substr(0, <returned_index>).
   // If the sentence exceeds the maximum text length, the sentence will be
@@ -379,11 +429,23 @@ export class FakeReadingMode {
     return '';
   }
 
-  logMetric(_time: number, _metricName: string) : void {}
-
-  logLongMetric(_time: number, _metricName: string): void {}
-
-  logSpeechError(errorCode: string): void {
-    console.error('Read Aloud got a speech error during test:', errorCode);
+  // Returns a list of node ids and ranges (start and length) associated with
+  // the index within the given text segment. The intended use is for
+  // highlighting the ranges. Note that a highlight can span over multiple
+  // nodes in certain cases. If the `phrases` argument is `true`, the text
+  // ranges for the containing phrase are returned, otherwise the text ranges
+  // for the word are returned.
+  //
+  // For example, for a segment of text composed of two nodes:
+  // Node 1: "Hello, this is a "
+  // Node 2: "segment of text."
+  // An index of "20" will return the node id associated with node 2, a start
+  // index of 0, and a length of 8 (covering the word "segment ").
+  getHighlightForCurrentSegmentIndex(_index: number, _phrases: boolean):
+      Array<{nodeId: number, start: number, length: number}> {
+    return [];
   }
+
+  // Resets the granularity index.
+  resetGranularityIndex() {}
 }

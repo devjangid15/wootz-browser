@@ -13,6 +13,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ref.h"
 #include "base/no_destructor.h"
+#include "base/timer/elapsed_timer.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 
@@ -65,8 +66,9 @@ class AwBrowserContextStore final {
   // CHECK the store is initialized and then get a pointer to it.
   static AwBrowserContextStore* GetInstance();
 
-  // Get the default context. This will never return null.
-  AwBrowserContext* GetDefault() const;
+  // Get the default context. This will never return null. Must be called on the
+  // UI thread.
+  AwBrowserContext* GetDefault();
   // Check if a named context exists (on disk or in memory). The context does
   // not need to be instantiated. The result is given to the callback once
   // determined.
@@ -117,6 +119,9 @@ class AwBrowserContextStore final {
   // been assigned to any profile (even deleted ones).
   int AssignNewProfileNumber();
 
+  const base::ElapsedTimer uptime_for_metrics_;
+  size_t instantiated_contexts_for_metrics_ = 0;
+
   // (local_state) PrefService which is used to persist information about the
   // profiles that exist on disk.
   const raw_ref<PrefService> prefs_;
@@ -131,4 +136,4 @@ class AwBrowserContextStore final {
 
 }  // namespace android_webview
 
-#endif  // ANDROID_WEBVIEW_BROWSER_AW_BROWSER_CONTEXT_H_
+#endif  // ANDROID_WEBVIEW_BROWSER_AW_BROWSER_CONTEXT_STORE_H_

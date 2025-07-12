@@ -32,17 +32,14 @@ class ClipboardAndroid : public Clipboard {
 
   // Called by Java when the Java Clipboard is notified that the clipboard has
   // changed.
-  void OnPrimaryClipChanged(JNIEnv* env,
-                            const base::android::JavaParamRef<jobject>& obj);
+  void OnPrimaryClipChanged(JNIEnv* env);
 
   // Called by Java when the Java Clipboard is notified that the window focus
   // has changed. Since Chrome will not receive OnPrimaryClipChanged call from
   // Android if Chrome is in background,Clipboard handler needs to check the
   // content of clipboard didn't change, when Chrome is back in foreground.
-  void OnPrimaryClipTimestampInvalidated(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
-      const jlong j_timestamp_ms);
+  void OnPrimaryClipTimestampInvalidated(JNIEnv* env,
+                                         const jlong j_timestamp_ms);
 
   // Called by Java side.
   int64_t GetLastModifiedTimeToJavaTime(JNIEnv* env);
@@ -98,10 +95,10 @@ class ClipboardAndroid : public Clipboard {
   void ReadPng(ClipboardBuffer buffer,
                const DataTransferEndpoint* data_dst,
                ReadPngCallback callback) const override;
-  void ReadCustomData(ClipboardBuffer buffer,
-                      const std::u16string& type,
-                      const DataTransferEndpoint* data_dst,
-                      std::u16string* result) const override;
+  void ReadDataTransferCustomData(ClipboardBuffer buffer,
+                                  const std::u16string& type,
+                                  const DataTransferEndpoint* data_dst,
+                                  std::u16string* result) const override;
   void ReadFilenames(ClipboardBuffer buffer,
                      const DataTransferEndpoint* data_dst,
                      std::vector<ui::FileInfo>* result) const override;
@@ -116,6 +113,7 @@ class ClipboardAndroid : public Clipboard {
   void WritePortableAndPlatformRepresentations(
       ClipboardBuffer buffer,
       const ObjectMap& objects,
+      const std::vector<RawData>& raw_objects,
       std::vector<Clipboard::PlatformRepresentation> platform_representations,
       std::unique_ptr<DataTransferEndpoint> data_src,
       uint32_t privacy_types) override;

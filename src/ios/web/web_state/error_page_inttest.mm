@@ -92,8 +92,9 @@ class TestWebStatePolicyDecider : public WebStatePolicyDecider {
                           PolicyDecisionCallback callback) override {
     PolicyDecision decision = PolicyDecision::Allow();
     GURL URL = net::GURLWithNSURL(request.URL);
-    if (URL.path() != path_ || URL.query() == blocked_request_query_)
+    if (URL.path() != path_ || URL.query() == blocked_request_query_) {
       decision = PolicyDecision::CancelAndDisplayError(CreateEmbedderError());
+    }
     std::move(callback).Run(decision);
   }
   void ShouldAllowResponse(NSURLResponse* response,
@@ -101,8 +102,9 @@ class TestWebStatePolicyDecider : public WebStatePolicyDecider {
                            PolicyDecisionCallback callback) override {
     PolicyDecision decision = PolicyDecision::Allow();
     GURL URL = net::GURLWithNSURL(response.URL);
-    if (URL.path() != path_ || URL.query() != allowed_query_)
+    if (URL.path() != path_ || URL.query() != allowed_query_) {
       decision = PolicyDecision::CancelAndDisplayError(CreateEmbedderError());
+    }
     std::move(callback).Run(decision);
   }
 
@@ -258,7 +260,7 @@ TEST_F(ErrorPageTest, GoForwardAfterServerIsDownAndReload) {
   web_state()->GetNavigationManager()->GoBack();
   ASSERT_TRUE(test::WaitForWebViewContainingText(web_state(), "Echo"));
 
-#if TARGET_IPHONE_SIMULATOR
+#if TARGET_OS_SIMULATOR
   // Go forward. The response will be retrieved from the page cache and will not
   // present the error page. Page cache may not always exist on device (which is
   // more memory constrained), so this part of the test is simulator-only.
@@ -274,7 +276,7 @@ TEST_F(ErrorPageTest, GoForwardAfterServerIsDownAndReload) {
   ASSERT_TRUE(security_state_info()->visible_ssl_status);
   EXPECT_EQ(SECURITY_STYLE_UNAUTHENTICATED,
             security_state_info()->visible_ssl_status->security_style);
-#endif  // TARGET_IPHONE_SIMULATOR
+#endif  // TARGET_OS_SIMULATOR
 }
 
 // Sucessfully loads the page, then loads the URL which fails to load, then

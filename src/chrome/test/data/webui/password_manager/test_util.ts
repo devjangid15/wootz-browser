@@ -48,6 +48,7 @@ export interface PasswordEntryParams {
   username?: string;
   displayName?: string;
   password?: string;
+  backupPassword?: string;
   federationText?: string;
   id?: number;
   inAccountStore?: boolean;
@@ -98,6 +99,7 @@ export function createPasswordEntry(params?: PasswordEntryParams):
     storedIn: storeType,
     note: note,
     changePasswordUrl: params.changePasswordUrl,
+    backupPassword: params.backupPassword,
     password: params.password || '',
     affiliatedDomains: params.affiliatedDomains || [domain],
     creationTime: params.isPasskey ? 1000000000 : undefined,
@@ -151,6 +153,11 @@ export function makePasswordManagerPrefs() {
       type: chrome.settingsPrivate.PrefType.BOOLEAN,
       value: true,
     },
+    credentials_enable_automatic_passkey_upgrades: {
+      key: 'credentials_enable_automatic_passkey_upgrades',
+      type: chrome.settingsPrivate.PrefType.BOOLEAN,
+      value: true,
+    },
     profile: {
       password_dismiss_compromised_alert: {
         key: 'profile.password_dismiss_compromised_alert',
@@ -159,7 +166,7 @@ export function makePasswordManagerPrefs() {
       },
     },
     password_manager: {
-      // <if expr="is_win or is_macosx">
+      // <if expr="is_win or is_macosx or is_chromeos">
       biometric_authentication_filling: {
         key: 'password_manager.biometric_authentication_filling',
         type: chrome.settingsPrivate.PrefType.BOOLEAN,

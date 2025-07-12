@@ -10,11 +10,16 @@
 
 #include "base/memory/raw_ptr.h"
 #include "base/synchronization/lock.h"
-#include "gpu/command_buffer/client/gpu_memory_buffer_manager.h"
+#include "gpu/ipc/common/surface_handle.h"
+#include "ui/gfx/gpu_memory_buffer.h"
+
+namespace base {
+class WaitableEvent;
+}
 
 namespace gpu {
 
-class TestGpuMemoryBufferManager : public gpu::GpuMemoryBufferManager {
+class TestGpuMemoryBufferManager {
  public:
   TestGpuMemoryBufferManager();
 
@@ -22,7 +27,7 @@ class TestGpuMemoryBufferManager : public gpu::GpuMemoryBufferManager {
   TestGpuMemoryBufferManager& operator=(const TestGpuMemoryBufferManager&) =
       delete;
 
-  ~TestGpuMemoryBufferManager() override;
+  ~TestGpuMemoryBufferManager();
 
   std::unique_ptr<TestGpuMemoryBufferManager>
   CreateClientGpuMemoryBufferManager();
@@ -34,20 +39,12 @@ class TestGpuMemoryBufferManager : public gpu::GpuMemoryBufferManager {
     fail_on_create_ = fail_on_create;
   }
 
-  // Overridden from gpu::GpuMemoryBufferManager:
   std::unique_ptr<gfx::GpuMemoryBuffer> CreateGpuMemoryBuffer(
       const gfx::Size& size,
       gfx::BufferFormat format,
       gfx::BufferUsage usage,
       gpu::SurfaceHandle surface_handle,
-      base::WaitableEvent* shutdown_event) override;
-  void CopyGpuMemoryBufferAsync(
-      gfx::GpuMemoryBufferHandle buffer_handle,
-      base::UnsafeSharedMemoryRegion memory_region,
-      base::OnceCallback<void(bool)> callback) override;
-  bool CopyGpuMemoryBufferSync(
-      gfx::GpuMemoryBufferHandle buffer_handle,
-      base::UnsafeSharedMemoryRegion memory_region) override;
+      base::WaitableEvent* shutdown_event);
 
  private:
   // This class is called by multiple threads at the same time. Hold this lock
@@ -57,7 +54,7 @@ class TestGpuMemoryBufferManager : public gpu::GpuMemoryBufferManager {
 
   // Buffers allocated by this manager.
   int last_gpu_memory_buffer_id_ = 1000;
-  std::map<int, gfx::GpuMemoryBuffer*> buffers_;
+  std::map<int, raw_ptr<gfx::GpuMemoryBuffer, CtnExperimental>> buffers_;
 
   // Parent information for child managers.
   int client_id_ = -1;
@@ -66,7 +63,7 @@ class TestGpuMemoryBufferManager : public gpu::GpuMemoryBufferManager {
 
   // Child infomration for parent managers.
   int last_client_id_ = 5000;
-  std::map<int, TestGpuMemoryBufferManager*> clients_;
+  std::map<int, raw_ptr<TestGpuMemoryBufferManager, CtnExperimental>> clients_;
 
   bool fail_on_create_ = false;
 };

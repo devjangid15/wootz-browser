@@ -62,10 +62,14 @@ std::optional<MantaStatusCode> MapServerStatusCodeToMantaStatusCode(
 }
 
 void LogTimeCost(const MantaMetricType request_type,
-                 const base::TimeDelta& time_cost) {
+                 base::TimeDelta time_cost) {
   switch (request_type) {
     case MantaMetricType::kOrca:
       base::UmaHistogramTimes("Ash.MantaService.OrcaProvider.TimeCost",
+                              time_cost);
+      break;
+    case MantaMetricType::kScanner:
+      base::UmaHistogramTimes("Ash.MantaService.ScannerProvider.TimeCost",
                               time_cost);
       break;
     case MantaMetricType::kSnapper:
@@ -76,24 +80,70 @@ void LogTimeCost(const MantaMetricType request_type,
       base::UmaHistogramTimes("Ash.MantaService.MahiProvider.Summary.TimeCost",
                               time_cost);
       break;
+    case MantaMetricType::kMahiElucidation:
+      base::UmaHistogramTimes(
+          "Ash.MantaService.MahiProvider.Elucidation.TimeCost", time_cost);
+      break;
     case MantaMetricType::kMahiQA:
       base::UmaHistogramTimes("Ash.MantaService.MahiProvider.QA.TimeCost",
                               time_cost);
       break;
-    case manta::MantaMetricType::kSparky:
-      base::UmaHistogramTimes("Ash.MantaService.SparkyProvider.TimeCost",
+    case MantaMetricType::kAnchovy:
+      base::UmaHistogramTimes("Ash.MantaService.AnchovyProvider.TimeCost",
                               time_cost);
+      break;
+    case MantaMetricType::kWalrus:
+      base::UmaHistogramTimes("Ash.MantaService.WalrusProvider.TimeCost",
+                              time_cost);
+      break;
+  }
+}
+
+void LogMantaStatusCode(const MantaMetricType request_type,
+                        const MantaStatusCode status_code) {
+  switch (request_type) {
+    case MantaMetricType::kOrca:
+      base::UmaHistogramEnumeration("Ash.MantaService.OrcaProvider.StatusCode",
+                                    status_code);
+      break;
+    case MantaMetricType::kScanner:
+      base::UmaHistogramEnumeration(
+          "Ash.MantaService.ScannerProvider.StatusCode", status_code);
+      break;
+    case MantaMetricType::kSnapper:
+      base::UmaHistogramEnumeration(
+          "Ash.MantaService.SnapperProvider.StatusCode", status_code);
+      break;
+    case MantaMetricType::kMahiSummary:
+      base::UmaHistogramEnumeration(
+          "Ash.MantaService.MahiProvider.Summary.StatusCode", status_code);
+      break;
+    case MantaMetricType::kMahiElucidation:
+      base::UmaHistogramEnumeration(
+          "Ash.MantaService.MahiProvider.Elucidation.StatusCode", status_code);
+      break;
+    case MantaMetricType::kMahiQA:
+      base::UmaHistogramEnumeration(
+          "Ash.MantaService.MahiProvider.QA.StatusCode", status_code);
+      break;
+    case MantaMetricType::kAnchovy:
+      base::UmaHistogramEnumeration(
+          "Ash.MantaService.AnchovyProvider.StatusCode", status_code);
+      break;
+    case MantaMetricType::kWalrus:
+      base::UmaHistogramEnumeration(
+          "Ash.MantaService.WalrusProvider.StatusCode", status_code);
       break;
   }
 }
 }  // namespace
 
-void OnEndpointFetcherComplete(MantaProtoResponseCallback callback,
-                               const base::Time& start_time,
-                               const MantaMetricType request_type,
-                               std::unique_ptr<EndpointFetcher> fetcher,
-                               std::unique_ptr<EndpointResponse> responses) {
-  // TODO(b/301185733): Log error code to UMA.
+void OnEndpointFetcherComplete(
+    MantaProtoResponseCallback callback,
+    base::Time start_time,
+    const MantaMetricType request_type,
+    std::unique_ptr<endpoint_fetcher::EndpointFetcher> fetcher,
+    std::unique_ptr<endpoint_fetcher::EndpointResponse> responses) {
   // Tries to parse the response as a Response proto and return to the
   // `callback` together with a OK status, or capture the errors and return a
   // proper error status.
@@ -103,6 +153,7 @@ void OnEndpointFetcherComplete(MantaProtoResponseCallback callback,
   std::string message, locale;
 
   if (!responses) {
+    LogMantaStatusCode(request_type, MantaStatusCode::kBackendFailure);
     std::move(callback).Run(nullptr,
                             {MantaStatusCode::kBackendFailure, message});
     return;
@@ -115,7 +166,8 @@ void OnEndpointFetcherComplete(MantaProtoResponseCallback callback,
     MantaStatusCode manta_status_code = MantaStatusCode::kBackendFailure;
 
     if (responses->error_type.has_value() &&
-        responses->error_type.value() == FetchErrorType::kNetError) {
+        responses->error_type.value() ==
+            endpoint_fetcher::FetchErrorType::kNetError) {
       manta_status_code = MantaStatusCode::kNoInternetConnection;
     }
 
@@ -124,6 +176,7 @@ void OnEndpointFetcherComplete(MantaProtoResponseCallback callback,
     if (!rpc_status.ParseFromString(responses->response)) {
       DVLOG(1) << "Got unexpected failed response but failed to parse a "
                   "RpcStatus proto";
+      LogMantaStatusCode(request_type, manta_status_code);
       std::move(callback).Run(nullptr, {manta_status_code, message});
       return;
     }
@@ -156,6 +209,7 @@ void OnEndpointFetcherComplete(MantaProtoResponseCallback callback,
       }
     }
 
+    LogMantaStatusCode(request_type, manta_status_code);
     std::move(callback).Run(nullptr, {manta_status_code, message, locale});
 
     return;
@@ -164,12 +218,14 @@ void OnEndpointFetcherComplete(MantaProtoResponseCallback callback,
   auto manta_response = std::make_unique<proto::Response>();
   if (!manta_response->ParseFromString(responses->response)) {
     DVLOG(1) << "Failed to parse MantaResponse as a Response proto";
+    LogMantaStatusCode(request_type, MantaStatusCode::kMalformedResponse);
     std::move(callback).Run(nullptr,
                             {MantaStatusCode::kMalformedResponse, message});
     return;
   }
 
   LogTimeCost(request_type, time_cost);
+  LogMantaStatusCode(request_type, MantaStatusCode::kOk);
   std::move(callback).Run(std::move(manta_response),
                           {MantaStatusCode::kOk, message});
 }

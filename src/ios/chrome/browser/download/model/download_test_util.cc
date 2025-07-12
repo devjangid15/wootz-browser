@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ios/chrome/browser/download/model/download_test_util.h"
 
 #include "base/base_paths.h"
@@ -15,6 +20,8 @@ const char kCalendarFilePath[] =
     "ios/testing/data/http_server_files/sample.ics";
 const char kMobileConfigFilePath[] =
     "ios/testing/data/http_server_files/sample.mobileconfig";
+const char kAppleWalletOrderFilePath[] =
+    "ios/testing/data/http_server_files/sample.order";
 const char kPkPassFilePath[] =
     "ios/testing/data/http_server_files/generic.pkpass";
 const char kBundledPkPassFilePath[] =

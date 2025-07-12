@@ -6,10 +6,10 @@
 
 #include "base/android/android_hardware_buffer_compat.h"
 #include "components/webxr/mailbox_to_surface_bridge_impl.h"
+#include "device/vr/android/xr_image_transport_base.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
 #include "gpu/command_buffer/service/ahardwarebuffer_utils.h"
 #include "gpu/ipc/common/android/android_hardware_buffer_utils.h"
-#include "gpu/ipc/common/gpu_memory_buffer_impl_android_hardware_buffer.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_context.h"
@@ -26,7 +26,7 @@ void GraphicsDelegateAndroid::Initialize(base::OnceClosure on_initialized) {
   // We can only share native GL resources with the runtimes, and they don't
   // support ANGLE, so disable it.
   // TODO(crbug.com/40744597): support ANGLE?
-  gl::init::DisableANGLE();
+  gl::DisableANGLE();
 
   gl::GLDisplay* display = nullptr;
   if (gl::GetGLImplementation() == gl::kGLImplementationNone) {
@@ -88,18 +88,18 @@ bool GraphicsDelegateAndroid::PreRender() {
            << shared_buffer_->shared_image->mailbox().ToDebugString()
            << " sync_token: " << shared_buffer_->sync_token.ToDebugString();
 
-  glBindTexture(GL_TEXTURE_EXTERNAL_OES, shared_buffer_->local_texture);
-  glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-  glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-  glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-  glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  GLenum target = shared_buffer_->local_texture.target;
+  glBindTexture(target, shared_buffer_->local_texture.id);
+  glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
   // Bind our image/texture/memory buffer as the draw framebuffer.
   glGenFramebuffersEXT(1, &draw_frame_buffer_);
   glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER, draw_frame_buffer_);
-  glFramebufferTexture2DEXT(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                            GL_TEXTURE_EXTERNAL_OES,
-                            shared_buffer_->local_texture, 0);
+  glFramebufferTexture2DEXT(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, target,
+                            shared_buffer_->local_texture.id, 0);
 
   return true;
 }
@@ -140,13 +140,15 @@ bool GraphicsDelegateAndroid::EnsureMemoryBuffer() {
   // they all have subtly different uses.
   // TODO(https://crbug.com/40909689): Consolidate this usage.
   gfx::Size buffer_size = GetTextureSize();
-  if (shared_buffer_ && shared_buffer_->size == buffer_size) {
+  if (shared_buffer_ && shared_buffer_->shared_image &&
+      shared_buffer_->shared_image->size() == buffer_size) {
     return true;
   }
 
   if (!shared_buffer_) {
     shared_buffer_ = std::make_unique<device::WebXrSharedBuffer>();
-    glGenTextures(1, &shared_buffer_->local_texture);
+    shared_buffer_->local_texture.target = GL_TEXTURE_2D;
+    glGenTextures(1, &shared_buffer_->local_texture.id);
   }
 
   if (shared_buffer_->shared_image) {
@@ -159,7 +161,7 @@ bool GraphicsDelegateAndroid::EnsureMemoryBuffer() {
 
   static constexpr gfx::BufferFormat format = gfx::BufferFormat::RGBA_8888;
   static constexpr gfx::BufferUsage usage = gfx::BufferUsage::SCANOUT;
-  uint32_t shared_image_usage =
+  gpu::SharedImageUsageSet shared_image_usage =
       gpu::SHARED_IMAGE_USAGE_SCANOUT | gpu::SHARED_IMAGE_USAGE_DISPLAY_READ |
       gpu::SHARED_IMAGE_USAGE_GLES2_READ | gpu::SHARED_IMAGE_USAGE_GLES2_WRITE;
 
@@ -169,9 +171,6 @@ bool GraphicsDelegateAndroid::EnsureMemoryBuffer() {
   // Create a GMB Handle from AHardwareBuffer handle.
   gfx::GpuMemoryBufferHandle gmb_handle;
   gmb_handle.type = gfx::ANDROID_HARDWARE_BUFFER;
-  // GpuMemoryBufferId is not used in this case and hence hardcoding it to 1
-  // here.
-  gmb_handle.id = gfx::GpuMemoryBufferId(1);
   gmb_handle.android_hardware_buffer =
       shared_buffer_->scoped_ahb_handle.Clone();
 
@@ -190,14 +189,12 @@ bool GraphicsDelegateAndroid::EnsureMemoryBuffer() {
     return false;
   }
 
-  glBindTexture(GL_TEXTURE_EXTERNAL_OES, shared_buffer_->local_texture);
-  glEGLImageTargetTexture2DOES(GL_TEXTURE_EXTERNAL_OES, egl_image.get());
+  glBindTexture(shared_buffer_->local_texture.target,
+                shared_buffer_->local_texture.id);
+  glEGLImageTargetTexture2DOES(shared_buffer_->local_texture.target,
+                               egl_image.get());
   shared_buffer_->local_eglimage = std::move(egl_image);
 
-  // Save size to avoid resize next time.
-  DVLOG(1) << __func__ << ": resized to " << buffer_size.width() << "x"
-           << buffer_size.height();
-  shared_buffer_->size = buffer_size;
   return true;
 }
 
@@ -209,7 +206,6 @@ void GraphicsDelegateAndroid::ResetMemoryBuffer() {
              << shared_buffer_->shared_image->mailbox().ToDebugString();
     mailbox_bridge_->DestroySharedImage(
         shared_buffer_->sync_token, std::move(shared_buffer_->shared_image));
-    shared_buffer_->size = {0, 0};
   }
 }
 

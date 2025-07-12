@@ -224,7 +224,7 @@ struct MEDIA_EXPORT XByteRangeTag {
   static constexpr auto kName = MediaPlaylistTagName::kXByteRange;
   static ParseStatus::Or<XByteRangeTag> Parse(TagItem);
 
-  types::ByteRangeExpression range;
+  types::parsing::ByteRangeExpression range;
 };
 
 // Represents the contents of the #EXT-X-DISCONTINUITY tag
@@ -275,7 +275,7 @@ struct MEDIA_EXPORT XMapTag {
 
   // This specifies a byte range into the resource containing the media
   // initialization section.
-  std::optional<types::ByteRangeExpression> byte_range;
+  std::optional<types::parsing::ByteRangeExpression> byte_range;
 };
 
 // Represents the contents of the #EXT-X-MEDIA-SEQUENCE tag.
@@ -306,7 +306,7 @@ struct MEDIA_EXPORT XPartTag {
 
   // If this partial segment is a subrange of its resource, this defines the
   // subrange.
-  std::optional<types::ByteRangeExpression> byte_range;
+  std::optional<types::parsing::ByteRangeExpression> byte_range;
 
   // Whether the partial segment contains an independent frame.
   bool independent = false;
@@ -411,7 +411,7 @@ struct MEDIA_EXPORT XSkipTag {
 // A server MAY omit adding an attribute to an EXT-X-RENDITION-REPORT tag - even
 // a mandatory attribute - if its value is the same as that of the Rendition
 // Report of the Media Playlist to which the EXT-X-RENDITION-REPORT tag is being
-// added.  Doing so reduces the size of the Rendition Report.
+// added. Doing so reduces the size of the Rendition Report.
 struct MEDIA_EXPORT XRenditionReportTag {
   static constexpr auto kName = MediaPlaylistTagName::kXRenditionReport;
   static ParseStatus::Or<XRenditionReportTag> Parse(
@@ -443,6 +443,309 @@ struct MEDIA_EXPORT XProgramDateTimeTag {
   static ParseStatus::Or<XProgramDateTimeTag> Parse(TagItem);
 
   base::Time time;
+};
+
+enum class XPreloadHintType {
+  kPart,
+  kMap,
+};
+
+// The EXT-X-PRELOAD-HINT tag allows a Client loading media from a live stream
+// to reduce the time to obtain a resource from the Server by issuing its
+// request before the resource is available to be delivered. The server will
+// hold onto the request ("block") until it can respond.
+//
+// A Playlist containing an EXT-X-ENDLIST tag MUST NOT contain an
+// EXT-X-PRELOAD-HINT tag.
+struct MEDIA_EXPORT XPreloadHintTag {
+  static constexpr auto kName = MediaPlaylistTagName::kXPreloadHint;
+  static ParseStatus::Or<XPreloadHintTag> Parse(
+      TagItem,
+      const VariableDictionary&,
+      VariableDictionary::SubstitutionBuffer&);
+  XPreloadHintType type;
+  ResolvedSourceString uri;
+  std::optional<types::DecimalInteger> byterange_start;
+  std::optional<types::DecimalInteger> byterange_length;
+};
+
+enum class XKeyTagMethod {
+  kNone,
+
+  // An encryption method of AES-128 signals that Media Segments are
+  // completely encrypted using the Advanced Encryption Standard (AES)
+  // [AES_128] with a 128-bit key, Cipher Block Chaining (CBC), and
+  // Public-Key Cryptography Standards #7 (PKCS7) padding [RFC5652].
+  // CBC is restarted on each segment boundary, using either the
+  // Initialization Vector (IV) attribute value or the Media Sequence
+  // Number as the IV. Sometimes AES-256 is used as well.
+  kAES128,
+  kAES256,
+
+  // With Sample Encryption, only media sample data - such as audio
+  // packets or video frames - is encrypted. The rest of the Media
+  // Segment is unencrypted. Sample Encryption allows parts of the
+  // Segment to be processed without (or before) decrypting the media
+  // itself.
+  kSampleAES,
+
+  // An encryption method of SAMPLE-AES-CTR is similar to SAMPLE-AES.
+  // However, fMP4 Media Segments are encrypted using the 'cenc' scheme
+  // of Common Encryption [COMMON_ENC]. Encryption of other Media
+  // Segment formats is not defined for SAMPLE-AES-CTR.  The IV
+  // attribute MUST NOT be present
+  kSampleAESCTR,
+  kSampleAESCENC,
+
+  // TODO: document why and when this is used. This shows up in some sample
+  // manifests I've seen.
+  kISO230017,
+};
+
+enum class XKeyTagKeyFormat {
+  kIdentity,
+  kClearKey,
+  kWidevine,
+  kUnsupported,
+};
+
+struct MEDIA_EXPORT XKeyTag {
+  using IVHex = types::parsing::HexRepr<128>;
+
+  static constexpr auto kName = MediaPlaylistTagName::kXKey;
+  static constexpr bool kAllowEmptyMethod = true;
+  static ParseStatus::Or<XKeyTag> Parse(
+      TagItem,
+      const VariableDictionary&,
+      VariableDictionary::SubstitutionBuffer&);
+
+  // If the encryption method is NONE, other attributes MUST NOT be
+  // present.
+  XKeyTagMethod method;
+
+  // The value is a quoted-string containing a URI that specifies how
+  // to obtain the key. This attribute is REQUIRED unless the METHOD
+  // is NONE.
+  std::optional<ResolvedSourceString> uri;
+
+  // The value is a hexadecimal-sequence that specifies a 128-bit
+  // unsigned integer Initialization Vector to be used with the key.
+  std::optional<IVHex::Container> iv;
+
+  // The value is a quoted-string that specifies how the key is
+  // represented in the resource identified by the URI; see Section 5
+  // for more detail. This attribute is OPTIONAL; its absence
+  // indicates an implicit value of "identity". Use of the KEYFORMAT
+  // attribute REQUIRES a compatibility version number of 5 or greater.
+  XKeyTagKeyFormat keyformat;
+
+  // The value is a quoted-string containing one or more positive
+  // integers separated by the "/" character (for example, "1", "1/2",
+  // or "1/2/5"). If more than one version of a particular KEYFORMAT
+  // is defined, this attribute can be used to indicate which
+  // version(s) this instance complies with. This attribute is
+  // OPTIONAL; if it is not present, its value is considered to be "1".
+  // Use of the KEYFORMATVERSIONS attribute REQUIRES a compatibility
+  // version number of 5 or greater.
+  std::optional<ResolvedSourceString> keyformat_versions;
+};
+
+struct MEDIA_EXPORT XSessionKeyTag {
+  static constexpr auto kName = MultivariantPlaylistTagName::kXSessionKey;
+  static constexpr bool kAllowEmptyMethod = false;
+  static ParseStatus::Or<XSessionKeyTag> Parse(
+      TagItem,
+      const VariableDictionary&,
+      VariableDictionary::SubstitutionBuffer&);
+
+  // the METHOD attribute MUST NOT be NONE.
+  XKeyTagMethod method;
+
+  // If an EXT-X-SESSION-KEY is used, the values of the METHOD, KEYFORMAT, and
+  // KEYFORMATVERSIONS attributes MUST match any EXT-X-KEY with the same URI
+  // value. These fields match the corresponding ones in XKeyTag.
+  ResolvedSourceString uri;
+  std::optional<XKeyTag::IVHex::Container> iv;
+  XKeyTagKeyFormat keyformat;
+  std::optional<ResolvedSourceString> keyformat_versions;
+};
+
+// Some additional notes from the spec:
+/*
+   A CUE attribute containing PRE indicates that an action is to be
+   triggered before playback of the primary asset begins, regardless of
+   where playback begins in the primary asset.
+
+   A CUE attribute containing POST indicates that an action is to be
+   triggered after the primary asset has been played to its end without
+   error.
+
+   The presence of a CUE attribute that contains ONCE indicates that an
+   action is to be triggered once.  It SHOULD NOT be triggered again,
+   even if the user replays the portion of the primary asset that
+   includes the trigger point.
+
+   A CUE attribute MUST NOT include both PRE and POST.
+
+   An EXT-X-DATERANGE tag with an END-ON-NEXT=YES attribute MUST have a
+   CLASS attribute.  Other EXT-X-DATERANGE tags with the same CLASS
+   attribute MUST NOT specify Date Ranges that overlap.
+
+   An EXT-X-DATERANGE tag with an END-ON-NEXT=YES attribute MUST NOT
+   contain DURATION or END-DATE attributes.
+
+   A Date Range with neither a DURATION, an END-DATE, nor an END-ON-
+   NEXT=YES attribute has an unknown duration, even if it has a PLANNED-
+   DURATION.
+
+   If a Playlist contains an EXT-X-DATERANGE tag, it MUST also contain
+   at least one EXT-X-PROGRAM-DATE-TIME tag.
+
+   If a Playlist contains two EXT-X-DATERANGE tags with the same ID
+   attribute value, then any AttributeName that appears in both tags
+   MUST have the same AttributeValue.
+
+   If a Date Range contains both a DURATION attribute and an END-DATE
+   attribute, the value of the END-DATE attribute MUST be equal to the
+   value of the START-DATE attribute plus the value of the DURATION
+   attribute.
+
+   Clients SHOULD ignore EXT-X-DATERANGE tags with illegal syntax.
+*/
+struct MEDIA_EXPORT XDateRangeTag {
+  enum class Cue { kPre, kPost, kOnce };
+
+  static constexpr auto kName = MediaPlaylistTagName::kXDateRange;
+  static ParseStatus::Or<XDateRangeTag> Parse(
+      TagItem,
+      const VariableDictionary&,
+      VariableDictionary::SubstitutionBuffer&);
+
+  struct CtorArgs;
+  ~XDateRangeTag();
+  explicit XDateRangeTag(CtorArgs);
+  XDateRangeTag(const XDateRangeTag&);
+
+  ResolvedSourceString id;
+  std::optional<ResolvedSourceString> client_class;
+  base::Time start_date;
+  std::optional<std::vector<Cue>> cue;
+  std::optional<base::Time> end_date;
+  std::optional<types::DecimalInteger> duration;
+
+  std::optional<types::DecimalInteger> planned_duration;
+
+  // TODO(crbug.com/314836475): SCTE-CMD, SCTE-IN, and SCTE-OUT are one of the
+  // last things to be supported. The SCTE35 spec is quite a complicated.
+
+  bool end_on_next;
+
+  // TODO(crbug.com/314836475): Implement support for arbitrary attributes at
+  // some point. There isn't much use here since we have no way to surface any
+  // of this information.
+  base::flat_map<ResolvedSourceString, ResolvedSourceString> attributes;
+};
+
+// The EXT-X-SESSION-DATA tag allows arbitrary session data to be carried in a
+// Multivariant Playlist.
+struct MEDIA_EXPORT XSessionDataTag {
+  static constexpr auto kName = MultivariantPlaylistTagName::kXSessionData;
+  static ParseStatus::Or<XSessionDataTag> Parse(
+      TagItem item,
+      const VariableDictionary& variables,
+      VariableDictionary::SubstitutionBuffer& buffer);
+
+  // Use reverse DNS naming convention.
+  ResolvedSourceString data_id;
+
+  // Must contain VALUE or URI, but not both.
+
+  // If LANGUAGE is specified, VALUE should contain a human readable string.
+  std::optional<ResolvedSourceString> value;
+  std::optional<ResolvedSourceString> language;
+
+  // FORMAT must be JSON or RAW. URI should be ignored when FORMAT is missing.
+  // if URI is present and FORMAT is not, FORMAT is implied to be JSON.
+  std::optional<ResolvedSourceString> uri;
+  bool format_is_json;
+};
+
+// A Multivariant Playlist that specifies alternative VIDEO Renditions and
+// I-frame Playlists SHOULD include an alternative I-frame VIDEO Rendition for
+// each regular VIDEO Rendition, with the same NAME and LANGUAGE attributes.
+struct MEDIA_EXPORT XIFrameStreamInfTag {
+  static constexpr auto kName = MultivariantPlaylistTagName::kXIFrameStreamInf;
+
+  static ParseStatus::Or<XIFrameStreamInfTag> Parse(
+      TagItem item,
+      const VariableDictionary& vars,
+      VariableDictionary::SubstitutionBuffer& subs);
+
+  struct CtorArgs;
+  ~XIFrameStreamInfTag();
+  explicit XIFrameStreamInfTag(CtorArgs);
+  XIFrameStreamInfTag(const XIFrameStreamInfTag&);
+
+  ResolvedSourceString uri;
+
+  // The peak segment bitrate of the stream this tag applies to, in bits per
+  // second.
+  types::DecimalInteger bandwidth;
+
+  // The average segment bitrate of the stream this tag applies to, in bits per
+  // second.
+  std::optional<types::DecimalInteger> average_bandwidth;
+
+  // An abstract, relative measure of the quality-of-experience of the stream
+  // this tag applies to. The determination of this number is up to the playlist
+  // author, however higher scores must indicate a better playback experience.
+  std::optional<types::DecimalFloatingPoint> score;
+
+  // A list of formats, where each format specifies a media
+  // sample type that is present is one or more renditions of the variant stream
+  // this tag applies to. According to the spec this *should* be present on
+  // every instance of this tag, but in practice it's not. It's represented as
+  // optional here to differentiate an empty list, ie CODECS="", vs the absence
+  // of the CODECS property.
+  std::optional<std::vector<std::string>> codecs;
+
+  // The optimal pixel resolution at which to display all video in this variant
+  // stream.
+  std::optional<types::DecimalResolution> resolution;
+
+  // The id of a video rendition group that should be used when playing this
+  // variant.
+  std::optional<ResolvedSourceString> video;
+};
+
+// The EXT-X-START tag indicates a preferred point at which to start playing a
+// Playlist. By default, clients SHOULD start playback at this point when
+// beginning a playback session.
+struct MEDIA_EXPORT XStartTag {
+  static constexpr auto kName = CommonTagName::kXStart;
+
+  static ParseStatus::Or<XStartTag> Parse(
+      TagItem item,
+      const VariableDictionary& vars,
+      VariableDictionary::SubstitutionBuffer& subs);
+
+  types::DecimalFloatingPoint time_offset;
+  bool precise;
+};
+
+// The EXT-X-CONTENT-STEERING tag allows a server to provide a Content Steering
+// (Section 7) Manifest. It is OPTIONAL. It MUST NOT appear more than once in a
+// Multivariant Playlist.
+struct MEDIA_EXPORT XContentSteeringTag {
+  static constexpr auto kName = MultivariantPlaylistTagName::kXContentSteering;
+
+  static ParseStatus::Or<XContentSteeringTag> Parse(
+      TagItem item,
+      const VariableDictionary& vars,
+      VariableDictionary::SubstitutionBuffer& subs);
+
+  ResolvedSourceString server_uri;
+  std::optional<ResolvedSourceString> pathway_id;
 };
 
 }  // namespace media::hls

@@ -27,24 +27,19 @@ import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
+import org.robolectric.annotation.Config;
 
-import org.chromium.base.Promise;
+import org.chromium.base.task.test.ShadowPostTask;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Batch;
-import org.chromium.base.test.util.Features.EnableFeatures;
-import org.chromium.base.test.util.JniMocker;
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
-import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.signin.services.SigninManager;
 import org.chromium.chrome.browser.signin.services.SigninMetricsUtils;
 import org.chromium.chrome.browser.signin.services.SigninMetricsUtilsJni;
 import org.chromium.chrome.browser.ui.signin.account_picker.AccountPickerBottomSheetMediator;
 import org.chromium.chrome.browser.ui.signin.account_picker.AccountPickerBottomSheetStrings;
 import org.chromium.chrome.browser.ui.signin.account_picker.AccountPickerLaunchMode;
+import org.chromium.chrome.test.util.browser.signin.AccountManagerTestRule;
 import org.chromium.components.browser_ui.device_lock.DeviceLockActivityLauncher;
-import org.chromium.components.signin.AccountManagerFacade;
-import org.chromium.components.signin.AccountManagerFacadeProvider;
 import org.chromium.components.signin.base.CoreAccountInfo;
 import org.chromium.components.signin.metrics.SigninAccessPoint;
 import org.chromium.ui.base.TestActivity;
@@ -53,20 +48,18 @@ import org.chromium.ui.base.WindowAndroid;
 import java.lang.ref.WeakReference;
 
 /** Unit tests for {@link SigninAccountPickerCoordinator}. */
-@Batch(Batch.UNIT_TESTS)
 @RunWith(BaseRobolectricTestRunner.class)
-@EnableFeatures({ChromeFeatureList.REPLACE_SYNC_PROMOS_WITH_SIGN_IN_PROMOS})
+@Config(shadows = {ShadowPostTask.class})
 public class SigninAccountPickerCoordinatorTest {
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
-    @Rule public JniMocker mJniMocker = new JniMocker();
 
     @Rule
     public ActivityScenarioRule<TestActivity> mActivityScenarioRule =
             new ActivityScenarioRule<>(TestActivity.class);
 
-    @Mock private Profile mProfileMock;
+    @Rule public AccountManagerTestRule mAccountManagerTestRule = new AccountManagerTestRule();
+
     @Mock private CoreAccountInfo mCoreAccountInfoMock;
-    @Mock private AccountManagerFacade mAccountManagerFacadeMock;
     @Mock private SigninManager mSigninManagerMock;
     @Mock private SigninMetricsUtils.Natives mSigninMetricsUtilsNativeMock;
     @Mock private WindowAndroid mWindowAndroidMock;
@@ -74,7 +67,8 @@ public class SigninAccountPickerCoordinatorTest {
     @Mock private SigninAccountPickerCoordinator.Delegate mDelegateMock;
     @Mock private AccountPickerBottomSheetMediator mMediator;
 
-    private final @SigninAccessPoint int mAccessPoint = SigninAccessPoint.NTP_SIGNED_OUT_ICON;
+    private static final @SigninAccessPoint int ACCESS_POINT =
+            SigninAccessPoint.NTP_SIGNED_OUT_ICON;
     private ComponentActivity mActivity;
     private ViewGroup mContainerView;
     private SigninAccountPickerCoordinator mCoordinator;
@@ -89,13 +83,14 @@ public class SigninAccountPickerCoordinatorTest {
                             mContainerView = new FrameLayout(mActivity);
                             mActivity.setContentView(mContainerView);
                         });
-        mJniMocker.mock(SigninMetricsUtilsJni.TEST_HOOKS, mSigninMetricsUtilsNativeMock);
-        AccountManagerFacadeProvider.setInstanceForTests(mAccountManagerFacadeMock);
-        when(mAccountManagerFacadeMock.getCoreAccountInfos()).thenReturn(new Promise<>());
+        ShadowPostTask.setTestImpl((taskTraits, task, delay) -> task.run());
+        SigninMetricsUtilsJni.setInstanceForTesting(mSigninMetricsUtilsNativeMock);
         when(mSigninManagerMock.isSigninAllowed()).thenReturn(true);
         when(mWindowAndroidMock.getActivity()).thenReturn(new WeakReference<>(mActivity));
         AccountPickerBottomSheetStrings bottomSheetStrings =
-                new AccountPickerBottomSheetStrings.Builder(R.string.sign_in_to_wootzapp).build();
+                new AccountPickerBottomSheetStrings.Builder(
+                                R.string.signin_account_picker_bottom_sheet_title)
+                        .build();
         mCoordinator =
                 new SigninAccountPickerCoordinator(
                         mWindowAndroidMock,
@@ -106,7 +101,8 @@ public class SigninAccountPickerCoordinatorTest {
                         mSigninManagerMock,
                         bottomSheetStrings,
                         AccountPickerLaunchMode.DEFAULT,
-                        mAccessPoint);
+                        ACCESS_POINT,
+                        /* selectedAccountId= */ null);
     }
 
     @Test
@@ -124,7 +120,7 @@ public class SigninAccountPickerCoordinatorTest {
 
         // Verify that the SigninManager starts sign-in then a dialog is shown for history opt-in.
         verify(mSigninManagerMock, times(1))
-                .signin(eq(mCoreAccountInfoMock), eq(mAccessPoint), any());
+                .signin(eq(mCoreAccountInfoMock), eq(ACCESS_POINT), any());
         verify(mDelegateMock, times(1)).onSignInComplete();
         verify(mDelegateMock, never()).onSignInCancel();
     }
@@ -161,7 +157,7 @@ public class SigninAccountPickerCoordinatorTest {
         // be implemented, and add test to ensure that the delegate is called only once in the
         // coordinator's lifetime.
         verify(mSigninManagerMock, times(1))
-                .signin(eq(mCoreAccountInfoMock), eq(mAccessPoint), any());
+                .signin(eq(mCoreAccountInfoMock), eq(ACCESS_POINT), any());
         verify(mDelegateMock, never()).onSignInComplete();
         verify(mDelegateMock, never()).onSignInCancel();
     }

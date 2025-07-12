@@ -25,13 +25,14 @@ class TabModelObserver {
   virtual ~TabModelObserver();
 
   // Called when a |tab| is selected.
-  virtual void DidSelectTab(TabAndroid* tab, TabModel::TabSelectionType type, int last_id);
+  virtual void DidSelectTab(TabAndroid* tab, TabModel::TabSelectionType type);
 
   // Called when a |tab| starts closing.
   virtual void WillCloseTab(TabAndroid* tab);
 
   // Called right before a |tab| has been destroyed.
-  virtual void OnFinishingTabClosure(int tab_id, bool incognito);
+  virtual void OnFinishingTabClosure(TabAndroid* tab,
+                                     TabModel::TabClosingSource source);
 
   // Called right before all |tabs| are destroyed.
   virtual void OnFinishingMultipleTabClosure(
@@ -51,7 +52,12 @@ class TabModelObserver {
   // Called when a tab is pending closure (ie, the user has just closed it, but
   // it can still be undone). At this point the |tab| has been removed from the
   // TabModel.
-  virtual void TabPendingClosure(TabAndroid* tab);
+  virtual void TabPendingClosure(TabAndroid* tab,
+                                 TabModel::TabClosingSource source);
+
+  // Called when all |tabs| closure is undone.
+  virtual void OnTabCloseUndone(
+      const std::vector<raw_ptr<TabAndroid, VectorExperimental>>& tabs);
 
   // Called when a |tab| closure is undone.
   virtual void TabClosureUndone(TabAndroid* tab);
@@ -70,8 +76,6 @@ class TabModelObserver {
   // Called after a tab has been removed. At this point the tab is no longer in
   // the TabModel.
   virtual void TabRemoved(TabAndroid* tab);
-
-  virtual void RestoreCompleted();
 };
 
 #endif  // CHROME_BROWSER_UI_ANDROID_TAB_MODEL_TAB_MODEL_OBSERVER_H_

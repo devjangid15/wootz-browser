@@ -4,30 +4,35 @@
 
 package org.chromium.chrome.browser.incognito;
 
+import android.app.Activity;
+import android.os.Build;
 import android.view.Window;
 import android.view.WindowManager;
 
-import androidx.annotation.NonNull;
-
 import org.chromium.base.supplier.Supplier;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 
 /**
  * An abstract base class to provide common functionalities related to allowing/blocking snapshot
  * for Incognito tabs across {@link ChromeTabbedActivity} and {@link CustomTabActivity}.
  */
+@NullMarked
 public abstract class IncognitoSnapshotController {
-    private final @NonNull Window mWindow;
-    private final @NonNull Supplier<Boolean> mIsShowingIncognitoSupplier;
+
+    private final Activity mActivity;
+    private final Window mWindow;
+    private final Supplier<Boolean> mIsShowingIncognitoSupplier;
 
     /**
-     * @param window The {@link Window} on which the snapshot capability needs to be controlled.
+     * @param activity The {@link Activity} on which the snapshot capability needs to be controlled.
      * @param isShowingIncognitoSupplier {@link Supplier<Boolean>} which indicates whether we are
      *     showing Incognito or not currently.
      */
     protected IncognitoSnapshotController(
-            @NonNull Window window, @NonNull Supplier<Boolean> isShowingIncognitoSupplier) {
-        mWindow = window;
+            Activity activity, Supplier<Boolean> isShowingIncognitoSupplier) {
+        mActivity = activity;
+        mWindow = activity.getWindow();
         mIsShowingIncognitoSupplier = isShowingIncognitoSupplier;
     }
 
@@ -42,6 +47,9 @@ public abstract class IncognitoSnapshotController {
 
         boolean expectedSecureState = mIsShowingIncognitoSupplier.get();
         if (ChromeFeatureList.sIncognitoScreenshot.isEnabled()) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                mActivity.setRecentsScreenshotEnabled(!expectedSecureState);
+            }
             expectedSecureState = false;
         }
         if (currentSecureState == expectedSecureState) return;

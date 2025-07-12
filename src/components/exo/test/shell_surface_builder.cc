@@ -18,7 +18,6 @@
 #include "components/exo/test/exo_test_base.h"
 #include "components/exo/test/test_security_delegate.h"
 #include "components/exo/xdg_shell_surface.h"
-#include "gpu/command_buffer/client/gpu_memory_buffer_manager.h"
 #include "ui/aura/env.h"
 #include "ui/display/types/display_constants.h"
 
@@ -87,7 +86,7 @@ namespace exo {
 namespace test {
 namespace {
 
-DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(Holder, kBuilderResourceHolderKey, nullptr)
+DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(Holder, kBuilderResourceHolderKey)
 
 Holder* FindHolder(Surface* surface) {
   aura::Window* window = surface->window();
@@ -373,7 +372,7 @@ std::unique_ptr<ShellSurface> ShellSurfaceBuilder::BuildShellSurface() {
         break;
       default:
         // Other states are not supported as initial state in ShellSurface.
-        NOTREACHED_IN_MIGRATION();
+        NOTREACHED();
     }
   }
 
@@ -442,7 +441,7 @@ ShellSurfaceBuilder::BuildClientControlledShellSurface() {
         shell_surface->SetPip();
         break;
       default:
-        NOTREACHED_IN_MIGRATION();
+        NOTREACHED();
     }
   }
 

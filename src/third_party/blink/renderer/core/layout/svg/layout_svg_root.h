@@ -25,6 +25,7 @@
 
 #include "base/check_op.h"
 #include "third_party/blink/renderer/core/core_export.h"
+#include "third_party/blink/renderer/core/layout/layout_object_inlines.h"
 #include "third_party/blink/renderer/core/layout/layout_replaced.h"
 #include "third_party/blink/renderer/core/layout/svg/svg_content_container.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_set.h"
@@ -33,6 +34,7 @@ namespace blink {
 
 class LayoutSVGText;
 class SVGElement;
+class SVGRect;
 enum class SVGTransformChange;
 
 class CORE_EXPORT LayoutSVGRoot final : public LayoutReplaced {
@@ -47,8 +49,13 @@ class CORE_EXPORT LayoutSVGRoot final : public LayoutReplaced {
   bool IsEmbeddedThroughFrameContainingSVGDocument() const;
 
   void IntrinsicSizingInfoChanged();
-  void UnscaledIntrinsicSizingInfo(IntrinsicSizingInfo&,
-                                   bool use_correct_viewbox = true) const;
+  NaturalSizingInfo UnscaledNaturalSizingInfo(
+      const SVGRect* override_viewbox) const;
+  NaturalSizingInfo UnscaledNaturalSizingInfo() const {
+    NOT_DESTROYED();
+    return UnscaledNaturalSizingInfo(nullptr);
+  }
+
   // This is a special case for SVG documents with percentage dimensions which
   // would normally not change under zoom. See: https://crbug.com/222786.
   double LogicalSizeScaleFactorForPercentageLengths() const;
@@ -135,7 +142,12 @@ class CORE_EXPORT LayoutSVGRoot final : public LayoutReplaced {
     return true;
   }
 
-  void ComputeIntrinsicSizingInfo(IntrinsicSizingInfo&) const override;
+  PhysicalNaturalSizingInfo GetNaturalDimensions() const override;
+  bool ShouldApplyObjectViewBox() const override {
+    NOT_DESTROYED();
+    return false;
+  }
+
   void PaintReplaced(const PaintInfo&,
                      const PhysicalOffset& paint_offset) const override;
 

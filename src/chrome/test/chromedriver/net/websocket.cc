@@ -14,12 +14,14 @@
 #include <vector>
 
 #include "base/base64.h"
+#include "base/containers/span.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/hash/sha1.h"
 #include "base/json/json_writer.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_view_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "build/build_config.h"
@@ -44,8 +46,7 @@ namespace {
 bool ResolveHost(const std::string& host,
                  uint16_t port,
                  net::AddressList* address_list) {
-  struct addrinfo hints;
-  memset(&hints, 0, sizeof(hints));
+  struct addrinfo hints = {};
   hints.ai_family = AF_UNSPEC;
   hints.ai_socktype = SOCK_STREAM;
 
@@ -140,11 +141,11 @@ bool WebSocket::Send(const std::string& message) {
   header_str.resize(header_size);
   CHECK_EQ(header_size,
            base::checked_cast<size_t>(net::WriteWebSocketFrameHeader(
-               header, &masking_key, &header_str[0], header_str.length())));
+               header, &masking_key, base::as_writable_byte_span(header_str))));
 
   std::string masked_message = message;
-  net::MaskWebSocketFramePayload(
-      masking_key, 0, &masked_message[0], masked_message.length());
+  net::MaskWebSocketFramePayload(masking_key, 0,
+                                 base::as_writable_byte_span(masked_message));
   Write(header_str + masked_message);
   return true;
 }
@@ -259,10 +260,13 @@ void WebSocket::OnRead(bool read_again, int code) {
     return;
   }
 
-  if (state_ == CONNECTING)
-    OnReadDuringHandshake(read_buffer_->data(), code);
-  else if (state_ == OPEN)
-    OnReadDuringOpen(read_buffer_->data(), code);
+  if (state_ == CONNECTING) {
+    OnReadDuringHandshake(
+        read_buffer_->span().first(base::checked_cast<size_t>(code)));
+  } else if (state_ == OPEN) {
+    OnReadDuringOpen(
+        read_buffer_->span().first(base::checked_cast<size_t>(code)));
+  }
 
   // If we were called by the event loop due to arrival of data, call Read()
   // again to read more data. If we were called by Read(), however, simply
@@ -274,11 +278,12 @@ void WebSocket::OnRead(bool read_again, int code) {
     Read();
 }
 
-void WebSocket::OnReadDuringHandshake(const char* data, int len) {
-  VLOG(4) << "WebSocket::OnReadDuringHandshake\n" << std::string(data, len);
-  handshake_response_ += std::string(data, len);
+void WebSocket::OnReadDuringHandshake(base::span<const uint8_t> data_span) {
+  VLOG(4) << "WebSocket::OnReadDuringHandshake\n"
+          << base::as_string_view(data_span);
+  handshake_response_ += base::as_string_view(data_span);
   size_t headers_end = net::HttpUtil::LocateEndOfHeaders(
-      handshake_response_.data(), handshake_response_.size(), 0);
+      base::as_byte_span(handshake_response_), 0);
   if (headers_end == std::string::npos)
     return;
 
@@ -300,13 +305,17 @@ void WebSocket::OnReadDuringHandshake(const char* data, int len) {
   sec_key_.clear();
   state_ = OPEN;
   InvokeConnectCallback(net::OK);
-  if (!leftover_message.empty())
-    OnReadDuringOpen(leftover_message.c_str(), leftover_message.length());
+  if (!leftover_message.empty()) {
+    OnReadDuringOpen(base::as_writable_byte_span(leftover_message));
+  }
 }
 
-void WebSocket::OnReadDuringOpen(const char* data, int len) {
+void WebSocket::OnReadDuringOpen(base::span<uint8_t> data_span) {
   std::vector<std::unique_ptr<net::WebSocketFrameChunk>> frame_chunks;
-  CHECK(parser_.Decode(data, len, &frame_chunks));
+
+  // Call the parser's Decode method
+  CHECK(parser_.Decode(data_span, &frame_chunks));
+
   for (size_t i = 0; i < frame_chunks.size(); ++i) {
     const auto& header = frame_chunks[i]->header;
     if (header) {
@@ -334,7 +343,7 @@ void WebSocket::OnReadDuringOpen(const char* data, int len) {
     std::vector<char> payload(buffer.begin(), buffer.end());
     if (is_current_frame_masked_) {
       MaskWebSocketFramePayload(current_masking_key_, current_frame_offset_,
-                                payload.data(), payload.size());
+                                base::as_writable_byte_span(payload));
     }
     next_message_ += std::string(payload.data(), payload.size());
     current_frame_offset_ += payload.size();

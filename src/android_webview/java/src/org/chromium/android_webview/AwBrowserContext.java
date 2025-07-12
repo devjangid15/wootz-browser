@@ -10,25 +10,35 @@ import android.util.LruCache;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.UiThread;
 import androidx.annotation.VisibleForTesting;
 
 import org.jni_zero.CalledByNative;
 import org.jni_zero.JNINamespace;
+import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
 
+import org.chromium.android_webview.common.AwFeatureMap;
 import org.chromium.android_webview.common.Lifetime;
 import org.chromium.android_webview.common.MediaIntegrityApiStatus;
 import org.chromium.android_webview.common.MediaIntegrityProvider;
+import org.chromium.base.BaseFeatures;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.StrictModeContext;
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.memory.MemoryPressureMonitor;
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.blink.mojom.PermissionStatus;
 import org.chromium.content_public.browser.BrowserContextHandle;
 import org.chromium.content_public.browser.ContentViewStatics;
 import org.chromium.url.Origin;
 
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * Java side of the Browser Context: contains all the java side objects needed to host one browsing
@@ -41,8 +51,12 @@ import java.util.Set;
 @JNINamespace("android_webview")
 @Lifetime.Profile
 public class AwBrowserContext implements BrowserContextHandle {
-    private static final String TAG = "AwBrowserContext";
+
     private static final String BASE_PREFERENCES = "WebViewProfilePrefs";
+
+    /* package */ static final Pattern BAD_HEADER_CHAR = Pattern.compile("[\u0000\r\n]");
+    /* package */ static final String BAD_HEADER_MSG =
+            "HTTP headers must not contain null, CR, or NL characters. ";
 
     /**
      * Cache storing already-initialized Play providers for the Media Integrity Blink renderer
@@ -91,6 +105,8 @@ public class AwBrowserContext implements BrowserContextHandle {
     @NonNull private final AwCookieManager mCookieManager;
     private final boolean mIsDefault;
     @NonNull private final SharedPreferences mSharedPreferences;
+
+    private final AwPrefetchManager mPrefetchManager;
 
     /**
      * Cache key for MediaIntegrityProviders. Ensures that values are keyed by
@@ -143,6 +159,7 @@ public class AwBrowserContext implements BrowserContextHandle {
                 AwBrowserContextJni.get().getDefaultContextName(),
                 AwBrowserContextJni.get().getDefaultContextRelativePath(),
                 AwCookieManager.getDefaultCookieManager(),
+                new AwPrefetchManager(0),
                 true);
     }
 
@@ -151,11 +168,13 @@ public class AwBrowserContext implements BrowserContextHandle {
             @NonNull String name,
             @NonNull String relativePath,
             @NonNull AwCookieManager cookieManager,
+            @NonNull AwPrefetchManager prefetchManager,
             boolean isDefault) {
         mNativeAwBrowserContext = nativeAwBrowserContext;
         mName = name;
         mRelativePath = relativePath;
         mCookieManager = cookieManager;
+        mPrefetchManager = prefetchManager;
         mIsDefault = isDefault;
 
         try (StrictModeContext ignored = StrictModeContext.allowDiskWrites()) {
@@ -176,7 +195,10 @@ public class AwBrowserContext implements BrowserContextHandle {
                         new AwContentsLifecycleNotifier.Observer() {
                             @Override
                             public void onFirstWebViewCreated() {
-                                MemoryPressureMonitor.INSTANCE.enablePolling();
+                                MemoryPressureMonitor.INSTANCE.enablePolling(
+                                        AwFeatureMap.isEnabled(
+                                                BaseFeatures
+                                                        .POST_GET_MY_MEMORY_STATE_TO_BACKGROUND));
                             }
 
                             @Override
@@ -214,6 +236,10 @@ public class AwBrowserContext implements BrowserContextHandle {
         } else {
             return BASE_PREFERENCES + relativePath + "_" + dataDirSuffix;
         }
+    }
+
+    public static String getDefaultContextName() {
+        return AwBrowserContextJni.get().getDefaultContextName();
     }
 
     public AwCookieManager getCookieManager() {
@@ -271,6 +297,42 @@ public class AwBrowserContext implements BrowserContextHandle {
         }
     }
 
+    /**
+     * Check if any of the provided HTTP header key-value pairs contains invalid characters.
+     *
+     * @param headers Map of HTTP header name-value pairs.
+     * @return An exception if validation fails. Otherwise, an empty Optional.
+     */
+    public static Optional<IllegalArgumentException> validateAdditionalHeaders(
+            Map<String, String> headers) {
+        if (headers == null) return Optional.empty();
+        for (Map.Entry<String, String> header : headers.entrySet()) {
+            String headerName = header.getKey();
+            String headerValue = header.getValue();
+            if (headerName != null && BAD_HEADER_CHAR.matcher(headerName).find()) {
+                return Optional.of(
+                        new IllegalArgumentException(
+                                BAD_HEADER_MSG + "Invalid header name '" + headerName + "'."));
+            }
+            if (headerValue != null && BAD_HEADER_CHAR.matcher(headerValue).find()) {
+                return Optional.of(
+                        new IllegalArgumentException(
+                                BAD_HEADER_MSG
+                                        + "Header '"
+                                        + headerName
+                                        + "' has invalid value '"
+                                        + headerValue
+                                        + "'"));
+            }
+        }
+        return Optional.empty();
+    }
+
+    @NonNull
+    public AwPrefetchManager getPrefetchManager() {
+        return mPrefetchManager;
+    }
+
     private void migrateGeolocationPreferences() {
         // Prefs dir will be created if it doesn't exist, so must allow writes
         // for this and so that the actual prefs can be written to the new
@@ -292,7 +354,46 @@ public class AwBrowserContext implements BrowserContextHandle {
         return Set.of(badRules);
     }
 
-    /** @see android.webkit.WebView#pauseTimers() */
+    public void setOriginMatchedHeader(
+            @NonNull String headerName, String headerValue, @NonNull Set<String> rules) {
+        ThreadUtils.assertOnUiThread();
+        if (headerName.isBlank()) {
+            throw new IllegalArgumentException("Blank HTTP header names are not allowed.");
+        }
+        if (!AwBrowserContextJni.get().isValidHttpHeaderName(headerName)) {
+            throw new IllegalArgumentException("Invalid HTTP header name: " + headerName);
+        }
+        if (!AwBrowserContextJni.get().isValidHttpHeaderValue(headerValue)) {
+            throw new IllegalArgumentException("Invalid HTTP header value: " + headerValue);
+        }
+
+        List<String> rejected =
+                AwBrowserContextJni.get()
+                        .setOriginMatchedHeader(
+                                mNativeAwBrowserContext, headerName, headerValue, rules);
+
+        if (!rejected.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Invalid origin patterns: " + String.join("; ", rejected));
+        }
+    }
+
+    public boolean hasOriginMatchedHeader(@NonNull String headerName) {
+        ThreadUtils.assertOnUiThread();
+        return AwBrowserContextJni.get()
+                .hasOriginMatchedHeader(mNativeAwBrowserContext, headerName);
+    }
+
+    public void clearOriginMatchedHeader(@NonNull String headerName) {
+        ThreadUtils.assertOnUiThread();
+        AwBrowserContextJni.get().clearOriginMatchedHeader(mNativeAwBrowserContext, headerName);
+    }
+
+    public void clearAllOriginMatchedHeaders() {
+        ThreadUtils.assertOnUiThread();
+        AwBrowserContextJni.get().clearAllOriginMatchedHeaders(mNativeAwBrowserContext);
+    }
+
     public void pauseTimers() {
         ContentViewStatics.setWebKitSharedTimersSuspended(true);
     }
@@ -325,17 +426,20 @@ public class AwBrowserContext implements BrowserContextHandle {
                 .clearPersistentOriginTrialStorageForTesting(mNativeAwBrowserContext);
     }
 
-    public boolean hasFormData() {
-        return AwBrowserContextJni.get().hasFormData(mNativeAwBrowserContext);
-    }
-
-    public void clearFormData() {
-        AwBrowserContextJni.get().clearFormData(mNativeAwBrowserContext);
-    }
-
     public void setServiceWorkerIoThreadClient(AwContentsIoThreadClient ioThreadClient) {
         AwBrowserContextJni.get()
                 .setServiceWorkerIoThreadClient(mNativeAwBrowserContext, ioThreadClient);
+    }
+
+    @UiThread
+    public void setMaxPrerenders(int maxPrerenders) {
+        AwBrowserContextJni.get()
+                .setAllowedPrerenderingCount(mNativeAwBrowserContext, maxPrerenders);
+    }
+
+    @UiThread
+    public void warmUpSpareRenderer() {
+        AwBrowserContextJni.get().warmUpSpareRenderer(mNativeAwBrowserContext);
     }
 
     private static SharedPreferences createSharedPrefs(String relativePath) {
@@ -346,16 +450,22 @@ public class AwBrowserContext implements BrowserContextHandle {
     @CalledByNative
     public static AwBrowserContext create(
             long nativeAwBrowserContext,
-            String name,
-            String relativePath,
+            @JniType("std::string") String name,
+            @JniType("std::string") String relativePath,
             AwCookieManager cookieManager,
+            AwPrefetchManager prefetchManager,
             boolean isDefault) {
         return new AwBrowserContext(
-                nativeAwBrowserContext, name, relativePath, cookieManager, isDefault);
+                nativeAwBrowserContext,
+                name,
+                relativePath,
+                cookieManager,
+                prefetchManager,
+                isDefault);
     }
 
     @CalledByNative
-    public static void deleteSharedPreferences(String relativePath) {
+    public static void deleteSharedPreferences(@JniType("std::string") String relativePath) {
         try (StrictModeContext ignored = StrictModeContext.allowDiskWrites()) {
             final String sharedPrefsFilename = getSharedPrefsFilename(relativePath);
             SharedPreferences.Editor prefsEditor = createSharedPrefs(sharedPrefsFilename).edit();
@@ -363,12 +473,25 @@ public class AwBrowserContext implements BrowserContextHandle {
         }
     }
 
+    @CalledByNative
+    private int getGeolocationPermission(@JniType("std::string") String origin) {
+        AwGeolocationPermissions permissions = getGeolocationPermissions();
+        if (!permissions.hasOrigin(origin)) {
+            return PermissionStatus.ASK;
+        }
+        return permissions.isOriginAllowed(origin)
+                ? PermissionStatus.GRANTED
+                : PermissionStatus.DENIED;
+    }
+
     @NativeMethods
     interface Natives {
         AwBrowserContext getDefaultJava();
 
+        @JniType("std::string")
         String getDefaultContextName();
 
+        @JniType("std::string")
         String getDefaultContextRelativePath();
 
         long getQuotaManagerBridge(long nativeAwBrowserContext);
@@ -378,11 +501,30 @@ public class AwBrowserContext implements BrowserContextHandle {
 
         void clearPersistentOriginTrialStorageForTesting(long nativeAwBrowserContext);
 
-        boolean hasFormData(long nativeAwBrowserContext);
-
-        void clearFormData(long nativeAwBrowserContext);
-
         void setServiceWorkerIoThreadClient(
                 long nativeAwBrowserContext, AwContentsIoThreadClient ioThreadClient);
+
+        void setAllowedPrerenderingCount(long nativeAwBrowserContext, int maxPrerenders);
+
+        @JniType("std::vector<std::string>")
+        List<String> setOriginMatchedHeader(
+                long nativeAwBrowserContext,
+                @JniType("std::string") @NonNull String headerName,
+                @JniType("std::string") @NonNull String headerValue,
+                @JniType("std::vector<std::string>") @NonNull Set<String> rules);
+
+        boolean hasOriginMatchedHeader(
+                long nativeAwBrowserContext, @JniType("std::string") @NonNull String headerName);
+
+        void clearOriginMatchedHeader(
+                long nativeAwBrowserContext, @JniType("std::string") String headerName);
+
+        void clearAllOriginMatchedHeaders(long nativeAwBrowserContext);
+
+        void warmUpSpareRenderer(long nativeAwBrowserContext);
+
+        boolean isValidHttpHeaderName(@JniType("std::string") String headerName);
+
+        boolean isValidHttpHeaderValue(@JniType("std::string") String headerValue);
     }
 }

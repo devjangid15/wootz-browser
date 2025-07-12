@@ -286,7 +286,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionResourceRequestPolicyTest,
       content::EvalJs(browser()->tab_strip_model()->GetActiveWebContents(),
                       "document.title"));
 
-  GURL newtab_page("wootzapp://newtab");
+  GURL newtab_page("chrome://newtab");
   GURL accessible_newtab_override(embedded_test_server()->GetURL(
       "/extensions/api_test/extension_resource_request_policy/"
       "web_accessible/accessible_history_navigation.html"));
@@ -314,7 +314,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionResourceRequestPolicyTest,
       "web_accessible/accessible_link_resource.html"));
   ui_test_utils::NavigateToURLBlockUntilNavigationsComplete(
       browser(), accessible_linked_resource, 1);
-  GURL accessible_url = extension->GetResourceURL("/test.png");
+  GURL accessible_url = extension->GetResourceURL("test.png");
   EXPECT_EQ(accessible_url, content::EvalJs(web_contents, "document.URL"));
   EXPECT_EQ(content::PAGE_TYPE_NORMAL,
             controller.GetLastCommittedEntry()->GetPageType());

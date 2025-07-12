@@ -104,11 +104,12 @@ class WebFrameSerializerSanitizationTest : public testing::Test {
     ShadowRoot* shadow_root;
     shadow_root = &host_element->AttachShadowRootInternal(
         shadow_type, focus_delegation, SlotAssignmentMode::kNamed,
-        /*registry*/ nullptr, /*serializable*/ false, /*clonable*/ false);
+        /*registry*/ nullptr, /*serializable*/ false, /*clonable*/ false,
+        /*reference_target*/ g_null_atom);
     shadow_root->SetDelegatesFocus(focus_delegation ==
                                    FocusDelegation::kDelegateFocus);
-    shadow_root->setInnerHTML(String::FromUTF8(shadow_content),
-                              ASSERT_NO_EXCEPTION);
+    shadow_root->SetInnerHTMLWithoutTrustedTypes(
+        String::FromUTF8(shadow_content));
     scope.GetDocument().View()->UpdateAllLifecyclePhasesForTest();
     return shadow_root;
   }

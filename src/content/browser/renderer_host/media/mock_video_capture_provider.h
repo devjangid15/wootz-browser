@@ -10,8 +10,12 @@
 #include "content/browser/renderer_host/media/video_capture_provider.h"
 #include "content/public/browser/video_capture_device_launcher.h"
 #include "media/capture/mojom/video_capture_types.mojom.h"
-#include "services/video_effects/public/mojom/video_effects_processor.mojom-forward.h"
+#include "services/video_effects/public/cpp/buildflags.h"
 #include "testing/gmock/include/gmock/gmock.h"
+
+#if BUILDFLAG(ENABLE_VIDEO_EFFECTS)
+#include "services/video_effects/public/mojom/video_effects_processor.mojom-forward.h"
+#endif
 
 namespace content {
 
@@ -24,6 +28,19 @@ class MockVideoCaptureProvider : public VideoCaptureProvider {
   MOCK_METHOD(std::unique_ptr<VideoCaptureDeviceLauncher>,
               CreateDeviceLauncher,
               (),
+              (override));
+  MOCK_METHOD(void,
+              OpenNativeScreenCapturePicker,
+              (DesktopMediaID::Type type,
+               base::OnceCallback<void(DesktopMediaID::Id)> created_callback,
+               base::OnceCallback<void(webrtc::DesktopCapturer::Source)>
+                   picker_callback,
+               base::OnceCallback<void()> cancel_callback,
+               base::OnceCallback<void()> error_callback),
+              (override));
+  MOCK_METHOD(void,
+              CloseNativeScreenCapturePicker,
+              (DesktopMediaID device_id),
               (override));
 };
 
@@ -41,8 +58,12 @@ class MockVideoCaptureDeviceLauncher : public VideoCaptureDeviceLauncher {
                base::OnceClosure connection_lost_cb,
                Callbacks* callbacks,
                base::OnceClosure done_cb,
+#if BUILDFLAG(ENABLE_VIDEO_EFFECTS)
                mojo::PendingRemote<video_effects::mojom::VideoEffectsProcessor>
-                   video_effects_processor),
+                   video_effects_processor,
+#endif
+               mojo::PendingRemote<media::mojom::ReadonlyVideoEffectsManager>
+                   readonly_video_effects_manager),
               (override));
 
   MOCK_METHOD(void, AbortLaunch, ());

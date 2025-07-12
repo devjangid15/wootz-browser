@@ -18,10 +18,12 @@
 #include "components/omnibox/browser/autocomplete_provider.h"
 #include "components/omnibox/browser/suggestion_answer.h"
 #include "components/omnibox/browser/suggestion_group_util.h"
+#include "third_party/omnibox_proto/answer_type.pb.h"
 #include "third_party/omnibox_proto/chrome_searchbox_stats.pb.h"
 #include "third_party/omnibox_proto/entity_info.pb.h"
 #include "third_party/omnibox_proto/navigational_intent.pb.h"
 #include "third_party/omnibox_proto/rich_answer_template.pb.h"
+#include "third_party/omnibox_proto/suggest_template_info.pb.h"
 #include "third_party/omnibox_proto/types.pb.h"
 #include "url/gurl.h"
 
@@ -189,17 +191,27 @@ class SearchSuggestionParser {
       return suggestion_group_id_;
     }
 
-    void SetAnswer(const SuggestionAnswer& answer);
-    const std::optional<SuggestionAnswer>& answer() const { return answer_; }
-
     void SetRichAnswerTemplate(
         const omnibox::RichAnswerTemplate& answer_template);
     const std::optional<omnibox::RichAnswerTemplate>& answer_template() const {
       return answer_template_;
     }
 
+    void SetAnswerType(const omnibox::AnswerType& answer_type);
+    const omnibox::AnswerType& answer_type() const { return answer_type_; }
+
     void SetEntityInfo(const omnibox::EntityInfo&);
     const omnibox::EntityInfo& entity_info() const { return entity_info_; }
+
+    void SetSuggestTemplateInfo(
+        const omnibox::SuggestTemplateInfo& suggest_template_info);
+    const std::optional<omnibox::SuggestTemplateInfo>& suggest_template_info()
+        const {
+      return suggest_template_info_;
+    }
+
+    void SetMatchContents(const std::u16string& match_contents);
+    void SetAnnotation(const std::u16string& annotation);
 
     bool should_prefetch() const { return should_prefetch_; }
     bool should_prerender() const { return should_prerender_; }
@@ -234,14 +246,17 @@ class SearchSuggestionParser {
     // config for the group this suggestion belongs to from the server response.
     std::optional<omnibox::GroupId> suggestion_group_id_;
 
-    // Optional short answer to the input that produced this suggestion.
-    std::optional<SuggestionAnswer> answer_;
-
-    // Optional proto that contains answer info.
+    // Optional proto that contains answer info for rich answers.
     std::optional<omnibox::RichAnswerTemplate> answer_template_;
+
+    // Answer type for answer verticals, including rich answers.
+    omnibox::AnswerType answer_type_ = omnibox::ANSWER_TYPE_UNSPECIFIED;
 
     // Proto containing various pieces of data related to entity suggestions.
     omnibox::EntityInfo entity_info_;
+
+    // Proto containing generalized suggestion information.
+    std::optional<omnibox::SuggestTemplateInfo> suggest_template_info_;
 
     // Should this result be prefetched?
     bool should_prefetch_;
@@ -305,6 +320,7 @@ class SearchSuggestionParser {
   typedef std::vector<NavigationResult> NavigationResults;
   typedef std::vector<omnibox::metrics::ChromeSearchboxStats::ExperimentStatsV2>
       ExperimentStatsV2s;
+  typedef std::vector<int64_t> GwsEventIdHashes;
 
   // A simple structure bundling most of the information (including
   // both SuggestResults and NavigationResults) returned by a call to
@@ -346,6 +362,9 @@ class SearchSuggestionParser {
 
     // If the active suggest field trial (if any) has triggered.
     bool field_trial_triggered;
+
+    // GWS event ID hashes, if any. To be logged to SearchboxStats.
+    GwsEventIdHashes gws_event_id_hashes;
 
     // The ExperimentStatsV2 containing GWS experiment details, if any. To be
     // logged to SearchboxStats.

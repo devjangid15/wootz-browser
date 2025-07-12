@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.tab;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.app.Activity;
 
 import androidx.annotation.VisibleForTesting;
@@ -19,10 +21,13 @@ import org.chromium.base.TerminationStatus;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
+import org.chromium.blink.mojom.ViewportFit;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.AppHooks;
 import org.chromium.chrome.browser.SwipeRefreshHandler;
 import org.chromium.chrome.browser.app.bluetooth.BluetoothNotificationService;
+import org.chromium.chrome.browser.app.serial.SerialNotificationService;
 import org.chromium.chrome.browser.app.usb.UsbNotificationService;
 import org.chromium.chrome.browser.bluetooth.BluetoothNotificationManager;
 import org.chromium.chrome.browser.display_cutout.DisplayCutoutTabHelper;
@@ -32,11 +37,13 @@ import org.chromium.chrome.browser.media.MediaCaptureNotificationServiceImpl;
 import org.chromium.chrome.browser.pdf.PdfUtils;
 import org.chromium.chrome.browser.policy.PolicyAuditor;
 import org.chromium.chrome.browser.policy.PolicyAuditor.AuditEvent;
+import org.chromium.chrome.browser.serial.SerialNotificationManager;
 import org.chromium.chrome.browser.ui.native_page.NativePage;
 import org.chromium.chrome.browser.usb.UsbNotificationManager;
 import org.chromium.content_public.browser.GlobalRenderFrameHostId;
 import org.chromium.content_public.browser.LifecycleState;
 import org.chromium.content_public.browser.NavigationHandle;
+import org.chromium.content_public.browser.Page;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.browser.WebContentsObserver;
 import org.chromium.net.NetError;
@@ -44,6 +51,7 @@ import org.chromium.ui.mojom.VirtualKeyboardMode;
 import org.chromium.url.GURL;
 
 /** WebContentsObserver used by Tab. */
+@NullMarked
 public class TabWebContentsObserver extends TabWebContentsUserData {
     // URL didFailLoad error code. Should match the value in net_error_list.h.
     public static final int BLOCKED_BY_ADMINISTRATOR = -22;
@@ -55,8 +63,8 @@ public class TabWebContentsObserver extends TabWebContentsUserData {
 
     private final TabImpl mTab;
     private final ObserverList<Callback<WebContents>> mInitObservers = new ObserverList<>();
-    private WebContentsObserver mObserver;
-    private GURL mLastUrl;
+    private @Nullable Observer mObserver;
+    private @Nullable GURL mLastUrl;
 
     public static TabWebContentsObserver from(Tab tab) {
         TabWebContentsObserver observer = get(tab);
@@ -68,7 +76,7 @@ public class TabWebContentsObserver extends TabWebContentsUserData {
     }
 
     @VisibleForTesting
-    public static TabWebContentsObserver get(Tab tab) {
+    public static @Nullable TabWebContentsObserver get(Tab tab) {
         return tab.getUserDataHost().getUserData(USER_DATA_KEY);
     }
 
@@ -110,7 +118,8 @@ public class TabWebContentsObserver extends TabWebContentsUserData {
     @Override
     public void cleanupWebContents(WebContents webContents) {
         if (mObserver != null) {
-            mObserver.destroy();
+            mObserver.updateNotificationsForTab();
+            mObserver.observe(null);
             mObserver = null;
         }
     }
@@ -125,7 +134,7 @@ public class TabWebContentsObserver extends TabWebContentsUserData {
         sadTab.show(
                 mTab.getThemedApplicationContext(),
                 /* suggestionAction= */ () -> {
-                    Activity activity = mTab.getWindowAndroid().getActivity().get();
+                    Activity activity = mTab.getWindowAndroidChecked().getActivity().get();
                     assert activity != null;
                     HelpAndFeedbackLauncherImpl.getForProfile(mTab.getProfile())
                             .show(
@@ -136,7 +145,7 @@ public class TabWebContentsObserver extends TabWebContentsUserData {
 
                 /* buttonAction= */ () -> {
                     if (sadTab.showSendFeedbackView()) {
-                        mTab.getActivity()
+                        assumeNonNull(mTab.getActivity())
                                 .startHelpAndFeedback(
                                         mTab.getUrl().getSpec(),
                                         "MobileSadTabFeedback",
@@ -175,17 +184,19 @@ public class TabWebContentsObserver extends TabWebContentsUserData {
             // content. The URL check is done in addition to the isNativePage to ensure a navigation
             // off the native page did not result in the crash.
             if (mTab.isNativePage()
-                    && (mTab.getNativePage().getUrl().equals(mTab.getUrl().getSpec())
+                    && (assumeNonNull(mTab.getNativePage()).getUrl().equals(mTab.getUrl().getSpec())
                             || NativePage.isNativePageUrl(
                                     mTab.getUrl(),
                                     mTab.isIncognito(),
-                                    PdfUtils.isPdfNavigation(mTab.getUrl().getSpec(), null)))) {
+                                    PdfUtils.shouldOpenPdfInline(mTab.isIncognito())
+                                            && PdfUtils.isDownloadedPdf(
+                                                    mTab.getUrl().getSpec())))) {
                 return;
             }
 
             int activityState =
                     ApplicationStatus.getStateForActivity(
-                            mTab.getWindowAndroid().getActivity().get());
+                            mTab.getWindowAndroidChecked().getActivity().get());
             if (mTab.isHidden()
                     || activityState == ActivityState.PAUSED
                     || activityState == ActivityState.STOPPED
@@ -211,6 +222,7 @@ public class TabWebContentsObserver extends TabWebContentsUserData {
 
         @Override
         public void didFinishLoadInPrimaryMainFrame(
+                Page page,
                 GlobalRenderFrameHostId frameId,
                 GURL url,
                 boolean isKnownValid,
@@ -241,7 +253,7 @@ public class TabWebContentsObserver extends TabWebContentsUserData {
                 String failingUrl, String description, int errorCode) {
             assert description != null;
 
-            PolicyAuditor auditor = AppHooks.get().getPolicyAuditor();
+            PolicyAuditor auditor = PolicyAuditor.maybeCreate();
             if (auditor != null) {
                 auditor.notifyAuditEvent(
                         ContextUtils.getApplicationContext(),
@@ -339,14 +351,15 @@ public class TabWebContentsObserver extends TabWebContentsUserData {
 
         @Override
         public void didChangeThemeColor() {
-            // mTab.updateThemeColor(mTab.getWebContents().getThemeColor());
+            mTab.updateThemeColor(assumeNonNull(mTab.getWebContents()).getThemeColor());
         }
 
         @Override
         public void onBackgroundColorChanged() {
-            // if (ChromeFeatureList.sNavBarColorMatchesTabBackground.isEnabled()) {
-            //     mTab.changeWebContentBackgroundColor(mTab.getWebContents().getBackgroundColor());
-            // }
+            if (ChromeFeatureList.sNavBarColorMatchesTabBackground.isEnabled()) {
+                mTab.changeWebContentBackgroundColor(
+                        assumeNonNull(mTab.getWebContents()).getBackgroundColor());
+            }
         }
 
         @Override
@@ -357,6 +370,17 @@ public class TabWebContentsObserver extends TabWebContentsUserData {
         @Override
         public void viewportFitChanged(@WebContentsObserver.ViewportFitType int value) {
             DisplayCutoutTabHelper.from(mTab).setViewportFit(value);
+            if (ChromeFeatureList.sEdgeToEdgeSafeAreaConstraint.isEnabled()) {
+                DisplayCutoutTabHelper.from(mTab)
+                        .setSafeAreaConstraint(value == ViewportFit.CONTAIN);
+            }
+        }
+
+        @Override
+        public void safeAreaConstraintChanged(boolean hasConstraint) {
+            if (ChromeFeatureList.sEdgeToEdgeSafeAreaConstraint.isEnabled()) {
+                DisplayCutoutTabHelper.from(mTab).setSafeAreaConstraint(hasConstraint);
+            }
         }
 
         @Override
@@ -368,7 +392,12 @@ public class TabWebContentsObserver extends TabWebContentsUserData {
         }
 
         @Override
-        public void destroy() {
+        public void webContentsDestroyed() {
+            updateNotificationsForTab();
+        }
+
+        void updateNotificationsForTab() {
+            assumeNonNull(mLastUrl);
             MediaCaptureNotificationServiceImpl.updateMediaNotificationForTab(
                     ContextUtils.getApplicationContext(), mTab.getId(), null, mLastUrl);
             BluetoothNotificationManager.updateBluetoothNotificationForTab(
@@ -385,7 +414,13 @@ public class TabWebContentsObserver extends TabWebContentsUserData {
                     null,
                     mLastUrl,
                     mTab.isIncognito());
-            super.destroy();
+            SerialNotificationManager.updateSerialNotificationForTab(
+                    ContextUtils.getApplicationContext(),
+                    SerialNotificationService.class,
+                    mTab.getId(),
+                    null,
+                    mLastUrl,
+                    mTab.isIncognito());
         }
     }
 }

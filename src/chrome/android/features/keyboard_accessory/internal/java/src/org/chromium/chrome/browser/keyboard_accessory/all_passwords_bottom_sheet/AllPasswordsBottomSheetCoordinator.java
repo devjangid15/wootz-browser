@@ -8,8 +8,8 @@ import android.content.Context;
 
 import androidx.annotation.VisibleForTesting;
 
-import org.chromium.chrome.browser.keyboard_accessory.all_passwords_bottom_sheet.AllPasswordsBottomSheetViewBinder.UiConfiguration;
-import org.chromium.chrome.browser.keyboard_accessory.helper.FaviconHelper;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.chrome.browser.autofill.helpers.FaviconHelper;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 import org.chromium.ui.modelutil.ListModel;
@@ -19,10 +19,13 @@ import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
 import org.chromium.ui.modelutil.RecyclerViewAdapter;
 import org.chromium.ui.modelutil.SimpleRecyclerViewMcp;
 
+import java.util.List;
+
 /**
  * Creates the AllPasswordsBottomSheet. AllPasswordsBottomSheet uses a bottom sheet to let the user
  * select a credential and fills it into the focused form.
  */
+@NullMarked
 class AllPasswordsBottomSheetCoordinator {
     private final AllPasswordsBottomSheetMediator mMediator = new AllPasswordsBottomSheetMediator();
 
@@ -64,13 +67,11 @@ class AllPasswordsBottomSheetCoordinator {
         ListModel<ListItem> listModel = new ListModel<>();
         mMediator.initialize(delegate, model, listModel);
 
-        UiConfiguration uiConfiguration = new UiConfiguration();
-        uiConfiguration.faviconHelper = FaviconHelper.create(context, profile);
         setUpView(
                 model,
                 listModel,
                 new AllPasswordsBottomSheetView(context, sheetController),
-                uiConfiguration);
+                FaviconHelper.create(context, profile));
     }
 
     /**
@@ -80,7 +81,7 @@ class AllPasswordsBottomSheetCoordinator {
      * @param isPasswordField True if the currently focused field is a password field and false for
      *     any other field type (e.g username, ...).
      */
-    public void showCredentials(Credential[] credentials, boolean isPasswordField) {
+    public void showCredentials(List<Credential> credentials, boolean isPasswordField) {
         mMediator.showCredentials(credentials, isPasswordField);
     }
 
@@ -89,7 +90,7 @@ class AllPasswordsBottomSheetCoordinator {
             PropertyModel model,
             ListModel<ListItem> listModel,
             AllPasswordsBottomSheetView view,
-            UiConfiguration uiConfiguration) {
+            FaviconHelper faviconHelper) {
         view.setSheetItemListAdapter(
                 new RecyclerViewAdapter<>(
                         new SimpleRecyclerViewMcp<>(
@@ -98,7 +99,7 @@ class AllPasswordsBottomSheetCoordinator {
                                 AllPasswordsBottomSheetViewBinder::connectPropertyModel),
                         (parent, itemType) ->
                                 AllPasswordsBottomSheetViewBinder.createViewHolder(
-                                        parent, itemType, uiConfiguration)));
+                                        parent, itemType, faviconHelper)));
         PropertyModelChangeProcessor.create(
                 model, view, AllPasswordsBottomSheetViewBinder::bindAllPasswordsBottomSheet);
     }

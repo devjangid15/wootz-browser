@@ -113,11 +113,12 @@ ContentSetting::ContentSetting(APIRequestHandler* request_handler,
 
 ContentSetting::~ContentSetting() = default;
 
-gin::WrapperInfo ContentSetting::kWrapperInfo = {gin::kEmbedderNativeGin};
+gin::DeprecatedWrapperInfo ContentSetting::kWrapperInfo = {
+    gin::kEmbedderNativeGin};
 
 gin::ObjectTemplateBuilder ContentSetting::GetObjectTemplateBuilder(
     v8::Isolate* isolate) {
-  return Wrappable<ContentSetting>::GetObjectTemplateBuilder(isolate)
+  return DeprecatedWrappable<ContentSetting>::GetObjectTemplateBuilder(isolate)
       .SetMethod("get", &ContentSetting::Get)
       .SetMethod("set", &ContentSetting::Set)
       .SetMethod("clear", &ContentSetting::Clear)
@@ -191,7 +192,7 @@ void ContentSetting::HandleFunction(const std::string& method_name,
         args.push_back(object);
       }
       JSRunner::Get(context)->RunJSFunction(parse_result.callback, context,
-                                            args.size(), args.data());
+                                            args);
     }
     return;
   }

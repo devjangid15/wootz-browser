@@ -22,8 +22,8 @@ import java.util.List;
 public class TestViewStructure extends ViewStructure {
     /** Test implementation of {@link HtmlInfo}. */
     public static class TestHtmlInfo extends HtmlInfo {
-        private String mTag;
-        private List<Pair<String, String>> mAttributes;
+        private final String mTag;
+        private final List<Pair<String, String>> mAttributes;
 
         public TestHtmlInfo(String tag, List<Pair<String, String>> attributes) {
             mTag = tag;
@@ -52,17 +52,17 @@ public class TestViewStructure extends ViewStructure {
 
     /** Test implementation of {@link HtmlInfo.Builder}. */
     public static class TestBuilder extends HtmlInfo.Builder {
-        private String mTag;
-        private ArrayList<Pair<String, String>> mAttributes;
+        private final String mTag;
+        private final ArrayList<Pair<String, String>> mAttributes;
 
         public TestBuilder(String tag) {
             mTag = tag;
-            mAttributes = new ArrayList<Pair<String, String>>();
+            mAttributes = new ArrayList<>();
         }
 
         @Override
         public HtmlInfo.Builder addAttribute(String name, String value) {
-            mAttributes.add(new Pair<String, String>(name, value));
+            mAttributes.add(new Pair<>(name, value));
             return this;
         }
 
@@ -73,7 +73,7 @@ public class TestViewStructure extends ViewStructure {
     }
 
     public TestViewStructure() {
-        mChildren = new ArrayList<TestViewStructure>();
+        mChildren = new ArrayList<>();
     }
 
     @Override
@@ -283,7 +283,13 @@ public class TestViewStructure extends ViewStructure {
     public void setFocusable(boolean state) {}
 
     @Override
-    public void setFocused(boolean state) {}
+    public void setFocused(boolean state) {
+        mFocused = state;
+    }
+
+    public boolean getFocused() {
+        return mFocused;
+    }
 
     @Override
     public void setClassName(String className) {
@@ -369,10 +375,11 @@ public class TestViewStructure extends ViewStructure {
     private CharSequence mHint;
     private String[] mAutofillHints;
     private int mId;
+    private boolean mFocused;
     private String mClassName;
     private String mWebDomain;
     private int mChildCount;
-    private ArrayList<TestViewStructure> mChildren;
+    private final ArrayList<TestViewStructure> mChildren;
     private CharSequence[] mAutofillOptions;
     private AutofillValue mAutofillValue;
     private boolean mDataIsSensitive;

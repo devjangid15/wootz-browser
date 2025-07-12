@@ -100,9 +100,8 @@ struct extensions::BrowserContextFactoryDependencies<
   static void DeclareFactoryDependencies(
       extensions::BrowserContextKeyedAPIFactory<
           chrome_apps::api::ArcAppsPrivateAPI>* factory) {
-    if (extensions::ExtensionsBrowserClient::Get())
-        factory->DependsOn(
-            ExtensionsBrowserClient::Get()->GetExtensionSystemFactory());
+    factory->DependsOn(
+        ExtensionsBrowserClient::Get()->GetExtensionSystemFactory());
     factory->DependsOn(ArcAppListPrefsFactory::GetInstance());
   }
 };

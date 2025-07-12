@@ -11,19 +11,20 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/sequence_checker.h"
 #include "build/build_config.h"
+#include "chrome/updater/event_logger.h"
+#include "chrome/updater/policy/service.h"
 #include "components/update_client/network.h"
 
 namespace updater {
-
-struct PolicyServiceProxyConfiguration;
 
 // Creates instances of `NetworkFetcher`. Because of idiosyncrasies of how
 // the Windows implementation works, the instance of the factory class must
 // outlive the lives of the network fetchers it creates.
 class NetworkFetcherFactory : public update_client::NetworkFetcherFactory {
  public:
-  explicit NetworkFetcherFactory(std::optional<PolicyServiceProxyConfiguration>
-                                     policy_service_proxy_configuration);
+  NetworkFetcherFactory(std::optional<PolicyServiceProxyConfiguration>
+                            policy_service_proxy_configuration,
+                        scoped_refptr<UpdaterEventLogger> event_logger);
   NetworkFetcherFactory(const NetworkFetcherFactory&) = delete;
   NetworkFetcherFactory& operator=(const NetworkFetcherFactory&) = delete;
 

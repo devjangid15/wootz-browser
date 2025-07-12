@@ -7,7 +7,11 @@
 #include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
+#include "base/notreached.h"
 #include "base/run_loop.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
+#include "base/strings/string_view_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "net/base/network_anonymization_key.h"
@@ -28,6 +32,7 @@
 #include "net/test/gtest_util.h"
 #include "net/test/test_data_directory.h"
 #include "net/test/test_with_task_environment.h"
+#include "net/third_party/quiche/src/quiche/common/http/http_header_block.h"
 #include "net/third_party/quiche/src/quiche/quic/test_tools/qpack/qpack_test_utils.h"
 #include "net/third_party/quiche/src/quiche/quic/test_tools/quic_spdy_session_peer.h"
 #include "net/third_party/quiche/src/quiche/quic/test_tools/quic_test_utils.h"
@@ -42,12 +47,6 @@ using testing::AnyNumber;
 using testing::Return;
 
 namespace net::test {
-
-namespace {
-
-constexpr char kTestHeaderName[] = "Foo";
-
-}  // anonymous namespace
 
 class EstablishedCryptoStream : public quic::test::MockQuicCryptoStream {
  public:
@@ -72,7 +71,7 @@ class QuicProxyDatagramClientSocketTest : public QuicProxyClientSocketTestBase {
   }
 
   void PopulateConnectRequestIR(
-      spdy::Http2HeaderBlock* block,
+      quiche::HttpHeaderBlock* block,
       std::optional<const HttpRequestHeaders> extra_headers) override {
     DCHECK(destination_endpoint_.scheme() == url::kHttpsScheme);
 
@@ -116,46 +115,43 @@ class QuicProxyDatagramClientSocketTest : public QuicProxyClientSocketTestBase {
     ASSERT_EQ(result, callback.WaitForResult());
   }
 
-  void AssertWriteReturns(const char* data, int len, int rv) override {
-    auto buf = base::MakeRefCounted<IOBufferWithSize>(len);
-    memcpy(buf->data(), data, len);
+  void AssertWriteReturns(base::span<const char> data, int rv) override {
+    auto buf = base::MakeRefCounted<IOBufferWithSize>(data.size());
+    buf->span().copy_from(base::as_bytes(data));
     EXPECT_EQ(rv,
               sock_->Write(buf.get(), buf->size(), write_callback_.callback(),
                            TRAFFIC_ANNOTATION_FOR_TESTS));
   }
 
-  void AssertSyncWriteSucceeds(const char* data, int len) override {
-    auto buf = base::MakeRefCounted<IOBufferWithSize>(len);
-    memcpy(buf->data(), data, len);
-    EXPECT_EQ(len,
-              sock_->Write(buf.get(), buf->size(), CompletionOnceCallback(),
-                           TRAFFIC_ANNOTATION_FOR_TESTS));
+  void AssertSyncWriteSucceeds(base::span<const char> data) override {
+    AssertWriteReturns(data, base::checked_cast<int>(data.size()));
   }
 
-  void AssertSyncReadEquals(const char* data, int len) override {
-    auto buf = base::MakeRefCounted<IOBufferWithSize>(len);
-    ASSERT_EQ(len, sock_->Read(buf.get(), len, CompletionOnceCallback()));
-    ASSERT_EQ(std::string(data, len), std::string(buf->data(), len));
+  void AssertSyncReadEquals(base::span<const char> data) override {
+    auto buf = base::MakeRefCounted<IOBufferWithSize>(data.size());
+    ASSERT_EQ(data.size(),
+              sock_->Read(buf.get(), data.size(), CompletionOnceCallback()));
+    ASSERT_EQ(data, base::as_chars(buf->span()));
     ASSERT_TRUE(sock_->IsConnected());
   }
 
-  void AssertAsyncReadEquals(const char* data, int len) override {
-    CHECK(false);
+  void AssertAsyncReadEquals(base::span<const char> data) override {
+    NOTREACHED();
   }
 
-  void AssertReadStarts(const char* data, int len) override {
-    read_buf_ = base::MakeRefCounted<IOBufferWithSize>(len);
-    ASSERT_EQ(ERR_IO_PENDING,
-              sock_->Read(read_buf_.get(), len, read_callback_.callback()));
+  void AssertReadStarts(base::span<const char> data) override {
+    read_buf_ = base::MakeRefCounted<IOBufferWithSize>(data.size());
+    ASSERT_EQ(ERR_IO_PENDING, sock_->Read(read_buf_.get(), data.size(),
+                                          read_callback_.callback()));
     EXPECT_TRUE(sock_->IsConnected());
   }
 
-  void AssertReadReturns(const char* data, int len) override {
+  void AssertReadReturns(base::span<const char> data) override {
     EXPECT_TRUE(sock_->IsConnected());
 
     // Now the read will return.
-    EXPECT_EQ(len, read_callback_.WaitForResult());
-    ASSERT_EQ(std::string(data, len), std::string(read_buf_->data(), len));
+    EXPECT_EQ(data.size(), read_callback_.WaitForResult());
+    ASSERT_EQ(data, base::as_chars(read_buf_->span()));
   }
 
  protected:
@@ -299,11 +295,13 @@ TEST_P(QuicProxyDatagramClientSocketTest, WriteSendsData) {
       SYNCHRONOUS,
       ConstructAckAndDatagramPacket(
           packet_number++, /*largest_received=*/1, /*smallest_received=*/1,
-          {quarter_stream_id + context_id + std::string(kMsg1, kLen1)}));
+          {quarter_stream_id + context_id +
+           std::string(base::as_string_view(kMsg1))}));
   mock_quic_data_.AddWrite(
       SYNCHRONOUS,
-      ConstructDatagramPacket(packet_number++, {quarter_stream_id + context_id +
-                                                std::string(kMsg2, kLen2)}));
+      ConstructDatagramPacket(packet_number++,
+                              {quarter_stream_id + context_id +
+                               std::string(base::as_string_view(kMsg2))}));
   mock_quic_data_.AddWrite(
       SYNCHRONOUS,
       ConstructRstPacket(packet_number++, quic::QUIC_STREAM_CANCELLED));
@@ -317,8 +315,8 @@ TEST_P(QuicProxyDatagramClientSocketTest, WriteSendsData) {
 
   AssertConnectSucceeds();
 
-  AssertSyncWriteSucceeds(kMsg1, kLen1);
-  AssertSyncWriteSucceeds(kMsg2, kLen2);
+  AssertSyncWriteSucceeds(kMsg1);
+  AssertSyncWriteSucceeds(kMsg2);
 }
 
 TEST_P(QuicProxyDatagramClientSocketTest, WriteOnClosedSocket) {
@@ -342,7 +340,7 @@ TEST_P(QuicProxyDatagramClientSocketTest, WriteOnClosedSocket) {
 
   sock_->Close();
 
-  AssertWriteReturns(kMsg1, kLen1, ERR_SOCKET_NOT_CONNECTED);
+  AssertWriteReturns(kMsg1, ERR_SOCKET_NOT_CONNECTED);
 }
 
 TEST_P(QuicProxyDatagramClientSocketTest, OnHttp3DatagramAddsDatagram) {
@@ -369,8 +367,9 @@ TEST_P(QuicProxyDatagramClientSocketTest, OnHttp3DatagramAddsDatagram) {
 
   AssertConnectSucceeds();
 
-  sock_->OnHttp3Datagram(0, std::string(1, '\0') /* context_id */ +
-                                std::string(kDatagramPayload, kDatagramLen));
+  sock_->OnHttp3Datagram(
+      0, std::string(1, '\0') /* context_id */ +
+             std::string(base::as_string_view(kDatagramPayload)));
 
   ASSERT_TRUE(!sock_->GetDatagramsForTesting().empty());
   ASSERT_EQ(sock_->GetDatagramsForTesting().front(), "youveGotMail");
@@ -393,8 +392,8 @@ TEST_P(QuicProxyDatagramClientSocketTest, ReadReadsDataInQueue) {
       ASYNC, ConstructServerDatagramPacket(
                  2, std::string(1, '\0') /* quarter_stream_id */ +
                         std::string(1, '\0') /* context_id */ +
-                        std::string(kDatagramPayload,
-                                    kDatagramLen)  // Actual message payload
+                        std::string(base::as_string_view(
+                            kDatagramPayload))  // Actual message payload
                  ));
   mock_quic_data_.AddWrite(
       SYNCHRONOUS, ConstructAckPacket(packet_number++, /*largest_received=*/2,
@@ -414,7 +413,7 @@ TEST_P(QuicProxyDatagramClientSocketTest, ReadReadsDataInQueue) {
   AssertConnectSucceeds();
 
   ResumeAndRun();
-  AssertSyncReadEquals(kDatagramPayload, kDatagramLen);
+  AssertSyncReadEquals(kDatagramPayload);
 
   histogram_tester_.ExpectUniqueSample(
       QuicProxyDatagramClientSocket::kMaxQueueSizeHistogram, false, 1);
@@ -434,8 +433,8 @@ TEST_P(QuicProxyDatagramClientSocketTest, AsyncReadWhenQueueIsEmpty) {
       ASYNC, ConstructServerDatagramPacket(
                  2, std::string(1, '\0') /* quarter_stream_id */ +
                         std::string(1, '\0') /* context_id */ +
-                        std::string(kDatagramPayload,
-                                    kDatagramLen)  // Actual message payload
+                        std::string(base::as_string_view(
+                            kDatagramPayload))  // Actual message payload
                  ));
   mock_quic_data_.AddWrite(
       SYNCHRONOUS, ConstructAckPacket(packet_number++, /*largest_received=*/2,
@@ -454,12 +453,12 @@ TEST_P(QuicProxyDatagramClientSocketTest, AsyncReadWhenQueueIsEmpty) {
 
   AssertConnectSucceeds();
 
-  AssertReadStarts(kDatagramPayload, kDatagramLen);
+  AssertReadStarts(kDatagramPayload);
 
   ResumeAndRun();
 
   EXPECT_TRUE(read_callback_.have_result());
-  AssertReadReturns(kDatagramPayload, kDatagramLen);
+  AssertReadReturns(kDatagramPayload);
 }
 
 TEST_P(QuicProxyDatagramClientSocketTest,
@@ -489,8 +488,9 @@ TEST_P(QuicProxyDatagramClientSocketTest,
 
   for (size_t i = 0;
        i < QuicProxyDatagramClientSocket::kMaxDatagramQueueSize + 1; i++) {
-    sock_->OnHttp3Datagram(0, std::string(1, '\0') /* context_id */ +
-                                  std::string(kDatagramPayload, kDatagramLen));
+    sock_->OnHttp3Datagram(
+        0, std::string(1, '\0') /* context_id */ +
+               std::string(base::as_string_view(kDatagramPayload)));
   }
 
   ASSERT_TRUE(sock_->GetDatagramsForTesting().size() ==

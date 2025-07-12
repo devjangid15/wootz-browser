@@ -70,7 +70,8 @@ OmniboxAction::ExecutionContext::ExecutionContext(
     : client_(client),
       open_url_callback_(std::move(callback)),
       match_selection_timestamp_(match_selection_timestamp),
-      disposition_(disposition) {}
+      disposition_(disposition),
+      enter_starter_pack_id_(0) {}
 
 OmniboxAction::ExecutionContext::~ExecutionContext() = default;
 
@@ -111,6 +112,10 @@ const gfx::VectorIcon& OmniboxAction::GetVectorIcon() const {
 }
 #endif
 
+gfx::Image OmniboxAction::GetIconImage() const {
+  return gfx::Image();
+}
+
 size_t OmniboxAction::EstimateMemoryUsage() const {
   size_t total = 0;
   total += base::trace_event::EstimateMemoryUsage(url_);
@@ -125,9 +130,7 @@ OmniboxActionId OmniboxAction::ActionId() const {
 #if BUILDFLAG(IS_ANDROID)
 base::android::ScopedJavaLocalRef<jobject> OmniboxAction::GetOrCreateJavaObject(
     JNIEnv* env) const {
-  NOTREACHED_IN_MIGRATION()
-      << "This implementation does not have a java counterpart";
-  return {};
+  NOTREACHED() << "This implementation does not have a java counterpart";
 }
 #endif
 
@@ -144,6 +147,5 @@ void OmniboxAction::OpenURL(OmniboxAction::ExecutionContext& context,
            context.match_selection_timestamp_,
            /*destination_url_entered_without_scheme=*/false,
            /*destination_url_entered_with_http_scheme=*/false, u"",
-           AutocompleteMatch(), AutocompleteMatch(),
-           IDNA2008DeviationCharacter::kNone);
+           AutocompleteMatch(), AutocompleteMatch());
 }

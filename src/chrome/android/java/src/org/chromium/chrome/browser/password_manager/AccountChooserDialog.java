@@ -4,7 +4,10 @@
 
 package org.chromium.chrome.browser.password_manager;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.app.Activity;
+import android.app.Dialog;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.res.Resources;
@@ -33,6 +36,8 @@ import org.jni_zero.CalledByNative;
 import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.components.browser_ui.util.AvatarGenerator;
 import org.chromium.components.url_formatter.UrlFormatter;
@@ -40,11 +45,11 @@ import org.chromium.ui.base.WindowAndroid;
 import org.chromium.ui.widget.Toast;
 
 /**
- *  A dialog offers the user the ability to choose credentials for authentication. User is
- *  presented with username along with avatar and full name in case they are available.
- *  Native counterpart should be notified about credentials user have chosen and also if user
- *  haven't chosen anything.
+ * A dialog offers the user the ability to choose credentials for authentication. User is presented
+ * with username along with avatar and full name in case they are available. Native counterpart
+ * should be notified about credentials user have chosen and also if user haven't chosen anything.
  */
+@NullMarked
 public class AccountChooserDialog
         implements DialogInterface.OnClickListener, DialogInterface.OnDismissListener {
     private final Context mContext;
@@ -57,13 +62,13 @@ public class AccountChooserDialog
     private final int mTitleLinkEnd;
     private final String mOrigin;
     private final String mSigninButtonText;
-    private ArrayAdapter<Credential> mAdapter;
+    private @Nullable ArrayAdapter<Credential> mAdapter;
 
     /** Holds the reference to the credentials which were chosen by the user. */
-    private Credential mCredential;
+    private @Nullable Credential mCredential;
 
     private long mNativeAccountChooserDialog;
-    private AlertDialog mDialog;
+    private @Nullable AlertDialog mDialog;
 
     /**
      * True, if credentials were selected via "Sign In" button instead of clicking on the credential
@@ -101,7 +106,7 @@ public class AccountChooserDialog
      * @param origin Address of the web page, where dialog was triggered.
      */
     @CalledByNative
-    private static AccountChooserDialog createAndShowAccountChooser(
+    private static @Nullable AccountChooserDialog createAndShowAccountChooser(
             WindowAndroid windowAndroid,
             long nativeAccountChooserDialog,
             Credential[] credentials,
@@ -128,9 +133,9 @@ public class AccountChooserDialog
 
     private ArrayAdapter<Credential> generateAccountsArrayAdapter(
             Context context, Credential[] credentials) {
-        return new ArrayAdapter<Credential>(context, /* resource= */ 0, credentials) {
+        return new ArrayAdapter<>(context, /* resource= */ 0, credentials) {
             @Override
-            public View getView(int position, View convertView, ViewGroup parent) {
+            public View getView(int position, @Nullable View convertView, ViewGroup parent) {
                 if (convertView == null) {
                     LayoutInflater inflater = LayoutInflater.from(getContext());
                     convertView =
@@ -139,14 +144,19 @@ public class AccountChooserDialog
                 convertView.setSelected(false);
                 convertView.setOnClickListener(
                         view -> {
-                            mCredential = mCredentials[position];
-                            if (mDialog != null) mDialog.dismiss();
+                            AccountChooserDialog.this.mCredential =
+                                    AccountChooserDialog.this.mCredentials[position];
+                            Dialog dialogInstance = AccountChooserDialog.this.mDialog;
+                            if (dialogInstance != null) {
+                                dialogInstance.dismiss();
+                            }
                         });
                 convertView.setTag(position);
 
                 Credential credential = getItem(position);
+                assumeNonNull(credential); // ArrayAdapter.getItem() can return @Nullable.
 
-                ImageView avatarView = (ImageView) convertView.findViewById(R.id.profile_image);
+                ImageView avatarView = convertView.findViewById(R.id.profile_image);
                 Drawable avatar = credential.getAvatar();
                 if (avatar == null) {
                     avatar =
@@ -155,9 +165,8 @@ public class AccountChooserDialog
                 }
                 avatarView.setImageDrawable(avatar);
 
-                TextView mainNameView = (TextView) convertView.findViewById(R.id.main_name);
-                TextView secondaryNameView =
-                        (TextView) convertView.findViewById(R.id.secondary_name);
+                TextView mainNameView = convertView.findViewById(R.id.main_name);
+                TextView secondaryNameView = convertView.findViewById(R.id.secondary_name);
                 if (credential.getFederation().isEmpty()) {
                     // Not federated credentials case
                     if (credential.getDisplayName().isEmpty()) {
@@ -174,8 +183,7 @@ public class AccountChooserDialog
                     secondaryNameView.setVisibility(View.VISIBLE);
                 }
 
-                ImageButton pslInfoButton =
-                        (ImageButton) convertView.findViewById(R.id.psl_info_btn);
+                ImageButton pslInfoButton = convertView.findViewById(R.id.psl_info_btn);
                 final String originUrl = credential.getOriginUrl();
 
                 if (!originUrl.isEmpty()) {
@@ -200,9 +208,9 @@ public class AccountChooserDialog
     private void show() {
         View titleView =
                 LayoutInflater.from(mContext).inflate(R.layout.account_chooser_dialog_title, null);
-        TextView origin = (TextView) titleView.findViewById(R.id.origin);
+        TextView origin = titleView.findViewById(R.id.origin);
         origin.setText(mOrigin);
-        TextView titleMessageText = (TextView) titleView.findViewById(R.id.title);
+        TextView titleMessageText = titleView.findViewById(R.id.title);
         if (mTitleLinkStart != 0 && mTitleLinkEnd != 0) {
             SpannableString spanableTitle = new SpannableString(mTitle);
             spanableTitle.setSpan(
@@ -215,6 +223,7 @@ public class AccountChooserDialog
                                                 mNativeAccountChooserDialog,
                                                 AccountChooserDialog.this);
                             }
+                            assumeNonNull(mDialog);
                             mDialog.dismiss();
                         }
                     },
@@ -256,8 +265,6 @@ public class AccountChooserDialog
 
         TextView text = (TextView) inflater.inflate(layoutId, null);
         text.setText(message);
-        text.announceForAccessibility(message);
-
         // The tooltip should be shown above and to the left (right for RTL) of the info button.
         // In order to do so the tooltip's location on the screen is determined. This location is
         // specified with regard to the top left corner and ignores RTL layouts. For this reason the
@@ -316,12 +323,13 @@ public class AccountChooserDialog
                 AvatarGenerator.makeRoundAvatar(
                         mContext.getResources(), avatarBitmap, avatarBitmap.getHeight());
         mCredentials[index].setAvatar(avatar);
+        assumeNonNull(mDialog);
         ListView view = mDialog.getListView();
         if (index >= view.getFirstVisiblePosition() && index <= view.getLastVisiblePosition()) {
             // Profile image is in the visible range.
             View credentialView = view.getChildAt(index - view.getFirstVisiblePosition());
             if (credentialView == null) return;
-            ImageView avatarView = (ImageView) credentialView.findViewById(R.id.profile_image);
+            ImageView avatarView = credentialView.findViewById(R.id.profile_image);
             avatarView.setImageDrawable(avatar);
         }
     }

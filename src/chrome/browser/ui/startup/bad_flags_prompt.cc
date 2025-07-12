@@ -15,7 +15,6 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/trace_event/memory_dump_manager.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "cc/base/switches.h"
 #include "chrome/browser/infobars/simple_alert_infobar_creator.h"
 #include "chrome/browser/ui/simple_message_box.h"
@@ -47,20 +46,19 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/resource/scoped_startup_resource_bundle.h"
+#include "ui/gfx/native_widget_types.h"
 #include "ui/views/views_switches.h"
+
+#if BUILDFLAG(IS_WIN)
+#include "services/webnn/webnn_switches.h"
+#endif
 
 #if BUILDFLAG(IS_ANDROID)
 #include "chrome/browser/android/flags/bad_flags_snackbar_manager.h"
 #include "chrome/browser/flags/android/chrome_feature_list.h"
 #else
-#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/actor/actor_switches.h"
 #endif
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-#include "chromeos/constants/chromeos_features.h"
-#endif
-
-namespace chrome {
 
 namespace {
 
@@ -74,6 +72,7 @@ const char* const kBadFlags[] = {
 
     // These flags disable sandbox-related security.
     sandbox::policy::switches::kDisableGpuSandbox,
+    sandbox::policy::switches::kDisableLandlockSandbox,
     sandbox::policy::switches::kDisableSeccompFilterSandbox,
     sandbox::policy::switches::kDisableSetuidSandbox,
     sandbox::policy::switches::kNoSandbox,
@@ -92,22 +91,18 @@ const char* const kBadFlags[] = {
     switches::kIgnoreCertificateErrors,
     network::switches::kIgnoreCertificateErrorsSPKIList,
 
-    // This flag could prevent QuotaChange events from firing or cause the event
-    // to fire too often, potentially impacting web application behavior.
-    switches::kQuotaChangeEventInterval,
-
     // These flags change the URLs that handle PII.
     switches::kGaiaUrl,
     translate::switches::kTranslateScriptURL,
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-    // This flag gives extensions more powers.
+    // These flags enable extensions running scripts on chrome:// and
+    // chrome-extension:// URLs.
     extensions::switches::kExtensionsOnChromeURLs,
+    extensions::switches::kExtensionsOnExtensionURLs,
 #endif
 
-// TODO(crbug.com/40118868): Revisit the macro expression once build flag switch
-// of lacros-chrome is complete.
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_LINUX)
     // Speech dispatcher is buggy, it can crash and it can make Chrome freeze.
     // http://crbug.com/327295
     switches::kEnableSpeechDispatcher,
@@ -142,6 +137,13 @@ const char* const kBadFlags[] = {
     // be possible to read GPU data for other Chromium processes.
     switches::kEnableUnsafeWebGPU,
 
+#if BUILDFLAG(IS_WIN)
+    // These flags allow loading libraries from specified paths, which may
+    // compromise process integrity and security.
+    switches::kWebNNOrtLibraryPathForTesting,
+    switches::kWebNNOrtEpLibraryPathForTesting,
+#endif
+
     // A flag to bypass the WebHID blocklist for testing purposes.
     switches::kDisableHidBlocklist,
 
@@ -173,29 +175,37 @@ const char* const kBadFlags[] = {
     // This flag enables injecting synthetic input. It is meant to be used only
     // in tests and performance benchmarks. Using it could allow faking user
     // interaction across origins.
-    cc::switches::kEnableGpuBenchmarking,
+    switches::kEnableGpuBenchmarking,
 
     // This flag enables loading a developer-signed certificate for Cast
     // streaming receivers and should only be used for testing purposes.
     cast_certificate::switches::kCastDeveloperCertificatePath,
+
+    // This flag ignores potential bad mojo messages received in network
+    // service process instead of collecting dump about their occurrence.
+    network::switches::kIgnoreBadMessageForTesting,
+
+    // This flag enables storing Probabilistic Reveal Tokens to disk during
+    // incognito sessions. It is meant to be used only for testing and
+    // debugging due to privacy concerns with storing data during an incognito
+    // session.
+    network::switches::kStoreProbabilisticRevealTokens,
+
+    // This flag bypasses several safety checks in the glic actor (e.g. an
+    // origin blocklist) for testing purposes.
+    actor::switches::kDisableActorSafetyChecks,
 };
 #endif  // !BUILDFLAG(IS_ANDROID)
 
 // Dangerous feature flags in about:flags for which to display a warning that
 // "stability and security will suffer".
 static const base::Feature* kBadFeatureFlagsInAboutFlags[] = {
-    // These features enables experimental support for isolated web apps, which
-    // unlock capabilities with a high potential for security / privacy abuse.
-    &features::kIsolatedWebApps,
+    // This feature enables developer mode support for Isolated Web Apps.
     &features::kIsolatedWebAppDevMode,
 
 #if BUILDFLAG(IS_ANDROID)
     &chrome::android::kCommandLineOnNonRooted,
 #endif
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-    &chromeos::features::kBlinkExtensionDiagnostics,
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
 
     // This flag disables security for the Page Embedded Permission Control, for
     // testing purposes. Can only be enabled via the command line.
@@ -251,16 +261,19 @@ void ShowBadFlagsInfoBar(content::WebContents* web_contents,
                          const char* flag) {
   std::string switch_value =
       base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(flag);
-  if (!switch_value.empty())
+  if (!switch_value.empty()) {
     switch_value = "=" + switch_value;
+  }
   ShowBadFlagsInfoBarHelper(web_contents, message_id,
                             std::string("--") + flag + switch_value);
 }
 
 void MaybeShowInvalidUserDataDirWarningDialog() {
-  const base::FilePath& user_data_dir = GetInvalidSpecifiedUserDataDir();
-  if (user_data_dir.empty())
+  const base::FilePath& user_data_dir =
+      chrome::GetInvalidSpecifiedUserDataDir();
+  if (user_data_dir.empty()) {
     return;
+  }
 
   startup_metric_utils::GetBrowser().SetNonBrowserUIDisplayed();
 
@@ -273,7 +286,5 @@ void MaybeShowInvalidUserDataDirWarningDialog() {
       IDS_CANT_WRITE_USER_DIRECTORY_SUMMARY, user_data_dir.LossyDisplayName());
 
   // More complex dialogs cannot be shown before the earliest calls here.
-  ShowWarningMessageBox(nullptr, title, message);
+  chrome::ShowWarningMessageBoxAsync(gfx::NativeWindow(), title, message);
 }
-
-}  // namespace chrome

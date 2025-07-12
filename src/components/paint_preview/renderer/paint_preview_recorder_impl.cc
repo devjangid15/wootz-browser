@@ -348,7 +348,8 @@ void PaintPreviewRecorderImpl::CapturePaintPreviewInternal(
   TRACE_EVENT_BEGIN0("paint_preview", "WebLocalFrame::CapturePaintPreview");
   bool success = frame->CapturePaintPreview(
       bounds, canvas, /*include_linked_destinations=*/params->capture_links,
-      /*skip_accelerated_content=*/params->skip_accelerated_content);
+      /*skip_accelerated_content=*/params->skip_accelerated_content,
+      /*allow_scrollbars=*/true);
   TRACE_EVENT_END0("paint_preview", "WebLocalFrame::CapturePaintPreview");
   canvas->restore();
   base::TimeDelta capture_time = base::TimeTicks::Now() - start_time;
@@ -394,6 +395,11 @@ void PaintPreviewRecorderImpl::CapturePaintPreviewInternal(
   auto* image_ctx = tracker->GetImageSerializationContext();
   image_ctx->max_decoded_image_size_bytes =
       params->max_decoded_image_size_bytes;
+
+  // The canvas holds a raw_ptr to the tracker, and when the tracker is moved to
+  // FinishRecordingOnUIThread, it's possible that it'll be released before
+  // returning, leading to a dangling pointer in the canvas.
+  canvas->SetPaintPreviewTracker(nullptr);
 
   FinishRecordingOnUIThread(recorder.finishRecordingAsPicture(), bounds,
                             std::move(tracker), params->persistence,

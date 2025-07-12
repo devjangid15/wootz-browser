@@ -21,7 +21,6 @@ class Label;
 
 namespace ash {
 
-class AssistantOnboardingView;
 class AssistantViewDelegate;
 
 class COMPONENT_EXPORT(ASSISTANT_UI) AssistantZeroStateView
@@ -54,7 +53,7 @@ class COMPONENT_EXPORT(ASSISTANT_UI) AssistantZeroStateView
       std::optional<AssistantExitPoint> exit_point) override;
 
   // LauncherSearchIphView::Delegate:
-  void RunLauncherSearchQuery(const std::u16string& query) override;
+  void RunLauncherSearchQuery(std::u16string_view query) override;
   void OpenAssistantPage() override;
 
  private:
@@ -65,7 +64,6 @@ class COMPONENT_EXPORT(ASSISTANT_UI) AssistantZeroStateView
   const raw_ptr<AssistantViewDelegate> delegate_;
 
   // Owned by view hierarchy;
-  raw_ptr<AssistantOnboardingView> onboarding_view_ = nullptr;
   raw_ptr<views::Label> greeting_label_ = nullptr;
   raw_ptr<views::View> spacer_ = nullptr;
   raw_ptr<LauncherSearchIphView> iph_view_ = nullptr;

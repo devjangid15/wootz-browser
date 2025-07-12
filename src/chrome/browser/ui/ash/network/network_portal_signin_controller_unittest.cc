@@ -6,14 +6,19 @@
 
 #include <memory>
 
+#include "ash/test/ash_test_helper.h"
+#include "base/check_deref.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/run_until.h"
 #include "base/test/scoped_feature_list.h"
 #include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/ui/webui/ash/floating_workspace/floating_workspace_dialog.h"
+#include "chrome/browser/ui/webui/ash/floating_workspace/floating_workspace_ui.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
@@ -37,6 +42,8 @@
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_names.h"
 #include "content/public/test/browser_task_environment.h"
+#include "content/public/test/test_web_contents_factory.h"
+#include "content/public/test/test_web_ui.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/cros_system_api/dbus/shill/dbus-constants.h"
 
@@ -48,7 +55,8 @@ constexpr char kTestPortalUrl[] = "http://www.gstatic.com/generate_204";
 
 class TestSigninController : public NetworkPortalSigninController {
  public:
-  TestSigninController() = default;
+  explicit TestSigninController(PrefService& local_state)
+      : NetworkPortalSigninController(local_state) {}
   TestSigninController(const TestSigninController&) = delete;
   TestSigninController& operator=(const TestSigninController&) = delete;
   ~TestSigninController() override = default;
@@ -96,7 +104,7 @@ class TestSigninController : public NetworkPortalSigninController {
 
 }  // namespace
 
-class NetworkPortalSigninControllerTest : public testing::TestWithParam<bool> {
+class NetworkPortalSigninControllerTest : public testing::Test {
  public:
   NetworkPortalSigninControllerTest() = default;
   NetworkPortalSigninControllerTest(const NetworkPortalSigninControllerTest&) =
@@ -106,12 +114,12 @@ class NetworkPortalSigninControllerTest : public testing::TestWithParam<bool> {
   ~NetworkPortalSigninControllerTest() override = default;
 
   void SetUp() override {
-    feature_list_.InitWithFeatureState(
-        chromeos::features::kCaptivePortalPopupWindow,
-        CaptivePortalPopupWindowEnabled());
-
+    // AshTestHelper is needed to call webui in one of the tests.
+    ash::AshTestHelper::InitParams params;
+    ash_test_helper_.SetUp(std::move(params));
     network_helper_ = std::make_unique<NetworkHandlerTestHelper>();
-    controller_ = std::make_unique<TestSigninController>();
+    controller_ = std::make_unique<TestSigninController>(
+        CHECK_DEREF(TestingBrowserProcess::GetGlobal()->local_state()));
 
     CHECK(test_profile_manager_.SetUp());
     user_manager_ = std::make_unique<FakeChromeUserManager>();
@@ -138,11 +146,10 @@ class NetworkPortalSigninControllerTest : public testing::TestWithParam<bool> {
     test_profile_manager_.DeleteAllTestingProfiles();
     user_manager_->Shutdown();
     user_manager_->Destroy();
+    ash_test_helper_.TearDown();
     user_manager_.reset();
     network_helper_.reset();
   }
-
-  bool CaptivePortalPopupWindowEnabled() { return GetParam(); }
 
  protected:
   using SigninMode = NetworkPortalSigninController::SigninMode;
@@ -175,7 +182,7 @@ class NetworkPortalSigninControllerTest : public testing::TestWithParam<bool> {
   void SimulateLoginAsKioskApp() {
     const AccountId account_id(
         AccountId::FromUserEmail("kiosk_app_user@gmail.com"));
-    user_manager::User* user = user_manager_->AddKioskAppUser(account_id);
+    user_manager::User* user = user_manager_->AddKioskChromeAppUser(account_id);
     SimulateLoginAsUser(user);
   }
 
@@ -239,25 +246,13 @@ class NetworkPortalSigninControllerTest : public testing::TestWithParam<bool> {
   }
 
   bool IsWindowForSigninDefault(const std::string& url) {
-    // When CaptivePortalPopupWindow is enabled, the signin window should be
-    // set and the url set to the probe url.
-    if (CaptivePortalPopupWindowEnabled()) {
-      return controller_->signin_window_url() == url;
-    }
-    // Otherwise a normal window with an OTR profile should be used and the url
-    // set to the probe url.
-    return controller_->incognito() && controller_->tab_url() == url;
+    return controller_->signin_window_url() == url;
   }
 
-  const std::string& DefaultUrl() {
-    if (CaptivePortalPopupWindowEnabled()) {
-      return controller_->signin_window_url();
-    }
-    return controller_->tab_url();
-  }
+  const std::string& DefaultUrl() { return controller_->signin_window_url(); }
 
   SigninMode GetSigninMode() {
-    return controller_->GetSigninMode(GetDefaultNetwork().GetPortalState());
+    return controller_->GetSigninMode(GetDefaultNetwork().portal_state());
   }
 
   content::BrowserTaskEnvironment task_environment_;
@@ -267,15 +262,16 @@ class NetworkPortalSigninControllerTest : public testing::TestWithParam<bool> {
   TestingProfileManager test_profile_manager_{
       TestingBrowserProcess::GetGlobal()};
   base::test::ScopedFeatureList feature_list_;
+  AshTestHelper ash_test_helper_;
 };
 
-TEST_P(NetworkPortalSigninControllerTest, LoginScreen) {
+TEST_F(NetworkPortalSigninControllerTest, LoginScreen) {
   EXPECT_EQ(GetSigninMode(), SigninMode::kSigninDialog);
   ShowSignin();
   EXPECT_FALSE(controller_->signin_dialog_url().empty());
 }
 
-TEST_P(NetworkPortalSigninControllerTest, KioskMode) {
+TEST_F(NetworkPortalSigninControllerTest, KioskMode) {
   SimulateLoginAsKioskApp();
 
   SetNetworkProxy();
@@ -285,7 +281,7 @@ TEST_P(NetworkPortalSigninControllerTest, KioskMode) {
   EXPECT_FALSE(controller_->signin_dialog_url().empty());
 }
 
-TEST_P(NetworkPortalSigninControllerTest, AuthenticationIgnoresProxyTrue) {
+TEST_F(NetworkPortalSigninControllerTest, AuthenticationIgnoresProxyTrue) {
   SimulateLogin();
   std::string expected_url = SetProbeUrl(kTestPortalUrl);
   SetNetworkProxy();
@@ -295,7 +291,7 @@ TEST_P(NetworkPortalSigninControllerTest, AuthenticationIgnoresProxyTrue) {
   EXPECT_TRUE(IsWindowForSigninDefault(expected_url));
 }
 
-TEST_P(NetworkPortalSigninControllerTest, AuthenticationIgnoresProxyFalse) {
+TEST_F(NetworkPortalSigninControllerTest, AuthenticationIgnoresProxyFalse) {
   SimulateLogin();
   std::string expected_url = SetProbeUrl(kTestPortalUrl);
   SetNetworkProxy();
@@ -307,7 +303,7 @@ TEST_P(NetworkPortalSigninControllerTest, AuthenticationIgnoresProxyFalse) {
   EXPECT_FALSE(controller_->incognito());
 }
 
-TEST_P(NetworkPortalSigninControllerTest, ProbeUrl) {
+TEST_F(NetworkPortalSigninControllerTest, ProbeUrl) {
   SimulateLogin();
   std::string expected_url = SetProbeUrl(kTestPortalUrl);
   EXPECT_EQ(GetSigninMode(), SigninMode::kSigninDefault);
@@ -315,14 +311,14 @@ TEST_P(NetworkPortalSigninControllerTest, ProbeUrl) {
   EXPECT_TRUE(IsWindowForSigninDefault(expected_url));
 }
 
-TEST_P(NetworkPortalSigninControllerTest, NoProbeUrl) {
+TEST_F(NetworkPortalSigninControllerTest, NoProbeUrl) {
   SimulateLogin();
   std::string expected_url = SetProbeUrl(std::string());
   ShowSignin();
   EXPECT_EQ(DefaultUrl(), expected_url);
 }
 
-TEST_P(NetworkPortalSigninControllerTest, NoProxy) {
+TEST_F(NetworkPortalSigninControllerTest, NoProxy) {
   SimulateLogin();
   std::string expected_url = SetProbeUrl(kTestPortalUrl);
   EXPECT_EQ(GetSigninMode(), SigninMode::kSigninDefault);
@@ -330,7 +326,7 @@ TEST_P(NetworkPortalSigninControllerTest, NoProxy) {
   EXPECT_TRUE(IsWindowForSigninDefault(expected_url));
 }
 
-TEST_P(NetworkPortalSigninControllerTest, ProxyDirect) {
+TEST_F(NetworkPortalSigninControllerTest, ProxyDirect) {
   SimulateLogin();
   std::string expected_url = SetProbeUrl(kTestPortalUrl);
   SetNetworkProxyDirect();
@@ -339,7 +335,7 @@ TEST_P(NetworkPortalSigninControllerTest, ProxyDirect) {
   EXPECT_TRUE(IsWindowForSigninDefault(expected_url));
 }
 
-TEST_P(NetworkPortalSigninControllerTest, IncognitoDisabledByPolicy) {
+TEST_F(NetworkPortalSigninControllerTest, IncognitoDisabledByPolicy) {
   SimulateLogin();
   std::string expected_url = SetProbeUrl(kTestPortalUrl);
   SetNetworkProxy();
@@ -347,26 +343,21 @@ TEST_P(NetworkPortalSigninControllerTest, IncognitoDisabledByPolicy) {
       GetPrefs(), policy::IncognitoModeAvailability::kDisabled);
   EXPECT_EQ(GetSigninMode(), SigninMode::kIncognitoDisabledByPolicy);
   ShowSignin();
-  if (CaptivePortalPopupWindowEnabled()) {
-    EXPECT_TRUE(IsWindowForSigninDefault(expected_url));
-  } else {
-    EXPECT_EQ(controller_->tab_url(), expected_url);
-    EXPECT_FALSE(controller_->incognito());
-  }
+  EXPECT_EQ(controller_->tab_url(), expected_url);
+  EXPECT_FALSE(controller_->incognito());
 }
 
-TEST_P(NetworkPortalSigninControllerTest,
+TEST_F(NetworkPortalSigninControllerTest,
        IncognitoDisabledByParentialControls) {
   SimulateLoginAsChild();
   std::string expected_url = SetProbeUrl(kTestPortalUrl);
   SetNetworkProxy();
   EXPECT_EQ(GetSigninMode(), SigninMode::kIncognitoDisabledByParentalControls);
   ShowSignin();
-  EXPECT_EQ(controller_->tab_url(), expected_url);
-  EXPECT_FALSE(controller_->incognito());
+  EXPECT_TRUE(IsWindowForSigninDefault(expected_url));
 }
 
-TEST_P(NetworkPortalSigninControllerTest, ProxyPref) {
+TEST_F(NetworkPortalSigninControllerTest, ProxyPref) {
   SimulateLogin();
   std::string expected_url = SetProbeUrl(kTestPortalUrl);
   base::Value::Dict proxy_config;
@@ -378,18 +369,7 @@ TEST_P(NetworkPortalSigninControllerTest, ProxyPref) {
   EXPECT_TRUE(IsWindowForSigninDefault(expected_url));
 }
 
-TEST_P(NetworkPortalSigninControllerTest, IsNewSigninProfile) {
-  if (CaptivePortalPopupWindowEnabled()) {
-    return;  // The portal signin profile is always used.
-  }
-  SimulateLogin();
-  std::string expected_url = SetProbeUrl(kTestPortalUrl);
-  ShowSignin();
-  EXPECT_EQ(DefaultUrl(), expected_url);
-  EXPECT_TRUE(controller_->incognito());
-}
-
-TEST_P(NetworkPortalSigninControllerTest, GuestLogin) {
+TEST_F(NetworkPortalSigninControllerTest, GuestLogin) {
   SimulateLoginAsGuest();
   std::string expected_url = SetProbeUrl(kTestPortalUrl);
   EXPECT_EQ(GetSigninMode(), SigninMode::kSigninDefault);
@@ -397,7 +377,37 @@ TEST_P(NetworkPortalSigninControllerTest, GuestLogin) {
   EXPECT_TRUE(IsWindowForSigninDefault(expected_url));
 }
 
-TEST_P(NetworkPortalSigninControllerTest, NoNetwork) {
+TEST_F(NetworkPortalSigninControllerTest, FloatingWorkspaceDialog) {
+  // We need |profile| for this test, so we cannot reuse SimulateLogin().
+  const AccountId test_account_id(
+      AccountId::FromUserEmail("test_user@gmail.com"));
+  Profile* profile =
+      test_profile_manager_.CreateTestingProfile("test_user@gmail.com");
+  user_manager_->AddUser(test_account_id);
+  user_manager_->LoginUser(test_account_id);
+  user_manager_->SwitchActiveUser(test_account_id);
+
+  // Set up web ui for testing.
+  auto web_contents_factory_ =
+      std::make_unique<content::TestWebContentsFactory>();
+  auto test_web_ui_ = std::make_unique<content::TestWebUI>();
+  test_web_ui_->set_web_contents(
+      web_contents_factory_->CreateWebContents(profile));
+  auto ui = std::make_unique<FloatingWorkspaceUI>(test_web_ui_.get());
+  test_web_ui_->SetController(std::move(ui));
+
+  ash::FloatingWorkspaceDialog::ShowNetworkScreen();
+  EXPECT_EQ(GetSigninMode(), SigninMode::kFloatingWorkspaceDialog);
+  ShowSignin();
+  EXPECT_FALSE(controller_->signin_dialog_url().empty());
+
+  // Wait until the dialog is closed so the test doesn't crash.
+  ash::FloatingWorkspaceDialog::Close();
+  EXPECT_TRUE(base::test::RunUntil(
+      []() { return !FloatingWorkspaceDialog::IsShown(); }));
+}
+
+TEST_F(NetworkPortalSigninControllerTest, NoNetwork) {
   SimulateLogin();
   // Set WiFi to idle
   network_helper_->SetServiceProperty(GetDefaultNetwork().path(),
@@ -407,7 +417,7 @@ TEST_P(NetworkPortalSigninControllerTest, NoNetwork) {
   EXPECT_TRUE(DefaultUrl().empty());
 }
 
-TEST_P(NetworkPortalSigninControllerTest, NotInPortalState) {
+TEST_F(NetworkPortalSigninControllerTest, NotInPortalState) {
   SimulateLogin();
   // Set WiFi to online
   network_helper_->SetServiceProperty(GetDefaultNetwork().path(),
@@ -417,7 +427,7 @@ TEST_P(NetworkPortalSigninControllerTest, NotInPortalState) {
   EXPECT_TRUE(DefaultUrl().empty());
 }
 
-TEST_P(NetworkPortalSigninControllerTest, Metrics) {
+TEST_F(NetworkPortalSigninControllerTest, Metrics) {
   base::HistogramTester histogram_tester;
   SimulateLogin();
   std::string expected_url = SetProbeUrl(std::string());
@@ -458,9 +468,5 @@ TEST_P(NetworkPortalSigninControllerTest, Metrics) {
   histogram_tester.ExpectTimeBucketCount("Network.NetworkPortalSigninTime",
                                          base::TimeDelta(), 1);
 }
-
-INSTANTIATE_TEST_SUITE_P(NetworkPortalSigninControllerTests,
-                         NetworkPortalSigninControllerTest,
-                         ::testing::Values(false, true));
 
 }  // namespace ash

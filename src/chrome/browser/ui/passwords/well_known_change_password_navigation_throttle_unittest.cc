@@ -12,6 +12,7 @@
 #include "content/public/browser/navigation_throttle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/test/mock_navigation_handle.h"
+#include "content/public/test/mock_navigation_throttle_registry.h"
 #include "content/public/test/navigation_simulator.h"
 #include "content/public/test/test_renderer_host.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -45,15 +46,18 @@ class WellKnownChangePasswordNavigationThrottleTest
 
   content::RenderFrameHost* subframe() const { return subframe_; }
 
-  std::unique_ptr<WellKnownChangePasswordNavigationThrottle>
-  CreateNavigationThrottle(NavigationThrottleOptions opts) {
+  bool CreateNavigationThrottle(NavigationThrottleOptions opts) {
     content::MockNavigationHandle handle(
         opts.url, opts.rfh ? opts.rfh.get() : main_rfh());
     handle.set_page_transition(opts.page_transition);
-    if (opts.initiator_origin)
+    if (opts.initiator_origin) {
       handle.set_initiator_origin(*opts.initiator_origin);
-    return WellKnownChangePasswordNavigationThrottle::MaybeCreateThrottleFor(
-        &handle);
+    }
+    content::MockNavigationThrottleRegistry registry(
+        &handle,
+        content::MockNavigationThrottleRegistry::RegistrationMode::kHold);
+    WellKnownChangePasswordNavigationThrottle::MaybeCreateAndAdd(registry);
+    return !registry.throttles().empty();
   }
 
  private:
@@ -79,7 +83,7 @@ TEST_F(WellKnownChangePasswordNavigationThrottleTest,
       .url = GURL("https://google.com/.well-known/change-password"),
       .page_transition = ui::PAGE_TRANSITION_LINK,
       .initiator_origin =
-          url::Origin::Create(GURL("wootzapp://settings/passwords/check")),
+          url::Origin::Create(GURL("chrome://settings/passwords/check")),
   }));
 
   EXPECT_TRUE(CreateNavigationThrottle({
@@ -113,7 +117,7 @@ TEST_F(WellKnownChangePasswordNavigationThrottleTest,
   url = GURL("https://google.com/foo");
   EXPECT_FALSE(CreateNavigationThrottle({url}));
 
-  url = GURL("wootzapp://settings/");
+  url = GURL("chrome://settings/");
   EXPECT_FALSE(CreateNavigationThrottle({url}));
 
   url = GURL("mailto:?subject=test");

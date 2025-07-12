@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/webshare/win/fake_random_access_stream.h"
 
 #include <robuffer.h>
@@ -209,7 +214,7 @@ class StreamData final : public base::RefCountedThreadSafe<StreamData> {
  private:
   friend class base::RefCountedThreadSafe<StreamData>;
 
-  virtual ~StreamData() {
+  ~StreamData() {
     EXPECT_FALSE(flush_async_in_progress_)
         << "StreamData destroyed while flush operation is in progress.";
     EXPECT_FALSE(read_async_in_progress_)
@@ -382,8 +387,7 @@ IFACEMETHODIMP FakeRandomAccessStream::Seek(UINT64 position) {
 
 IFACEMETHODIMP
 FakeRandomAccessStream::CloneStream(IRandomAccessStream** stream) {
-  NOTREACHED_IN_MIGRATION();
-  return E_NOTIMPL;
+  NOTREACHED();
 }
 
 IFACEMETHODIMP FakeRandomAccessStream::get_CanRead(boolean* value) {

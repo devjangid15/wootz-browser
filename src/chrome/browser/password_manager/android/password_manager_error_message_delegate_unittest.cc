@@ -18,6 +18,7 @@
 #include "components/password_manager/core/common/password_manager_pref_names.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/testing_pref_service.h"
+#include "components/sync/service/sync_service_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -28,7 +29,7 @@ constexpr char kErrorMessageDismissalReasonHistogramName[] =
     "PasswordManager.ErrorMessageDismissalReason.";
 constexpr char kErrorMessageDisplayReasonHistogramName[] =
     "PasswordManager.ErrorMessageDisplayReason";
-}
+}  // namespace
 
 class PasswordManagerErrorMessageDelegateTest
     : public ChromeRenderViewHostTestHarness {
@@ -416,7 +417,9 @@ TEST_F(PasswordManagerErrorMessageDelegateTest,
   EXPECT_NE(nullptr, GetMessageWrapper());
 
   EXPECT_CALL(*helper_bridge(),
-              StartTrustedVaultKeyRetrievalFlow(web_contents()));
+              StartTrustedVaultKeyRetrievalFlow(
+                  web_contents(), syncer::TrustedVaultUserActionTriggerForUMA::
+                                      kPasswordManagerErrorMessage));
   GetMessageWrapper()->HandleActionClick(base::android::AttachCurrentThread());
 
   // The message needs to be dismissed manually in tests. In production code
@@ -425,5 +428,58 @@ TEST_F(PasswordManagerErrorMessageDelegateTest,
   histogram_tester.ExpectUniqueSample(
       base::StrCat(
           {kErrorMessageDismissalReasonHistogramName, "KeyRetrievalRequired"}),
+      messages::DismissReason::PRIMARY_ACTION, 1);
+}
+
+// Tests that the key retrieval flow starts when the user clicks the action
+// button and that the metrics are recorded correctly.
+TEST_F(PasswordManagerErrorMessageDelegateTest,
+       StartTrustedVaultKeyRetrievalFlowForEmptySecurityDomain) {
+  base::HistogramTester histogram_tester;
+
+  DisplayMessageAndExpectEnqueued(
+      password_manager::ErrorMessageFlowType::kSaveFlow,
+      password_manager::PasswordStoreBackendErrorType::kEmptySecurityDomain);
+  EXPECT_NE(nullptr, GetMessageWrapper());
+
+  EXPECT_CALL(*helper_bridge(),
+              StartTrustedVaultKeyRetrievalFlow(
+                  web_contents(), syncer::TrustedVaultUserActionTriggerForUMA::
+                                      kPasswordManagerErrorMessage));
+  GetMessageWrapper()->HandleActionClick(base::android::AttachCurrentThread());
+
+  // The message needs to be dismissed manually in tests. In production code
+  // this happens automatically, but on the java side.
+  DismissMessageAndExpectDismissed(messages::DismissReason::PRIMARY_ACTION);
+  histogram_tester.ExpectUniqueSample(
+      base::StrCat(
+          {kErrorMessageDismissalReasonHistogramName, "EmptySecurityDomain"}),
+      messages::DismissReason::PRIMARY_ACTION, 1);
+}
+
+// Tests that the key retrieval flow starts when the user clicks the action
+// button and that the metrics are recorded correctly.
+TEST_F(PasswordManagerErrorMessageDelegateTest,
+       StartTrustedVaultKeyRetrievalFlowForIrretrievableSecurityDomain) {
+  base::HistogramTester histogram_tester;
+
+  DisplayMessageAndExpectEnqueued(
+      password_manager::ErrorMessageFlowType::kSaveFlow,
+      password_manager::PasswordStoreBackendErrorType::
+          kIrretrievableSecurityDomain);
+  EXPECT_NE(nullptr, GetMessageWrapper());
+
+  EXPECT_CALL(*helper_bridge(),
+              StartTrustedVaultKeyRetrievalFlow(
+                  web_contents(), syncer::TrustedVaultUserActionTriggerForUMA::
+                                      kPasswordManagerErrorMessage));
+  GetMessageWrapper()->HandleActionClick(base::android::AttachCurrentThread());
+
+  // The message needs to be dismissed manually in tests. In production code
+  // this happens automatically, but on the java side.
+  DismissMessageAndExpectDismissed(messages::DismissReason::PRIMARY_ACTION);
+  histogram_tester.ExpectUniqueSample(
+      base::StrCat({kErrorMessageDismissalReasonHistogramName,
+                    "IrretrievableSecurityDomain"}),
       messages::DismissReason::PRIMARY_ACTION, 1);
 }

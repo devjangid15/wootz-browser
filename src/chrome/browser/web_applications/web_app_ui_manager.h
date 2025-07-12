@@ -19,6 +19,7 @@
 #include "chrome/browser/web_applications/os_integration/web_app_shortcut.h"
 #include "chrome/browser/web_applications/web_app_callback_app_identity.h"
 #include "components/services/app_service/public/cpp/app_launch_util.h"
+#include "components/webapps/browser/install_result_code.h"
 #include "components/webapps/browser/uninstall_result_code.h"
 #include "components/webapps/common/web_app_id.h"
 #include "ui/gfx/native_widget_types.h"
@@ -36,6 +37,9 @@ class WebContents;
 class NavigationHandle;
 }  // namespace content
 
+namespace webapps {
+class MlInstallOperationTracker;
+}
 namespace web_app {
 
 class WithAppResources;
@@ -101,6 +105,8 @@ enum class LaunchWebAppWindowSetting {
 // events from WebAppTabHelpers.
 class WebAppUiManager {
  public:
+  using ShowIntentPickerBubbleCallback = base::OnceCallback<void(bool)>;
+
   struct RoolNotificationBehavior {
     bool is_rool_enabled = false;
     bool is_prevent_close_enabled = false;
@@ -149,26 +155,35 @@ class WebAppUiManager {
   virtual void AddAppToQuickLaunchBar(const webapps::AppId& app_id) = 0;
   virtual bool IsAppInQuickLaunchBar(const webapps::AppId& app_id) const = 0;
 
-  // Returns whether |web_contents| is in a web app window or popup window
-  // created from a web app window.
-  virtual bool IsInAppWindow(content::WebContents* web_contents) const = 0;
-  virtual const webapps::AppId* GetAppIdForWindow(
-      const content::WebContents* web_contents) const = 0;
-  virtual void NotifyOnAssociatedAppChanged(
-      content::WebContents* web_contents,
-      const std::optional<webapps::AppId>& previous_app_id,
-      const std::optional<webapps::AppId>& new_app_id) const = 0;
+  virtual bool CanReparentAppTabToWindow(
+      const webapps::AppId& app_id,
+      bool shortcut_created,
+      content::WebContents* web_contents) const = 0;
+  // Reparents the |contents| to a new browser window, returns a nullptr if the
+  // operation failed.
+  virtual Browser* ReparentAppTabToWindow(content::WebContents* contents,
+                                          const webapps::AppId& app_id,
+                                          bool shortcut_created) = 0;
 
-  virtual bool CanReparentAppTabToWindow(const webapps::AppId& app_id,
-                                         bool shortcut_created) const = 0;
-  virtual void ReparentAppTabToWindow(content::WebContents* contents,
-                                      const webapps::AppId& app_id,
-                                      bool shortcut_created) = 0;
+  // Reparents the `contents` to a new browser window, returns a nullptr if the
+  // operation failed. Runs `completion_callback` with the web contents of the
+  // newly reparented app window.
+  virtual Browser* ReparentAppTabToWindow(
+      content::WebContents* contents,
+      const webapps::AppId& app_id,
+      base::OnceCallback<void(content::WebContents*)> completion_callback) = 0;
 
   // Shows the pre-launch dialog for a file handling web app launch. The user
   // can allow or block the launch.
   virtual void ShowWebAppFileLaunchDialog(
       const std::vector<base::FilePath>& file_paths,
+      const webapps::AppId& app_id,
+      WebAppLaunchAcceptanceCallback launch_callback) = 0;
+
+  // Shows the pre-launch dialog for a protocol web app launch. The user can
+  // allow or block the launch.
+  virtual void ShowWebAppProtocolLaunchDialog(
+      const GURL& protocol_url,
       const webapps::AppId& app_id,
       WebAppLaunchAcceptanceCallback launch_callback) = 0;
 
@@ -243,7 +258,34 @@ class WebAppUiManager {
   // Triggers the web app install dialog on the specified |web_contents| if
   // there is an installable web app. This will show the dialog even if the app
   // is already installed.
-  virtual void TriggerInstallDialog(content::WebContents* web_contents) = 0;
+  using InstallCallback =
+      base::OnceCallback<void(const webapps::AppId& app_id,
+                              webapps::InstallResultCode code)>;
+  virtual void TriggerInstallDialog(content::WebContents* web_contents,
+                                    webapps::WebappInstallSource source,
+                                    InstallCallback callback) = 0;
+
+  // Triggers the web app install dialog for a background install of the
+  // contents at `install_url`, with the optional `manifest_id`. The dialog will
+  // be anchored to `initiating_web_contents`. This assumes the app is not
+  // already installed. Used for the Web Install API.
+  virtual void TriggerInstallDialogForBackgroundInstall(
+      content::WebContents* initiating_web_contents,
+      std::unique_ptr<webapps::MlInstallOperationTracker> tracker,
+      const GURL& install_url,
+      const std::optional<GURL>& manifest_id,
+      InstallCallback callback) = 0;
+
+  using WebInstallAppLaunchAcceptanceCallback =
+      base::OnceCallback<void(bool accepted)>;
+  // Triggers the web app launch dialog anchored to `initiating_web_contents`
+  // to launch the app given by `app_id`. Used for the Web Install API.
+  virtual void TriggerLaunchDialogForBackgroundInstall(
+      content::WebContents* initiating_web_contents,
+      const webapps::AppId& app_id,
+      Profile* profile,
+      const std::string& app_name,
+      WebInstallAppLaunchAcceptanceCallback callback) = 0;
 
   // The uninstall dialog will be modal to |parent_window|, or a non-modal if
   // |parent_window| is nullptr. Use this API if a Browser window needs to be
@@ -271,6 +313,12 @@ class WebAppUiManager {
       UninstallCompleteCallback callback,
       UninstallScheduledCallback scheduled_callback) = 0;
 
+  // This assumes the app is already installed. The callback is called with
+  // true when the user chooses to open the app, otherwise, false is called.
+  virtual void ShowIntentPicker(const GURL& url,
+                                content::WebContents* web_contents,
+                                ShowIntentPickerBubbleCallback callback) = 0;
+
   // Launches the Isolated Web App installer for a bundle with the given path.
   // If an installer with the given path already exists, brings it to front and
   // focuses it instead.
@@ -286,7 +334,7 @@ class WebAppUiManager {
   // Creates the IPH bubble for apps that are launched via link capturing being
   // enabled.
   virtual void MaybeShowIPHPromoForAppsLaunchedViaLinkCapturing(
-      content::WebContents* web_contents,
+      Browser* browser,
       Profile* profile,
       const std::string& app_id) = 0;
 

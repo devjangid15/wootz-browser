@@ -10,6 +10,7 @@
 #include "ui/accessibility/ax_action_data.h"
 #include "ui/accessibility/ax_enums.mojom-forward.h"
 #include "ui/accessibility/ax_node_id_forward.h"
+#include "ui/accessibility/platform/ax_platform_node_id.h"
 #include "ui/accessibility/platform/ax_platform_tree_manager.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
@@ -51,6 +52,9 @@ class COMPONENT_EXPORT(AX_PLATFORM) AXPlatformTreeManagerDelegate {
   // Note that when accessibility is turned on, focus might behave differently,
   // including making some unfocusable UI elements to become focusable. See
   // `views::FocusBehavior`.
+  //
+  // TODO(accessibility): This method is about widget activation. Rename to
+  // `AccessibilityWidgetIsActive` or similar.
   virtual bool AccessibilityViewHasFocus() = 0;
 
   // Moves the focus inside the View` that contains the current accessibility
@@ -60,6 +64,9 @@ class COMPONENT_EXPORT(AX_PLATFORM) AXPlatformTreeManagerDelegate {
   // Note that when accessibility is turned on, focus might behave differently,
   // including making some unfocusable UI elements to become focusable. See
   // `views::FocusBehavior`.
+  //
+  // TODO(accessibility): This method is about widget activation. Rename to
+  // `AccessibilityWidgetActivate` or similar.
   virtual void AccessibilityViewSetFocus() = 0;
 
   // Returns the bounds (in screen coordinates) of the `View` that contains the
@@ -131,6 +138,10 @@ class COMPONENT_EXPORT(AX_PLATFORM) AXPlatformTreeManagerDelegate {
   virtual bool ShouldSuppressAXLoadComplete() = 0;
   virtual content::WebContentsAccessibility*
   AccessibilityGetWebContentsAccessibility() = 0;
+
+  // Returns true if the current accessibility tree is for web content, false if
+  // it's for Views.
+  virtual bool AccessibilityIsWebContentSource() = 0;
 
  protected:
   AXPlatformTreeManagerDelegate() = default;

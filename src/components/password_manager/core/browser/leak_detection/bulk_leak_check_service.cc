@@ -54,8 +54,9 @@ void BulkLeakCheckService::MetricsReporter::OnStartCheck(
 
 void BulkLeakCheckService::MetricsReporter::OnCredentialChecked(
     IsLeaked is_leaked) {
-  if (is_leaked)
+  if (is_leaked) {
     leaked_credential_count_++;
+  }
 }
 
 void BulkLeakCheckService::MetricsReporter::OnCancelCheck() {
@@ -63,8 +64,6 @@ void BulkLeakCheckService::MetricsReporter::OnCancelCheck() {
 }
 
 void BulkLeakCheckService::MetricsReporter::OnError(LeakDetectionError error) {
-  UMA_HISTOGRAM_ENUMERATION("PasswordManager.BulkCheck.Error", error);
-
   error_or_canceled_ = true;
 }
 
@@ -90,8 +89,9 @@ void BulkLeakCheckService::CheckUsernamePasswordPairs(
     NotifyStateChanged();
     return;
   }
-  if (!metrics_reporter_)
+  if (!metrics_reporter_) {
     metrics_reporter_ = std::make_unique<MetricsReporter>();
+  }
   metrics_reporter_->OnStartCheck(credentials.size());
   if (bulk_leak_check_) {
     DCHECK_EQ(State::kRunning, state_);
@@ -150,8 +150,9 @@ void BulkLeakCheckService::RemoveObserver(Observer* obs) {
 }
 
 void BulkLeakCheckService::Shutdown() {
-  for (Observer& obs : observers_)
+  for (Observer& obs : observers_) {
     obs.OnBulkCheckServiceShutDown();
+  }
   observers_.Clear();
   metrics_reporter_.reset();
   bulk_leak_check_.reset();
@@ -172,10 +173,12 @@ void BulkLeakCheckService::OnFinishedCredential(LeakCheckCredential credential,
     metrics_reporter_.reset();
     bulk_leak_check_.reset();
   }
-  for (Observer& obs : observers_)
+  for (Observer& obs : observers_) {
     obs.OnCredentialDone(credential, is_leaked);
-  if (state_ == State::kIdle)
+  }
+  if (state_ == State::kIdle) {
     NotifyStateChanged();
+  }
 }
 
 void BulkLeakCheckService::OnError(LeakDetectionError error) {
@@ -207,8 +210,9 @@ void BulkLeakCheckService::OnError(LeakDetectionError error) {
 }
 
 void BulkLeakCheckService::NotifyStateChanged() {
-  for (Observer& obs : observers_)
+  for (Observer& obs : observers_) {
     obs.OnStateChanged(state_);
+  }
 }
 
 }  // namespace password_manager

@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_PAGE_LOAD_METRICS_BROWSER_FAKE_PAGE_LOAD_METRICS_OBSERVER_DELEGATE_H_
 #define COMPONENTS_PAGE_LOAD_METRICS_BROWSER_FAKE_PAGE_LOAD_METRICS_OBSERVER_DELEGATE_H_
 
+#include <vector>
+
 #include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
 #include "components/page_load_metrics/browser/page_load_metrics_observer.h"
@@ -83,6 +85,7 @@ class FakePageLoadMetricsObserverDelegate
   bool IsFirstNavigationInWebContents() const override;
   bool IsOriginVisit() const override;
   bool IsTerminalVisit() const override;
+  bool ShouldObserveScheme(std::string_view scheme) const override;
   int64_t GetNavigationId() const override;
 
   // Helpers to add a BackForwardCacheRestore to this fake.

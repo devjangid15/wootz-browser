@@ -6,6 +6,7 @@
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/apps/platform_apps/app_browsertest_util.h"
 #include "chrome/browser/profiles/profile.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "extensions/browser/app_window/native_app_window.h"
@@ -20,9 +21,7 @@ using AppWindowBrowserTest = PlatformAppBrowserTest;
 // This test is disabled on Linux because of the unpredictable nature of native
 // windows. We cannot assume that the window manager will insert any title bar
 // at all, so the test may fail on certain window managers.
-// TODO(crbug.com/40118868): Revisit the macro expression once build flag switch
-// of lacros-chrome is complete.
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_LINUX)
 #define MAYBE_FrameInsetsForDefaultFrame DISABLED_FrameInsetsForDefaultFrame
 #else
 #define MAYBE_FrameInsetsForDefaultFrame FrameInsetsForDefaultFrame
@@ -114,7 +113,7 @@ IN_PROC_BROWSER_TEST_F(AppWindowBrowserTest, DraggableFramelessWindow) {
   EXPECT_FALSE(draggable_region->isEmpty());
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 
 // Disabled due to flake. https://crbug.com/1416579
 IN_PROC_BROWSER_TEST_F(AppWindowBrowserTest,
@@ -130,8 +129,9 @@ IN_PROC_BROWSER_TEST_F(AppWindowBrowserTest,
   // eviction.
   content::RenderFrameSubmissionObserver submission_observer(
       app_window->web_contents());
-  if (!submission_observer.render_frame_count())
+  if (!submission_observer.render_frame_count()) {
     submission_observer.WaitForAnyFrameSubmission();
+  }
 
   // Helper function as this test requires inspecting a number of content::
   // internal objects.
@@ -139,7 +139,7 @@ IN_PROC_BROWSER_TEST_F(AppWindowBrowserTest,
       app_window->web_contents()->GetRenderWidgetHostView());
 }
 
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 }  // namespace
 

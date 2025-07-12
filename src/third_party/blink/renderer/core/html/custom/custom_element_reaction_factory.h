@@ -9,10 +9,6 @@
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 
-namespace WTF {
-class String;
-}  // namespace WTF
-
 namespace blink {
 
 class CustomElementDefinition;
@@ -30,6 +26,8 @@ class CustomElementReactionFactory {
   static CustomElementReaction& CreateConnected(
       CustomElementDefinition& definition);
   static CustomElementReaction& CreateDisconnected(
+      CustomElementDefinition& definition);
+  static CustomElementReaction& CreateConnectedMove(
       CustomElementDefinition& definition);
   static CustomElementReaction& CreateAdopted(
       CustomElementDefinition& definition,

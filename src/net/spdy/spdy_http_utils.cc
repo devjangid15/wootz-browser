@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 #include "net/spdy/spdy_http_utils.h"
 
 #include <string>
@@ -13,6 +14,7 @@
 #include "base/strings/strcat.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
+#include "base/strings/string_view_util.h"
 #include "base/types/expected.h"
 #include "base/types/expected_macros.h"
 #include "net/base/features.h"
@@ -24,7 +26,6 @@
 #include "net/http/http_util.h"
 #include "net/quic/quic_http_utils.h"
 #include "net/third_party/quiche/src/quiche/quic/core/quic_stream_priority.h"
-#include "net/third_party/quiche/src/quiche/spdy/core/http2_header_block.h"
 
 namespace net {
 
@@ -41,16 +42,16 @@ constexpr size_t kExpectedRawHeaderSize = 4035;
 // `headers`.
 void AddUniqueSpdyHeader(std::string_view name,
                          std::string_view value,
-                         spdy::Http2HeaderBlock* headers) {
+                         quiche::HttpHeaderBlock* headers) {
   auto insert_result = headers->insert({name, value});
-  CHECK_EQ(insert_result, spdy::Http2HeaderBlock::InsertResult::kInserted);
+  CHECK_EQ(insert_result, quiche::HttpHeaderBlock::InsertResult::kInserted);
 }
 
 // Convert `headers` to an HttpResponseHeaders object based on the features
 // enabled at runtime.
 base::expected<scoped_refptr<HttpResponseHeaders>, int>
 SpdyHeadersToHttpResponseHeadersUsingFeatures(
-    const spdy::Http2HeaderBlock& headers) {
+    const quiche::HttpHeaderBlock& headers) {
   if (base::FeatureList::IsEnabled(
           features::kSpdyHeadersToHttpResponseUseBuilder)) {
     return SpdyHeadersToHttpResponseHeadersUsingBuilder(headers);
@@ -61,7 +62,7 @@ SpdyHeadersToHttpResponseHeadersUsingFeatures(
 
 }  // namespace
 
-int SpdyHeadersToHttpResponse(const spdy::Http2HeaderBlock& headers,
+int SpdyHeadersToHttpResponse(const quiche::HttpHeaderBlock& headers,
                               HttpResponseInfo* response) {
   ASSIGN_OR_RETURN(response->headers,
                    SpdyHeadersToHttpResponseHeadersUsingFeatures(headers));
@@ -71,9 +72,9 @@ int SpdyHeadersToHttpResponse(const spdy::Http2HeaderBlock& headers,
 
 NET_EXPORT_PRIVATE base::expected<scoped_refptr<HttpResponseHeaders>, int>
 SpdyHeadersToHttpResponseHeadersUsingRawString(
-    const spdy::Http2HeaderBlock& headers) {
+    const quiche::HttpHeaderBlock& headers) {
   // The ":status" header is required.
-  spdy::Http2HeaderBlock::const_iterator it =
+  quiche::HttpHeaderBlock::const_iterator it =
       headers.find(spdy::kHttp2StatusHeader);
   if (it == headers.end()) {
     return base::unexpected(ERR_INCOMPLETE_HTTP2_HEADERS);
@@ -81,8 +82,8 @@ SpdyHeadersToHttpResponseHeadersUsingRawString(
 
   const auto status = it->second;
 
-  std::string raw_headers =
-      base::StrCat({"HTTP/1.1 ", status, std::string_view("\0", 1)});
+  std::string raw_headers = base::StrCat(
+      {"HTTP/1.1 ", status, base::MakeStringViewWithNulChars("\0")});
   raw_headers.reserve(kExpectedRawHeaderSize);
   for (const auto& [name, value] : headers) {
     DCHECK_GT(name.size(), 0u);
@@ -109,8 +110,8 @@ SpdyHeadersToHttpResponseHeadersUsingRawString(
       } else {
         tval = value.substr(start);
       }
-      base::StrAppend(&raw_headers,
-                      {name, ":", tval, std::string_view("\0", 1)});
+      base::StrAppend(&raw_headers, {name, ":", tval,
+                                     base::MakeStringViewWithNulChars("\0")});
       start = end + 1;
     } while (end != value.npos);
   }
@@ -130,12 +131,12 @@ SpdyHeadersToHttpResponseHeadersUsingRawString(
 
 NET_EXPORT_PRIVATE base::expected<scoped_refptr<HttpResponseHeaders>, int>
 SpdyHeadersToHttpResponseHeadersUsingBuilder(
-    const spdy::Http2HeaderBlock& headers) {
+    const quiche::HttpHeaderBlock& headers) {
   // The ":status" header is required.
   // TODO(ricea): The ":status" header should always come first. Skip this hash
   // lookup after we no longer need to be compatible with the old
   // implementation.
-  spdy::Http2HeaderBlock::const_iterator it =
+  quiche::HttpHeaderBlock::const_iterator it =
       headers.find(spdy::kHttp2StatusHeader);
   if (it == headers.end()) {
     return base::unexpected(ERR_INCOMPLETE_HTTP2_HEADERS);
@@ -197,7 +198,7 @@ SpdyHeadersToHttpResponseHeadersUsingBuilder(
 void CreateSpdyHeadersFromHttpRequest(const HttpRequestInfo& info,
                                       std::optional<RequestPriority> priority,
                                       const HttpRequestHeaders& request_headers,
-                                      spdy::Http2HeaderBlock* headers) {
+                                      quiche::HttpHeaderBlock* headers) {
   headers->insert({spdy::kHttp2MethodHeader, info.method});
   if (info.method == "CONNECT") {
     headers->insert({spdy::kHttp2AuthorityHeader, GetHostAndPort(info.url)});
@@ -223,7 +224,6 @@ void CreateSpdyHeadersFromHttpRequest(const HttpRequestInfo& info,
   // quic helpers but the header values for HTTP extensible priorities are
   // independent of quic.
   if (priority &&
-      base::FeatureList::IsEnabled(net::features::kPriorityHeader) &&
       headers->find(kHttp2PriorityHeader) == headers->end()) {
     uint8_t urgency = ConvertRequestPriorityToQuicPriority(priority.value());
     bool incremental = info.priority_incremental;
@@ -241,7 +241,7 @@ void CreateSpdyHeadersFromHttpRequestForExtendedConnect(
     std::optional<RequestPriority> priority,
     const std::string& ext_connect_protocol,
     const HttpRequestHeaders& request_headers,
-    spdy::Http2HeaderBlock* headers) {
+    quiche::HttpHeaderBlock* headers) {
   CHECK_EQ(info.method, "CONNECT");
 
   // Extended CONNECT, unlike CONNECT, requires scheme and path, and uses the
@@ -261,7 +261,7 @@ void CreateSpdyHeadersFromHttpRequestForExtendedConnect(
 void CreateSpdyHeadersFromHttpRequestForWebSocket(
     const GURL& url,
     const HttpRequestHeaders& request_headers,
-    spdy::Http2HeaderBlock* headers) {
+    quiche::HttpHeaderBlock* headers) {
   headers->insert({spdy::kHttp2MethodHeader, "CONNECT"});
   headers->insert({spdy::kHttp2AuthorityHeader, GetHostAndOptionalPort(url)});
   headers->insert({spdy::kHttp2SchemeHeader, "https"});
@@ -299,22 +299,6 @@ ConvertSpdyPriorityToRequestPriority(spdy::SpdyPriority priority) {
              ? IDLE
              : static_cast<RequestPriority>(
                    MAXIMUM_PRIORITY - (priority - spdy::kV3HighestPriority));
-}
-
-NET_EXPORT_PRIVATE void ConvertHeaderBlockToHttpRequestHeaders(
-    const spdy::Http2HeaderBlock& spdy_headers,
-    HttpRequestHeaders* http_headers) {
-  for (const auto& it : spdy_headers) {
-    std::string_view key = it.first;
-    if (key[0] == ':') {
-      key.remove_prefix(1);
-    }
-    std::vector<std::string_view> values = base::SplitStringPiece(
-        it.second, "\0", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
-    for (const auto& value : values) {
-      http_headers->SetHeader(key, value);
-    }
-  }
 }
 
 }  // namespace net

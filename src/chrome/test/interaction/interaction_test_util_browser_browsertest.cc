@@ -17,7 +17,7 @@
 #include "chrome/test/interaction/feature_engagement_initialized_observer.h"
 #include "chrome/test/interaction/interactive_browser_test.h"
 #include "chrome/test/interaction/webcontents_interaction_test_util.h"
-#include "components/user_education/common/new_badge_controller.h"
+#include "components/user_education/common/new_badge/new_badge_controller.h"
 #include "content/public/test/browser_test.h"
 #include "ui/base/interaction/element_identifier.h"
 #include "ui/base/interaction/interaction_test_util.h"
@@ -77,8 +77,6 @@ IN_PROC_BROWSER_TEST_F(InteractionTestUtilBrowserTest, CompareScreenshot_View) {
                              /*baseline_cl=*/"3924454"));
 }
 
-namespace {
-
 class ScreenshotSurfaceTestDialog : public views::BubbleDialogDelegateView {
  public:
   DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kTitleElementId);
@@ -102,10 +100,9 @@ class ScreenshotSurfaceTestDialog : public views::BubbleDialogDelegateView {
 DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(ScreenshotSurfaceTestDialog,
                                       kTitleElementId);
 
-}  // namespace
-
 IN_PROC_BROWSER_TEST_F(InteractionTestUtilBrowserTest,
-                       CompareScreenshot_Surface) {
+                       // TODO(crbug.com/422631121): Re-enable this test
+                       DISABLED_CompareScreenshot_Surface) {
   views::Widget* widget = nullptr;
 
   RunTestSequence(
@@ -115,7 +112,7 @@ IN_PROC_BROWSER_TEST_F(InteractionTestUtilBrowserTest,
                      std::make_unique<ScreenshotSurfaceTestDialog>(anchor));
                  widget->Show();
                }),
-      WaitForShow(ScreenshotSurfaceTestDialog::kTitleElementId), FlushEvents(),
+      WaitForShow(ScreenshotSurfaceTestDialog::kTitleElementId),
       SetOnIncompatibleAction(OnIncompatibleAction::kSkipTest,
                               kSkipPixelTestsReason),
       ScreenshotSurface(ScreenshotSurfaceTestDialog::kTitleElementId,

@@ -26,19 +26,13 @@ void NormalGetUpdatesDelegate::HelpPopulateGuMessage(
     sync_pb::GetUpdatesMessage* get_updates) const {
   // Set the origin.
   get_updates->set_get_updates_origin(sync_pb::SyncEnums::GU_TRIGGER);
-  get_updates->set_is_retry(nudge_tracker_->IsRetryRequired());
-
-  // Special case: A GU performed for no other reason than retry will have its
-  // origin set to RETRY.
-  if (nudge_tracker_->GetOrigin() == sync_pb::SyncEnums::RETRY)
-    get_updates->set_get_updates_origin(sync_pb::SyncEnums::RETRY);
 
   // Fill in the notification hints.
   for (int i = 0; i < get_updates->from_progress_marker_size(); ++i) {
     sync_pb::DataTypeProgressMarker* progress_marker =
         get_updates->mutable_from_progress_marker(i);
-    ModelType type =
-        GetModelTypeFromSpecificsFieldNumber(progress_marker->data_type_id());
+    DataType type =
+        GetDataTypeFromSpecificsFieldNumber(progress_marker->data_type_id());
 
     DCHECK(!nudge_tracker_->IsTypeBlocked(type))
         << "Throttled types should have been removed from the request_types.";

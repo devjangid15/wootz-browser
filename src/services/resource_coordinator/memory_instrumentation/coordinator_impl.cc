@@ -388,14 +388,12 @@ void CoordinatorImpl::PerformNextQueuedGlobalMemoryDump() {
   if (request->args.add_to_trace && heap_profiler_) {
     request->heap_dump_in_progress = true;
 
-    // |IsArgumentFilterEnabled| is the round-about way of asking to anonymize
-    // the trace. The only way that PII gets leaked is if the full path is
-    // emitted for mapped files. Passing |strip_path_from_mapped_files|
-    // is all that is necessary to anonymize the trace.
+    // We use level_of_detail == kBackground as a way of asking to anonymize the
+    // trace. The only way that PII gets leaked is if the full path is emitted
+    // for mapped files. Passing |strip_path_from_mapped_files| is all that is
+    // necessary to anonymize the trace.
     bool strip_path_from_mapped_files =
-        base::trace_event::TraceLog::GetInstance()
-            ->GetCurrentTraceConfig()
-            .IsArgumentFilterEnabled();
+        request->args.level_of_detail == MemoryDumpLevelOfDetail::kBackground;
     heap_profiler_->DumpProcessesForTracing(
         strip_path_from_mapped_files, write_proto_heap_profile_,
         base::BindOnce(&CoordinatorImpl::OnDumpProcessesForTracing,
@@ -483,11 +481,11 @@ void CoordinatorImpl::OnOSMemoryDumpForVMRegions(uint64_t dump_guid,
                                                  OSMemDumpMap os_dumps) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   auto request_it = in_progress_vm_region_requests_.find(dump_guid);
-  DCHECK(request_it != in_progress_vm_region_requests_.end());
+  CHECK(request_it != in_progress_vm_region_requests_.end());
 
   QueuedVmRegionRequest* request = request_it->second.get();
   auto it = request->pending_responses.find(process_id);
-  DCHECK(it != request->pending_responses.end());
+  CHECK(it != request->pending_responses.end());
   request->pending_responses.erase(it);
   request->responses[process_id].os_dumps = std::move(os_dumps);
 
@@ -544,8 +542,7 @@ void CoordinatorImpl::RemovePendingResponse(
     QueuedRequest::PendingResponse::Type type) {
   QueuedRequest* request = GetCurrentRequest();
   if (request == nullptr) {
-    NOTREACHED_IN_MIGRATION() << "No current dump request.";
-    return;
+    NOTREACHED() << "No current dump request.";
   }
   auto it = request->pending_responses.find({process_id, type});
   if (it == request->pending_responses.end()) {

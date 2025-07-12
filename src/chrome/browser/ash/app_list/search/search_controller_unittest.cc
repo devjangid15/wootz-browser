@@ -2,8 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/ash/app_list/search/search_controller.h"
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <vector>
@@ -13,7 +19,7 @@
 #include "ash/public/cpp/app_list/app_list_types.h"
 #include "base/containers/to_vector.h"
 #include "base/memory/raw_ptr.h"
-#include "base/ranges/algorithm.h"
+#include "base/strings/stringprintf.h"
 #include "base/test/bind.h"
 #include "base/time/time.h"
 #include "chrome/browser/ash/app_list/search/chrome_search_result.h"
@@ -28,6 +34,8 @@
 #include "chrome/browser/ash/app_list/search/types.h"
 #include "chrome/browser/ash/app_list/test/fake_app_list_model_updater.h"
 #include "chrome/browser/ash/app_list/test/test_app_list_controller_delegate.h"
+#include "chrome/test/base/scoped_testing_local_state.h"
+#include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
@@ -88,8 +96,7 @@ class SearchControllerTest : public testing::Test {
     search_controller_ = std::make_unique<SearchController>(
         /*model_updater=*/&model_updater_,
         /*list_controller=*/&list_controller_,
-        /*notifier=*/nullptr, &profile_,
-        /*federated_service_controller_*/ nullptr);
+        /*notifier=*/nullptr, &profile_);
     search_controller_->Initialize();
 
     auto ranker_manager = std::make_unique<TestRankerManager>(&profile_);
@@ -153,6 +160,10 @@ class SearchControllerTest : public testing::Test {
 
  protected:
   content::BrowserTaskEnvironment task_environment_;
+
+  // Needed for `DriveIntegrationService`.
+  ScopedTestingLocalState local_state_{TestingBrowserProcess::GetGlobal()};
+
   display::test::TestScreen test_screen_{/*create_dispay=*/true,
                                          /*register_screen=*/true};
   TestingProfile profile_;
@@ -501,9 +512,6 @@ TEST_F(
   search_controller_->SetResults(Result::kPlayStoreApp,
                                  std::move(play_store_app_results));
   ExpectIdOrder({"a", "b", "c", "d", "e"});
-  search_controller_->SetResults(Result::kInternalApp,
-                                 std::move(internal_app_results));
-  ExpectIdOrder({"a", "b", "c", "d", "e", "f"});
 }
 
 TEST_F(SearchControllerTest, FirstSearchResultsNotShownInSecondSearch) {

@@ -4,15 +4,19 @@
 
 package org.chromium.chrome.browser.fullscreen;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.app.Activity;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Message;
+import android.os.OutcomeReceiver;
 import android.view.View;
 import android.view.View.OnLayoutChangeListener;
 import android.view.Window;
 import android.view.WindowManager;
 
-import androidx.annotation.Nullable;
+import androidx.annotation.IntDef;
 import androidx.annotation.VisibleForTesting;
 import androidx.core.util.ObjectsCompat;
 
@@ -22,20 +26,26 @@ import org.chromium.base.ApplicationStatus.ActivityStateListener;
 import org.chromium.base.ApplicationStatus.WindowFocusChangedListener;
 import org.chromium.base.BuildInfo;
 import org.chromium.base.ObserverList;
+import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.NullUnmarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.cc.input.BrowserControlsState;
 import org.chromium.chrome.browser.ActivityTabProvider;
 import org.chromium.chrome.browser.ActivityTabProvider.ActivityTabTabObserver;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
+import org.chromium.chrome.browser.multiwindow.MultiWindowModeStateDispatcher;
 import org.chromium.chrome.browser.multiwindow.MultiWindowUtils;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabAttributeKeys;
 import org.chromium.chrome.browser.tab.TabAttributes;
 import org.chromium.chrome.browser.tab.TabBrowserControlsConstraintsHelper;
 import org.chromium.chrome.browser.tab.TabHidingType;
-import org.chromium.chrome.browser.tab.TabUtils;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorTabObserver;
+import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeUtils;
 import org.chromium.components.embedder_support.view.ContentView;
 import org.chromium.content_public.browser.GestureListenerManager;
 import org.chromium.content_public.browser.NavigationHandle;
@@ -43,17 +53,39 @@ import org.chromium.content_public.browser.SelectionPopupController;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.base.ViewUtils;
 
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 import java.lang.ref.WeakReference;
 
 /** Handles updating the UI based on requests to the HTML Fullscreen API. */
+@NullMarked
 public abstract class FullscreenHtmlApiHandlerBase
-        implements ActivityStateListener,
-                WindowFocusChangedListener,
-                FullscreenManager {
+        implements ActivityStateListener, WindowFocusChangedListener, FullscreenManager {
+    private static final String TAG = "FullscreenHTMLBase";
     private static final boolean DEBUG_LOGS = false;
+    private static final String BROWSER_CONTROLS_FORCED_UPON_FULLSCREEN_EXIT_HISTOGRAM =
+            "Android.FullscreenExit.BrowserControlsForced";
 
     protected static final int MSG_ID_SET_VISIBILITY_FOR_SYSTEM_BARS = 1;
-    protected  static final int MSG_ID_UNSET_FULLSCREEN_LAYOUT = 2;
+    protected static final int MSG_ID_UNSET_FULLSCREEN_LAYOUT = 2;
+
+    // These values are persisted to logs. Entries should not be renumbered and numeric values
+    // should never be reused.
+    @IntDef({
+        BrowserControlsForcedUponFullscreenExitState.MULTI_WINDOW_EDGE_TO_EDGE,
+        BrowserControlsForcedUponFullscreenExitState.NOT_MULTI_WINDOW_EDGE_TO_EDGE,
+        BrowserControlsForcedUponFullscreenExitState.MULTI_WINDOW_NOT_EDGE_TO_EDGE,
+        BrowserControlsForcedUponFullscreenExitState.NOT_MULTI_WINDOW_NOT_EDGE_TO_EDGE,
+        BrowserControlsForcedUponFullscreenExitState.COUNT
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface BrowserControlsForcedUponFullscreenExitState {
+        int MULTI_WINDOW_EDGE_TO_EDGE = 0;
+        int NOT_MULTI_WINDOW_EDGE_TO_EDGE = 1;
+        int MULTI_WINDOW_NOT_EDGE_TO_EDGE = 2;
+        int NOT_MULTI_WINDOW_NOT_EDGE_TO_EDGE = 3;
+        int COUNT = 4;
+    }
 
     // The time we allow the Android notification bar to be shown when it is requested temporarily
     // by the Android system (this value is additive on top of the show duration imposed by
@@ -73,37 +105,42 @@ public abstract class FullscreenHtmlApiHandlerBase
     // We need to cache WebContents/ContentView since we are setting fullscreen UI state on
     // the WebContents's container view, and a Tab can change to have null web contents/
     // content view, i.e., if you navigate to a native page.
-    @Nullable private WebContents mWebContentsInFullscreen;
-    @Nullable private View mContentViewInFullscreen;
-    @Nullable protected Tab mTabInFullscreen;
-    @Nullable private FullscreenOptions mFullscreenOptions;
+    private @Nullable WebContents mWebContentsInFullscreen;
+    private @Nullable View mContentViewInFullscreen;
+    protected @Nullable Tab mTabInFullscreen;
+    private @Nullable FullscreenOptions mFullscreenOptions;
 
-    private FullscreenToast mToast;
+    private @Nullable FullscreenToast mToast;
 
-    private OnLayoutChangeListener mFullscreenOnLayoutChangeListener;
+    private @Nullable OnLayoutChangeListener mFullscreenOnLayoutChangeListener;
 
-    private FullscreenOptions mPendingFullscreenOptions;
+    private @Nullable FullscreenOptions mPendingFullscreenOptions;
 
-    private ActivityTabTabObserver mActiveTabObserver;
-    private TabModelSelectorTabObserver mTabFullscreenObserver;
-    @Nullable private Tab mTab;
+    private @Nullable ActivityTabTabObserver mActiveTabObserver;
+    private @Nullable TabModelSelectorTabObserver mTabFullscreenObserver;
+    private @Nullable Tab mTab;
+    private boolean mDisplayEdgeToEdgeFullscreenToBeExited;
+    private boolean mIsInMultiWindowMode;
+
+    private final FullscreenMultiWindowModeObserver mMultiWindowModeObserver;
 
     private boolean mNotifyOnNextExit;
 
     // Current ContentView. Updates when active tab is switched or WebContents is swapped
     // in the current Tab.
-    private ContentView mContentView;
+    private @Nullable ContentView mContentView;
 
-    protected ContentView getContentView() {
+    protected @Nullable ContentView getContentView() {
         return mContentView;
     }
 
     /**
      * Update the current content view that can be shown in fullscreen mode, e.g. when the active
      * tab is switched or when web contents are swapped in the current Tab.
+     *
      * @param contentView The new content view.
      */
-    protected void setContentView(ContentView contentView) {
+    protected void setContentView(@Nullable ContentView contentView) {
         mContentView = contentView;
     }
 
@@ -113,8 +150,7 @@ public abstract class FullscreenHtmlApiHandlerBase
         private final WeakReference<FullscreenHtmlApiHandlerBase> mFullscreenHtmlApiHandler;
 
         public FullscreenHandler(FullscreenHtmlApiHandlerBase fullscreenHtmlApiHandlerBase) {
-            mFullscreenHtmlApiHandler =
-                    new WeakReference<FullscreenHtmlApiHandlerBase>(fullscreenHtmlApiHandlerBase);
+            mFullscreenHtmlApiHandler = new WeakReference<>(fullscreenHtmlApiHandlerBase);
         }
 
         @Override
@@ -200,6 +236,27 @@ public abstract class FullscreenHtmlApiHandlerBase
         }
     }
 
+    class FullscreenMultiWindowModeObserver
+            implements MultiWindowModeStateDispatcher.MultiWindowModeObserver {
+        @Override
+        public void onMultiWindowModeChanged(boolean isInMultiWindowMode) {
+            if (ChromeFeatureList.isEnabled(ChromeFeatureList.DISPLAY_EDGE_TO_EDGE_FULLSCREEN)) {
+                // Fix for https://crbug.com/416443642 exiting from full screen mode when
+                // transition to PIP is done.
+                // When playing video in full screen mode and the home button is pushed the page
+                // should transition into PIP. Keeping it the same for desktops, as PIP can be
+                // entered when Chrome is playing video in background.
+                if (mTab != null
+                        && !mActivity.isInPictureInPictureMode() // Not in the PIP mode
+                        && !mIsInMultiWindowMode // Window was in the fullscreen mode
+                        && isInMultiWindowMode) { // Window is not in fullscreen anymore
+                    onExitFullscreen(mTab);
+                }
+            }
+            mIsInMultiWindowMode = isInMultiWindowMode;
+        }
+    }
+
     /**
      * Constructs the handler that will manage the UI transitions from the HTML fullscreen API.
      *
@@ -207,11 +264,14 @@ public abstract class FullscreenHtmlApiHandlerBase
      * @param areControlsHidden Supplier of a flag indicating if browser controls are hidden.
      * @param exitFullscreenOnStop Whether fullscreen mode should exit on stop - should be true for
      *     Activities that are not always fullscreen.
+     * @param multiWindowDispatcher multi window mode observer allows to exit fullscreen when user
+     *     drag the window out of edge-to-edge fullscreen
      */
     public FullscreenHtmlApiHandlerBase(
             Activity activity,
             ObservableSupplier<Boolean> areControlsHidden,
-            boolean exitFullscreenOnStop) {
+            boolean exitFullscreenOnStop,
+            MultiWindowModeStateDispatcher multiWindowDispatcher) {
         mActivity = activity;
         mAreControlsHidden = areControlsHidden;
         mAreControlsHidden.addObserver(this::maybeEnterFullscreenFromPendingState);
@@ -220,6 +280,9 @@ public abstract class FullscreenHtmlApiHandlerBase
         mPersistentModeSupplier = new ObservableSupplierImpl<>();
         mPersistentModeSupplier.set(false);
         mExitFullscreenOnStop = exitFullscreenOnStop;
+
+        mMultiWindowModeObserver = new FullscreenMultiWindowModeObserver();
+        multiWindowDispatcher.addObserver(mMultiWindowModeObserver);
     }
 
     /**
@@ -233,7 +296,7 @@ public abstract class FullscreenHtmlApiHandlerBase
         mActiveTabObserver =
                 new ActivityTabTabObserver(activityTabProvider) {
                     @Override
-                    protected void onObservingDifferentTab(Tab tab, boolean hint) {
+                    protected void onObservingDifferentTab(@Nullable Tab tab, boolean hint) {
                         mTab = tab;
                         setContentView(tab != null ? tab.getContentView() : null);
                         if (tab != null) {
@@ -309,7 +372,7 @@ public abstract class FullscreenHtmlApiHandlerBase
                     enterPersistentFullscreenMode(options);
                     destroySelectActionMode(tab);
                     setEnterFullscreenRunnable(tab, null);
-                    for (FullscreenManager.Observer observer : mObservers) {
+                    for (Observer observer : mObservers) {
                         observer.onEnterFullscreen(tab, options);
                     }
                 };
@@ -363,7 +426,7 @@ public abstract class FullscreenHtmlApiHandlerBase
         }
     }
 
-    private void setEnterFullscreenRunnable(Tab tab, Runnable runnable) {
+    private void setEnterFullscreenRunnable(Tab tab, @Nullable Runnable runnable) {
         TabAttributes attrs = TabAttributes.from(tab);
         if (runnable == null) {
             attrs.clear(TabAttributeKeys.ENTER_FULLSCREEN);
@@ -372,7 +435,7 @@ public abstract class FullscreenHtmlApiHandlerBase
         }
     }
 
-    private Runnable getAndClearEnterFullscreenRunnable(Tab tab) {
+    private @Nullable Runnable getAndClearEnterFullscreenRunnable(Tab tab) {
         Runnable r =
                 tab != null ? TabAttributes.from(tab).get(TabAttributeKeys.ENTER_FULLSCREEN) : null;
         if (r != null) setEnterFullscreenRunnable(tab, null);
@@ -380,17 +443,41 @@ public abstract class FullscreenHtmlApiHandlerBase
     }
 
     /**
-     * Enters persistent fullscreen mode. In this mode, the browser controls will be
-     * permanently hidden until this mode is exited.
+     * Enters persistent fullscreen mode. In this mode, the browser controls will be permanently
+     * hidden until this mode is exited.
      *
      * @param options Options to choose mode of fullscreen.
      */
     private void enterPersistentFullscreenMode(FullscreenOptions options) {
         if (!shouldSkipEnterFullscreenRequest(options)) {
+            if (ChromeFeatureList.isEnabled(ChromeFeatureList.DISPLAY_EDGE_TO_EDGE_FULLSCREEN)) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    OutcomeReceiver<@Nullable Void, Throwable> resultCb =
+                            new OutcomeReceiver<>() {
+                                @Override
+                                public void onResult(@Nullable Void unused) {
+                                    // Mark that the Window mode was changed during the fullscreen
+                                    // transition. It needs to be reverted on exit.
+                                    mDisplayEdgeToEdgeFullscreenToBeExited = true;
+                                }
+
+                                @Override
+                                public void onError(Throwable error) {
+                                    // There is nothing to be done in case of failed transition to
+                                    // fullscreen mode. It can happen when in split screen or
+                                    // already in fullscreen mode.
+                                    mDisplayEdgeToEdgeFullscreenToBeExited = false;
+                                }
+                            };
+                    maybeEnterActivityFullscreenMode(resultCb);
+                }
+            }
+
             mPersistentModeSupplier.set(true);
             mNotifyOnNextExit = true;
             if (mAreControlsHidden.get()) {
                 // The browser controls are currently hidden.
+                assert mTab != null;
                 enterFullscreen(mTab, options);
             } else {
                 // We should hide browser controls first.
@@ -419,11 +506,21 @@ public abstract class FullscreenHtmlApiHandlerBase
 
     @Override
     public void exitPersistentFullscreenMode() {
+        // Exit window edge to edge fullscreen mode only if element fullscreen mode was triggered
+        // when the window was in free form mode. This prevent exiting window fullscreen mode when
+        // user requested it independently.
+        if (mDisplayEdgeToEdgeFullscreenToBeExited) {
+            maybeExitActivityFullscreenMode(null);
+            mDisplayEdgeToEdgeFullscreenToBeExited = false;
+        }
+
         if (getPersistentFullscreenMode()) {
             getToast().onExitPersistentFullscreen();
             mPersistentModeSupplier.set(false);
 
             if (mWebContentsInFullscreen != null && mTabInFullscreen != null) {
+                // mContentViewInFullscreen is non-null, since mWebContentsInFullscreen is non-null
+                assumeNonNull(mContentViewInFullscreen);
                 exitFullscreen(mWebContentsInFullscreen, mContentViewInFullscreen);
             } else {
                 if (mPendingFullscreenOptions != null) mPendingFullscreenOptions.setCanceled();
@@ -442,7 +539,9 @@ public abstract class FullscreenHtmlApiHandlerBase
 
     @Override
     public boolean getPersistentFullscreenMode() {
-        return mPersistentModeSupplier.get();
+        Boolean value = mPersistentModeSupplier.get();
+        assert value != null;
+        return value;
     }
 
     /**
@@ -467,7 +566,12 @@ public abstract class FullscreenHtmlApiHandlerBase
 
         // Ensure that the layout change listener to bring back browser controls is called on
         // automotive devices that never hide system bars.
-        if (BuildInfo.getInstance().isAutomotive) {
+        // TODO(peilinwang/clhager) When edge to edge is enabled, or when we are in multi window
+        //  mode, onLayoutChange doesn't trigger, which results in not showing the browser controls
+        //  when we're supposed to, and also messes up the viewport and toolbar.
+        if (BuildInfo.getInstance().isAutomotive
+                || EdgeToEdgeUtils.isChromeEdgeToEdgeFeatureEnabled()
+                || MultiWindowUtils.getInstance().isInMultiWindowMode(mActivity)) {
             ViewUtils.requestLayout(contentView, "FullscreenHtmlApiHandler.exitFullScreen");
         }
     }
@@ -489,17 +593,59 @@ public abstract class FullscreenHtmlApiHandlerBase
                             int oldTop,
                             int oldRight,
                             int oldBottom) {
-                        if ((bottom - top) <= (oldBottom - oldTop)
-                                || BuildInfo.getInstance().isAutomotive) {
-                            // At this point, browser controls are hidden. Show browser controls
-                            // only if it's permitted.
-                            TabBrowserControlsConstraintsHelper.update(
-                                    mTab, BrowserControlsState.SHOWN, true);
-                            contentView.removeOnLayoutChangeListener(this);
-                        }
+                        showBrowserControlsOnFullscreenExit(
+                                top, bottom, oldTop, oldBottom, contentView);
                     }
                 };
-            contentView.addOnLayoutChangeListener(mFullscreenOnLayoutChangeListener);
+        contentView.addOnLayoutChangeListener(mFullscreenOnLayoutChangeListener);
+    }
+
+    private void showBrowserControlsOnFullscreenExit(
+            int top, int bottom, int oldTop, int oldBottom, View contentView) {
+        boolean didLayoutGrow = (bottom - top) > (oldBottom - oldTop);
+        // Only show the browser controls if the layout is shrinking (or staying the same). However,
+        // this check should be bypassed on automotive.
+        if (didLayoutGrow && !BuildInfo.getInstance().isAutomotive) {
+            // If the dedicated flag is enabled, bypass this check and show the browser controls. A
+            // report should also be logged to help confirm whether odd layout values are related
+            // to multi-window mode / the edge-to-edge feature.
+            if (ChromeFeatureList.sForceBrowserControlsUponExitingFullscreen.isEnabled()) {
+                logBrowserControlsForcedUponFullscreenExit();
+            } else {
+                return;
+            }
+        }
+
+        // At this point, browser controls are hidden. Show browser controls only if it's permitted.
+        TabBrowserControlsConstraintsHelper.update(mTab, BrowserControlsState.SHOWN, true);
+        if (mFullscreenOnLayoutChangeListener != null) {
+            contentView.removeOnLayoutChangeListener(mFullscreenOnLayoutChangeListener);
+        }
+    }
+
+    private void logBrowserControlsForcedUponFullscreenExit() {
+        @BrowserControlsForcedUponFullscreenExitState int state;
+        boolean isInMultiWindowMode = MultiWindowUtils.getInstance().isInMultiWindowMode(mActivity);
+        boolean edgeToEdgeEnabled = EdgeToEdgeUtils.isChromeEdgeToEdgeFeatureEnabled();
+        if (isInMultiWindowMode) {
+            if (edgeToEdgeEnabled) {
+                state = BrowserControlsForcedUponFullscreenExitState.MULTI_WINDOW_EDGE_TO_EDGE;
+            } else {
+                state = BrowserControlsForcedUponFullscreenExitState.MULTI_WINDOW_NOT_EDGE_TO_EDGE;
+            }
+        } else {
+            if (edgeToEdgeEnabled) {
+                state = BrowserControlsForcedUponFullscreenExitState.NOT_MULTI_WINDOW_EDGE_TO_EDGE;
+            } else {
+                state =
+                        BrowserControlsForcedUponFullscreenExitState
+                                .NOT_MULTI_WINDOW_NOT_EDGE_TO_EDGE;
+            }
+        }
+        RecordHistogram.recordEnumeratedHistogram(
+                BROWSER_CONTROLS_FORCED_UPON_FULLSCREEN_EXIT_HISTOGRAM,
+                state,
+                BrowserControlsForcedUponFullscreenExitState.COUNT);
     }
 
     private boolean isAlreadyInFullscreenOrNavigationHidden(View contentView) {
@@ -532,7 +678,7 @@ public abstract class FullscreenHtmlApiHandlerBase
         if (webContents == null) return;
         mFullscreenOptions = options;
         final View contentView = tab.getContentView();
-
+        assert contentView != null;
         if (isAlreadyInFullscreenOrNavigationHidden(contentView)) {
             // We are already in fullscreen mode and the fullscreen options match what is
             // needed; nothing to do.
@@ -544,9 +690,6 @@ public abstract class FullscreenHtmlApiHandlerBase
             resetEnterFullscreenLayoutChangeListener(contentView);
             hideSystemBars(contentView, mFullscreenOptions);
         } else {
-            Activity activity = TabUtils.getActivity(tab);
-            boolean isMultiWindow = MultiWindowUtils.getInstance().isInMultiWindowMode(activity);
-
             // To avoid a double layout that is caused by the system when just hiding
             // the status bar set the status bar as translucent immediately. This causes
             // it not to take up space so the layout is stable. (See https://crbug.com/935015).
@@ -554,7 +697,7 @@ public abstract class FullscreenHtmlApiHandlerBase
             // on some automotive devices), since the status bar will be forced to always stay
             // visible.
             if (!mFullscreenOptions.showStatusBar
-                    && !isMultiWindow
+                    && !mIsInMultiWindowMode
                     && !BuildInfo.getInstance().isAutomotive) {
                 setTranslucentStatusBar();
             }
@@ -603,8 +746,8 @@ public abstract class FullscreenHtmlApiHandlerBase
                         // directly in the onLayoutChange would have no effect.
                         mHandler.sendEmptyMessage(MSG_ID_SET_VISIBILITY_FOR_SYSTEM_BARS);
 
-                        if ((bottom - top) <= (oldBottom - oldTop)
-                                && (right - left) <= (oldRight - oldLeft)
+                        if ((bottom - top) < (oldBottom - oldTop)
+                                && (right - left) < (oldRight - oldLeft)
                                 // Some automotive devices never hide the system bars, so Chrome
                                 // can't rely on detecting a change in insets.
                                 && !BuildInfo.getInstance().isAutomotive) {
@@ -677,6 +820,28 @@ public abstract class FullscreenHtmlApiHandlerBase
         window.setAttributes(attrs);
     }
 
+    private void maybeEnterActivityFullscreenMode(
+            OutcomeReceiver<@Nullable Void, Throwable> callback) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            runRequestActivityFullscreenMode(callback, Activity.FULLSCREEN_MODE_REQUEST_ENTER);
+        }
+    }
+
+    private void maybeExitActivityFullscreenMode(
+            @Nullable OutcomeReceiver<@Nullable Void, Throwable> callback) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            runRequestActivityFullscreenMode(callback, Activity.FULLSCREEN_MODE_REQUEST_EXIT);
+        }
+    }
+
+    private void runRequestActivityFullscreenMode(
+            @Nullable OutcomeReceiver<@Nullable Void, Throwable> callback,
+            int fullscreenModeRequest) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            mActivity.requestFullscreenMode(fullscreenModeRequest, callback);
+        }
+    }
+
     /** Destroys the FullscreenHtmlApiHandler. */
     public void destroy() {
         mTab = null;
@@ -694,6 +859,7 @@ public abstract class FullscreenHtmlApiHandlerBase
         return mObservers;
     }
 
+    @NullUnmarked
     FullscreenOptions getPendingFullscreenOptionsForTesting() {
         return mPendingFullscreenOptions;
     }

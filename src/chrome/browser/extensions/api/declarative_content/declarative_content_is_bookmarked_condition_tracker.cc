@@ -185,7 +185,7 @@ void DeclarativeContentIsBookmarkedConditionTracker::TrackForWebContents(
     content::WebContents* contents) {
   per_web_contents_tracker_[contents] = std::make_unique<PerWebContentsTracker>(
       contents,
-      base::BindRepeating(&Delegate::RequestEvaluation,
+      base::BindRepeating(&Delegate::NotifyPredicateStateUpdated,
                           base::Unretained(delegate_)),
       base::BindOnce(&DeclarativeContentIsBookmarkedConditionTracker::
                          DeletePerWebContentsTracker,
@@ -210,7 +210,7 @@ bool DeclarativeContentIsBookmarkedConditionTracker::EvaluatePredicate(
   const DeclarativeContentIsBookmarkedPredicate* typed_predicate =
       static_cast<const DeclarativeContentIsBookmarkedPredicate*>(predicate);
   auto loc = per_web_contents_tracker_.find(tab);
-  DCHECK(loc != per_web_contents_tracker_.end());
+  CHECK(loc != per_web_contents_tracker_.end());
   return loc->second->is_url_bookmarked() == typed_predicate->is_bookmarked();
 }
 

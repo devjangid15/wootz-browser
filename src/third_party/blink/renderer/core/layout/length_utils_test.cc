@@ -50,7 +50,7 @@ class LengthUtilsTest : public testing::Test {
       ConstraintSpace constraint_space = ConstructConstraintSpace(200, 300)) {
     return ::blink::ResolveMainInlineLength(
         constraint_space, *initial_style_, /* border_padding */ BoxStrut(),
-        [&](MinMaxSizesType) -> MinMaxSizesResult {
+        [&](SizeType) -> MinMaxSizesResult {
           return {*sizes, /* depends_on_block_constraints */ false};
         },
         length, /* auto_length */ nullptr);
@@ -62,7 +62,7 @@ class LengthUtilsTest : public testing::Test {
       ConstraintSpace constraint_space = ConstructConstraintSpace(200, 300)) {
     return ::blink::ResolveMinInlineLength(
         constraint_space, *initial_style_, /* border_padding */ BoxStrut(),
-        [&](MinMaxSizesType) -> MinMaxSizesResult {
+        [&](SizeType) -> MinMaxSizesResult {
           return {*sizes, /* depends_on_block_constraints */ false};
         },
         length);
@@ -74,7 +74,7 @@ class LengthUtilsTest : public testing::Test {
       ConstraintSpace constraint_space = ConstructConstraintSpace(200, 300)) {
     return ::blink::ResolveMaxInlineLength(
         constraint_space, *initial_style_, /* border_padding */ BoxStrut(),
-        [&](MinMaxSizesType) -> MinMaxSizesResult {
+        [&](SizeType) -> MinMaxSizesResult {
           return {*sizes, /* depends_on_block_constraints */ false};
         },
         length);
@@ -110,18 +110,17 @@ class LengthUtilsTestWithNode : public RenderingTest {
       ConstraintSpace constraint_space = ConstructConstraintSpace(200, 300),
       LayoutUnit content_size = LayoutUnit(),
       LayoutUnit inline_size = kIndefiniteSize) {
-    const auto& style = node.Style();
     BoxStrut border_padding = ComputeBorders(constraint_space, node) +
-                              ComputePadding(constraint_space, style);
+                              ComputePadding(constraint_space, node.Style());
     return ::blink::ComputeBlockSizeForFragment(
-        constraint_space, style, border_padding, content_size, inline_size);
+        constraint_space, node, border_padding, content_size, inline_size);
   }
 };
 
 TEST_F(LengthUtilsTest, TestResolveInlineLength) {
   EXPECT_EQ(LayoutUnit(60), ResolveMainInlineLength(Length::Percent(30)));
   EXPECT_EQ(LayoutUnit(150), ResolveMainInlineLength(Length::Fixed(150)));
-  EXPECT_EQ(LayoutUnit(200), ResolveMainInlineLength(Length::FillAvailable()));
+  EXPECT_EQ(LayoutUnit(200), ResolveMainInlineLength(Length::Stretch()));
 
   MinMaxSizes sizes;
   sizes.min_size = LayoutUnit(30);
@@ -149,14 +148,14 @@ TEST_F(LengthUtilsTest, TestIndefiniteResolveInlineLength) {
             ResolveMinInlineLength(Length::Auto(), std::nullopt, space));
   EXPECT_EQ(LayoutUnit::Max(),
             ResolveMaxInlineLength(Length::Percent(30), std::nullopt, space));
-  EXPECT_EQ(LayoutUnit::Max(), ResolveMaxInlineLength(Length::FillAvailable(),
-                                                      std::nullopt, space));
+  EXPECT_EQ(LayoutUnit::Max(),
+            ResolveMaxInlineLength(Length::Stretch(), std::nullopt, space));
 }
 
 TEST_F(LengthUtilsTest, TestResolveBlockLength) {
   EXPECT_EQ(LayoutUnit(90), ResolveMainBlockLength(Length::Percent(30)));
   EXPECT_EQ(LayoutUnit(150), ResolveMainBlockLength(Length::Fixed(150)));
-  EXPECT_EQ(LayoutUnit(300), ResolveMainBlockLength(Length::FillAvailable()));
+  EXPECT_EQ(LayoutUnit(300), ResolveMainBlockLength(Length::Stretch()));
 }
 
 TEST_F(LengthUtilsTestWithNode, TestComputeContentContribution) {

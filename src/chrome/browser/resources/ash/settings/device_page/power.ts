@@ -13,23 +13,30 @@ import 'chrome://resources/ash/common/cr_elements/cr_shared_style.css.js';
 import 'chrome://resources/polymer/v3_0/iron-flex-layout/iron-flex-layout-classes.js';
 import '../controls/settings_toggle_button.js';
 import '../settings_shared.css.js';
+import './power_optimized_charging_dialog.js';
 
 import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
+import type {CrButtonElement} from 'chrome://resources/ash/common/cr_elements/cr_button/cr_button.js';
 import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
 import {WebUiListenerMixin} from 'chrome://resources/ash/common/cr_elements/web_ui_listener_mixin.js';
 import {assertNotReached} from 'chrome://resources/js/assert.js';
+import {focusWithoutInk} from 'chrome://resources/js/focus_without_ink.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
+import {assertExists} from '../assert_extras.js';
 import {DeepLinkingMixin} from '../common/deep_linking_mixin.js';
-import {isRevampWayfindingEnabled} from '../common/load_time_booleans.js';
+import {isBatteryChargeLimitAvailable} from '../common/load_time_booleans.js';
 import {RouteObserverMixin} from '../common/route_observer_mixin.js';
-import {SettingsToggleButtonElement} from '../controls/settings_toggle_button.js';
+import type {SettingsToggleButtonElement} from '../controls/settings_toggle_button.js';
+import type {SettingsToggleV2Element} from '../controls/v2/settings_toggle_v2.js';
 import {recordSettingChange} from '../metrics_recorder.js';
 import {Setting} from '../mojom-webui/setting.mojom-webui.js';
-import {Route, routes} from '../router.js';
+import type {Route} from '../router.js';
+import {routes} from '../router.js';
 
-import {BatteryStatus, DevicePageBrowserProxy, DevicePageBrowserProxyImpl, IdleBehavior, LidClosedBehavior, PowerManagementSettings, PowerSource} from './device_page_browser_proxy.js';
+import type {BatteryStatus, DevicePageBrowserProxy, PowerManagementSettings, PowerSource} from './device_page_browser_proxy.js';
+import {DevicePageBrowserProxyImpl, IdleBehavior, LidClosedBehavior} from './device_page_browser_proxy.js';
 import {getTemplate} from './power.html.js';
 
 interface IdleOption {
@@ -40,7 +47,7 @@ interface IdleOption {
 
 export interface SettingsPowerElement {
   $: {
-    adaptiveChargingToggle: SettingsToggleButtonElement,
+    optimizedChargingChangeButton: CrButtonElement,
     batterySaverToggle: SettingsToggleButtonElement,
     lidClosedToggle: SettingsToggleButtonElement,
     powerSource: HTMLSelectElement,
@@ -147,10 +154,10 @@ export class SettingsPowerElement extends SettingsPowerElementBase {
         computed: 'hasSingleOption_(batteryIdleOptions_)',
       },
 
-      adaptiveChargingEnabled_: {
+      adaptiveChargingSupported_: {
         type: Boolean,
         value() {
-          return loadTimeData.getBoolean('isAdaptiveChargingEnabled');
+          return loadTimeData.getBoolean('isAdaptiveChargingSupported');
         },
       },
 
@@ -171,6 +178,18 @@ export class SettingsPowerElement extends SettingsPowerElementBase {
         },
       },
 
+      batteryChargeLimitAvailable_: {
+        type: Boolean,
+        value() {
+          return isBatteryChargeLimitAvailable();
+        },
+      },
+
+      optimizedChargingDialogVisible_: {
+        type: Boolean,
+        value: false,
+      },
+
       batterySaverFeatureEnabled_: Boolean,
 
       batterySaverHidden_: {
@@ -179,48 +198,57 @@ export class SettingsPowerElement extends SettingsPowerElementBase {
             'computeBatterySaverHidden_(batteryStatus_, batterySaverFeatureEnabled_)',
       },
 
-      isRevampWayfindingEnabled_: {
+      optimizedChargingSublabel_: {
+        type: String,
+        computed:
+            'computeOptimizedChargingSublabel_(adaptiveChargingPref_.value, false)',
+      },
+
+      optimizedChargingHidden_: {
         type: Boolean,
-        value: () => {
-          return isRevampWayfindingEnabled();
-        },
+        computed:
+            'computeOptimizedChargingHidden_(adaptiveChargingSupported_, batteryChargeLimitAvailable_)',
       },
-
-      /**
-       * Used by DeepLinkingMixin to focus this page's deep links.
-       */
-      supportedSettingIds: {
-        type: Object,
-        value: () => new Set<Setting>([
-          Setting.kPowerIdleBehaviorWhileCharging,
-          Setting.kPowerSource,
-          Setting.kSleepWhenLaptopLidClosed,
-          Setting.kPowerIdleBehaviorWhileOnBattery,
-          Setting.kAdaptiveCharging,
-          Setting.kBatterySaver,
-        ]),
-      },
-
     };
   }
 
+  // DeepLinkingMixin override
+  override supportedSettingIds = new Set<Setting>([
+    Setting.kPowerIdleBehaviorWhileCharging,
+    Setting.kPowerSource,
+    Setting.kSleepWhenLaptopLidClosed,
+    Setting.kPowerIdleBehaviorWhileOnBattery,
+    Setting.kAdaptiveCharging,
+    Setting.kBatterySaver,
+    Setting.kOptimizedCharging,
+    Setting.kChargeLimit,
+  ]);
+
   private acIdleManaged_: boolean;
   private acIdleOptions_: IdleOption[];
-  private adaptiveChargingEnabled_: boolean;
+  private adaptiveChargingSupported_: boolean;
   private adaptiveChargingManaged_: boolean;
   private adaptiveChargingPref_: chrome.settingsPrivate.PrefObject<boolean>;
+  private readonly batteryChargeLimitAvailable_: boolean;
+  private optimizedChargingSublabel_: string;
+  private optimizedChargingHidden_: boolean;
+  private optimizedChargingDialogVisible_: boolean;
   private batteryIdleManaged_: boolean;
   private batteryIdleOptions_: IdleOption[];
   private batterySaverHidden_: boolean;
   private batteryStatus_: BatteryStatus|undefined;
   private browserProxy_: DevicePageBrowserProxy;
   private hasLid_: boolean;
-  private isRevampWayfindingEnabled_: boolean;
   private lidClosedLabel_: string;
   private lidClosedPref_: chrome.settingsPrivate.PrefObject<boolean>;
   private isExternalPowerUSB_: boolean;
   private isExternalPowerAC_: boolean;
+  private powerSourceLabel_: string;
+  private powerSourceName_: string;
   private powerSources_: PowerSource[]|undefined;
+  private shouldAcIdleSelectBeDisabled_: boolean;
+  private shouldBatteryIdleSelectBeDisabled_: boolean;
+  private showPowerSourceDropdown_: boolean;
   private selectedPowerSourceId_: string;
   private batterySaverFeatureEnabled_: boolean;
 
@@ -312,6 +340,26 @@ export class SettingsPowerElement extends SettingsPowerElementBase {
     return !featureEnabled || !batteryStatus.present;
   }
 
+  private computeOptimizedChargingSublabel_(
+      adaptiveChargingEnabled: boolean, chargeLimitEnabled: boolean): string {
+    if (adaptiveChargingEnabled) {
+      return this.i18n('powerAdaptiveChargingLabel');
+    }
+    if (chargeLimitEnabled) {
+      return this.i18n('powerBatteryChargeLimitLabel');
+    }
+    // Return empty string if no policy is selected.
+    return '';
+  }
+
+  private computeOptimizedChargingHidden_(
+      adaptiveChargingSupported: boolean,
+      batteryChargeLimitAvailable: boolean): boolean {
+    // Hidden if adaptive charging is not supported, or if the feature flag is
+    // not enabled.
+    return !adaptiveChargingSupported || !batteryChargeLimitAvailable;
+  }
+
   private onPowerSourceChange_(): void {
     this.browserProxy_.setPowerSource(this.$.powerSource.value);
   }
@@ -350,9 +398,38 @@ export class SettingsPowerElement extends SettingsPowerElementBase {
   }
 
   private onAdaptiveChargingToggleChange_(): void {
-    const enabled = this.$.adaptiveChargingToggle.checked;
+    const adaptiveChargingToggle =
+        this.shadowRoot!.querySelector<SettingsToggleV2Element>(
+            '#adaptiveChargingToggle');
+    assertExists(adaptiveChargingToggle);
+    const enabled = adaptiveChargingToggle.checked;
     this.browserProxy_.setAdaptiveCharging(enabled);
     recordSettingChange(Setting.kAdaptiveCharging, {boolValue: enabled});
+  }
+
+  private onOptimizedChargingToggleChange_(): void {
+    const enabled =
+        this.shadowRoot!
+            .querySelector<SettingsToggleV2Element>('#optimizedChargingToggle')
+            ?.checked ??
+        false;
+    // TODO(mwoj): Retrieve pref (adaptive charging or battery charge limit) and
+    // use the browser proxy to set the appropriate one.
+    recordSettingChange(Setting.kOptimizedCharging, {boolValue: enabled});
+  }
+
+  private makeOptimizedChargingDialogVisible_(e: Event): void {
+    e.preventDefault();
+    this.optimizedChargingDialogVisible_ = true;
+  }
+
+  private onOptimizedChargingDialogClose_(): void {
+    this.optimizedChargingDialogVisible_ = false;
+    const optimizedChargingChangeButton =
+        this.shadowRoot!.querySelector<CrButtonElement>(
+            '#optimizedChargingChangeButton');
+    assertExists(optimizedChargingChangeButton);
+    focusWithoutInk(optimizedChargingChangeButton);
   }
 
   /**
@@ -509,46 +586,40 @@ export class SettingsPowerElement extends SettingsPowerElementBase {
     const classes = ['cr-row'];
 
     switch (element) {
-      case 'batterySaver':
+      case 'optimizedCharging':
         if (!batteryPresent) {
           classes.push('first');
         }
         break;
+      case 'batterySaver':
+        if (!batteryPresent && this.optimizedChargingHidden_) {
+          classes.push('first');
+        }
+        break;
       case 'adaptiveCharging':
-        if (!batteryPresent && this.batterySaverHidden_) {
+        if (!batteryPresent && this.optimizedChargingHidden_ &&
+            this.batterySaverHidden_) {
           classes.push('first');
         }
         break;
       case 'idle':
-        if (!batteryPresent && this.batterySaverHidden_ &&
-            !this.adaptiveChargingEnabled_) {
+        if (!batteryPresent && this.optimizedChargingHidden_ &&
+            this.batterySaverHidden_ && !this.adaptiveChargingSupported_) {
           classes.push('first');
         }
         break;
       case 'acIdle':
-        if (!batteryPresent && this.batterySaverHidden_ &&
-            !this.adaptiveChargingEnabled_) {
+        if (!batteryPresent && this.optimizedChargingHidden_ &&
+            this.batterySaverHidden_ && !this.adaptiveChargingSupported_) {
           classes.push('first');
         }
-        if (this.isRevampWayfindingEnabled_) {
-          classes.push('dropdown-row');
-        } else {
-          classes.push('indented');
-        }
+        classes.push('dropdown-row');
         break;
       case 'batteryIdle':
-        if (this.isRevampWayfindingEnabled_) {
-          classes.push('dropdown-row');
-        } else {
-          classes.push('indented');
-        }
+        classes.push('dropdown-row');
         break;
       case 'lidClosed':
-        if (this.isRevampWayfindingEnabled_) {
-          classes.push('dropdown-row');
-        } else {
-          classes.push('first');
-        }
+        classes.push('dropdown-row');
         break;
     }
 

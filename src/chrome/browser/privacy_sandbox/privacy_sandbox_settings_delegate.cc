@@ -63,9 +63,11 @@ const base::FeatureParam<bool> kCookieDeprecationUseProfileFiltering{
 
 PrivacySandboxSettingsDelegate::PrivacySandboxSettingsDelegate(
     Profile* profile,
-    tpcd::experiment::ExperimentManager* experiment_manager)
+    tpcd::experiment::ExperimentManager* experiment_manager,
+    PrivacySandboxCountries* privacy_sandbox_countries)
     : profile_(profile),
-      experiment_manager_(experiment_manager)
+      experiment_manager_(experiment_manager),
+      privacy_sandbox_countries_(privacy_sandbox_countries)
 #if BUILDFLAG(IS_ANDROID)
       ,
       webapp_registry_(std::make_unique<WebappRegistry>())
@@ -76,14 +78,11 @@ PrivacySandboxSettingsDelegate::PrivacySandboxSettingsDelegate(
 PrivacySandboxSettingsDelegate::~PrivacySandboxSettingsDelegate() = default;
 
 bool PrivacySandboxSettingsDelegate::IsRestrictedNoticeEnabled() const {
-  return privacy_sandbox::IsRestrictedNoticeRequired();
+  return privacy_sandbox::IsRestrictedNoticeRequired(
+      privacy_sandbox_countries_);
 }
 
 bool PrivacySandboxSettingsDelegate::IsPrivacySandboxRestricted() const {
-  if (privacy_sandbox::kPrivacySandboxSettings4ForceRestrictedUserForTesting
-          .Get()) {
-    return true;
-  }
   // If the Sandbox was ever reported as restricted, it is always restricted.
   // TODO (crbug.com/1428546): Adjust when we have a graduation flow.
   bool was_ever_reported_as_restricted =
@@ -114,11 +113,6 @@ bool PrivacySandboxSettingsDelegate::IsPrivacySandboxRestricted() const {
 
 bool PrivacySandboxSettingsDelegate::IsPrivacySandboxCurrentlyUnrestricted()
     const {
-  if (privacy_sandbox::kPrivacySandboxSettings4ForceRestrictedUserForTesting
-          .Get()) {
-    return false;
-  }
-
   auto* identity_manager = IdentityManagerFactory::GetForProfile(profile_);
   if (!identity_manager ||
       !identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSignin)) {
@@ -137,7 +131,8 @@ bool PrivacySandboxSettingsDelegate::IsPrivacySandboxCurrentlyUnrestricted()
 
 bool PrivacySandboxSettingsDelegate::IsSubjectToM1NoticeRestricted() const {
   // If the feature is deactivated, the notice shouldn't be shown.
-  if (!privacy_sandbox::IsRestrictedNoticeRequired()) {
+  if (!privacy_sandbox::IsRestrictedNoticeRequired(
+          privacy_sandbox_countries_)) {
     return false;
   }
   return PrivacySandboxRestrictedNoticeRequired();
@@ -150,7 +145,7 @@ bool PrivacySandboxSettingsDelegate::IsIncognitoProfile() const {
 bool PrivacySandboxSettingsDelegate::HasAppropriateTopicsConsent() const {
   // If the profile doesn't require a release 4 consent, then it always has
   // an appropriate (i.e. not required) Topics consent.
-  if (!privacy_sandbox::IsConsentRequired()) {
+  if (!privacy_sandbox::IsConsentRequired(privacy_sandbox_countries_)) {
     return true;
   }
 
@@ -333,12 +328,8 @@ bool PrivacySandboxSettingsDelegate::IsCookieDeprecationLabelAllowed() const {
           kIneligible:
         return false;
       case privacy_sandbox::TrackingProtectionOnboarding::OnboardingStatus::
-          kOffboarded:
-      case privacy_sandbox::TrackingProtectionOnboarding::OnboardingStatus::
           kEligible:
         return !tpcd::experiment::kNeedOnboardingForLabel.Get();
-      case privacy_sandbox::TrackingProtectionOnboarding::OnboardingStatus::
-          kOnboardingRequested:
       case privacy_sandbox::TrackingProtectionOnboarding::OnboardingStatus::
           kOnboarded:
         return true;
@@ -386,10 +377,6 @@ bool PrivacySandboxSettingsDelegate::
         kIneligible:
     case privacy_sandbox::TrackingProtectionOnboarding::OnboardingStatus::
         kEligible:
-    case privacy_sandbox::TrackingProtectionOnboarding::OnboardingStatus::
-        kOffboarded:
-    case privacy_sandbox::TrackingProtectionOnboarding::OnboardingStatus::
-        kOnboardingRequested:
       return false;
     case privacy_sandbox::TrackingProtectionOnboarding::OnboardingStatus::
         kOnboarded:
@@ -409,12 +396,9 @@ bool PrivacySandboxSettingsDelegate::
       static_cast<content_settings::CookieControlsMode>(
           profile_->GetPrefs()->GetInteger(prefs::kCookieControlsMode));
 
-  switch (cookie_controls_mode) {
-    case content_settings::CookieControlsMode::kBlockThirdParty:
-      return false;
-    case content_settings::CookieControlsMode::kIncognitoOnly:
-    case content_settings::CookieControlsMode::kOff:
-      break;
+  if (cookie_controls_mode ==
+      content_settings::CookieControlsMode::kBlockThirdParty) {
+    return false;
   }
 
   return true;

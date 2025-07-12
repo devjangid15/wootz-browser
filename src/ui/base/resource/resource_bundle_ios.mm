@@ -61,8 +61,7 @@ void ResourceBundle::LoadCommonResources() {
 }
 
 // static
-base::FilePath ResourceBundle::GetLocaleFilePath(
-    const std::string& app_locale) {
+base::FilePath ResourceBundle::GetLocaleFilePath(std::string_view app_locale) {
   NSString* mac_locale = base::SysUTF8ToNSString(app_locale);
 
   // iOS uses "_" instead of "-", so swap to get a iOS-style value.
@@ -148,12 +147,7 @@ gfx::Image& ResourceBundle::GetNativeImageNamed(int resource_id) {
                                       orientation:UIImageOrientationUp];
     }
 
-    if (!ui_image) {
-      LOG(WARNING) << "Unable to load image with id " << resource_id;
-      NOTREACHED_IN_MIGRATION();  // Want to assert in debug mode.
-      return GetEmptyImage();
-    }
-
+    CHECK(ui_image) << "Unable to load image with id " << resource_id;
     image = gfx::Image(ui_image);
   }
 

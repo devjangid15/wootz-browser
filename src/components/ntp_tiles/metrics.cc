@@ -49,8 +49,7 @@ std::string GetSourceHistogramName(TileSource source) {
     case TileSource::CUSTOM_LINKS:
       return kHistogramCustomLinksName;
   }
-  NOTREACHED_IN_MIGRATION();
-  return std::string();
+  NOTREACHED();
 }
 
 const char* GetTileTypeSuffix(TileVisualType type) {
@@ -61,7 +60,7 @@ const char* GetTileTypeSuffix(TileVisualType type) {
       return kTileTypeSuffixIconGray;
     case TileVisualType::ICON_REAL:
       return kTileTypeSuffixIconReal;
-    case TileVisualType::NONE:                     // Fall through.
+    case TileVisualType::NONE:  // Fall through.
     case TileVisualType::UNKNOWN_TILE_TYPE:
       break;
   }
@@ -72,6 +71,12 @@ const char* GetTileTypeSuffix(TileVisualType type) {
 
 void RecordPageImpression(int number_of_tiles) {
   base::UmaHistogramSparse("NewTabPage.NumberOfTiles", number_of_tiles);
+}
+
+void RecordNumberOfCustomTilesOnFirstNtp(int number_of_custom_tiles) {
+  base::UmaHistogramSparse(
+      "NewTabPage.MostVisited.NumberOfCustomTilesOnFirstNtp",
+      number_of_custom_tiles);
 }
 
 void RecordTileImpression(const NTPTileImpression& impression) {

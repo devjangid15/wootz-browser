@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #ifndef COMPONENTS_URL_PATTERN_INDEX_STRING_SPLITTER_H_
 #define COMPONENTS_URL_PATTERN_INDEX_STRING_SPLITTER_H_
 
@@ -37,8 +42,6 @@ class StringSplitter {
       // match.
       return current_.data() == rhs.current_.data();
     }
-
-    bool operator!=(const Iterator& rhs) const { return !operator==(rhs); }
 
     std::string_view operator*() const { return current_; }
     const std::string_view* operator->() const { return &current_; }

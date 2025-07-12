@@ -43,7 +43,6 @@ void PagePlaceholderTabHelper::CancelPlaceholderForNextNavigation() {
 
 void PagePlaceholderTabHelper::WasShown(web::WebState* web_state) {
   if (add_placeholder_for_next_navigation_) {
-    add_placeholder_for_next_navigation_ = false;
     AddPlaceholder();
   }
 }
@@ -57,7 +56,6 @@ void PagePlaceholderTabHelper::DidStartNavigation(
     web::NavigationContext* navigation_context) {
   DCHECK_EQ(web_state_, web_state);
   if (add_placeholder_for_next_navigation_ && web_state->IsVisible()) {
-    add_placeholder_for_next_navigation_ = false;
     AddPlaceholder();
   }
 }
@@ -86,9 +84,11 @@ void PagePlaceholderTabHelper::AddPlaceholder() {
   // that do not guarantee the WebState's view is in the view hierarchy.
   // TODO(crbug.com/40630853): Do not DCHECK([webState->GetView() window]) here
   // since this is a known issue.
-  if (displaying_placeholder_ || ![web_state_->GetView() window])
+  if (displaying_placeholder_ || ![web_state_->GetView() window]) {
     return;
+  }
 
+  add_placeholder_for_next_navigation_ = false;
   displaying_placeholder_ = true;
 
   // Lazily create the placeholder view.
@@ -141,8 +141,9 @@ void PagePlaceholderTabHelper::DisplaySnapshotImage(UIImage* snapshot) {
 }
 
 void PagePlaceholderTabHelper::RemovePlaceholder() {
-  if (!displaying_placeholder_)
+  if (!displaying_placeholder_) {
     return;
+  }
 
   displaying_placeholder_ = false;
 
@@ -157,5 +158,3 @@ void PagePlaceholderTabHelper::RemovePlaceholder() {
         weak_placeholder_view.alpha = 1.0f;
       }];
 }
-
-WEB_STATE_USER_DATA_KEY_IMPL(PagePlaceholderTabHelper)

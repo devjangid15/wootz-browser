@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 
+#include <algorithm>
 #include <string_view>
 #include <utility>
 
@@ -16,9 +17,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/notreached.h"
 #include "base/observer_list.h"
-#include "base/ranges/algorithm.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "components/custom_handlers/pref_names.h"
 #include "components/custom_handlers/protocol_handler.h"
 #include "components/pref_registry/pref_registry_syncable.h"
@@ -305,8 +304,9 @@ bool ProtocolHandlerRegistry::CanSchemeBeOverridden(
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   const ProtocolHandlerList* handlers = GetHandlerList(scheme);
   // If we already have a handler for this scheme, we can add more.
-  if (handlers != NULL && !handlers->empty())
+  if (handlers != nullptr && !handlers->empty()) {
     return true;
+  }
   // Don't override a scheme if it already has an external handler.
   return !delegate_->IsExternalHandlerRegistered(
       static_cast<std::string>(scheme));
@@ -505,7 +505,7 @@ void ProtocolHandlerRegistry::PromoteHandler(const ProtocolHandler& handler) {
   DCHECK(IsRegistered(handler));
   auto p = protocol_handlers_.find(handler.protocol());
   ProtocolHandlerList& list = p->second;
-  list.erase(base::ranges::find(list, handler));
+  list.erase(std::ranges::find(list, handler));
   list.insert(list.begin(), handler);
 }
 
@@ -531,7 +531,7 @@ ProtocolHandlerRegistry::GetHandlerList(std::string_view scheme) const {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   auto p = protocol_handlers_.find(scheme);
   if (p == protocol_handlers_.end()) {
-    return NULL;
+    return nullptr;
   }
   return &p->second;
 }
@@ -698,7 +698,7 @@ void ProtocolHandlerRegistry::EraseHandler(const ProtocolHandler& handler,
 
 void ProtocolHandlerRegistry::EraseHandler(const ProtocolHandler& handler,
                                            ProtocolHandlerList* list) {
-  list->erase(base::ranges::find(*list, handler));
+  list->erase(std::ranges::find(*list, handler));
 }
 
 void ProtocolHandlerRegistry::OnSetAsDefaultProtocolClientFinished(

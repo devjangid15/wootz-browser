@@ -14,18 +14,22 @@
 #include "base/files/file_path.h"
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/observer_list_types.h"
 #include "base/threading/thread_checker.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/install_prompt_permissions.h"
+#include "chrome/browser/ui/extensions/extension_install_ui.h"
 #include "chrome/common/buildflags.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/permissions/permission_message.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/native_widget_types.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 class ExtensionInstallPromptShowParams;
 class Profile;
@@ -38,7 +42,6 @@ class WebContents;
 namespace extensions {
 class CrxInstallError;
 class Extension;
-class ExtensionInstallUI;
 class PermissionSet;
 }  // namespace extensions
 
@@ -63,7 +66,7 @@ class ExtensionInstallPrompt {
     // LAUNCH_PROMPT_DEPRECATED = 7,
     REMOTE_INSTALL_PROMPT = 8,
     REPAIR_PROMPT = 9,
-    DELEGATED_PERMISSIONS_PROMPT = 10,
+    // DELEGATED_PERMISSIONS_PROMPT = 10,
     // DELEGATED_BUNDLE_PERMISSIONS_PROMPT_DEPRECATED = 11,
     // WEBSTORE_WIDGET_PROMPT_DEPRECATED = 12,
     EXTENSION_REQUEST_PROMPT = 13,
@@ -154,13 +157,6 @@ class ExtensionInstallPrompt {
       extension_ = extension;
     }
 
-    const std::string& delegated_username() const {
-      return delegated_username_;
-    }
-    void set_delegated_username(const std::string& delegated_username) {
-      delegated_username_ = delegated_username;
-    }
-
     const gfx::Image& icon() const { return icon_; }
     void set_icon(const gfx::Image& icon) { icon_ = icon; }
 
@@ -199,8 +195,6 @@ class ExtensionInstallPrompt {
     // The extension being installed.
     raw_ptr<const extensions::Extension, AcrossTasksDanglingUntriaged>
         extension_;
-
-    std::string delegated_username_;
 
     // The icon to be displayed.
     gfx::Image icon_;
@@ -260,14 +254,14 @@ class ExtensionInstallPrompt {
   // The implementations of this function are platform-specific.
   static ShowDialogCallback GetDefaultShowDialogCallback();
 
-  // Returns the appropriate prompt type for the given |extension|.
+  // Returns the appropriate prompt type for the given `extension`.
   // TODO(devlin): This method is yucky - callers probably only care about one
   // prompt type. We just need to comb through and figure out what it is.
   static PromptType GetReEnablePromptTypeForExtension(
       content::BrowserContext* context,
       const extensions::Extension* extension);
 
-  // Creates a dummy extension from the |manifest|, replacing the name and
+  // Creates a dummy extension from the `manifest`, replacing the name and
   // description with the localizations if provided.
   static scoped_refptr<extensions::Extension> GetLocalizedExtensionForDisplay(
       const base::Value::Dict& manifest,
@@ -290,22 +284,20 @@ class ExtensionInstallPrompt {
 
   virtual ~ExtensionInstallPrompt();
 
-  extensions::ExtensionInstallUI* install_ui() const {
-    return install_ui_.get();
-  }
+  ExtensionInstallUI* install_ui() const { return install_ui_.get(); }
 
-  // Starts the process to show the install dialog. Loads the icon (if |icon| is
-  // null), sets up the Prompt, and calls |show_dialog_callback| when ready to
+  // Starts the process to show the install dialog. Loads the icon (if `icon` is
+  // null), sets up the Prompt, and calls `show_dialog_callback` when ready to
   // show.
-  // |extension| can be null in the case of a bndle install.
-  // If |icon| is null, this will attempt to load the extension's icon.
-  // |prompt| is used to pass in a prompt with additional data (like retained
-  // device permissions) or a different type. If not provided, |prompt| will
+  // `extension` can be null in the case of a bundle install.
+  // If `icon` is null, this will attempt to load the extension's icon.
+  // `prompt` is used to pass in a prompt with additional data (like retained
+  // device permissions) or a different type. If not provided, `prompt` will
   // be created as an INSTALL_PROMPT.
-  // |custom_permissions| will be used if provided; otherwise, the extensions
+  // `custom_permissions` will be used if provided; otherwise, the extensions
   // current permissions are used.
   //
-  // The |install_callback| *MUST* eventually be called.
+  // The `install_callback` *MUST* eventually be called.
   void ShowDialog(DoneCallback install_callback,
                   const extensions::Extension* extension,
                   const SkBitmap* icon,
@@ -339,7 +331,7 @@ class ExtensionInstallPrompt {
   std::unique_ptr<Prompt> GetPromptForTesting();
 
  private:
-  // Sets the icon that will be used in any UI. If |icon| is NULL, or contains
+  // Sets the icon that will be used in any UI. If `icon` is NULL, or contains
   // an empty bitmap, then a default icon will be used instead.
   void SetIcon(const SkBitmap* icon);
 
@@ -373,7 +365,7 @@ class ExtensionInstallPrompt {
   std::unique_ptr<const extensions::PermissionSet> custom_permissions_;
 
   // The object responsible for doing the UI specific actions.
-  std::unique_ptr<extensions::ExtensionInstallUI> install_ui_;
+  std::unique_ptr<ExtensionInstallUI> install_ui_;
 
   // Parameters to show the confirmation UI.
   std::unique_ptr<ExtensionInstallPromptShowParams> show_params_;
@@ -387,7 +379,7 @@ class ExtensionInstallPrompt {
   // Used to show the confirm dialog.
   ShowDialogCallback show_dialog_callback_;
 
-  // Whether or not the |show_dialog_callback_| was called.
+  // Whether or not the `show_dialog_callback_` was called.
   bool did_call_show_dialog_;
 
   base::WeakPtrFactory<ExtensionInstallPrompt> weak_factory_{this};

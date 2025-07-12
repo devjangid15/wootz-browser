@@ -69,21 +69,32 @@ ThreadPoolInstance::ScopedBestEffortExecutionFence::
   g_thread_pool->EndBestEffortFence();
 }
 
+ThreadPoolInstance::ScopedRestrictedTasks::ScopedRestrictedTasks() {
+  DCHECK(g_thread_pool);
+  g_thread_pool->BeginRestrictedTasks();
+}
+
+ThreadPoolInstance::ScopedRestrictedTasks::~ScopedRestrictedTasks() {
+  DCHECK(g_thread_pool);
+  g_thread_pool->EndRestrictedTasks();
+}
+
 ThreadPoolInstance::ScopedFizzleBlockShutdownTasks::
     ScopedFizzleBlockShutdownTasks() {
   // It's possible for this to be called without a ThreadPool present in tests.
-  if (g_thread_pool)
+  if (g_thread_pool) {
     g_thread_pool->BeginFizzlingBlockShutdownTasks();
+  }
 }
 
 ThreadPoolInstance::ScopedFizzleBlockShutdownTasks::
     ~ScopedFizzleBlockShutdownTasks() {
   // It's possible for this to be called without a ThreadPool present in tests.
-  if (g_thread_pool)
+  if (g_thread_pool) {
     g_thread_pool->EndFizzlingBlockShutdownTasks();
+  }
 }
 
-#if !BUILDFLAG(IS_NACL)
 // static
 void ThreadPoolInstance::CreateAndStartWithDefaultParams(
     std::string_view name) {
@@ -102,7 +113,6 @@ void ThreadPoolInstance::StartWithDefaultParams() {
       static_cast<size_t>(std::max(3, SysInfo::NumberOfProcessors() - 1));
   Start({max_num_foreground_threads});
 }
-#endif  // !BUILDFLAG(IS_NACL)
 
 void ThreadPoolInstance::Create(std::string_view name) {
   Set(std::make_unique<internal::ThreadPoolImpl>(name));

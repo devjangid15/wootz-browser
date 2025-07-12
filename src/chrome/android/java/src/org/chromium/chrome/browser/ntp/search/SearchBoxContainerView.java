@@ -4,56 +4,45 @@
 
 package org.chromium.chrome.browser.ntp.search;
 
+
 import android.content.Context;
 import android.graphics.Typeface;
 import android.graphics.drawable.RippleDrawable;
 import android.util.AttributeSet;
 import android.view.MotionEvent;
+import android.view.View;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
-import androidx.appcompat.content.res.AppCompatResources;
-
+import org.chromium.base.Log;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 
 /** Provides the additional capabilities needed for the SearchBox container layout. */
+@NullMarked
 public class SearchBoxContainerView extends LinearLayout {
-    private final boolean mIsSurfacePolishEnabled;
-    private final int mEndPadding;
-    private final int mStartPadding;
-    private final int mLateralMargin;
+    private static final String TAG = "SearchBoxContainer";
+    private View mComposeplateButtonView;
 
     /** Constructor for inflating from XML. */
     public SearchBoxContainerView(Context context, AttributeSet attrs) {
         super(context, attrs);
-        mIsSurfacePolishEnabled = ChromeFeatureList.sSurfacePolish.isEnabled();
-        mEndPadding = getResources().getDimensionPixelSize(R.dimen.fake_search_box_end_padding);
-        mStartPadding = getResources().getDimensionPixelSize(R.dimen.fake_search_box_start_padding);
-        mLateralMargin =
-                getResources().getDimensionPixelSize(R.dimen.mvt_container_lateral_margin_polish);
     }
 
     @Override
     protected void onFinishInflate() {
         super.onFinishInflate();
-        if (mIsSurfacePolishEnabled) {
-            setPaddingRelative(mStartPadding, 0, mEndPadding, 0);
 
-            MarginLayoutParams params = (MarginLayoutParams) getLayoutParams();
-            params.leftMargin = mLateralMargin;
-            params.rightMargin = mLateralMargin;
+        // TODO(crbug.com/347509698): Remove the log statements after fixing the bug.
+        Log.i(TAG, "SearchBoxContainerView.onFinishInflate before set typeface");
 
-            setBackground(
-                    AppCompatResources.getDrawable(
-                            getContext(), R.drawable.home_surface_search_box_background));
+        TextView searchBoxTextView = findViewById(R.id.search_box_text);
+        Typeface typeface = Typeface.create("google-sans-medium", Typeface.NORMAL);
+        searchBoxTextView.setTypeface(typeface);
 
-            TextView searchBoxTextView = findViewById(R.id.search_box_text);
-            searchBoxTextView.setTextAppearance(
-                    getContext(), R.style.TextAppearance_SearchBoxText_NewTabPage_SurfacePolish);
-            Typeface typeface = Typeface.create("google-sans-medium", Typeface.NORMAL);
-            searchBoxTextView.setTypeface(typeface);
-        }
+        mComposeplateButtonView = findViewById(R.id.composeplate_button);
+
+        Log.i(TAG, "SearchBoxContainerView.onFinishInflate after set typeface");
     }
 
     @Override
@@ -64,5 +53,18 @@ public class SearchBoxContainerView extends LinearLayout {
             }
         }
         return super.onInterceptTouchEvent(ev);
+    }
+
+    void setComposeplateButtonVisibility(boolean isVisible) {
+        mComposeplateButtonView.setVisibility(isVisible ? View.VISIBLE : View.GONE);
+        int endPaddingInDp =
+                isVisible
+                        ? R.dimen.fake_search_box_with_composeplate_button_end_padding
+                        : R.dimen.fake_search_box_end_padding;
+        setPaddingRelative(
+                getPaddingStart(),
+                getPaddingTop(),
+                getResources().getDimensionPixelSize(endPaddingInDp),
+                getPaddingBottom());
     }
 }

@@ -6,15 +6,16 @@ package org.chromium.chrome.browser.ntp.search;
 
 import android.content.Context;
 import android.content.res.ColorStateList;
-import android.graphics.Bitmap;
 import android.graphics.drawable.Drawable;
 import android.view.View.OnClickListener;
 import android.view.View.OnDragListener;
 import android.view.ViewGroup;
 
 import androidx.appcompat.content.res.AppCompatResources;
-import androidx.core.graphics.drawable.RoundedBitmapDrawable;
 
+import org.chromium.build.annotations.MonotonicNonNull;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.lens.LensController;
 import org.chromium.chrome.browser.lens.LensEntryPoint;
 import org.chromium.chrome.browser.lens.LensIntentParams;
@@ -25,7 +26,6 @@ import org.chromium.chrome.browser.lifecycle.NativeInitObserver;
 import org.chromium.chrome.browser.omnibox.R;
 import org.chromium.chrome.browser.theme.ThemeUtils;
 import org.chromium.chrome.browser.ui.theme.BrandedColorScheme;
-import org.chromium.ui.base.ViewUtils;
 import org.chromium.ui.base.WindowAndroid;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
@@ -33,13 +33,15 @@ import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
 import java.util.ArrayList;
 import java.util.List;
 
+@NullMarked
 class SearchBoxMediator implements DestroyObserver, NativeInitObserver {
     private final Context mContext;
     private final PropertyModel mModel;
     private final ViewGroup mView;
     private final List<OnClickListener> mVoiceSearchClickListeners = new ArrayList<>();
     private final List<OnClickListener> mLensClickListeners = new ArrayList<>();
-    private ActivityLifecycleDispatcher mActivityLifecycleDispatcher;
+    private @MonotonicNonNull OnClickListener mComposeplateButtonClickListener;
+    private @Nullable ActivityLifecycleDispatcher mActivityLifecycleDispatcher;
 
     /** Constructor. */
     SearchBoxMediator(Context context, PropertyModel model, ViewGroup view) {
@@ -120,8 +122,25 @@ class SearchBoxMediator implements DestroyObserver, NativeInitObserver {
                 });
     }
 
+    /** Called to set a click listener for the composeplate button. */
+    void setComposeplateButtonClickListener(OnClickListener listener) {
+        assert mComposeplateButtonClickListener == null;
+
+        mComposeplateButtonClickListener = listener;
+        mModel.set(
+                SearchBoxProperties.COMPOSEPLATE_BUTTON_CLICK_CALLBACK,
+                v -> {
+                    mComposeplateButtonClickListener.onClick(v);
+                });
+    }
+
+    void setComposeplateButtonIconRawResId(int iconRawResId) {
+        mModel.set(SearchBoxProperties.COMPOSEPLATE_BUTTON_ICON_RAW_RES_ID, iconRawResId);
+    }
+
     /**
      * Launch the Lens app.
+     *
      * @param lensEntryPoint A {@link LensEntryPoint}.
      * @param windowAndroid A {@link WindowAndroid} instance.
      * @param isIncognito Whether the request is from a Incognito tab.
@@ -162,25 +181,5 @@ class SearchBoxMediator implements DestroyObserver, NativeInitObserver {
 
     void setTextViewTranslationX(float translationX) {
         mModel.set(SearchBoxProperties.SEARCH_TEXT_TRANSLATION_X, translationX);
-    }
-
-    void setButtonsHeight(int height) {
-        mModel.set(SearchBoxProperties.BUTTONS_HEIGHT, height);
-    }
-
-    void setButtonsWidth(int width) {
-        mModel.set(SearchBoxProperties.BUTTONS_WIDTH, width);
-    }
-
-    void setLensButtonLeftMargin(int leftMargin) {
-        mModel.set(SearchBoxProperties.LENS_BUTTON_LEFT_MARGIN, leftMargin);
-    }
-
-    private Drawable getRoundedDrawable(Bitmap bitmap) {
-        if (bitmap == null) return null;
-        RoundedBitmapDrawable roundedBitmapDrawable =
-                ViewUtils.createRoundedBitmapDrawable(mContext.getResources(), bitmap, 0);
-        roundedBitmapDrawable.setCircular(true);
-        return roundedBitmapDrawable;
     }
 }

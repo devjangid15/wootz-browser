@@ -7,7 +7,6 @@
 
 #include "components/viz/common/display/update_vsync_parameters_callback.h"
 #include "components/viz/common/frame_sinks/begin_frame_source.h"
-#include "components/viz/service/display/frame_rate_decider.h"
 #include "components/viz/service/viz_service_export.h"
 #include "ui/gl/vsync_thread_win.h"
 
@@ -34,11 +33,6 @@ class VIZ_SERVICE_EXPORT ExternalBeginFrameSourceWin
   void SetPreferredInterval(base::TimeDelta interval) override;
   void SetVSyncDisplayID(int64_t display_id) override;
 
-  // BeginFrameSource implementation.
-  void SetDynamicBeginFrameDeadlineOffsetSource(
-      DynamicBeginFrameDeadlineOffsetSource*
-          dynamic_begin_frame_deadline_offset_source) override;
-
   // ExternalBeginFrameSourceClient implementation.
   void OnNeedsBeginFrames(bool needs_begin_frames) override;
 
@@ -46,6 +40,8 @@ class VIZ_SERVICE_EXPORT ExternalBeginFrameSourceWin
   void OnVSync(base::TimeTicks vsync_time, base::TimeDelta interval) override;
 
  private:
+  void OnVSyncOnSequence(base::TimeTicks vsync_time, base::TimeDelta interval);
+
   scoped_refptr<base::SequencedTaskRunner> task_runner_;
 
   BeginFrameArgsGenerator begin_frame_args_generator_;

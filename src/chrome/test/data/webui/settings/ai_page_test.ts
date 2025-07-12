@@ -2,219 +2,351 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-'chrome://settings/settings.js';
+import 'chrome://settings/settings.js';
 
-import type {SettingsToggleButtonElement, SettingsAiPageElement, SettingsPrefsElement} from 'chrome://settings/settings.js';
-import {SettingsAiPageFeaturePrefName as PrefName, CrSettingsPrefs, loadTimeData, FeatureOptInState} from 'chrome://settings/settings.js';
+import {EntityDataManagerProxyImpl, FeatureOptInState, SettingsAiPageFeaturePrefName as PrefName} from 'chrome://settings/lazy_load.js';
+import type {CrLinkRowElement, SettingsAiPageElement, SettingsPrefsElement} from 'chrome://settings/settings.js';
+import {AiPageInteractions, CrSettingsPrefs, loadTimeData, MetricsBrowserProxyImpl, OpenWindowProxyImpl, resetRouterForTesting, Router, routes} from 'chrome://settings/settings.js';
+import {assertEquals, assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
+import {flushTasks} from 'chrome://webui-test/polymer_test_util.js';
+import {TestOpenWindowProxy} from 'chrome://webui-test/test_open_window_proxy.js';
+import {isChildVisible, isVisible} from 'chrome://webui-test/test_util.js';
 
-import {assertEquals, assertTrue, assertFalse} from 'chrome://webui-test/chai_assert.js';
-import {isVisible} from 'chrome://webui-test/test_util.js';
+import {TestEntityDataManagerProxy} from './test_entity_data_manager_proxy.js';
+import {TestMetricsBrowserProxy} from './test_metrics_browser_proxy.js';
 
-suite('ExperimentalAdvancedPage', function() {
+suite('AiPage', function() {
+  let metricsBrowserProxy: TestMetricsBrowserProxy;
+  let openWindowProxy: TestOpenWindowProxy;
   let page: SettingsAiPageElement;
   let settingsPrefs: SettingsPrefsElement;
+  let entityDataManager: TestEntityDataManagerProxy;
 
   suiteSetup(function() {
+    metricsBrowserProxy = new TestMetricsBrowserProxy();
+    MetricsBrowserProxyImpl.setInstance(metricsBrowserProxy);
+    openWindowProxy = new TestOpenWindowProxy();
+    OpenWindowProxyImpl.setInstance(openWindowProxy);
+
+    loadTimeData.overrideValues({
+      showAiPage: true,
+      showAiPageAiFeatureSection: true,
+    });
     settingsPrefs = document.createElement('settings-prefs');
     return CrSettingsPrefs.initialized;
   });
 
-  function createPage() {
+  setup(function() {
+    entityDataManager = new TestEntityDataManagerProxy();
+    EntityDataManagerProxyImpl.setInstance(entityDataManager);
+  });
+
+  teardown(function() {
+    Router.getInstance().resetRouteForTesting();
+    metricsBrowserProxy.reset();
+    openWindowProxy.reset();
+  });
+
+  async function createPage() {
     document.body.innerHTML = window.trustedTypes!.emptyHTML;
     page = document.createElement('settings-ai-page');
     page.prefs = settingsPrefs.prefs;
+    Router.getInstance().navigateTo(routes.AI);
     document.body.appendChild(page);
+    return flushTasks();
   }
 
-  // Test that interacting with the main toggle
-  //  - updates the corresponding pref
-  //  - updates the iron-collapse opened status
-  test('MainToggle', () => {
-    createPage();
-    page.setPrefValue(PrefName.MAIN, FeatureOptInState.NOT_INITIALIZED);
+  async function verifyFeatureVisibilityMetrics(
+      histogramName: string, visible: boolean) {
+    const recordedHistograms =
+        await metricsBrowserProxy.getArgs('recordBooleanHistogram');
+    assertTrue(recordedHistograms.some(
+        histogram =>
+            histogramName === histogram[0] && visible === histogram[1]));
+  }
 
-    const mainToggle = page.shadowRoot!.querySelector('settings-toggle-button');
-    assertTrue(!!mainToggle);
-    const collapse = page.shadowRoot!.querySelector('iron-collapse');
-    assertTrue(!!collapse);
+  async function verifyFeatureInteractionMetrics(
+      interaction: AiPageInteractions, action: string) {
+    const result =
+        await metricsBrowserProxy.whenCalled('recordAiPageInteractions');
+    assertEquals(interaction, result);
 
-    // Check NOT_INITIALIZED case.
-    assertFalse(mainToggle.checked);
-    assertFalse(collapse.opened);
+    assertEquals(action, await metricsBrowserProxy.whenCalled('recordAction'));
+  }
 
-    // Check ENABLED case.
-    mainToggle.click();
-    assertEquals(FeatureOptInState.ENABLED, page.getPref(PrefName.MAIN).value);
-    assertTrue(mainToggle.checked);
-    assertTrue(collapse.opened);
-
-    // Check DISABLED case.
-    mainToggle.click();
-    assertEquals(FeatureOptInState.DISABLED, page.getPref(PrefName.MAIN).value);
-    assertFalse(mainToggle.checked);
-    assertFalse(collapse.opened);
-  });
-
-  test('FeatureTogglesVisibility', () => {
+  test('FeatureRowsVisibility', async () => {
     // Case 1, a subset of the controls should be visible.
     loadTimeData.overrideValues({
+      showAutofillAiControl: true,
+      showHistorySearchControl: false,
+      showCompareControl: true,
       showComposeControl: true,
       showTabOrganizationControl: false,
-      showWallpaperSearchControl: false,
+      showPasswordChangeControl: false,
     });
-    createPage();
+    resetRouterForTesting();
+    await createPage();
 
-    // Turn the main pref to ENABLED so that the iron-collapse holding the
-    // feature specific toggles is expanded.
-    page.setPrefValue(PrefName.MAIN, FeatureOptInState.ENABLED);
+    assertEquals(6, metricsBrowserProxy.getCallCount('recordBooleanHistogram'));
 
-    let toggles = page.shadowRoot!.querySelectorAll(
-        'iron-collapse settings-toggle-button');
-    assertEquals(3, toggles.length);
-    assertTrue(isVisible(toggles[0]!));
-    assertFalse(isVisible(toggles[1]!));
-    assertFalse(isVisible(toggles[2]!));
+    assertFalse(isChildVisible(page, '#historySearchRowV2'));
+    await verifyFeatureVisibilityMetrics(
+        'Settings.AiPage.ElementVisibility.HistorySearch', false);
 
-    // Case 1, a different subset of the controls should be visible.
+    assertTrue(isChildVisible(page, '#compareRowV2'));
+    await verifyFeatureVisibilityMetrics(
+        'Settings.AiPage.ElementVisibility.Compare', true);
+
+    assertTrue(isChildVisible(page, '#composeRowV2'));
+    await verifyFeatureVisibilityMetrics(
+        'Settings.AiPage.ElementVisibility.Compose', true);
+
+    assertFalse(isChildVisible(page, '#tabOrganizationRowV2'));
+    await verifyFeatureVisibilityMetrics(
+        'Settings.AiPage.ElementVisibility.TabOrganization', false);
+
+    assertTrue(isChildVisible(page, '#autofillAiRowV2'));
+    await verifyFeatureVisibilityMetrics(
+        'Settings.AiPage.ElementVisibility.AutofillAI', true);
+
+    assertFalse(isChildVisible(page, '#passwordChangeRowV2'));
+    await verifyFeatureVisibilityMetrics(
+        'Settings.AiPage.ElementVisibility.PasswordChange', false);
+
+    metricsBrowserProxy.resetResolver('recordBooleanHistogram');
+
+    // No new metrics should get recorded on next AI page navigation.
+    Router.getInstance().navigateTo(routes.AI);
+    assertEquals(0, metricsBrowserProxy.getCallCount('recordBooleanHistogram'));
+
+    // Case 2, a different subset of the controls should be visible.
     loadTimeData.overrideValues({
+      showAutofillAiControl: false,
+      showHistorySearchControl: true,
+      showCompareControl: false,
       showComposeControl: false,
       showTabOrganizationControl: true,
-      showWallpaperSearchControl: true,
+      showPasswordChangeControl: true,
     });
-    createPage();
+    resetRouterForTesting();
+    await createPage();
+    assertEquals(6, metricsBrowserProxy.getCallCount('recordBooleanHistogram'));
 
-    toggles = page.shadowRoot!.querySelectorAll(
-        'iron-collapse settings-toggle-button');
-    assertEquals(3, toggles.length);
-    assertFalse(isVisible(toggles[0]!));
-    assertTrue(isVisible(toggles[1]!));
-    assertTrue(isVisible(toggles[2]!));
+    assertTrue(isChildVisible(page, '#historySearchRowV2'));
+    await verifyFeatureVisibilityMetrics(
+        'Settings.AiPage.ElementVisibility.HistorySearch', true);
+
+    assertFalse(isChildVisible(page, '#compareRowV2'));
+    await verifyFeatureVisibilityMetrics(
+        'Settings.AiPage.ElementVisibility.Compare', false);
+
+    assertFalse(isChildVisible(page, '#composeRowV2'));
+    await verifyFeatureVisibilityMetrics(
+        'Settings.AiPage.ElementVisibility.Compose', false);
+
+    assertTrue(isChildVisible(page, '#tabOrganizationRowV2'));
+    await verifyFeatureVisibilityMetrics(
+        'Settings.AiPage.ElementVisibility.TabOrganization', true);
+
+    assertFalse(isChildVisible(page, '#autofillAiRowV2'));
+    await verifyFeatureVisibilityMetrics(
+        'Settings.AiPage.ElementVisibility.AutofillAI', false);
+
+    assertTrue(isChildVisible(page, '#passwordChangeRowV2'));
+    await verifyFeatureVisibilityMetrics(
+        'Settings.AiPage.ElementVisibility.PasswordChange', true);
+
+    metricsBrowserProxy.resetResolver('recordBooleanHistogram');
+
+    // No new metrics should get recorded on next AI page navigation.
+    Router.getInstance().navigateTo(routes.AI);
+    assertEquals(0, metricsBrowserProxy.getCallCount('recordBooleanHistogram'));
   });
 
-  test('FeatureTogglesInteraction', () => {
+  test('historySearchRow', async () => {
     loadTimeData.overrideValues({
-      showComposeControl: true,
-      showTabOrganizationControl: true,
-      showWallpaperSearchControl: true,
+      showAiPage: true,
+      showHistorySearchControl: true,
     });
-    createPage();
-    const toggles =
-        page.shadowRoot!.querySelectorAll<SettingsToggleButtonElement>(
-            'iron-collapse settings-toggle-button');
-    assertEquals(3, toggles.length);
+    resetRouterForTesting();
+    await createPage();
 
-    for (const toggle of toggles) {
-      assertTrue(!!toggle.pref);
-      page.setPrefValue(toggle.pref.key, FeatureOptInState.NOT_INITIALIZED);
-      assertFalse(toggle.checked);
-    }
+    const historySearchRow =
+        page.shadowRoot!.querySelector<CrLinkRowElement>('#historySearchRowV2');
 
-    function assertPrefs(
-        value1: FeatureOptInState, value2: FeatureOptInState,
-        value3: FeatureOptInState) {
-      assertEquals(value1, page.getPref(PrefName.COMPOSE).value);
-      assertEquals(value2, page.getPref(PrefName.TAB_ORGANIZATION).value);
-      assertEquals(value3, page.getPref(PrefName.WALLPAPER_SEARCH).value);
-    }
+    assertTrue(!!historySearchRow);
+    assertTrue(isVisible(historySearchRow));
 
-    // Check turning on toggles one by one.
-    toggles[0]!.click();
-    assertPrefs(
-        FeatureOptInState.ENABLED, FeatureOptInState.NOT_INITIALIZED,
-        FeatureOptInState.NOT_INITIALIZED);
+    page.setPrefValue(
+        PrefName.HISTORY_SEARCH, FeatureOptInState.NOT_INITIALIZED);
+    assertEquals(
+        loadTimeData.getString('historySearchSublabelOff'),
+        historySearchRow.subLabel);
 
-    toggles[1]!.click();
-    assertPrefs(
-        FeatureOptInState.ENABLED, FeatureOptInState.ENABLED,
-        FeatureOptInState.NOT_INITIALIZED);
+    page.setPrefValue(PrefName.HISTORY_SEARCH, FeatureOptInState.DISABLED);
+    assertEquals(
+        loadTimeData.getString('historySearchSublabelOff'),
+        historySearchRow.subLabel);
 
-    toggles[2]!.click();
-    assertPrefs(
-        FeatureOptInState.ENABLED, FeatureOptInState.ENABLED,
-        FeatureOptInState.ENABLED);
+    page.setPrefValue(PrefName.HISTORY_SEARCH, FeatureOptInState.ENABLED);
+    assertEquals(
+        loadTimeData.getString('historySearchSublabelOn'),
+        historySearchRow.subLabel);
 
-    // Check turning off toggles one by one.
-    toggles[0]!.click();
-    assertPrefs(
-        FeatureOptInState.DISABLED, FeatureOptInState.ENABLED,
-        FeatureOptInState.ENABLED);
+    historySearchRow.click();
+    await verifyFeatureInteractionMetrics(
+        AiPageInteractions.HISTORY_SEARCH_CLICK,
+        'Settings.AiPage.HistorySearchEntryPointClick');
 
-    toggles[1]!.click();
-    assertPrefs(
-        FeatureOptInState.DISABLED, FeatureOptInState.DISABLED,
-        FeatureOptInState.ENABLED);
-
-    toggles[2]!.click();
-    assertPrefs(
-        FeatureOptInState.DISABLED, FeatureOptInState.DISABLED,
-        FeatureOptInState.DISABLED);
+    const currentRoute = Router.getInstance().getCurrentRoute();
+    assertEquals(routes.HISTORY_SEARCH, currentRoute);
+    assertEquals(routes.AI, currentRoute.parent);
   });
 
-  test('FeatureTogglesSeparators', () => {
-    // Asserts whether a separator is shown for each visible row.
-    function assertSeparatorsVisible(expected: boolean[]) {
-      const toggles =
-          page.shadowRoot!.querySelectorAll<SettingsToggleButtonElement>(
-              'iron-collapse settings-toggle-button:not([hidden])');
-
-      assertEquals(expected.length, toggles.length);
-      expected.forEach((visible, i) => {
-        assertEquals(visible, toggles[i]!.classList.contains('hr'));
-      });
-    }
-
-    // Case1: All rows visible.
+  test('compareRow', async () => {
     loadTimeData.overrideValues({
+      showAiPage: true,
+      showCompareControl: true,
+    });
+    resetRouterForTesting();
+    await createPage();
+
+    const compareRow =
+        page.shadowRoot!.querySelector<HTMLElement>('#compareRowV2');
+
+    assertTrue(!!compareRow);
+    assertTrue(isVisible(compareRow));
+    compareRow.click();
+    await verifyFeatureInteractionMetrics(
+        AiPageInteractions.COMPARE_CLICK,
+        'Settings.AiPage.CompareEntryPointClick');
+
+    const currentRoute = Router.getInstance().getCurrentRoute();
+    assertEquals(routes.COMPARE, currentRoute);
+    assertEquals(routes.AI, currentRoute.parent);
+  });
+
+  test('composeRow', async () => {
+    loadTimeData.overrideValues({
+      showAiPage: true,
       showComposeControl: true,
+    });
+    resetRouterForTesting();
+    await createPage();
+
+    const composeRow =
+        page.shadowRoot!.querySelector<HTMLElement>('#composeRowV2');
+
+    assertTrue(!!composeRow);
+    assertTrue(isVisible(composeRow));
+    composeRow.click();
+    await verifyFeatureInteractionMetrics(
+        AiPageInteractions.COMPOSE_CLICK,
+        'Settings.AiPage.ComposeEntryPointClick');
+
+    const currentRoute = Router.getInstance().getCurrentRoute();
+    assertEquals(routes.OFFER_WRITING_HELP, currentRoute);
+    assertEquals(routes.AI, currentRoute.parent);
+  });
+
+  test('tabOrganizationRow', async () => {
+    loadTimeData.overrideValues({
+      showAiPage: true,
       showTabOrganizationControl: true,
-      showWallpaperSearchControl: true,
     });
-    createPage();
-    assertSeparatorsVisible([false, true, true]);
+    resetRouterForTesting();
+    await createPage();
 
-    // Case2: Row 0 hidden.
-    loadTimeData.overrideValues({
-      showComposeControl: false,
-      showTabOrganizationControl: true,
-      showWallpaperSearchControl: true,
-    });
-    createPage();
-    assertSeparatorsVisible([false, true]);
+    const tabOrganizationRow =
+        page.shadowRoot!.querySelector<HTMLElement>('#tabOrganizationRowV2');
 
-    // Case3: Row 1 hidden.
-    loadTimeData.overrideValues({
-      showComposeControl: true,
-      showTabOrganizationControl: false,
-      showWallpaperSearchControl: true,
-    });
-    createPage();
-    assertSeparatorsVisible([false, true]);
+    assertTrue(!!tabOrganizationRow);
+    assertTrue(isVisible(tabOrganizationRow));
+    tabOrganizationRow.click();
+    await verifyFeatureInteractionMetrics(
+        AiPageInteractions.TAB_ORGANIZATION_CLICK,
+        'Settings.AiPage.TabOrganizationEntryPointClick');
 
-    // Case4: Row 2 hidden.
-    loadTimeData.overrideValues({
-      showComposeControl: true,
-      showTabOrganizationControl: true,
-      showWallpaperSearchControl: false,
-    });
-    createPage();
-    assertSeparatorsVisible([false, true]);
+    assertEquals(
+        routes.AI_TAB_ORGANIZATION, Router.getInstance().getCurrentRoute());
+  });
 
-    // Case5: Rows 0,1 hidden.
+  test('autofillAiRow', async () => {
+    entityDataManager.setGetOptInStatusResponse(false);
     loadTimeData.overrideValues({
-      showComposeControl: false,
-      showTabOrganizationControl: false,
-      showWallpaperSearchControl: true,
+      showAutofillAiControl: true,
     });
-    createPage();
-    assertSeparatorsVisible([false]);
+    resetRouterForTesting();
 
-    // Case6: Rows 0,2 hidden.
+    await createPage();
+    page.setPrefValue(PrefName.AUTOFILL_AI, false);
+
+    const autofillAiRow =
+        page.shadowRoot!.querySelector<CrLinkRowElement>('#autofillAiRowV2');
+    assertTrue(!!autofillAiRow);
+    assertEquals(
+        loadTimeData.getString('autofillAiDescriptionFeatureOff'),
+        autofillAiRow.subLabel);
+    // Note that while the pref change triggers the update, the opt-in status
+    // itself is read using the `entityDataManager.getOptInStatus()` helper
+    // method. This is because this method handles reading the pref for
+    // currently signed in user.
+    entityDataManager.setGetOptInStatusResponse(true);
+    page.setPrefValue(PrefName.AUTOFILL_AI, true);
+    await flushTasks();
+    assertEquals(
+        loadTimeData.getString('autofillAiDescriptionFeatureOn'),
+        autofillAiRow.subLabel);
+  });
+
+  test('autofillAiRowClick', async () => {
     loadTimeData.overrideValues({
-      showComposeControl: false,
-      showTabOrganizationControl: true,
-      showWallpaperSearchControl: false,
+      showAutofillAiControl: true,
     });
-    createPage();
-    assertSeparatorsVisible([false]);
+    resetRouterForTesting();
+
+    await createPage();
+
+    const autofillAiRow =
+        page.shadowRoot!.querySelector<HTMLElement>('#autofillAiRowV2');
+    assertTrue(!!autofillAiRow);
+    autofillAiRow.click();
+
+    await verifyFeatureInteractionMetrics(
+        AiPageInteractions.AUTOFILL_AI_CLICK,
+        'Settings.AiPage.AutofillAIEntryPointClick');
+    assertEquals(routes.AUTOFILL_AI, Router.getInstance().getCurrentRoute());
+  });
+
+  test('PasswordChangeRow', async () => {
+    loadTimeData.overrideValues({
+      showPasswordChangeControl: true,
+    });
+    await createPage();
+
+    const passwordChangeRow =
+        page.shadowRoot!.querySelector<HTMLElement>('#passwordChangeRowV2');
+    assertTrue(!!passwordChangeRow);
+    assertTrue(isVisible(passwordChangeRow));
+
+    passwordChangeRow.click();
+    await verifyFeatureInteractionMetrics(
+        AiPageInteractions.PASSWORD_CHANGE_CLICK,
+        'Settings.AiPage.PasswordChangeEntryPointClick');
+
+    const url = await openWindowProxy.whenCalled('openUrl');
+    assertEquals(url, loadTimeData.getString('passwordChangeSettingsUrl'));
+  });
+
+  test('NoPasswordChangeRowWhenFeatureDisabled', async () => {
+    loadTimeData.overrideValues({
+      showPasswordChangeControl: false,
+    });
+    await createPage();
+
+    const passwordChangeRow =
+        page.shadowRoot!.querySelector<HTMLElement>('#passwordChangeRowV2');
+    assertTrue(!!passwordChangeRow);
+    assertFalse(isVisible(passwordChangeRow));
   });
 });

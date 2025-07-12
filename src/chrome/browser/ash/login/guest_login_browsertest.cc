@@ -13,8 +13,11 @@
 #include "chrome/browser/ash/login/test/login_manager_mixin.h"
 #include "chrome/browser/ash/login/test/oobe_screen_waiter.h"
 #include "chrome/browser/ash/login/test/oobe_screens_utils.h"
+#include "chrome/browser/ash/profiles/profile_helper.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
 #include "chrome/browser/ui/webui/ash/login/guest_tos_screen_handler.h"
 #include "chrome/browser/ui/webui/ash/login/user_creation_screen_handler.h"
@@ -22,8 +25,8 @@
 #include "chromeos/ash/components/dbus/session_manager/fake_session_manager_client.h"
 #include "chromeos/ash/components/dbus/userdataauth/fake_userdataauth_client.h"
 #include "chromeos/dbus/power/fake_power_manager_client.h"
-#include "components/flags_ui/feature_entry_macros.h"
 #include "components/user_manager/user_manager.h"
+#include "components/webui/flags/feature_entry_macros.h"
 #include "content/public/test/browser_test.h"
 #include "third_party/cros_system_api/switches/chrome_switches.h"
 
@@ -36,7 +39,10 @@ const test::UIPath kGuestTosAcceptButton = {kGuestTosId, "acceptButton"};
 // Tests guest user log in.
 class GuestLoginTest : public MixinBasedInProcessBrowserTest {
  public:
-  GuestLoginTest() { login_manager_.set_session_restore_enabled(); }
+  GuestLoginTest() {
+    login_manager_.set_session_restore_enabled();
+    SetAllowFeaturesSwitches(/*allow=*/true);
+  }
   ~GuestLoginTest() override = default;
 
   // Test overrides can implement this to add login policy switches to login
@@ -117,6 +123,13 @@ IN_PROC_BROWSER_TEST_F(GuestLoginTest, Login) {
 
   user_manager::UserManager* user_manager = user_manager::UserManager::Get();
   EXPECT_TRUE(user_manager->IsLoggedInAsGuest());
+
+  // Checks User::GetProfilePrefs() uses the correct instance.
+  user_manager::User* user = user_manager->GetActiveUser();
+  ASSERT_TRUE(user);
+  EXPECT_EQ(user_manager::UserType::kGuest, user->GetType());
+  EXPECT_EQ(ProfileHelper::Get()->GetProfileByUser(user)->GetPrefs(),
+            user->GetProfilePrefs());
 }
 
 // Check that the guest button is visible on user creation screen before
@@ -195,9 +208,10 @@ IN_PROC_BROWSER_TEST_F(GuestLoginTest, ExitFullscreenOnSuspend) {
   login_manager_.WaitForActiveSession();
   BrowserWindow* browser_window = browser()->window();
   browser()
-      ->exclusive_access_manager()
+      ->GetFeatures()
+      .exclusive_access_manager()
       ->fullscreen_controller()
-      ->ToggleBrowserFullscreenMode();
+      ->ToggleBrowserFullscreenMode(/*user_initiated=*/true);
   EXPECT_TRUE(browser_window->IsFullscreen());
   chromeos::FakePowerManagerClient::Get()->SendSuspendImminent(
       power_manager::SuspendImminent_Reason_OTHER);

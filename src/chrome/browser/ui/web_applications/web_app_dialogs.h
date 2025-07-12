@@ -13,7 +13,6 @@
 #include "base/auto_reset.h"
 #include "base/functional/callback.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/web_applications/web_app_callback_app_identity.h"
 #include "chrome/browser/web_applications/web_app_install_info.h"
 #include "chrome/browser/web_applications/web_app_uninstall_dialog_user_options.h"
@@ -36,19 +35,15 @@ namespace content {
 class WebContents;
 }
 
-namespace views {
-class Widget;
-}  // namespace views
-
 namespace webapps {
 class MlInstallOperationTracker;
 enum class WebappUninstallSource;
-struct Screenshot;
 }  // namespace webapps
 
 namespace web_app {
 
 class IsolatedWebAppInstallerCoordinator;
+class WebAppScreenshotFetcher;
 struct WebAppInstallInfo;
 
 // Callback used to indicate whether a user has accepted the installation of a
@@ -66,17 +61,6 @@ void ShowCreateShortcutDialog(
     std::unique_ptr<WebAppInstallInfo> web_app_info,
     std::unique_ptr<webapps::MlInstallOperationTracker> install_tracker,
     AppInstallationAcceptanceCallback callback);
-
-// Creates a dialog that requests the consent from the user to install the
-// requested apps as sub apps to the named parent app. This is triggered by
-// an app calling the Multi App API add() function. The dialog is modal to
-// the browser containing the app calling the API. |sub_apps| contains the
-// information to represent each app to the user.
-views::Widget* CreateSubAppsInstallDialogWidget(
-    const std::u16string parent_app_name,
-    const std::vector<std::unique_ptr<WebAppInstallInfo>>& sub_apps,
-    base::RepeatingClosure settings_page_callback,
-    gfx::NativeWindow window);
 
 // When an app changes its icon or name, that is considered an app identity
 // change which (for some types of apps) needs confirmation from the user.
@@ -143,6 +127,10 @@ enum class PwaInProductHelpState {
   kNotShown
 };
 
+DECLARE_ELEMENT_IDENTIFIER_VALUE(kSimpleInstallDialogAppTitle);
+DECLARE_ELEMENT_IDENTIFIER_VALUE(kSimpleInstallDialogIconView);
+DECLARE_ELEMENT_IDENTIFIER_VALUE(kSimpleInstallDialogOriginLabel);
+
 // Shows the PWA installation confirmation bubble anchored off the PWA install
 // icon in the omnibox.
 //
@@ -166,6 +154,8 @@ void ShowDiyAppInstallDialog(
     AppInstallationAcceptanceCallback callback,
     PwaInProductHelpState iph_state = PwaInProductHelpState::kNotShown);
 
+DECLARE_ELEMENT_IDENTIFIER_VALUE(kDetailedInstallDialogImageContainer);
+
 // Shows the Web App detailed install dialog.
 // The dialog shows app's detailed information including screenshots. Users then
 // confirm or cancel install in this dialog.
@@ -174,12 +164,12 @@ void ShowWebAppDetailedInstallDialog(
     std::unique_ptr<WebAppInstallInfo> web_app_info,
     std::unique_ptr<webapps::MlInstallOperationTracker> install_tracker,
     AppInstallationAcceptanceCallback callback,
-    std::vector<webapps::Screenshot> screenshots,
+    base::WeakPtr<WebAppScreenshotFetcher> screenshot_fetcher,
     PwaInProductHelpState iph_state = PwaInProductHelpState::kNotShown);
 
 // Sets whether |ShowSimpleInstallDialogForWebApps| should accept immediately
 // without any user interaction.
-void SetAutoAcceptPWAInstallConfirmationForTesting(bool auto_accept);
+base::AutoReset<bool> SetAutoAcceptPWAInstallConfirmationForTesting();
 
 // Sets whether |ShowDiyInstallDialogForWebApps| should accept immediately
 // without any user interaction.
@@ -202,6 +192,28 @@ void PostCallbackOnBrowserActivation(
     const Browser* browser,
     ui::ElementIdentifier id,
     base::OnceCallback<void(bool)> view_and_element_activated_callback);
+
+// Callback used by the Web Install API to indicate whether the user has
+// accepted the launch of a web app.
+using WebInstallAppLaunchAcceptanceCallback =
+    base::OnceCallback<void(bool accepted)>;
+
+DECLARE_ELEMENT_IDENTIFIER_VALUE(kWebInstallLaunchDialogAppName);
+
+// Shows a web app launch dialog for `app_id`. Used by the Web Install API. The
+// dialog contains the app short name and icon, just like the intent picker. The
+// user can accept or cancel the launch. A response is sent via `callback` so
+// the service implementation can resolve itself based on the user
+// interaction.
+void ShowWebInstallAppLaunchDialog(
+    content::WebContents* web_contents,
+    const webapps::AppId& app_id,
+    Profile* profile,
+    std::string app_name,
+    WebInstallAppLaunchAcceptanceCallback callback);
+
+// Sets whether |ShowWebInstallAppLaunchDialog| should accept immediately.
+base::AutoReset<bool> SetAutoAcceptWebInstallLaunchDialogForTesting();
 
 }  // namespace web_app
 

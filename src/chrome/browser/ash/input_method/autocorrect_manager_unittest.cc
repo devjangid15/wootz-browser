@@ -5,22 +5,18 @@
 #include "chrome/browser/ash/input_method/autocorrect_manager.h"
 
 #include "ash/constants/ash_features.h"
-#include "ash/system/federated/federated_client_manager.h"
 #include "base/functional/callback_helpers.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "chrome/browser/ash/input_method/autocorrect_enums.h"
 #include "chrome/browser/ash/input_method/autocorrect_prefs.h"
 #include "chrome/browser/ash/input_method/suggestion_enums.h"
-#include "chrome/browser/ash/input_method/ui/suggestion_details.h"
 #include "chrome/browser/metrics/chrome_metrics_service_accessor.h"
+#include "chrome/browser/ui/ash/input_method/suggestion_details.h"
 #include "chrome/browser/ui/ash/keyboard/chrome_keyboard_controller_client.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/test/base/testing_profile.h"
-#include "chromeos/ash/components/dbus/federated/federated_client.h"
-#include "chromeos/ash/services/federated/public/cpp/fake_service_connection.h"
-#include "chromeos/ash/services/federated/public/cpp/service_connection.h"
 #include "chromeos/ash/services/ime/public/cpp/autocorrect.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/ukm/test_ukm_recorder.h"
@@ -408,12 +404,12 @@ ui::ime::AssistiveWindowButton CreateHighlightedLearnMoreButton() {
 
 // A helper for creating key event.
 ui::KeyEvent CreateKeyEvent(ui::DomKey key, ui::DomCode code) {
-  return ui::KeyEvent(ui::ET_KEY_PRESSED, ui::VKEY_UNKNOWN, code, ui::EF_NONE,
-                      key, ui::EventTimeForNow());
+  return ui::KeyEvent(ui::EventType::kKeyPressed, ui::VKEY_UNKNOWN, code,
+                      ui::EF_NONE, key, ui::EventTimeForNow());
 }
 
 ui::KeyEvent PressKeyWithCtrl(const ui::DomCode& code) {
-  return ui::KeyEvent(ui::EventType::ET_KEY_PRESSED, ui::VKEY_UNKNOWN, code,
+  return ui::KeyEvent(ui::EventType::kKeyPressed, ui::VKEY_UNKNOWN, code,
                       ui::EF_CONTROL_DOWN, ui::DomKey::NONE,
                       ui::EventTimeForNow());
 }
@@ -496,7 +492,6 @@ class MockSuggestionHandler : public SuggestionHandlerInterface {
               (int context_id,
                const std::u16string& candidate,
                size_t delete_previous_utf16_len,
-               bool use_replace_surrounding_text,
                std::string* error),
               (override));
   MOCK_METHOD(bool,
@@ -512,6 +507,11 @@ std::vector<base::test::FeatureRef> DisabledFeatures() {
   return {ash::features::kImeRuleConfig};
 }
 
+std::vector<base::test::FeatureRef>
+DisabledFeaturesIncludingAutocorrectByDefault() {
+  return {ash::features::kImeRuleConfig, ash::features::kAutocorrectByDefault};
+}
+
 std::vector<base::test::FeatureRef> RequiredForAutocorrectByDefault() {
   return {ash::features::kAutocorrectByDefault,
           ash::features::kImeFstDecoderParamsUpdate,
@@ -522,22 +522,14 @@ class AutocorrectManagerTest : public testing::Test {
  protected:
   AutocorrectManagerTest()
       : profile_(std::make_unique<TestingProfile>()),
-        manager_(&mock_suggestion_handler_, profile_.get()),
-        scoped_federated_fake_for_test_(&fake_federated_service_connection_) {
+        manager_(&mock_suggestion_handler_, profile_.get()) {
     // Disable ImeRulesConfigs by default.
     feature_list_.InitWithFeatures({}, DisabledFeatures());
-
-    // TODO(b/b/289140140): Refactor FederatedClientManager such that the
-    // testing framework for clients can be simpler.
-    ash::FederatedClient::InitializeFake();
-    federated::FederatedClientManager::UseFakeAshInteractionForTest();
 
     IMEBridge::Get()->SetInputContextHandler(&mock_ime_input_context_handler_);
     keyboard_client_ = ChromeKeyboardControllerClient::CreateForTest();
     keyboard_client_->set_keyboard_enabled_for_test(false);
   }
-
-  void TearDown() override { ash::FederatedClient::Shutdown(); }
 
   content::BrowserTaskEnvironment task_environment_{
       base::test::TaskEnvironment::TimeSource::MOCK_TIME};
@@ -548,10 +540,6 @@ class AutocorrectManagerTest : public testing::Test {
   std::unique_ptr<ChromeKeyboardControllerClient> keyboard_client_;
   AutocorrectManager manager_;
   base::HistogramTester histogram_tester_;
-
-  ash::federated::FakeServiceConnectionImpl fake_federated_service_connection_;
-  ash::federated::ScopedFakeServiceConnectionForTest
-      scoped_federated_fake_for_test_;
 };
 
 TEST_F(AutocorrectManagerTest,
@@ -2827,8 +2815,14 @@ TEST_F(AutocorrectManagerTest, RecordRejectionForPkControlBackspace) {
   histogram_tester_.ExpectTotalCount(kAutocorrectV2PkRejectionHistName, 2);
 }
 
-TEST_F(AutocorrectManagerTest,
-       IsNotDisabledWhenNoSuggestionProviderAndNoExperimentFlag) {
+TEST_F(
+    AutocorrectManagerTest,
+    IsNotDisabledWhenNoSuggestionProviderAndAutocorrectByDefaultFlagIsDisabled) {
+  feature_list_.Reset();
+  feature_list_.InitWithFeatures(
+      /*enabled_features=*/{},
+      /*disabled_features=*/DisabledFeaturesIncludingAutocorrectByDefault());
+
   manager_.OnActivate(kUsEnglishEngineId);
   manager_.OnFocus(kContextId);
 
@@ -2894,6 +2888,10 @@ INSTANTIATE_TEST_SUITE_P(
 
 TEST_P(NotDisabledByInvalidSuggestionProvider,
        WhenAutocorrectByDefaultFlagDisabled) {
+  feature_list_.Reset();
+  feature_list_.InitWithFeatures(
+      /*enabled_features=*/{},
+      /*disabled_features=*/DisabledFeaturesIncludingAutocorrectByDefault());
   const AutocorrectSuggestionProvider& provider = GetParam();
 
   manager_.OnActivate(kUsEnglishEngineId);
@@ -3261,7 +3259,7 @@ INSTANTIATE_TEST_SUITE_P(
         {"UsEnglishDefault",
          /*engine_id=*/kUsEnglishEngineId,
          /*autocorrect_level=*/std::nullopt,
-         /*expected_pref=*/AutocorrectPreference::kDefault},
+         /*expected_pref=*/AutocorrectPreference::kEnabledByDefault},
     }),
     [](const testing::TestParamInfo<PkUserPrefCase> info) {
       return info.param.test_name;
@@ -3499,6 +3497,10 @@ TEST_P(PkEnabledByDefaultTest, ItIsEnabledByDefaultWhenFlagIsEnabled) {
 TEST_P(PkEnabledByDefaultTest, ItIsNotEnabledByDefaultWhenFlagIsDisabled) {
   const PkEnabledByDefaultCase& test_case = GetParam();
   PrefService* prefs = profile_->GetPrefs();
+  feature_list_.Reset();
+  feature_list_.InitWithFeatures(
+      /*enabled_features=*/{},
+      /*disabled_features=*/DisabledFeaturesIncludingAutocorrectByDefault());
   if (test_case.autocorrect_level) {
     SetAutocorrectPreferenceTo(*profile_, kUsEnglishEngineId,
                                *test_case.autocorrect_level);
@@ -3966,46 +3968,6 @@ TEST_F(AutocorrectManagerUkmMetricsTest, RecordsAppCompatUkmForExitField) {
       ukm_entries[1], UkmEntry::kCompatibilitySummary_PKName,
       static_cast<int>(
           AutocorrectCompatibilitySummary::kUserExitedTextFieldWithUnderline));
-}
-
-// TODO(b/319190264): Consider parameterizing these federated tests on UMA
-// consent status, pending outcome of FederatedClientManager unit testing
-// refactor.
-TEST_F(AutocorrectManagerTest, FederatedLoggingWhenUmaEnabled) {
-  feature_list_.Reset();
-  feature_list_.InitWithFeatures({features::kAutocorrectFederatedPhh},
-                                 DisabledFeatures());
-  bool chrome_metrics_enabled = true;
-  ChromeMetricsServiceAccessor::SetMetricsAndCrashReportingForTesting(
-      &chrome_metrics_enabled);
-
-  EXPECT_EQ(0, manager_.GetFederatedClientManagerForTest()
-                   .get_num_successful_reports_for_test());
-
-  manager_.HandleAutocorrect(gfx::Range(0, 3), u"teh", u"the");
-  // The handling of an autocorrection triggers a federated logging event.
-  EXPECT_EQ(1, manager_.GetFederatedClientManagerForTest()
-                   .get_num_successful_reports_for_test());
-  ChromeMetricsServiceAccessor::SetMetricsAndCrashReportingForTesting(nullptr);
-}
-
-TEST_F(AutocorrectManagerTest, NoFederatedLoggingWhenUmaDisabled) {
-  feature_list_.Reset();
-  feature_list_.InitWithFeatures({features::kAutocorrectFederatedPhh},
-                                 DisabledFeatures());
-  bool chrome_metrics_enabled = false;
-  ChromeMetricsServiceAccessor::SetMetricsAndCrashReportingForTesting(
-      &chrome_metrics_enabled);
-
-  EXPECT_EQ(0, manager_.GetFederatedClientManagerForTest()
-                   .get_num_successful_reports_for_test());
-
-  manager_.HandleAutocorrect(gfx::Range(0, 3), u"teh", u"the");
-  // No federated logging despite enabled feature flag, because Chrome metrics
-  // collection is disabled.
-  EXPECT_EQ(0, manager_.GetFederatedClientManagerForTest()
-                   .get_num_successful_reports_for_test());
-  ChromeMetricsServiceAccessor::SetMetricsAndCrashReportingForTesting(nullptr);
 }
 
 }  // namespace

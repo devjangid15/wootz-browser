@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 // Helper tool that is built and run during a build to pull strings from the
 // GRD files and generate a localized string files needed for iOS app bundles.
 // Arguments:
@@ -33,7 +38,6 @@
 #import "base/apple/foundation_util.h"
 #import "base/files/file_path.h"
 #import "base/files/file_util.h"
-#import "base/strings/string_piece.h"
 #import "base/strings/sys_string_conversions.h"
 #import "ios/chrome/tools/strings/grit_header_parsing.h"
 #import "ui/base/resource/data_pack.h"
@@ -52,19 +56,22 @@ std::unique_ptr<ui::DataPack> LoadResourceDataPack(
       [NSString stringWithFormat:@"%@/%@.lproj/locale.pak",
                                  packed_data_pack_dir, locale_name];
 
-  if (!resource_path)
+  if (!resource_path) {
     return resource_data_pack;
+  }
 
   // FilePath may contain components that references parent directory
   // (".."). DataPack disallows paths with ".." for security reasons.
   base::FilePath resources_pak_path([resource_path fileSystemRepresentation]);
   resources_pak_path = base::MakeAbsoluteFilePath(resources_pak_path);
-  if (!base::PathExists(resources_pak_path))
+  if (!base::PathExists(resources_pak_path)) {
     return resource_data_pack;
+  }
 
   resource_data_pack.reset(new ui::DataPack(ui::k100Percent));
-  if (!resource_data_pack->LoadFromPath(resources_pak_path))
+  if (!resource_data_pack->LoadFromPath(resources_pak_path)) {
     resource_data_pack.reset();
+  }
 
   return resource_data_pack;
 }
@@ -73,7 +80,7 @@ std::unique_ptr<ui::DataPack> LoadResourceDataPack(
 // Return nil if none is found.
 NSString* GetStringFromDataPack(const ui::DataPack& data_pack,
                                 uint16_t resource_id) {
-  std::optional<std::string_view> data = data_pack.GetStringPiece(resource_id);
+  std::optional<std::string_view> data = data_pack.GetStringView(resource_id);
   if (!data.has_value()) {
     return nil;
   }

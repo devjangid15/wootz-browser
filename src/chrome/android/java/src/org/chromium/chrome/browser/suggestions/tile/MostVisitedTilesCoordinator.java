@@ -6,12 +6,13 @@ package org.chromium.chrome.browser.suggestions.tile;
 
 import android.app.Activity;
 import android.content.res.Configuration;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewStub;
 
 import androidx.annotation.Nullable;
-import androidx.annotation.VisibleForTesting;
 
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
@@ -23,9 +24,9 @@ import org.chromium.chrome.browser.suggestions.SuggestionsConfig;
 import org.chromium.chrome.browser.suggestions.SuggestionsDependencyFactory;
 import org.chromium.chrome.browser.suggestions.SuggestionsUiDelegate;
 import org.chromium.chrome.browser.ui.native_page.TouchEnabledDelegate;
+import org.chromium.chrome.browser.user_education.UserEducationHelper;
 import org.chromium.components.browser_ui.widget.displaystyle.UiConfig;
 import org.chromium.ui.base.DeviceFormFactor;
-import org.chromium.ui.base.WindowAndroid;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
 
@@ -34,19 +35,12 @@ public class MostVisitedTilesCoordinator implements ConfigurationChangedObserver
     private static final int TITLE_LINES = 1;
     public static final String CONTEXT_MENU_USER_ACTION_PREFIX = "Suggestions";
 
-    /**
-     * The maximum number of tiles to try and fit in a row. On smaller screens, there may not be
-     * enough space to fit all of them.
-     */
-    @VisibleForTesting public static final int MAX_TILE_COLUMNS_FOR_GRID = 4;
-
     private final Activity mActivity;
     private final ActivityLifecycleDispatcher mActivityLifecycleDispatcher;
     private final MostVisitedTilesMediator mMediator;
-    private final WindowAndroid mWindowAndroid;
     private final UiConfig mUiConfig;
-    private final PropertyModelChangeProcessor mModelChangeProcessor;
     private TileRenderer mRenderer;
+    private UserEducationHelper mUserEducationHelper;
     private ContextMenuManager mContextMenuManager;
     private OfflinePageBridge mOfflinePageBridge;
 
@@ -56,12 +50,6 @@ public class MostVisitedTilesCoordinator implements ConfigurationChangedObserver
      *     e.g.configuration changes. We need this to adjust the paddings and margins of the tile
      *     views.
      * @param mvTilesContainerLayout The container view of most visited tiles layout.
-     * @param windowAndroid The current {@link WindowAndroid}
-     * @param isScrollableMVTEnabled Whether scrollable MVT is enabled. If true {@link
-     *     MostVisitedTilesCarouselLayout} is used; if false {@link MostVisitedTilesGridLayout} is
-     *     used.
-     * @param maxRows The maximum number of rows to display. This will only be used for {@link
-     *     MostVisitedTilesGridLayout}.
      * @param snapshotTileGridChangedRunnable The runnable called when the snapshot tile grid is
      *     changed.
      * @param tileCountChangedRunnable The runnable called when the tile count is changed.
@@ -70,37 +58,21 @@ public class MostVisitedTilesCoordinator implements ConfigurationChangedObserver
             Activity activity,
             ActivityLifecycleDispatcher activityLifecycleDispatcher,
             View mvTilesContainerLayout,
-            WindowAndroid windowAndroid,
-            boolean isScrollableMVTEnabled,
-            int maxRows,
             @Nullable Runnable snapshotTileGridChangedRunnable,
             @Nullable Runnable tileCountChangedRunnable) {
         mActivity = activity;
         mActivityLifecycleDispatcher = activityLifecycleDispatcher;
-        mWindowAndroid = windowAndroid;
 
-        ((ViewStub)
-                        mvTilesContainerLayout.findViewById(
-                                isScrollableMVTEnabled
-                                        ? R.id.mv_tiles_carousel_stub
-                                        : R.id.mv_tiles_grid_stub))
-                .inflate();
-        ViewGroup tilesLayout = mvTilesContainerLayout.findViewById(R.id.mv_tiles_layout);
-
-        if (!isScrollableMVTEnabled) {
-            assert maxRows != Integer.MAX_VALUE;
-            ((MostVisitedTilesGridLayout) tilesLayout).setMaxColumns(MAX_TILE_COLUMNS_FOR_GRID);
-            ((MostVisitedTilesGridLayout) tilesLayout).setMaxRows(maxRows);
-        }
+        ((ViewStub) mvTilesContainerLayout.findViewById(R.id.mv_tiles_layout_stub)).inflate();
+        MostVisitedTilesLayout tilesLayout =
+                mvTilesContainerLayout.findViewById(R.id.mv_tiles_layout);
 
         mUiConfig = new UiConfig(tilesLayout);
         PropertyModel propertyModel = new PropertyModel(MostVisitedTilesProperties.ALL_KEYS);
-        mModelChangeProcessor =
-                PropertyModelChangeProcessor.create(
-                        propertyModel,
-                        new MostVisitedTilesViewBinder.ViewHolder(
-                                mvTilesContainerLayout, tilesLayout),
-                        MostVisitedTilesViewBinder::bind);
+        PropertyModelChangeProcessor.create(
+                propertyModel,
+                new MostVisitedTilesViewBinder.ViewHolder(mvTilesContainerLayout, tilesLayout),
+                MostVisitedTilesViewBinder::bind);
         mRenderer =
                 new TileRenderer(
                         mActivity, SuggestionsConfig.getTileStyle(mUiConfig), TITLE_LINES, null);
@@ -111,10 +83,9 @@ public class MostVisitedTilesCoordinator implements ConfigurationChangedObserver
                         activity.getResources(),
                         mUiConfig,
                         tilesLayout,
-                        mvTilesContainerLayout.findViewById(R.id.tile_grid_placeholder_stub),
+                        mvTilesContainerLayout.findViewById(R.id.mv_tiles_placeholder_stub),
                         mRenderer,
                         propertyModel,
-                        isScrollableMVTEnabled,
                         isTablet,
                         snapshotTileGridChangedRunnable,
                         tileCountChangedRunnable);
@@ -148,17 +119,20 @@ public class MostVisitedTilesCoordinator implements ConfigurationChangedObserver
         }
         mRenderer.onNativeInitializationReady(profile);
 
+        Handler handler = new Handler(Looper.getMainLooper());
+        mUserEducationHelper = new UserEducationHelper(mActivity, profile, handler);
+
         mContextMenuManager =
                 new ContextMenuManager(
                         suggestionsUiDelegate.getNavigationDelegate(),
                         touchEnabledDelegate,
                         mActivity::closeContextMenu,
                         CONTEXT_MENU_USER_ACTION_PREFIX);
-        mWindowAndroid.addContextMenuCloseListener(mContextMenuManager);
         mOfflinePageBridge =
                 SuggestionsDependencyFactory.getInstance().getOfflinePageBridge(profile);
         mMediator.initWithNative(
                 profile,
+                mUserEducationHelper,
                 suggestionsUiDelegate,
                 mContextMenuManager,
                 tileGroupDelegate,
@@ -172,12 +146,6 @@ public class MostVisitedTilesCoordinator implements ConfigurationChangedObserver
 
         if (mOfflinePageBridge != null) mOfflinePageBridge = null;
         if (mRenderer != null) mRenderer = null;
-
-        if (mWindowAndroid != null) {
-            mWindowAndroid.removeContextMenuCloseListener(mContextMenuManager);
-            mContextMenuManager = null;
-        }
-
         if (mMediator != null) mMediator.destroy();
     }
 

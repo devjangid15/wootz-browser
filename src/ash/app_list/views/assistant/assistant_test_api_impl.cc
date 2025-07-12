@@ -22,6 +22,7 @@
 #include "ash/shell.h"
 #include "ash/wm/overview/overview_controller.h"
 #include "base/functional/bind.h"
+#include "base/strings/utf_string_conversions.h"
 #include "components/prefs/pref_service.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/compositor/scoped_animation_duration_scale_mode.h"
@@ -117,10 +118,6 @@ views::View* AssistantTestApiImpl::keyboard_input_toggle() {
 
 views::View* AssistantTestApiImpl::suggestion_chip_container() {
   return page_view()->GetViewByID(AssistantViewID::kSuggestionContainer);
-}
-
-views::View* AssistantTestApiImpl::onboarding_view() {
-  return page_view()->GetViewByID(AssistantViewID::kOnboardingView);
 }
 
 views::View* AssistantTestApiImpl::opt_in_view() {

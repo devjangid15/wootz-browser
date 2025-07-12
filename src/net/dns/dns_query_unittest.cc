@@ -12,7 +12,9 @@
 #include <tuple>
 #include <vector>
 
+#include "base/compiler_specific.h"
 #include "base/containers/span.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "net/base/io_buffer.h"
 #include "net/dns/dns_names_util.h"
@@ -36,7 +38,7 @@ bool ParseAndCreateDnsQueryFromRawPacket(const uint8_t* data,
                                          size_t length,
                                          std::unique_ptr<DnsQuery>* out) {
   auto packet = base::MakeRefCounted<IOBufferWithSize>(length);
-  memcpy(packet->data(), data, length);
+  UNSAFE_TODO(memcpy(packet->data(), data, length));
   *out = std::make_unique<DnsQuery>(packet);
   return (*out)->Parse(length);
 }
@@ -73,7 +75,8 @@ TEST(DnsQueryTest, Constructor) {
   EXPECT_THAT(AsTuple(q1.io_buffer()), ElementsAreArray(query_data));
   EXPECT_THAT(q1.qname(), ElementsAreArray(kQName));
 
-  std::string_view question(reinterpret_cast<const char*>(query_data) + 12, 21);
+  std::string_view question(
+      UNSAFE_TODO(reinterpret_cast<const char*>(query_data) + 12), 21);
   EXPECT_EQ(question, q1.question());
 }
 
@@ -124,14 +127,15 @@ TEST(DnsQueryTest, EDNS0) {
   };
 
   OptRecordRdata opt_rdata;
-  opt_rdata.AddOpt(
-      OptRecordRdata::UnknownOpt::CreateForTesting(255, "\xde\xad\xbe\xef"));
+  const auto data = std::to_array<uint8_t>({0xde, 0xad, 0xbe, 0xef});
+  opt_rdata.AddOpt(OptRecordRdata::UnknownOpt::CreateForTesting(255, data));
   DnsQuery q1(0xbeef, kQName, dns_protocol::kTypeA, &opt_rdata);
   EXPECT_EQ(dns_protocol::kTypeA, q1.qtype());
 
   EXPECT_THAT(AsTuple(q1.io_buffer()), ElementsAreArray(query_data));
 
-  std::string_view question(reinterpret_cast<const char*>(query_data) + 12, 21);
+  std::string_view question(
+      UNSAFE_TODO(reinterpret_cast<const char*>(query_data) + 12), 21);
   EXPECT_EQ(question, q1.question());
 }
 
@@ -276,7 +280,7 @@ const uint8_t kQueryInvalidDNSDomainName2[] = {
 
 TEST(DnsQueryParseTest, FailsInvalidQueries) {
   const struct TestCase {
-    const uint8_t* data;
+    raw_ptr<const uint8_t> data;
     size_t size;
   } testcases[] = {
       {kQueryTruncatedQuestion, std::size(kQueryTruncatedQuestion)},
@@ -320,7 +324,7 @@ TEST(DnsQueryParseTest, ParsesLongName) {
       4);
 
   auto packet = base::MakeRefCounted<IOBufferWithSize>(data.size());
-  memcpy(packet->data(), data.data(), data.size());
+  UNSAFE_TODO(memcpy(packet->data(), data.data(), data.size()));
   DnsQuery query(packet);
 
   EXPECT_TRUE(query.Parse(data.size()));
@@ -354,7 +358,7 @@ TEST(DnsQueryParseTest, FailsTooLongName) {
       4);
 
   auto packet = base::MakeRefCounted<IOBufferWithSize>(data.size());
-  memcpy(packet->data(), data.data(), data.size());
+  UNSAFE_TODO(memcpy(packet->data(), data.data(), data.size()));
   DnsQuery query(packet);
 
   EXPECT_FALSE(query.Parse(data.size()));
@@ -387,7 +391,7 @@ TEST(DnsQueryParseTest, FailsTooLongSingleLabelName) {
       4);
 
   auto packet = base::MakeRefCounted<IOBufferWithSize>(data.size());
-  memcpy(packet->data(), data.data(), data.size());
+  UNSAFE_TODO(memcpy(packet->data(), data.data(), data.size()));
   DnsQuery query(packet);
 
   EXPECT_FALSE(query.Parse(data.size()));
@@ -409,7 +413,7 @@ TEST(DnsQueryParseTest, FailsNonendedName) {
       "\003www\006google\006test";  // Nonended name.
 
   auto packet = base::MakeRefCounted<IOBufferWithSize>(sizeof(kData) - 1);
-  memcpy(packet->data(), kData, sizeof(kData) - 1);
+  UNSAFE_TODO(memcpy(packet->data(), kData, sizeof(kData) - 1));
   DnsQuery query(packet);
 
   EXPECT_FALSE(query.Parse(sizeof(kData) - 1));
@@ -434,7 +438,7 @@ TEST(DnsQueryParseTest, FailsNameWithoutTerminator) {
       "\x00\x01";                  // CLASS=IN
 
   auto packet = base::MakeRefCounted<IOBufferWithSize>(sizeof(kData) - 1);
-  memcpy(packet->data(), kData, sizeof(kData) - 1);
+  UNSAFE_TODO(memcpy(packet->data(), kData, sizeof(kData) - 1));
   DnsQuery query(packet);
 
   EXPECT_FALSE(query.Parse(sizeof(kData) - 1));
@@ -450,7 +454,7 @@ TEST(DnsQueryParseTest, FailsQueryWithNoQuestions) {
       "\x00\x00";  // 0 additional records
 
   auto packet = base::MakeRefCounted<IOBufferWithSize>(sizeof(kData) - 1);
-  memcpy(packet->data(), kData, sizeof(kData) - 1);
+  UNSAFE_TODO(memcpy(packet->data(), kData, sizeof(kData) - 1));
   DnsQuery query(packet);
 
   EXPECT_FALSE(query.Parse(sizeof(kData) - 1));
@@ -472,7 +476,7 @@ TEST(DnsQueryParseTest, FailsQueryWithMultipleQuestions) {
       "\x00\x01";                      // CLASS=IN
 
   auto packet = base::MakeRefCounted<IOBufferWithSize>(sizeof(kData) - 1);
-  memcpy(packet->data(), kData, sizeof(kData) - 1);
+  UNSAFE_TODO(memcpy(packet->data(), kData, sizeof(kData) - 1));
   DnsQuery query(packet);
 
   EXPECT_FALSE(query.Parse(sizeof(kData) - 1));
@@ -497,7 +501,7 @@ TEST(DnsQueryParseTest, IgnoresExtraQuestion) {
       "\x00\x01";                      // CLASS=IN
 
   auto packet = base::MakeRefCounted<IOBufferWithSize>(sizeof(kData) - 1);
-  memcpy(packet->data(), kData, sizeof(kData) - 1);
+  UNSAFE_TODO(memcpy(packet->data(), kData, sizeof(kData) - 1));
   DnsQuery query(packet);
 
   EXPECT_TRUE(query.Parse(sizeof(kData) - 1));
@@ -523,7 +527,7 @@ TEST(DnsQueryParseTest, FailsQueryWithMissingQuestion) {
       "\x00\x00";  // 0 additional records
 
   auto packet = base::MakeRefCounted<IOBufferWithSize>(sizeof(kData) - 1);
-  memcpy(packet->data(), kData, sizeof(kData) - 1);
+  UNSAFE_TODO(memcpy(packet->data(), kData, sizeof(kData) - 1));
   DnsQuery query(packet);
 
   EXPECT_FALSE(query.Parse(sizeof(kData) - 1));
@@ -548,7 +552,7 @@ TEST(DnsQueryParseTest, FailsQueryWithNamePointer) {
       "\004test\000";              // Byte 29 (name pointer destination): test.
 
   auto packet = base::MakeRefCounted<IOBufferWithSize>(sizeof(kData) - 1);
-  memcpy(packet->data(), kData, sizeof(kData) - 1);
+  UNSAFE_TODO(memcpy(packet->data(), kData, sizeof(kData) - 1));
   DnsQuery query(packet);
 
   EXPECT_FALSE(query.Parse(sizeof(kData) - 1));

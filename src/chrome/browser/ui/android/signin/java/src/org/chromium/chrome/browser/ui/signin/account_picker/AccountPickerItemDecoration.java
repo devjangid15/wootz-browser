@@ -3,16 +3,20 @@
 // found in the LICENSE file.
 package org.chromium.chrome.browser.ui.signin.account_picker;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.graphics.Rect;
 import android.view.View;
 
 import androidx.annotation.DrawableRes;
 import androidx.recyclerview.widget.RecyclerView;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.ui.signin.R;
 import org.chromium.ui.base.ViewUtils;
 
 /** Item decoration which updates the background and the margins of the account list items. */
+@NullMarked
 public final class AccountPickerItemDecoration extends RecyclerView.ItemDecoration {
     @Override
     public void getItemOffsets(
@@ -20,7 +24,7 @@ public final class AccountPickerItemDecoration extends RecyclerView.ItemDecorati
         super.getItemOffsets(outRect, view, parent, state);
 
         int position = parent.getChildAdapterPosition(view);
-        int itemsCount = parent.getAdapter().getItemCount();
+        int itemsCount = assumeNonNull(parent.getAdapter()).getItemCount();
 
         @DrawableRes int backgroundId = getBackgroundDrawableId(position, itemsCount);
         view.setBackgroundResource(backgroundId);
@@ -30,6 +34,9 @@ public final class AccountPickerItemDecoration extends RecyclerView.ItemDecorati
     }
 
     private int getBackgroundDrawableId(int position, int itemCount) {
+        if (itemCount == 1) { // Round all edges of the only item.
+            return R.drawable.account_row_background_rounded_all;
+        }
         if (position == itemCount - 1) { // Round the bottom of the last item.
             return R.drawable.account_row_background_rounded_down;
         }

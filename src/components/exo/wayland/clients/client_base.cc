@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "components/exo/wayland/clients/client_base.h"
 
 #include <aura-shell-client-protocol.h>
@@ -9,7 +14,6 @@
 #include <fcntl.h>
 #include <fullscreen-shell-unstable-v1-client-protocol.h>
 #include <linux-dmabuf-unstable-v1-client-protocol.h>
-#include <linux-explicit-synchronization-unstable-v1-client-protocol.h>
 #include <presentation-time-client-protocol.h>
 #include <stylus-unstable-v2-client-protocol.h>
 #include <sys/mman.h>
@@ -18,6 +22,7 @@
 #include <wayland-client-core.h>
 #include <wayland-client-protocol.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -33,7 +38,6 @@
 #include "base/memory/shared_memory_mapper.h"
 #include "base/memory/unsafe_shared_memory_region.h"
 #include "base/posix/eintr_wrapper.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -43,14 +47,14 @@
 #include "third_party/skia/include/core/SkColorSpace.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
 #include "third_party/skia/include/core/SkSurface.h"
-#include "third_party/skia/include/gpu/GrBackendSurface.h"
-#include "third_party/skia/include/gpu/GrDirectContext.h"
+#include "third_party/skia/include/gpu/ganesh/GrBackendSurface.h"
+#include "third_party/skia/include/gpu/ganesh/GrDirectContext.h"
 #include "third_party/skia/include/gpu/ganesh/SkSurfaceGanesh.h"
+#include "third_party/skia/include/gpu/ganesh/gl/GrGLAssembleInterface.h"
 #include "third_party/skia/include/gpu/ganesh/gl/GrGLBackendSurface.h"
 #include "third_party/skia/include/gpu/ganesh/gl/GrGLDirectContext.h"
-#include "third_party/skia/include/gpu/gl/GrGLAssembleInterface.h"
-#include "third_party/skia/include/gpu/gl/GrGLInterface.h"
-#include "third_party/skia/include/gpu/gl/GrGLTypes.h"
+#include "third_party/skia/include/gpu/ganesh/gl/GrGLInterface.h"
+#include "third_party/skia/include/gpu/ganesh/gl/GrGLTypes.h"
 #include "ui/gfx/geometry/size_conversions.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_enums.h"
@@ -925,7 +929,7 @@ ClientBase::InitParams::InitParams() {
 #endif
 }
 
-ClientBase::InitParams::~InitParams() {}
+ClientBase::InitParams::~InitParams() = default;
 
 ClientBase::InitParams::InitParams(const InitParams& params) = default;
 
@@ -992,9 +996,9 @@ bool ClientBase::InitParams::FromCommandLine(
 ////////////////////////////////////////////////////////////////////////////////
 // ClientBase::Buffer, public:
 
-ClientBase::Buffer::Buffer() {}
+ClientBase::Buffer::Buffer() = default;
 
-ClientBase::Buffer::~Buffer() {}
+ClientBase::Buffer::~Buffer() = default;
 
 ////////////////////////////////////////////////////////////////////////////////
 // ClientBase, public:
@@ -1013,8 +1017,7 @@ bool ClientBase::Init(const InitParams& params) {
       surface_size_.SetSize(params.height, params.width);
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
   surface_size_ = gfx::ToCeiledSize(
       gfx::ScaleSize(gfx::SizeF(surface_size_), 1.0f / params.scale));
@@ -1383,7 +1386,7 @@ bool ClientBase::Init(const InitParams& params) {
 ////////////////////////////////////////////////////////////////////////////////
 // ClientBase, protected:
 
-ClientBase::ClientBase() {}
+ClientBase::ClientBase() = default;
 
 ClientBase::~ClientBase() {
   make_current_ = nullptr;
@@ -1563,7 +1566,7 @@ std::unique_ptr<ClientBase::Buffer> ClientBase::CreateBuffer(
         return nullptr;
       }
 
-      base::span<uint8_t> mapped_span = base::make_span(mapped_data, length);
+      base::span<uint8_t> mapped_span(mapped_data, length);
       buffer->shared_memory_mapping = MemfdMemoryMapping(mapped_span);
       buffer->shm_pool.reset(
           wl_shm_create_pool(globals_.shm.get(), memfd, length));
@@ -1905,7 +1908,7 @@ std::unique_ptr<ClientBase::Buffer> ClientBase::CreateDrmBuffer(
 
 ClientBase::Buffer* ClientBase::DequeueBuffer() {
   auto buffer_it =
-      base::ranges::find_if_not(buffers_, &ClientBase::Buffer::busy);
+      std::ranges::find_if_not(buffers_, &ClientBase::Buffer::busy);
   if (buffer_it == buffers_.end())
     return nullptr;
 

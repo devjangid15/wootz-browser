@@ -23,8 +23,7 @@ include_rules = [
   "+chrome/browser/ash/policy/handlers",
   "+chrome/browser/ash/policy/off_hours",
   "+chrome/browser/ash/profiles",
-  "+chrome/browser/ash/tpm_firmware_update.h",
-  "+chrome/browser/browser_process.h",
+  "+chrome/browser/ash/tpm",
   "+chrome/browser/net",
   "+chrome/browser/profiles",
   "+chrome/browser/site_isolation",
@@ -32,3 +31,9 @@ include_rules = [
   "+chrome/common/pref_names.h",
   "+chrome/test/base",
 ]
+
+specific_include_rules = {
+  "scoped_cros_settings_test_helper\\.cc": [
+    "+chrome/browser/browser_process.h",
+  ]
+}

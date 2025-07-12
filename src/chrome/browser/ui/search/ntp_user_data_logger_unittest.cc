@@ -41,8 +41,8 @@ constexpr int kTitleTagTitleSource =
 constexpr int kInferredTitleSource =
     static_cast<int>(TileTitleSource::INFERRED);
 
-using Sample = base::HistogramBase::Sample;
-using Samples = std::vector<Sample>;
+using Sample32 = base::HistogramBase::Sample32;
+using Samples = std::vector<Sample32>;
 
 // Helper function that uses sensible defaults for irrelevant fields of
 // NTPTileImpression.
@@ -60,7 +60,7 @@ ntp_tiles::NTPTileImpression MakeNTPTileImpression(int index,
 std::vector<base::Bucket> FillImpressions(int numImpressions, int count) {
   std::vector<base::Bucket> impressions;
   for (int i = 0; i < numImpressions; ++i) {
-    impressions.push_back(Bucket(i, count));
+    impressions.emplace_back(i, count);
   }
   return impressions;
 }
@@ -70,7 +70,7 @@ class TestNTPUserDataLogger : public NTPUserDataLogger {
   explicit TestNTPUserDataLogger(const GURL& ntp_url)
       : NTPUserDataLogger(nullptr, ntp_url, base::Time::Now()) {}
 
-  ~TestNTPUserDataLogger() override {}
+  ~TestNTPUserDataLogger() override = default;
 
   bool DefaultSearchProviderIsGoogle() const override { return is_google_; }
 
@@ -94,7 +94,7 @@ TEST_F(NTPUserDataLoggerTest, ShouldRecordNumberOfTiles) {
   base::HistogramTester histogram_tester;
 
   // Ensure non-zero statistics.
-  TestNTPUserDataLogger logger(GURL("wootzapp://newtab/"));
+  TestNTPUserDataLogger logger(GURL("chrome://newtab/"));
 
   const base::TimeDelta delta = base::Milliseconds(73);
 
@@ -116,7 +116,7 @@ TEST_F(NTPUserDataLoggerTest, ShouldRecordNumberOfTiles) {
 }
 
 TEST_F(NTPUserDataLoggerTest, ShouldNotRecordImpressionsBeforeAllTilesLoaded) {
-  TestNTPUserDataLogger logger(GURL("wootzapp://newtab/"));
+  TestNTPUserDataLogger logger(GURL("chrome://newtab/"));
 
   base::HistogramTester histogram_tester;
 
@@ -142,7 +142,7 @@ TEST_F(NTPUserDataLoggerTest, ShouldNotRecordImpressionsBeforeAllTilesLoaded) {
 }
 
 TEST_F(NTPUserDataLoggerTest, ShouldRecordImpressions) {
-  TestNTPUserDataLogger logger(GURL("wootzapp://newtab/"));
+  TestNTPUserDataLogger logger(GURL("chrome://newtab/"));
 
   base::HistogramTester histogram_tester;
 
@@ -220,7 +220,7 @@ TEST_F(NTPUserDataLoggerTest, ShouldRecordImpressions) {
 }
 
 TEST_F(NTPUserDataLoggerTest, ShouldNotRecordRepeatedImpressions) {
-  TestNTPUserDataLogger logger(GURL("wootzapp://newtab/"));
+  TestNTPUserDataLogger logger(GURL("chrome://newtab/"));
 
   base::HistogramTester histogram_tester;
 
@@ -275,7 +275,7 @@ TEST_F(NTPUserDataLoggerTest, ShouldNotRecordRepeatedImpressions) {
 }
 
 TEST_F(NTPUserDataLoggerTest, ShouldNotRecordImpressionsForBinsBeyondMax) {
-  TestNTPUserDataLogger logger(GURL("wootzapp://newtab/"));
+  TestNTPUserDataLogger logger(GURL("chrome://newtab/"));
 
   base::HistogramTester histogram_tester;
 
@@ -321,7 +321,7 @@ TEST_F(NTPUserDataLoggerTest, ShouldNotRecordImpressionsForBinsBeyondMax) {
 }
 
 TEST_F(NTPUserDataLoggerTest, ShouldRecordNavigations) {
-  TestNTPUserDataLogger logger(GURL("wootzapp://newtab/"));
+  TestNTPUserDataLogger logger(GURL("chrome://newtab/"));
 
   {
     base::HistogramTester histogram_tester;
@@ -468,7 +468,7 @@ TEST_F(NTPUserDataLoggerTest, ShouldRecordNavigations) {
 TEST_F(NTPUserDataLoggerTest, ShouldRecordMostVisitedLoadTime) {
   base::HistogramTester histogram_tester;
 
-  TestNTPUserDataLogger logger(GURL("wootzapp://newtab/"));
+  TestNTPUserDataLogger logger(GURL("chrome://newtab/"));
 
   base::TimeDelta delta_tiles_loaded = base::Milliseconds(100);
 
@@ -504,7 +504,7 @@ TEST_F(NTPUserDataLoggerTest, ShouldRecordImpressionsAge) {
   base::HistogramTester histogram_tester;
 
   // Ensure non-zero statistics.
-  TestNTPUserDataLogger logger(GURL("wootzapp://newtab/"));
+  TestNTPUserDataLogger logger(GURL("chrome://newtab/"));
 
   constexpr base::TimeDelta delta = base::Milliseconds(0);
 

@@ -33,9 +33,7 @@ UserAvatar BuildAshUserAvatarForUser(const user_manager::User& user) {
   };
 
   if (user.has_image_bytes()) {
-    avatar.bytes.assign(
-        user.image_bytes()->front(),
-        user.image_bytes()->front() + user.image_bytes()->size());
+    avatar.bytes.assign(user.image_bytes()->begin(), user.image_bytes()->end());
   } else if (user.image_is_stub()) {
     load_image_from_resource(IDR_LOGIN_DEFAULT_USER);
   }

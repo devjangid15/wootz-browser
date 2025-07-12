@@ -78,11 +78,9 @@ class COMPONENT_EXPORT(ASSISTANT_UI) MockAssistantViewDelegate
               (const base::UnguessableToken& suggestion_id),
               (override));
 
-  MOCK_METHOD(bool, ShouldShowOnboarding, (), (const, override));
-
   MOCK_METHOD(void,
               OnLauncherSearchChipPressed,
-              (const std::u16string&),
+              (std::u16string_view),
               (override));
 };
 

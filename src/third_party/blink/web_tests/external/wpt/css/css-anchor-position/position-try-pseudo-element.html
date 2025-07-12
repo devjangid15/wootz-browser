@@ -9,10 +9,9 @@
     position: relative;
     width: 195px;
     height: 200px;
-    left: 999999px; /* force fallback */
   }
   #target::before {
-    position-try-options: --f1, --f2;
+    position-try-fallbacks: --f1, --f2;
     background: lime;
     position: absolute;
     left: 200px;
@@ -22,7 +21,7 @@
     content: "";
   }
   #target::after {
-    position-try-options: --f1, --f2;
+    position-try-fallbacks: --f1, --f2;
     background: green;
     position: absolute;
     left: 100px;

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "remoting/host/setup/start_host_as_root.h"
 
 #include <errno.h>
@@ -11,16 +16,27 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
 #include "base/check.h"
 #include "base/command_line.h"
 #include "base/containers/contains.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/process/launch.h"
+#include "base/strings/string_split.h"
 
 namespace remoting {
 
+namespace {
+
 constexpr char kChromotingGroupName[] = "chrome-remote-desktop";
+constexpr std::string_view kUserNameSwitch = "user-name";
+constexpr std::string_view kCorpUserSwitch = "corp-user";
+constexpr std::string_view kCloudUserSwitch = "cloud-user";
 
 void PrintGroupMembershipError(const char* user_name) {
   fprintf(stderr,
@@ -68,33 +84,83 @@ bool CheckChromotingGroupMembership(const char* user_name,
   return true;
 }
 
+bool ValidateCommandLine(const base::CommandLine& command_line) {
+  bool has_username = command_line.HasSwitch(kUserNameSwitch);
+  bool has_corp_user = command_line.HasSwitch(kCorpUserSwitch);
+  bool has_cloud_user = command_line.HasSwitch(kCloudUserSwitch);
+
+  if (!has_username && !has_corp_user && !has_cloud_user) {
+    fprintf(stderr,
+            "At least one of the following args must be provided:\n"
+            "  --user-name=<username>\n"
+            "  --corp-user=<username>\n"
+            "  --cloud-user=<email>\n");
+    return false;
+  } else if (has_corp_user && has_cloud_user) {
+    fprintf(
+        stderr,
+        "'--corp-user' and '--cloud-user' flags cannot be used together.\n");
+    return false;
+  } else if (has_cloud_user) {
+    std::string arg_value = command_line.GetSwitchValueASCII(kCloudUserSwitch);
+    if (!base::SplitStringOnce(arg_value, '@')) {
+      fprintf(stderr, "The --cloud-user flag requires an email address.\n");
+      return false;
+    }
+  }
+
+  return true;
+}
+
+std::string ExtractUsernameFromCommandLine(
+    const base::CommandLine& command_line) {
+  // The 'user-name' flag contains the local account to run the host as.
+  // If '--user-name' is not provided, then we will try to extract it from
+  // either '--cloud-user' or '--corp-user'.
+  // Note, it is expected that the switch contents have been validated via
+  // ValidateCommandLine() before calling this function.
+  std::string user_name;
+  if (command_line.HasSwitch(kUserNameSwitch)) {
+    user_name = command_line.GetSwitchValueASCII(kUserNameSwitch);
+  } else if (command_line.HasSwitch(kCorpUserSwitch)) {
+    // For compat reasons, we support either email or username for this param.
+    // TODO: joedow - Remove support for the email param in M139.
+    std::string arg_value = command_line.GetSwitchValueASCII(kCorpUserSwitch);
+    auto parts = base::SplitStringOnce(arg_value, '@');
+    if (!parts) {
+      user_name = std::move(arg_value);
+    } else {
+      user_name = std::string(parts->first);
+    }
+  } else if (command_line.HasSwitch(kCloudUserSwitch)) {
+    std::string arg_value = command_line.GetSwitchValueASCII(kCloudUserSwitch);
+    user_name = base::SplitStringOnce(arg_value, '@')->first;
+  }
+
+  return user_name;
+}
+
+}  // namespace
+
 int StartHostAsRoot(int argc, char** argv) {
   DCHECK(getuid() == 0);
 
   base::CommandLine command_line(argc, argv);
-  std::string user_email;
-  std::string user_name;
-  if (command_line.HasSwitch("corp-user")) {
-    user_email = command_line.GetSwitchValueASCII("corp-user");
-  } else if (command_line.HasSwitch("cloud-user")) {
-    user_email = command_line.GetSwitchValueASCII("cloud-user");
-  }
-
-  if (!user_email.empty()) {
-    size_t at_symbol_pos = user_email.find("@");
-    if (at_symbol_pos != std::string::npos) {
-      user_name = user_email.substr(0, at_symbol_pos);
-    }
-  } else if (command_line.HasSwitch("user-name")) {
-    user_name = command_line.GetSwitchValueASCII("user-name");
-  }
-
-  if (user_name.empty()) {
-    fprintf(stderr,
-            "Must specify of the following arguments when running as root:\n"
-            "  --user-name\n  --corp-user\n  --cloud-user\n");
+  if (!ValidateCommandLine(command_line)) {
     return 1;
   }
+  std::string user_name = ExtractUsernameFromCommandLine(command_line);
+  if (user_name.empty()) {
+    fprintf(stderr,
+            "A username and/or email must be provided from one of the "
+            "following switches:\n"
+            "  --user-name=<username>\n"
+            "  --corp-user=<username>\n"
+            "  --cloud-user=<email>\n");
+    return 1;
+  }
+  fprintf(stdout, "Configuring the host service to run as local account: %s\n",
+          user_name.c_str());
 
   errno = 0;
   const passwd* user_struct = getpwnam(user_name.c_str());
@@ -131,7 +197,7 @@ int StartHostAsRoot(int argc, char** argv) {
   }
 
   int return_value = 1;
-  command_line.RemoveSwitch("user-name");
+  command_line.RemoveSwitch(kUserNameSwitch);
   command_line.RemoveSwitch("sysvinit");
   command_line.AppendSwitch("no-start");
   std::vector<std::string> create_config_command_line{

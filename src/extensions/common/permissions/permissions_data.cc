@@ -10,6 +10,7 @@
 #include "base/command_line.h"
 #include "base/containers/contains.h"
 #include "base/feature_list.h"
+#include "base/memory/stack_allocated.h"
 #include "base/no_destructor.h"
 #include "content/public/common/url_constants.h"
 #include "extensions/common/constants.h"
@@ -73,6 +74,8 @@ ContextPermissions& GetContextPermissions(int context_id) {
 }
 
 class AutoLockOnValidThread {
+  STACK_ALLOCATED();
+
  public:
   AutoLockOnValidThread(base::Lock& lock, base::ThreadChecker* thread_checker)
       : auto_lock_(lock) {
@@ -148,8 +151,7 @@ bool PermissionsData::IsRestrictedUrl(const GURL& document_url,
   if (!ExtensionsClient::Get()->IsScriptableURL(document_url, error))
     return true;
 
-  bool allow_on_chrome_urls = base::CommandLine::ForCurrentProcess()->HasSwitch(
-                                  switches::kExtensionsOnChromeURLs);
+  bool allow_on_chrome_urls = switches::AreExtensionsOnChromeURLsAllowed();
   if (document_url.SchemeIs(content::kChromeUIScheme) &&
       !allow_on_chrome_urls) {
     if (error)
@@ -157,8 +159,10 @@ bool PermissionsData::IsRestrictedUrl(const GURL& document_url,
     return true;
   }
 
+  bool allow_on_extension_urls =
+      switches::AreExtensionsOnExtensionURLsAllowed();
   if (document_url.SchemeIs(kExtensionScheme) &&
-      document_url.host() != extension_id_ && !allow_on_chrome_urls) {
+      document_url.host() != extension_id_ && !allow_on_extension_urls) {
     if (error)
       *error = manifest_errors::kCannotAccessExtensionUrl;
     return true;

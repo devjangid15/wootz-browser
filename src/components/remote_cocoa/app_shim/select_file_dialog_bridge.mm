@@ -5,9 +5,8 @@
 #include "components/remote_cocoa/app_shim/select_file_dialog_bridge.h"
 
 #import <AppKit/AppKit.h>
-#include <CoreServices/CoreServices.h>  // pre-macOS 11
 #import <Foundation/Foundation.h>
-#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>  // macOS 11
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #include <stddef.h>
 
 #include "base/apple/bridging.h"
@@ -21,6 +20,7 @@
 #include "base/threading/hang_watcher.h"
 #include "base/threading/thread_restrictions.h"
 #import "components/remote_cocoa/app_shim/native_widget_mac_nswindow.h"
+#import "components/remote_cocoa/app_shim/native_widget_ns_window_bridge.h"
 #import "ui/base/l10n/l10n_util_mac.h"
 #include "ui/strings/grit/ui_strings.h"
 
@@ -28,28 +28,21 @@ namespace {
 
 const int kFileTypePopupTag = 1234;
 
+// Returns whether the Uniform Type system considers `ext` to be a valid file
+// extension.
+bool IsValidExtension(const base::FilePath::StringType& ext) {
+  UTType* type =
+      [UTType typeWithFilenameExtension:base::SysUTF8ToNSString(ext)];
+  return !!type;
+}
+
 NSString* GetDescriptionFromExtension(const base::FilePath::StringType& ext) {
-  if (@available(macOS 11, *)) {
-    UTType* type =
-        [UTType typeWithFilenameExtension:base::SysUTF8ToNSString(ext)];
-    NSString* description = type.localizedDescription;
+  UTType* type =
+      [UTType typeWithFilenameExtension:base::SysUTF8ToNSString(ext)];
+  NSString* description = type.localizedDescription;
 
-    if (description.length) {
-      return description;
-    }
-  } else {
-    base::apple::ScopedCFTypeRef<CFStringRef> ext_cf =
-        base::SysUTF8ToCFStringRef(ext);
-    base::apple::ScopedCFTypeRef<CFStringRef> uti(
-        UTTypeCreatePreferredIdentifierForTag(kUTTagClassFilenameExtension,
-                                              ext_cf.get(),
-                                              /*inConformingToUTI=*/nullptr));
-    NSString* description =
-        base::apple::CFToNSOwnershipCast(UTTypeCopyDescription(uti.get()));
-
-    if (description && description.length) {
-      return description;
-    }
+  if (description.length) {
+    return description;
   }
 
   // In case no description is found, create a description based on the
@@ -61,13 +54,15 @@ NSString* GetDescriptionFromExtension(const base::FilePath::StringType& ext) {
 }
 
 NSView* CreateAccessoryView() {
-  // The label. Add attributes per-OS to match the labels that macOS uses.
+  // The label.
   NSTextField* label =
       [NSTextField labelWithString:l10n_util::GetNSString(
                                        IDS_SAVE_PAGE_FILE_FORMAT_PROMPT_MAC)];
   label.translatesAutoresizingMaskIntoConstraints = NO;
   label.textColor = NSColor.secondaryLabelColor;
-  if (base::mac::MacOSMajorVersion() >= 11) {
+  if (base::mac::MacOSMajorVersion() >= 26) {
+    label.font = [NSFont systemFontOfSize:NSFont.systemFontSize];
+  } else {
     label.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
   }
 
@@ -113,15 +108,9 @@ NSView* CreateAccessoryView() {
                                                     constant:10]];
 
   // Horizontal and vertical baseline between the label and popup.
-  CGFloat labelPopupPadding;
-  if (base::mac::MacOSMajorVersion() >= 11) {
-    labelPopupPadding = 8;
-  } else {
-    labelPopupPadding = 5;
-  }
   [constraints addObject:[popup.leadingAnchor
                              constraintEqualToAnchor:label.trailingAnchor
-                                            constant:labelPopupPadding]];
+                                            constant:8]];
   [constraints
       addObject:[popup.firstBaselineAnchor
                     constraintEqualToAnchor:label.firstBaselineAnchor]];
@@ -249,14 +238,17 @@ NSSavePanel* __weak g_last_created_panel_for_testing = nil;
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-  if (index < _fileExtensionLists.count) {
+  if (index < _fileExtensionLists.count && _fileExtensionLists[index].count) {
     // For save dialogs, this causes the first item in the allowedFileTypes
     // array to be used as the extension for the save panel.
     _dialog.allowedFileTypes = _fileExtensionLists[index];
   } else {
-    // The user selected "All files" option. (Note that nil is "all types" and
-    // an empty array is an error, unlike with -allowedContentTypes, where an
-    // empty array is "all types" and nil is an error.)
+    // The user selected "All files" option (or this is the error case where the
+    // page specified literally no valid extensions).
+    //
+    // (API note: nil is "all types" and an empty array is an error, unlike with
+    // -allowedContentTypes, where an empty array is "all types" and nil is an
+    // error.)
     _dialog.allowedFileTypes = nil;
   }
 #pragma clang diagnostic pop
@@ -418,6 +410,18 @@ void SelectFileDialogBridge::Show(
           base::apple::ObjCCast<NativeWidgetMacNSWindow>(sheet_parent)) {
     sheet_parent = [sheet_parent_widget_window preferredSheetParent];
   }
+
+  // The sheet parent will be activated by AppKit on sheet close, which may
+  // cause auto-dismissal of the owning window (e.g. extension popup).
+  // Therefore, prevent the sheet parent from becoming key.
+  if (sheet_parent != owning_window_) {
+    if (NativeWidgetMacNSWindow* sheet_parent_widget_window =
+            base::apple::ObjCCast<NativeWidgetMacNSWindow>(sheet_parent)) {
+      scoped_prevent_key_window_ =
+          std::make_unique<ScopedPreventKeyWindow>(sheet_parent_widget_window);
+    }
+  }
+
   [panel_ beginSheetModalForWindow:sheet_parent
                  completionHandler:^(NSInteger result) {
                    ended_callback.Run(result != NSModalResponseOK);
@@ -462,6 +466,13 @@ void SelectFileDialogBridge::SetAccessoryView(
     // Store different extensions in the current extension group.
     NSMutableArray<NSString*>* file_extensions_array = [NSMutableArray array];
     for (const base::FilePath::StringType& ext : ext_list) {
+      // If an extension can't be mapped to a UTType (not even a dynamic one)
+      // then attempting to use it with a save panel will cause the save panel
+      // service to fail (see https://crbug.com/40900143).
+      if (!IsValidExtension(ext)) {
+        continue;
+      }
+
       if (ext == default_extension) {
         default_extension_index = i;
       }
@@ -583,6 +594,26 @@ void SelectFileDialogBridge::OnPanelEnded(bool did_cancel) {
 
   std::move(show_callback_).Run(did_cancel, paths, index, file_tags);
 }
+
+class SelectFileDialogBridge::ScopedPreventKeyWindow {
+ public:
+  ScopedPreventKeyWindow(NativeWidgetMacNSWindow* window) {
+    bridge_ = window.bridge->GetWeakPtr();
+    window.preventKeyWindow = YES;
+  }
+
+  ScopedPreventKeyWindow(const SelectFileDialogBridge&) = delete;
+  ScopedPreventKeyWindow& operator=(const SelectFileDialogBridge&) = delete;
+
+  ~ScopedPreventKeyWindow() {
+    if (bridge_) {
+      bridge_->ns_window().preventKeyWindow = NO;
+    }
+  }
+
+ private:
+  base::WeakPtr<NativeWidgetNSWindowBridge> bridge_;
+};
 
 // static
 NSSavePanel* SelectFileDialogBridge::GetLastCreatedNativePanelForTesting() {

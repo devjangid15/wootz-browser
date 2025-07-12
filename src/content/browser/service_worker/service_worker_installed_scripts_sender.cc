@@ -68,6 +68,14 @@ void ServiceWorkerInstalledScriptsSender::StartSendingScript(
   DCHECK(current_sending_url_.is_empty());
   state_ = State::kSendingScripts;
 
+  // (crbug.com/352578800) Override the state and bypass reading the scripts as
+  // it does not exist since the registration is a fake one and therefore there
+  // is no actual script.
+  if (resource_id == blink::mojom::kSyntheticResponseServiceWorkerResourceId) {
+    state_ = State::kIdle;
+    return;
+  }
+
   if (!owner_->context()) {
     Abort(ServiceWorkerInstalledScriptReader::FinishedReason::kNoContextError);
     return;
@@ -76,11 +84,8 @@ void ServiceWorkerInstalledScriptsSender::StartSendingScript(
   current_sending_url_ = script_url;
 
   mojo::Remote<storage::mojom::ServiceWorkerResourceReader> resource_reader;
-  owner_->context()
-      ->registry()
-      ->GetRemoteStorageControl()
-      ->CreateResourceReader(resource_id,
-                             resource_reader.BindNewPipeAndPassReceiver());
+  owner_->context()->registry().GetRemoteStorageControl()->CreateResourceReader(
+      resource_id, resource_reader.BindNewPipeAndPassReceiver());
   TRACE_EVENT_NESTABLE_ASYNC_BEGIN1("ServiceWorker", "SendingScript", this,
                                     "script_url", current_sending_url_.spec());
   reader_ = std::make_unique<ServiceWorkerInstalledScriptReader>(
@@ -187,8 +192,7 @@ void ServiceWorkerInstalledScriptsSender::Abort(
   switch (reason) {
     case ServiceWorkerInstalledScriptReader::FinishedReason::kNotFinished:
     case ServiceWorkerInstalledScriptReader::FinishedReason::kSuccess:
-      NOTREACHED_IN_MIGRATION();
-      return;
+      NOTREACHED();
     case ServiceWorkerInstalledScriptReader::FinishedReason::
         kNoResponseHeadError:
     case ServiceWorkerInstalledScriptReader::FinishedReason::

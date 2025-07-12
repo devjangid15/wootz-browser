@@ -14,8 +14,7 @@
 #include "base/sequence_checker.h"
 #include "base/time/time.h"
 #include "base/types/optional_ref.h"
-#include "components/optimization_guide/core/model_execution/feature_keys.h"
-#include "components/optimization_guide/core/model_quality/model_quality_logs_uploader.h"
+#include "components/optimization_guide/optimization_guide_internals/webui/optimization_guide_internals.mojom.h"
 #include "components/optimization_guide/proto/model_quality_service.pb.h"
 #include "url/gurl.h"
 
@@ -26,6 +25,9 @@ class SharedURLLoaderFactory;
 }  // namespace network
 
 namespace optimization_guide {
+
+class MqlsFeatureMetadata;
+class ModelQualityLogEntry;
 
 class ModelQualityLogsUploaderService {
  public:
@@ -42,18 +44,31 @@ class ModelQualityLogsUploaderService {
 
   // Does various checks like metrics consent, enterprise check before uploading
   // the logs.
-  virtual bool CanUploadLogs(UserVisibleFeatureKey feature);
+  virtual bool CanUploadLogs(const MqlsFeatureMetadata* metadata);
 
-  // Sets system profile proto corresponding to the logging_metadata.
-  virtual void SetSystemProfileProto(proto::LoggingMetadata* logging_metadata);
-
-  void UploadModelQualityLogs(std::unique_ptr<ModelQualityLogEntry> log_entry);
+  // Sets system metadata, including the UMA system profile.
+  virtual void SetSystemMetadata(proto::LoggingMetadata* logging_metadata);
 
   // Returns the WeakPtr for uploading logs during model qualtiy logs
   // destruction.
   base::WeakPtr<ModelQualityLogsUploaderService> GetWeakPtr() {
     return weak_ptr_factory_.GetWeakPtr();
   }
+
+  // Test-only setter. Pairs well with TestUrlLoaderFactory.
+  void SetUrlLoaderFactoryForTesting(
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory);
+
+  // Sets an MQLS log to be displayed on WebUI page for debugging purposes.
+  void SetMqlsLogForWebUI(optimization_guide_internals::mojom::MqlsLogPtr log);
+
+  // Gets all MQLS logs to be displayed on WebUI page for debugging purposes.
+  std::vector<optimization_guide_internals::mojom::MqlsLogPtr>
+  GetMqlsLogsForWebUI();
+
+ protected:
+  virtual void UploadFinalizedLog(std::unique_ptr<proto::LogAiDataRequest> log,
+                                  proto::LogAiDataRequest::FeatureCase feature);
 
  private:
   friend class ModelQualityLogsUploaderServiceTest;
@@ -70,6 +85,10 @@ class ModelQualityLogsUploaderService {
 
   // Used for creating an active_url_loader when needed for request.
   scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_;
+
+  // MQLS logs to be displayed on WebUI page for debugging purposes.
+  std::vector<optimization_guide_internals::mojom::MqlsLogPtr>
+      mqls_logs_for_web_ui_;
 
   SEQUENCE_CHECKER(sequence_checker_);
 

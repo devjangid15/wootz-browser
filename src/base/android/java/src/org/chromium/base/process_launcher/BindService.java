@@ -16,15 +16,19 @@ import android.os.UserHandle;
 
 import androidx.annotation.RequiresApi;
 
-import org.chromium.base.compat.ApiHelperForQ;
 import org.chromium.build.BuildConfig;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 
 import java.lang.reflect.Method;
 import java.util.concurrent.Executor;
 
 /** Class of static helper methods to call Context.bindService variants. */
-final class BindService {
-    private static Method sBindServiceAsUserMethod;
+@NullMarked
+public final class BindService {
+    private static @Nullable Method sBindServiceAsUserMethod;
+    private static int sBindServiceCount;
+    private static boolean sEnableCounting;
 
     static boolean supportVariableConnections() {
         return Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
@@ -40,10 +44,12 @@ final class BindService {
             int flags,
             Handler handler,
             Executor executor,
-            String instanceName) {
+            @Nullable String instanceName) {
+        if (sEnableCounting) {
+            sBindServiceCount++;
+        }
         if (supportVariableConnections() && instanceName != null) {
-            return ApiHelperForQ.bindIsolatedService(
-                    context, intent, flags, instanceName, executor, connection);
+            return context.bindIsolatedService(intent, flags, instanceName, executor, connection);
         }
 
         if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.N) {
@@ -60,6 +66,29 @@ final class BindService {
                 throw new RuntimeException(runtimeException.getMessage(), reflectionException);
             }
         }
+    }
+
+    /**
+     * Enables counting of bindService calls.
+     *
+     * <p>Note that counter is not thread-safe. setEnableCounting(), doBindService(),
+     * getAndResetBindServiceCount() should be called on the same thread.
+     *
+     * @param enabled Whether to enable counting of bindService calls.
+     */
+    public static void setEnableCounting(boolean enabled) {
+        sEnableCounting = enabled;
+    }
+
+    /**
+     * Returns the number of bindService calls and resets the counter.
+     *
+     * @return The number of bindService calls.
+     */
+    public static int getAndResetBindServiceCount() {
+        int count = sBindServiceCount;
+        sBindServiceCount = 0;
+        return count;
     }
 
     private static boolean bindServiceByCall(

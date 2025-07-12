@@ -2,11 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "media/gpu/h264_builder.h"
 
 #include "base/logging.h"
 #include "media/filters/h26x_annex_b_bitstream_builder.h"
-#include "media/video/h264_parser.h"
+#include "media/parsers/h264_parser.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace media {
@@ -19,8 +24,12 @@ class H264BuilderTest : public ::testing::Test {
     sps.profile_idc = 100;
     sps.level_idc = 13;
     sps.chroma_format_idc = 1;
-    memset(sps.scaling_list4x4, 16, sizeof(sps.scaling_list4x4));
-    memset(sps.scaling_list8x8, 16, sizeof(sps.scaling_list8x8));
+    for (auto& row : sps.scaling_list4x4) {
+      row.fill(16u);
+    }
+    for (auto& row : sps.scaling_list8x8) {
+      row.fill(16u);
+    }
     sps.log2_max_frame_num_minus4 = 5;
     sps.log2_max_pic_order_cnt_lsb_minus4 = 6;
     sps.max_num_ref_frames = 4;
@@ -56,21 +65,20 @@ TEST_F(H264BuilderTest, H264BuildParseIdentity) {
   BuildPackedH264PPS(bitstream_builder, sps, pps);
 
   H264Parser parser;
-  parser.SetStream(bitstream_builder.data(), bitstream_builder.BytesInBuffer());
+  parser.SetStream(bitstream_builder.data().data(),
+                   bitstream_builder.BytesInBuffer());
   H264NALU nalu;
   EXPECT_EQ(parser.AdvanceToNextNALU(&nalu), H264Parser::Result::kOk);
   EXPECT_EQ(nalu.nal_unit_type, H264NALU::kSPS);
   int sps_id;
   EXPECT_EQ(parser.ParseSPS(&sps_id), H264Parser::Result::kOk);
-
-  EXPECT_EQ(memcmp(parser.GetSPS(sps_id), &sps, sizeof(sps)), 0);
+  EXPECT_EQ(*parser.GetSPS(sps_id), sps);
 
   EXPECT_EQ(parser.AdvanceToNextNALU(&nalu), H264Parser::Result::kOk);
   EXPECT_EQ(nalu.nal_unit_type, H264NALU::kPPS);
   int pps_id;
   EXPECT_EQ(parser.ParsePPS(&pps_id), H264Parser::Result::kOk);
-
-  EXPECT_EQ(memcmp(parser.GetPPS(pps_id), &pps, sizeof(pps)), 0);
+  EXPECT_EQ(*parser.GetPPS(pps_id), pps);
 }
 
 }  // namespace media

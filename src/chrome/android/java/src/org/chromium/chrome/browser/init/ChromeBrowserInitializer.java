@@ -12,7 +12,6 @@ import org.chromium.base.SysUtils;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.TraceEvent;
 import org.chromium.base.library_loader.LibraryLoader;
-import org.chromium.base.library_loader.LibraryPrefetcher;
 import org.chromium.base.library_loader.LibraryProcessType;
 import org.chromium.base.task.ChainedTasks;
 import org.chromium.base.task.TaskTraits;
@@ -68,7 +67,7 @@ public class ChromeBrowserInitializer {
             task.run();
         } else {
             if (mTasksToRunWithFullBrowser == null) {
-                mTasksToRunWithFullBrowser = new ArrayList<Runnable>();
+                mTasksToRunWithFullBrowser = new ArrayList<>();
             }
             mTasksToRunWithFullBrowser.add(task);
         }
@@ -162,6 +161,9 @@ public class ChromeBrowserInitializer {
                     "ChromeBrowserInitializer.handlePostNativeStartup called before "
                             + "ChromeBrowserInitializer.postInflationStartup has been run.");
         }
+
+        ProcessInitializationHandler.getInstance().onPostNativeStartup();
+
         final ChainedTasks tasks = new ChainedTasks();
         ProcessInitializationHandler.getInstance()
                 .enqueuePostNativeTasksToRunBeforeActivityNativeInit(
@@ -170,33 +172,41 @@ public class ChromeBrowserInitializer {
         tasks.add(
                 TaskTraits.UI_DEFAULT,
                 () -> {
-                    // Run as early as possible. It should also be in a separate task (and after)
-                    // initNetworkChangeNotifier, as this posts a task to the UI thread that would
-                    // interfere with preconneciton otherwise. By preconnecting afterwards, we make
-                    // sure that this task has run.
-                    delegate.maybePreconnect();
+                    try (TraceEvent te = TraceEvent.scoped("Activity.maybePreconnect")) {
+                        // Run as early as possible. It should also be in a separate task (and
+                        // after) initNetworkChangeNotifier, as this posts a task to the UI thread
+                        // that would interfere with preconneciton otherwise. By preconnecting
+                        // afterwards, we make sure that this task has run.
+                        delegate.maybePreconnect();
+                    }
                 });
 
         tasks.add(
                 TaskTraits.UI_DEFAULT,
                 () -> {
-                    if (delegate.isActivityFinishingOrDestroyed()) return;
-                    delegate.initializeCompositor();
+                    try (TraceEvent te = TraceEvent.scoped("Activity.initializeCompositor")) {
+                        if (delegate.isActivityFinishingOrDestroyed()) return;
+                        delegate.initializeCompositor();
+                    }
                 });
 
         tasks.add(
                 TaskTraits.UI_DEFAULT,
                 () -> {
-                    if (delegate.isActivityFinishingOrDestroyed()) return;
-                    delegate.initializeState();
+                    try (TraceEvent te = TraceEvent.scoped("Activity.initializeState")) {
+                        if (delegate.isActivityFinishingOrDestroyed()) return;
+                        delegate.initializeState();
+                    }
                 });
 
         tasks.add(
                 TaskTraits.UI_DEFAULT,
                 () -> {
-                    if (delegate.isActivityFinishingOrDestroyed()) return;
-                    // Some tasks posted by this are on the critical path.
-                    delegate.startNativeInitialization();
+                    try (TraceEvent te = TraceEvent.scoped("Activity.finishNativeInitialization")) {
+                        if (delegate.isActivityFinishingOrDestroyed()) return;
+                        // Some tasks posted by this are on the critical path.
+                        delegate.startNativeInitialization();
+                    }
                 });
 
         ProcessInitializationHandler.getInstance()
@@ -216,7 +226,7 @@ public class ChromeBrowserInitializer {
 
         if (isAsync) {
             // We want to start this queue once the C++ startup tasks have run; allow the
-            // C++ startup to run asynchonously, and set it up to start the Java queue once
+            // C++ startup to run asynchronously, and set it up to start the Java queue once
             // it has finished.
             startChromeBrowserProcessesAsync(
                     delegate.shouldStartGpuProcess(),
@@ -249,6 +259,8 @@ public class ChromeBrowserInitializer {
                             LibraryProcessType.PROCESS_BROWSER,
                             startGpuProcess,
                             startMinimalBrowser,
+                            /* singleProcess= */ false,
+                            /* scheduleFlushStartupTasks= */ false,
                             callback);
         } finally {
             TraceEvent.end("ChromeBrowserInitializer.startChromeBrowserProcessesAsync");
@@ -262,7 +274,6 @@ public class ChromeBrowserInitializer {
             StrictMode.ThreadPolicy oldPolicy = StrictMode.allowThreadDiskReads();
             LibraryLoader.getInstance().ensureInitialized();
             StrictMode.setThreadPolicy(oldPolicy);
-            LibraryPrefetcher.asyncPrefetchLibrariesToMemory();
             getBrowserStartupController()
                     .startBrowserProcessesSync(
                             LibraryProcessType.PROCESS_BROWSER,

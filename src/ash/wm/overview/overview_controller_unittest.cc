@@ -4,7 +4,9 @@
 
 #include "ash/wm/overview/overview_controller.h"
 
+#include <array>
 #include <memory>
+#include <vector>
 
 #include "ash/app_list/test/app_list_test_helper.h"
 #include "ash/frame_throttler/frame_throttling_controller.h"
@@ -769,7 +771,7 @@ class OverviewVirtualKeyboardTest : public OverviewControllerTest {
     keyboard::test::WaitUntilLoaded();
 
     keyboard_ui_controller()->GetKeyboardWindow()->SetBounds(
-        keyboard::KeyboardBoundsFromRootBounds(
+        keyboard::test::KeyboardBoundsFromRootBounds(
             Shell::GetPrimaryRootWindow()->bounds(), 100));
     // Wait for keyboard window to load.
     base::RunLoop().RunUntilIdle();
@@ -782,21 +784,21 @@ class OverviewVirtualKeyboardTest : public OverviewControllerTest {
 
 TEST_F(OverviewVirtualKeyboardTest, ToggleOverviewModeHidesVirtualKeyboard) {
   keyboard_ui_controller()->ShowKeyboard(false /* locked */);
-  ASSERT_TRUE(keyboard::WaitUntilShown());
+  ASSERT_TRUE(keyboard::test::WaitUntilShown());
 
   EnterOverview();
 
   // Timeout failure here if the keyboard does not hide.
-  keyboard::WaitUntilHidden();
+  keyboard::test::WaitUntilHidden();
 }
 
 TEST_F(OverviewVirtualKeyboardTest,
        ToggleOverviewModeDoesNotHideLockedVirtualKeyboard) {
   keyboard_ui_controller()->ShowKeyboard(true /* locked */);
-  ASSERT_TRUE(keyboard::WaitUntilShown());
+  ASSERT_TRUE(keyboard::test::WaitUntilShown());
 
   EnterOverview();
-  EXPECT_FALSE(keyboard::IsKeyboardHiding());
+  EXPECT_FALSE(keyboard::test::IsKeyboardHiding());
 }
 
 // Tests that frame throttling starts and ends accordingly when overview starts
@@ -806,12 +808,13 @@ TEST_F(OverviewControllerTest, FrameThrottling) {
   FrameThrottlingController* frame_throttling_controller =
       Shell::Get()->frame_throttling_controller();
   frame_throttling_controller->AddArcObserver(&observer);
-  const int browser_window_count = 3;
-  const int arc_window_count = 2;
+  constexpr int browser_window_count = 3;
+  constexpr int arc_window_count = 2;
 
   const std::vector<viz::FrameSinkId> ids{{1u, 1u}, {2u, 2u}, {3u, 3u}};
-  std::unique_ptr<aura::Window>
-      created_windows[browser_window_count + arc_window_count];
+  std::array<std::unique_ptr<aura::Window>,
+             browser_window_count + arc_window_count>
+      created_windows;
   for (int i = 0; i < browser_window_count; ++i) {
     created_windows[i] =
         CreateAppWindow(gfx::Rect(), chromeos::AppType::BROWSER);
@@ -838,6 +841,21 @@ TEST_F(OverviewControllerTest, FrameThrottling) {
   EXPECT_TRUE(frame_throttling_controller->GetFrameSinkIdsToThrottle().empty());
 
   frame_throttling_controller->RemoveArcObserver(&observer);
+}
+
+// Tests that Ash.Overview.DeskCount metric is recorded.
+TEST_F(OverviewControllerTest, RecordsDeskCountMetric) {
+  base::HistogramTester histogram_tester;
+  EnterOverview();
+  ExitOverview();
+  histogram_tester.ExpectUniqueSample("Ash.Overview.DeskCount", 1, 1);
+
+  DesksController::Get()->NewDesk(DesksCreationRemovalSource::kKeyboard);
+  ASSERT_EQ(2u, DesksController::Get()->desks().size());
+  EnterOverview();
+  ExitOverview();
+  histogram_tester.ExpectBucketCount("Ash.Overview.DeskCount", 1, 1);
+  histogram_tester.ExpectBucketCount("Ash.Overview.DeskCount", 2, 1);
 }
 
 class OverviewEnterFromWallpaperTest : public OverviewControllerTest {

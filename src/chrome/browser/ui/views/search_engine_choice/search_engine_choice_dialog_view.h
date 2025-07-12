@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_SEARCH_ENGINE_CHOICE_SEARCH_ENGINE_CHOICE_DIALOG_VIEW_H_
 #define CHROME_BROWSER_UI_VIEWS_SEARCH_ENGINE_CHOICE_SEARCH_ENGINE_CHOICE_DIALOG_VIEW_H_
 
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/views/view.h"
@@ -30,6 +31,11 @@ class SearchEngineChoiceDialogView : public views::View {
 
   // Initialize SearchEngineChoiceDialogView's web_view_ element.
   void Initialize();
+
+  // Returns a closure that can be executed to close the view (see
+  // `SearchEngineChoiceDialogView::CloseView()`). Uses a weak pointer
+  // internally, so it can be called after the view has been destroyed.
+  base::OnceClosure GetCloseViewClosure();
 
  private:
   // Show the dialog widget.

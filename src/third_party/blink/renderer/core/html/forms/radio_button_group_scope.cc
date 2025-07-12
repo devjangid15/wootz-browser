@@ -133,7 +133,7 @@ void RadioButtonGroup::UpdateCheckedState(HTMLInputElement* button) {
 void RadioButtonGroup::RequiredAttributeChanged(HTMLInputElement* button) {
   DCHECK_EQ(button->FormControlType(), FormControlType::kInputRadio);
   auto it = members_.find(button);
-  DCHECK_NE(it, members_.end());
+  CHECK_NE(it, members_.end());
   bool was_valid = IsValid();
   // Synchronize the 'required' flag for the button, along with
   // updating the overall count.

@@ -73,7 +73,7 @@ class HttpsOnlyModeUpgradeTabHelper
   // allowlisted).
   bool IsHttpAllowedForUrl(const GURL& url) const;
   // Called when the upgrade timer times out.
-  void OnHttpsLoadTimeout(base::WeakPtr<web::WebState> weak_web_state);
+  void OnHttpsLoadTimeout();
   // Stops the current navigation and sets the state so that an upgrade will be
   // started.
   void StopToUpgrade(
@@ -121,11 +121,10 @@ class HttpsOnlyModeUpgradeTabHelper
 
   base::OneShotTimer timer_;
 
+  raw_ptr<web::WebState> web_state_;
   raw_ptr<PrefService> prefs_;
   raw_ptr<PrerenderService> prerender_service_;
   raw_ptr<HttpsUpgradeService> service_;
-
-  WEB_STATE_USER_DATA_KEY_DECL();
 };
 
 #endif  // IOS_CHROME_BROWSER_HTTPS_UPGRADES_MODEL_HTTPS_ONLY_MODE_UPGRADE_TAB_HELPER_H_

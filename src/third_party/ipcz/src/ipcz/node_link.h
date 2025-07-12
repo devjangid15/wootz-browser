@@ -111,7 +111,6 @@ class NodeLink : public msg::NodeMessageListener {
   // shared RouterLinkState structure for the new link. Only central links
   // require a RouterLinkState.
   Ref<RemoteRouterLink> AddRemoteRouterLink(
-      const OperationContext& context,
       SublinkId sublink,
       FragmentRef<RouterLinkState> link_state,
       LinkType type,
@@ -210,12 +209,14 @@ class NodeLink : public msg::NodeMessageListener {
   // Must only be called on an activated NodeLink, either one which was created
   // with CreateActive(), or one which was activated later by calling
   // Activate().
-  void Deactivate(const OperationContext& context);
+  void Deactivate();
 
   // Finalizes serialization of DriverObjects within `message` and transmits it
   // to the NodeLink's peer, either over the DriverTransport or through shared
   // memory.
   void Transmit(Message& message);
+
+  void AcceptEarlyParcelsForSublink(SublinkId sublink_id);
 
  private:
   friend class RefCounted<NodeLink>;
@@ -270,7 +271,7 @@ class NodeLink : public msg::NodeMessageListener {
   bool OnAcceptRelayedMessage(msg::AcceptRelayedMessage& accept) override;
   void OnTransportError() override;
 
-  void HandleTransportError(const OperationContext& context);
+  void HandleTransportError();
 
   // Invoked when we receive a Parcel whose data fragment resides in a buffer
   // not yet known to the local node. This schedules the parcel for acceptance
@@ -344,10 +345,15 @@ class NodeLink : public msg::NodeMessageListener {
       absl::flat_hash_map<SubparcelTrackerKey, SubparcelTracker>;
   SubparcelTrackerMap subparcel_trackers_ ABSL_GUARDED_BY(mutex_);
 
+  // A queue for parcels arriving before their corresponding Router.
+  using SublinkEarlyParcelsMap =
+      absl::flat_hash_map<SublinkId, std::vector<std::unique_ptr<Parcel>>>;
+  SublinkEarlyParcelsMap early_parcels_for_sublink_ ABSL_GUARDED_BY(mutex_);
+
   // Tracks pending referrals sent to the broker.
   uint64_t next_referral_id_ = 0;
-  absl::flat_hash_map<uint64_t, ReferralCallback> pending_referrals_
-      ABSL_GUARDED_BY(mutex_);
+  using ReferralCallbackMap = absl::flat_hash_map<uint64_t, ReferralCallback>;
+  ReferralCallbackMap pending_referrals_ ABSL_GUARDED_BY(mutex_);
 };
 
 }  // namespace ipcz

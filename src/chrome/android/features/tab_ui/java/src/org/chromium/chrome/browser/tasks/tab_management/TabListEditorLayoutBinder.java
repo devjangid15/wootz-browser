@@ -4,10 +4,15 @@
 
 package org.chromium.chrome.browser.tasks.tab_management;
 
+import android.view.ViewGroup;
+import android.view.ViewGroup.MarginLayoutParams;
+
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
 
 /** This is a ViewBinder for TabListEditorLayout. */
+@NullMarked
 public class TabListEditorLayoutBinder {
     /**
      * This method binds the given model to the given view.
@@ -39,10 +44,13 @@ public class TabListEditorLayoutBinder {
                     .setTextColorStateList(model.get(TabListEditorProperties.TOOLBAR_TEXT_TINT));
         } else if (TabListEditorProperties.TOOLBAR_BUTTON_TINT == propertyKey) {
             view.getToolbar().setButtonTint(model.get(TabListEditorProperties.TOOLBAR_BUTTON_TINT));
-        } else if (TabListEditorProperties.RELATED_TAB_COUNT_PROVIDER == propertyKey) {
-            view.getToolbar()
-                    .setRelatedTabCountProvider(
-                            model.get(TabListEditorProperties.RELATED_TAB_COUNT_PROVIDER));
+        } else if (TabListEditorProperties.TOOLBAR_TITLE == propertyKey) {
+            view.getToolbar().setTitle(model.get(TabListEditorProperties.TOOLBAR_TITLE));
+        } else if (TabListEditorProperties.TOP_MARGIN == propertyKey) {
+            ViewGroup.MarginLayoutParams layoutParams = (MarginLayoutParams) view.getLayoutParams();
+            layoutParams.topMargin = model.get(TabListEditorProperties.TOP_MARGIN);
+            // Calling setLayoutParams to requestLayout() for margin to take effect.
+            view.setLayoutParams(layoutParams);
         }
     }
 }

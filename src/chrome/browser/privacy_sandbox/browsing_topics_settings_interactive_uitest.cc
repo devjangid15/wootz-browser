@@ -15,8 +15,11 @@
 #include "components/privacy_sandbox/canonical_topic.h"
 #include "components/privacy_sandbox/privacy_sandbox_features.h"
 #include "components/privacy_sandbox/privacy_sandbox_prefs.h"
-#include "content/public/common/content_features.h"
 #include "content/public/test/browser_test.h"
+
+#if BUILDFLAG(IS_MAC)
+#include "base/mac/mac_util.h"
+#endif
 
 namespace {
 
@@ -47,16 +50,6 @@ DeepQuery GetAdTopicsPageQuery() {
 class PrivacySandboxSettingsTopicsInteractiveTest
     : public InteractiveBrowserTest {
  public:
-  void SetUp() override {
-    scoped_feature_list_.InitWithFeaturesAndParameters(
-        {{privacy_sandbox::kPrivacySandboxProactiveTopicsBlocking,
-          {{privacy_sandbox::
-                kPrivacySandboxProactiveTopicsBlockingIncludeModeBName,
-            "false"}}}},
-        {{features::kCookieDeprecationFacilitatedTesting}});
-    InteractiveBrowserTest::SetUp();
-  }
-
   void SetUpOnMainThread() override {
     browser()->profile()->GetPrefs()->SetBoolean(
         prefs::kPrivacySandboxM1TopicsEnabled, true);
@@ -94,7 +87,7 @@ class PrivacySandboxSettingsTopicsInteractiveTest
       (blockedTopicsList + "privacy-sandbox-interest-item") + "cr-button";
   const DeepQuery blockedTopicsRow =
       GetAdTopicsPageQuery() + "#blockedTopicsRow";
-  const DeepQuery ironCollapse = GetAdTopicsPageQuery() + "iron-collapse";
+  const DeepQuery ironCollapse = GetAdTopicsPageQuery() + "cr-collapse";
 
  private:
   base::test::ScopedFeatureList scoped_feature_list_;
@@ -120,6 +113,15 @@ IN_PROC_BROWSER_TEST_F(PrivacySandboxSettingsTopicsInteractiveTest,
 // (checked == false). Validate that the PS service returns only 1 blocked topic
 // with an ID of 1. Navigate to the Ad Topics Page and validate topic(1) is
 // blocked topics list.
+// TODO(https://crbug.com/430518830): Flaky on
+// linux-blink-web-tests-force-accessibility-rel
+#if BUILDFLAG(IS_LINUX)
+#define MAYBE_BlockFirstTopicOnManageTopicsPage \
+  DISABLED_BlockFirstTopicOnManageTopicsPage
+#else
+#define MAYBE_BlockFirstTopicOnManageTopicsPage \
+  BlockFirstTopicOnManageTopicsPage
+#endif
 IN_PROC_BROWSER_TEST_F(PrivacySandboxSettingsTopicsInteractiveTest,
                        BlockFirstTopicOnManageTopicsPage) {
   RunTestSequence(
@@ -150,6 +152,13 @@ IN_PROC_BROWSER_TEST_F(PrivacySandboxSettingsTopicsInteractiveTest,
 // topic toggle is ON (checked == true).
 IN_PROC_BROWSER_TEST_F(PrivacySandboxSettingsTopicsInteractiveTest,
                        UnblockOneTopicOnAdTopicsPage) {
+#if BUILDFLAG(IS_MAC)
+  // https://crbug.com/407801060
+  if (base::mac::MacOSMajorVersion() == 15) {
+    GTEST_SKIP() << "Disabled on macOS Sequoia.";
+  }
+#endif
+
   BlockTopic(1);
   RunTestSequence(
       InstrumentTab(kPrivacySandboxTopicsElementId),
@@ -162,7 +171,7 @@ IN_PROC_BROWSER_TEST_F(PrivacySandboxSettingsTopicsInteractiveTest,
       ExecuteJsAt(kPrivacySandboxTopicsElementId, firstBlockedItemButton,
                   "(el) => el.click()"),
       CheckResult([this]() { return GetBlockedTopicsSize(); }, 0u,
-                  "Checking that there is 0 blocked topics"),
+                  "Checking that there are 0 blocked topics"),
       NavigateWebContents(kPrivacySandboxTopicsElementId,
                           GURL(chrome::kPrivacySandboxManageTopicsURL)),
       CheckJsResultAt(kPrivacySandboxTopicsElementId, firstToggle,
@@ -180,13 +189,13 @@ IN_PROC_BROWSER_TEST_F(PrivacySandboxSettingsTopicsInteractiveTest,
       CheckJsResultAt(kPrivacySandboxTopicsElementId,
                       GetManageTopicsPageQuery(),
                       R"(
-        (el) => Array.from(el.shadowRoot.querySelectorAll('iron-icon')).some(
+        (el) => Array.from(el.shadowRoot.querySelectorAll('cr-icon')).some(
                     el => el.icon === 'firstLevelTopics20:artist')
         )"),
       CheckJsResultAt(kPrivacySandboxTopicsElementId,
                       GetManageTopicsPageQuery(),
                       R"(
-        (el) => Array.from(el.shadowRoot.querySelectorAll('iron-icon')).some(
+        (el) => Array.from(el.shadowRoot.querySelectorAll('cr-icon')).some(
                 el => el.icon === 'firstLevelTopics20:category')
         )",
                       false));

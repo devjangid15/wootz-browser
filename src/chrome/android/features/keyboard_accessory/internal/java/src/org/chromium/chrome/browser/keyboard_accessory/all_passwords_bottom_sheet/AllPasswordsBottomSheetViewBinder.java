@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.keyboard_accessory.all_passwords_bottom_sheet;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
 import static org.chromium.chrome.browser.keyboard_accessory.all_passwords_bottom_sheet.AllPasswordsBottomSheetProperties.CredentialProperties.CREDENTIAL;
 import static org.chromium.chrome.browser.keyboard_accessory.all_passwords_bottom_sheet.AllPasswordsBottomSheetProperties.CredentialProperties.IS_PASSWORD_FIELD;
 import static org.chromium.chrome.browser.keyboard_accessory.all_passwords_bottom_sheet.AllPasswordsBottomSheetProperties.CredentialProperties.ON_CLICK_LISTENER;
@@ -23,9 +24,10 @@ import android.widget.TextView;
 import androidx.annotation.Nullable;
 
 import org.chromium.base.Callback;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.chrome.browser.autofill.helpers.FaviconHelper;
 import org.chromium.chrome.browser.keyboard_accessory.R;
 import org.chromium.chrome.browser.keyboard_accessory.all_passwords_bottom_sheet.AllPasswordsBottomSheetProperties.ItemType;
-import org.chromium.chrome.browser.keyboard_accessory.helper.FaviconHelper;
 import org.chromium.chrome.browser.keyboard_accessory.utils.InsecureFillingDialogUtils;
 import org.chromium.components.browser_ui.widget.chips.ChipView;
 import org.chromium.components.url_formatter.SchemeDisplay;
@@ -39,12 +41,8 @@ import org.chromium.url.GURL;
  * Provides functions that map {@link AllPasswordsBottomSheetProperties} changes in a {@link
  * PropertyModel} to the suitable method in {@link AllPasswordsBottomSheetView}.
  */
+@NullMarked
 class AllPasswordsBottomSheetViewBinder {
-    /** Generic UI Configurations that help to transform specific model data. */
-    static class UiConfiguration {
-        /** Supports loading favicons for accessory data. */
-        public FaviconHelper faviconHelper;
-    }
 
     /**
      * Called whenever a property in the given model changes. It updates the given view accordingly.
@@ -87,21 +85,21 @@ class AllPasswordsBottomSheetViewBinder {
      *
      * @param parent The parent {@link ViewGroup} of the new item.
      * @param itemType The type of View to create.
-     * @param uiConfiguration Supports additional generic UI Configuration.
+     * @param faviconHelper Supports loading favicons for accessory data.
      */
     static AllPasswordsBottomSheetViewHolder createViewHolder(
-            ViewGroup parent, @ItemType int itemType, UiConfiguration uiConfiguration) {
+            ViewGroup parent, @ItemType int itemType, FaviconHelper faviconHelper) {
         switch (itemType) {
             case ItemType.CREDENTIAL:
                 return new AllPasswordsBottomSheetViewHolder(
                         parent,
                         R.layout.keyboard_accessory_sheet_tab_password_info,
                         (model, view, propertyKey) ->
-                                bindCredentialView(
-                                        model, view, propertyKey, uiConfiguration.faviconHelper));
+                                bindCredentialView(model, view, propertyKey, faviconHelper));
         }
         assert false : "Cannot create view for ItemType: " + itemType;
-        return null;
+        // https://github.com/uber/NullAway/issues/1104
+        return assumeNonNull(null);
     }
 
     /**
@@ -169,6 +167,12 @@ class AllPasswordsBottomSheetViewBinder {
                         credential.getOriginUrl(), icon -> setIconForBitmap(iconView, icon));
             }
 
+            if (credential.isPlusAddressUsername()) {
+                usernameChip.setIcon(
+                        R.drawable.ic_plus_addresses_logo_24dp, /* tintWithTextColor= */ true);
+            } else {
+                usernameChip.setIcon(ChipView.INVALID_ICON_ID, /* tintWithTextColor= */ false);
+            }
         } else {
             assert false : "Unhandled update to property:" + propertyKey;
         }

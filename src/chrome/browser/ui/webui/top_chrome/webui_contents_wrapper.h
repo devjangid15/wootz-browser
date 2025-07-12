@@ -6,12 +6,16 @@
 #define CHROME_BROWSER_UI_WEBUI_TOP_CHROME_WEBUI_CONTENTS_WRAPPER_H_
 
 #include <memory>
+#include <string_view>
 #include <utility>
 
 #include "base/memory/weak_ptr.h"
+#include "base/scoped_observation.h"
+#include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_observer.h"
 #include "chrome/browser/ui/webui/top_chrome/top_chrome_web_ui_controller.h"
+#include "chrome/browser/ui/webui/top_chrome/top_chrome_webui_config.h"
 #include "chrome/browser/ui/webui_name_variants.h"
-#include "content/public/browser/browser_context.h"
 #include "content/public/browser/file_select_listener.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
@@ -20,16 +24,13 @@
 #include "third_party/blink/public/mojom/page/draggable_region.mojom.h"
 #include "ui/base/models/menu_model.h"
 
-namespace content {
-class BrowserContext;
-}  // namespace content
-
 // WebUIContentsWrapper wraps a WebContents that hosts a top chrome WebUI.
 // This class notifies the Host when it should be shown or hidden via ShowUI()
 // and CloseUI() in addition to passing through resize events so the Host can
 // adjust bounds accordingly.
 class WebUIContentsWrapper : public content::WebContentsDelegate,
                              public content::WebContentsObserver,
+                             public ProfileObserver,
                              public TopChromeWebUIController::Embedder {
  public:
   class Host {
@@ -44,7 +45,7 @@ class WebUIContentsWrapper : public content::WebContentsDelegate,
                                        const gfx::Size& new_size) {}
     virtual bool HandleKeyboardEvent(
         content::WebContents* source,
-        const content::NativeWebKeyboardEvent& event);
+        const input::NativeWebKeyboardEvent& event);
     virtual bool HandleContextMenu(content::RenderFrameHost& render_frame_host,
                                    const content::ContextMenuParams& params);
     virtual void RequestMediaAccessPermission(
@@ -65,15 +66,23 @@ class WebUIContentsWrapper : public content::WebContentsDelegate,
         content::WebContents* contents) {}
     virtual void SetContentsBounds(content::WebContents* source,
                                    const gfx::Rect& bounds) {}
+    virtual content::WebContents* AddNewContents(
+        content::WebContents* source,
+        std::unique_ptr<content::WebContents> new_contents,
+        const GURL& target_url,
+        WindowOpenDisposition disposition,
+        const blink::mojom::WindowFeatures& window_features,
+        bool user_gesture,
+        bool* was_blocked);
   };
 
   WebUIContentsWrapper(const GURL& webui_url,
-                       content::BrowserContext* browser_context,
+                       Profile* profile,
                        int task_manager_string_id,
                        bool webui_resizes_host,
                        bool esc_closes_ui,
                        bool supports_draggable_regions,
-                       const std::string& webui_name);
+                       std::string_view webui_name);
   ~WebUIContentsWrapper() override;
 
   // content::WebContentsDelegate:
@@ -81,10 +90,9 @@ class WebUIContentsWrapper : public content::WebContentsDelegate,
                              const gfx::Size& new_size) override;
   content::KeyboardEventProcessingResult PreHandleKeyboardEvent(
       content::WebContents* source,
-      const content::NativeWebKeyboardEvent& event) override;
-  bool HandleKeyboardEvent(
-      content::WebContents* source,
-      const content::NativeWebKeyboardEvent& event) override;
+      const input::NativeWebKeyboardEvent& event) override;
+  bool HandleKeyboardEvent(content::WebContents* source,
+                           const input::NativeWebKeyboardEvent& event) override;
   bool HandleContextMenu(content::RenderFrameHost& render_frame_host,
                          const content::ContextMenuParams& params) override;
   std::unique_ptr<content::EyeDropper> OpenEyeDropper(
@@ -107,11 +115,22 @@ class WebUIContentsWrapper : public content::WebContentsDelegate,
       content::WebContents* contents) override;
   void SetContentsBounds(content::WebContents* source,
                          const gfx::Rect& bounds) override;
+  content::WebContents* AddNewContents(
+      content::WebContents* source,
+      std::unique_ptr<content::WebContents> new_contents,
+      const GURL& target_url,
+      WindowOpenDisposition disposition,
+      const blink::mojom::WindowFeatures& window_features,
+      bool user_gesture,
+      bool* was_blocked) override;
 
   // content::WebContentsObserver:
   void PrimaryPageChanged(content::Page& page) override;
   void PrimaryMainFrameRenderProcessGone(
       base::TerminationStatus status) override;
+
+  // ProfileObserver:
+  void OnProfileWillBeDestroyed(Profile* profile) override;
 
   // TopChromeWebUIController::Embedder:
   void CloseUI() override;
@@ -145,9 +164,6 @@ class WebUIContentsWrapper : public content::WebContentsDelegate,
   // If true will allow the wrapped WebContents to automatically resize its
   // RenderWidgetHostView and send back updates to `Host` for the new size.
   const bool webui_resizes_host_;
-  // Captures the content size when `webui_resizes_host` is true. This
-  // size is passed to Host::ResizeDueToAutoResize() host when the host is set.
-  gfx::Size contents_requested_size_;
 
   bool is_ready_to_show_ = false;
   // If true will cause the ESC key to close the UI during pre-handling.
@@ -160,6 +176,8 @@ class WebUIContentsWrapper : public content::WebContentsDelegate,
   std::optional<std::vector<blink::mojom::DraggableRegionPtr>>
       draggable_regions_;
 
+  base::ScopedObservation<Profile, ProfileObserver> profile_observation_{this};
+
   base::WeakPtr<WebUIContentsWrapper::Host> host_;
   std::unique_ptr<content::WebContents> web_contents_;
 };
@@ -168,45 +186,62 @@ class WebUIContentsWrapper : public content::WebContentsDelegate,
 // subclass used by the hosted WebUI. This type information allows compile time
 // checking that the WebUIController subclasses TopChromeWebUIController as
 // expected.
+// Upon the construction of this class, its wrapped web contents has started the
+// navigation to `webui_url`, and `GetWebUIController()` is guaranteed to return
+// a non-null pointer.
 template <typename T>
 class WebUIContentsWrapperT : public WebUIContentsWrapper {
  public:
+  // Helper to allow static_assert to concatenate string_view at build time.
+  static consteval std::string ConcatStrings(
+      std::initializer_list<std::string_view> strs) {
+    std::string result;
+    size_t total_length = 0;
+    for (const auto str : strs) {
+      total_length += str.size();
+    }
+    result.reserve(total_length);
+    for (const auto str : strs) {
+      result += str;
+    }
+    return result;
+  }
+
   // TODO(tluk): Consider introducing init params to avoid further cluttering
   // constructor params.
   WebUIContentsWrapperT(const GURL& webui_url,
-                        content::BrowserContext* browser_context,
+                        Profile* profile,
                         int task_manager_string_id,
-                        bool webui_resizes_host = true,
                         bool esc_closes_ui = true,
                         bool supports_draggable_regions = false)
       : WebUIContentsWrapper(webui_url,
-                             browser_context,
+                             profile,
                              task_manager_string_id,
-                             webui_resizes_host,
+                             TopChromeWebUIConfig::From(profile, webui_url)
+                                 ->ShouldAutoResizeHost(),
                              esc_closes_ui,
                              supports_draggable_regions,
                              T::GetWebUIName()),
         webui_url_(webui_url) {
-    static_assert(
-        views_metrics::IsValidWebUINameVariant("." + T::GetWebUIName()));
-    if (is_ready_to_show()) {
-      CHECK(GetWebUIController());
-      GetWebUIController()->set_embedder(weak_ptr_factory_.GetWeakPtr());
-    } else {
-      ReloadWebContents();
-    }
+    static_assert(views_metrics::IsValidWebUIName(
+        ConcatStrings({".", T::GetWebUIName()})));
+
+    CHECK(GetWebUIController());
+    GetWebUIController()->set_embedder(weak_ptr_factory_.GetWeakPtr());
   }
 
   void ReloadWebContents() override {
     web_contents()->GetController().LoadURL(webui_url_, content::Referrer(),
                                             ui::PAGE_TRANSITION_AUTO_TOPLEVEL,
                                             std::string());
-    // Depends on the WebUIController object being constructed synchronously
-    // when the navigation is started in LoadInitialURL(). The WebUIController
-    // may not be defined at this point if the content code encounteres an
-    // error during navigation so check here to ensure the pointer is valid.
-    if (T* webui_controller = GetWebUIController())
+    // WARNING: with RenderDocument enabled, every navigation creates a new
+    // WebUI controller. If this is not the initial navigation,
+    // `GetWebUIController()` will return the old controller.
+    // TODO(crbug.com/40615943): provide an content API to access the new
+    // WebUI object.
+    if (T* webui_controller = GetWebUIController()) {
       webui_controller->set_embedder(weak_ptr_factory_.GetWeakPtr());
+    }
   }
 
   // May return null.

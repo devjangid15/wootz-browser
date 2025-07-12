@@ -23,7 +23,6 @@ import androidx.annotation.Nullable;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
@@ -36,7 +35,6 @@ import org.chromium.base.Callback;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Feature;
-import org.chromium.base.test.util.Features;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.signin.services.IdentityServicesProvider;
 import org.chromium.components.signin.base.CoreAccountInfo;
@@ -54,7 +52,6 @@ import java.util.Map;
 public class FeedFeedbackCollectorTest {
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
     // Enable the Features class, so we can override command line switches in the test.
-    @Rule public TestRule mFeaturesProcessorRule = new Features.JUnitProcessor();
     @Mock private Activity mActivity;
     @Mock private Profile mProfile;
     @Mock private CoreAccountInfo mAccountInfo;
@@ -131,7 +128,7 @@ public class FeedFeedbackCollectorTest {
     public void testFeedSynchronousData() {
         @SuppressWarnings("unchecked")
         Callback<FeedbackCollector> callback = mock(Callback.class);
-        Map<String, String> feedContext = new HashMap<String, String>();
+        Map<String, String> feedContext = new HashMap<>();
         feedContext.put(CARD_URL, THE_URL);
         feedContext.put(CARD_PUBLISHER, THE_PUBLISHER);
         feedContext.put(CARD_PUBLISHING_DATE, THE_PUBLISHING_DATE);

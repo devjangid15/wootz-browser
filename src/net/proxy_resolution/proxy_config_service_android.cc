@@ -23,9 +23,11 @@
 #include "net/base/host_port_pair.h"
 #include "net/base/proxy_server.h"
 #include "net/base/proxy_string_util.h"
-#include "net/net_jni_headers/ProxyChangeListener_jni.h"
 #include "net/proxy_resolution/proxy_config_with_annotation.h"
 #include "url/third_party/mozilla/url_parse.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "net/net_jni_headers/ProxyChangeListener_jni.h"
 
 using base::android::AttachCurrentThread;
 using base::android::ConvertUTF8ToJavaString;
@@ -429,7 +431,6 @@ class ProxyConfigServiceAndroid::Delegate
     // ProxyConfigServiceAndroid::JNIDelegate overrides.
     void ProxySettingsChangedTo(
         JNIEnv* env,
-        const JavaParamRef<jobject>& jself,
         const JavaParamRef<jstring>& jhost,
         jint jport,
         const JavaParamRef<jstring>& jpac_url,
@@ -444,8 +445,7 @@ class ProxyConfigServiceAndroid::Delegate
       delegate_->ProxySettingsChangedTo(host, jport, pac_url, exclusion_list);
     }
 
-    void ProxySettingsChanged(JNIEnv* env,
-                              const JavaParamRef<jobject>& self) override {
+    void ProxySettingsChanged(JNIEnv* env) override {
       delegate_->ProxySettingsChanged();
     }
 

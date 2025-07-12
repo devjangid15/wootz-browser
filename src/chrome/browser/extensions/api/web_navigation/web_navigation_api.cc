@@ -8,7 +8,6 @@
 
 #include <memory>
 
-#include "chrome/browser/android/tab_android.h"
 #include "chrome/browser/extensions/api/web_navigation/web_navigation_api_constants.h"
 #include "chrome/browser/extensions/api/web_navigation/web_navigation_api_helpers.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
@@ -42,8 +41,9 @@ namespace extensions {
 namespace web_navigation = api::web_navigation;
 
 // WebNavigtionEventRouter -------------------------------------------
+
 WebNavigationEventRouter::PendingWebContents::PendingWebContents() = default;
-WebNavigationEventRouter::PendingWebContents::~PendingWebContents() {}
+WebNavigationEventRouter::PendingWebContents::~PendingWebContents() = default;
 
 void WebNavigationEventRouter::PendingWebContents::Set(
     int source_tab_id,
@@ -66,15 +66,6 @@ void WebNavigationEventRouter::PendingWebContents::WebContentsDestroyed() {
   // |this| is deleted!
 }
 
-WebNavigationEventRouter::WebNavigationEventRouter() {
-  TabModelList::AddObserver(this);
-}
-
-WebNavigationEventRouter::~WebNavigationEventRouter() {
-  TabModelList::RemoveObserver(this);
-}
-
-#if 0
 WebNavigationEventRouter::WebNavigationEventRouter(Profile* profile)
     : profile_(profile), browser_tab_strip_tracker_(this, this) {
   browser_tab_strip_tracker_.Init();
@@ -113,33 +104,6 @@ void WebNavigationEventRouter::OnTabStripModelChanged(
   } else if (change.type() == TabStripModelChange::kInserted) {
     for (auto& tab : change.GetInsert()->contents)
       TabAdded(tab.contents);
-  }
-}
-#endif
-
-void WebNavigationEventRouter::OnTabModelAdded() {
-    for (TabModel* tab_model : TabModelList::models()) {
-        if (std::find(observed_tab_models_.begin(), observed_tab_models_.end(), tab_model) 
-            == observed_tab_models_.end()) {
-            observed_tab_models_.push_back(tab_model);
-            tab_model->AddObserver(this);
-        }
-    }
-}
-
-void WebNavigationEventRouter::OnTabModelRemoved() {
-    for (auto it = observed_tab_models_.begin(); it != observed_tab_models_.end(); ++it) {
-        if (std::find(TabModelList::models().begin(), TabModelList::models().end(), *it) 
-            == TabModelList::models().end()) {
-            observed_tab_models_.erase(it);
-            return;
-        }
-    }
-}
-
-void WebNavigationEventRouter::DidAddTab(TabAndroid* tab, TabModel::TabLaunchType type) {
-  if (tab && tab->web_contents()) {
-    TabAdded(tab->web_contents());
   }
 }
 
@@ -215,7 +179,7 @@ WebNavigationTabObserver::WebNavigationTabObserver(
     : WebContentsObserver(web_contents),
       content::WebContentsUserData<WebNavigationTabObserver>(*web_contents) {}
 
-WebNavigationTabObserver::~WebNavigationTabObserver() {}
+WebNavigationTabObserver::~WebNavigationTabObserver() = default;
 
 // static
 WebNavigationTabObserver* WebNavigationTabObserver::Get(
@@ -269,7 +233,6 @@ void WebNavigationTabObserver::DidStartNavigation(
                                    nullptr)) {
     DispatchCachedOnBeforeNavigate();
   }
-  LOG(ERROR) << "DidStartNavigation " << navigation_handle->GetURL();
 }
 
 void WebNavigationTabObserver::DidFinishNavigation(
@@ -384,19 +347,16 @@ void WebNavigationTabObserver::DidOpenRequestedURL(
       web_contents()->GetBrowserContext());
   if (!api)
     return;  // Possible in unit tests.
-
   WebNavigationEventRouter* router = api->web_navigation_event_router_.get();
   if (!router)
     return;
 
-  // TabStripModel* ignored_tab_strip_model = nullptr;
+  TabStripModel* ignored_tab_strip_model = nullptr;
   int ignored_tab_index = -1;
-  // bool new_contents_is_present_in_tabstrip = ExtensionTabUtil::GetTabStripModel(
-  //     new_contents, &ignored_tab_strip_model, &ignored_tab_index);
-  bool new_contents_is_present_in_tabstrip = ExtensionTabUtil::GetTabModel(
-       new_contents, nullptr, &ignored_tab_index);
+  bool new_contents_is_present_in_tabstrip = ExtensionTabUtil::GetTabStripModel(
+      new_contents, &ignored_tab_strip_model, &ignored_tab_index);
   router->RecordNewWebContents(
-      web_contents(), source_render_frame_host->GetProcess()->GetID(),
+      web_contents(), source_render_frame_host->GetProcess()->GetDeprecatedID(),
       source_render_frame_host->GetRoutingID(), url, new_contents,
       !new_contents_is_present_in_tabstrip);
 }
@@ -668,7 +628,8 @@ ExtensionFunction::ResponseAction WebNavigationGetAllFramesFunction::Run() {
                 ExtensionApiFrameIdMap::GetFrameType(render_frame_host);
             frame.document_lifecycle =
                 ExtensionApiFrameIdMap::GetDocumentLifecycle(render_frame_host);
-            frame.process_id = render_frame_host->GetProcess()->GetID();
+            frame.process_id =
+                render_frame_host->GetProcess()->GetDeprecatedID();
             frame.error_occurred = navigation_state->GetErrorOccurredInFrame();
             result_list.push_back(std::move(frame));
             return content::RenderFrameHost::FrameIterationAction::kContinue;
@@ -698,7 +659,7 @@ WebNavigationAPI::WebNavigationAPI(content::BrowserContext* context)
                                  web_navigation::OnTabReplaced::kEventName);
 }
 
-WebNavigationAPI::~WebNavigationAPI() {}
+WebNavigationAPI::~WebNavigationAPI() = default;
 
 void WebNavigationAPI::Shutdown() {
   EventRouter::Get(browser_context_)->UnregisterObserver(this);
@@ -714,8 +675,8 @@ WebNavigationAPI::GetFactoryInstance() {
 }
 
 void WebNavigationAPI::OnListenerAdded(const EventListenerInfo& details) {
-  web_navigation_event_router_ = std::make_unique<WebNavigationEventRouter>();
-      // Profile::FromBrowserContext(browser_context_));
+  web_navigation_event_router_ = std::make_unique<WebNavigationEventRouter>(
+      Profile::FromBrowserContext(browser_context_));
   EventRouter::Get(browser_context_)->UnregisterObserver(this);
 }
 

@@ -4,6 +4,7 @@
 
 #include "ash/system/video_conference/video_conference_tray_controller.h"
 
+#include <array>
 #include <string>
 
 #include "ash/constants/ash_features.h"
@@ -83,7 +84,7 @@ constexpr char kShowCreateWithAiButtonAnimation[] =
 
 // VC nudge ids vector that is iterated whenever `CloseAllVcNudges()` is
 // called. Please keep in sync whenever adding/removing/updating a nudge id.
-const char* const kNudgeIds[] = {
+constexpr std::array<const char*, 6> kNudgeIds = {
     kVideoConferenceTraySpeakOnMuteOptInNudgeId,
     kVideoConferenceTraySpeakOnMuteDetectedNudgeId,
     kVideoConferenceTrayMicrophoneUseWhileHWDisabledNudgeId,
@@ -352,15 +353,13 @@ void VideoConferenceTrayController::OnSpeakOnMuteNudgeOptInAction(bool opt_in) {
       l10n_util::GetStringUTF16(
           opt_in
               ? IDS_ASH_VIDEO_CONFERENCE_NUDGE_SPEAK_ON_MUTE_OPT_IN_CONFIRMATION_BODY
-              : IDS_ASH_VIDEO_CONFERENCE_NUDGE_SPEAK_ON_MUTE_OPT_OUT_CONFIRMATION_BODY),
-      ToastData::kDefaultToastDuration,
-      /*visible_on_lock_screen=*/false,
-      /*has_dismiss_button=*/true,
-      l10n_util::GetStringUTF16(
-          IDS_ASH_VIDEO_CONFERENCE_NUDGE_SPEAK_ON_MUTE_OPT_IN_CONFIRMATION_BUTTON));
+              : IDS_ASH_VIDEO_CONFERENCE_NUDGE_SPEAK_ON_MUTE_OPT_OUT_CONFIRMATION_BODY));
   toast_data.persist_on_hover = true;
   toast_data.show_on_all_root_windows = true;
-  toast_data.dismiss_callback = base::BindRepeating([]() {
+  toast_data.button_type = ToastData::ButtonType::kTextButton;
+  toast_data.button_text = l10n_util::GetStringUTF16(
+      IDS_ASH_VIDEO_CONFERENCE_NUDGE_SPEAK_ON_MUTE_OPT_IN_CONFIRMATION_BUTTON);
+  toast_data.button_callback = base::BindRepeating([]() {
     Shell::Get()
         ->system_tray_model()
         ->client()
@@ -368,6 +367,14 @@ void VideoConferenceTrayController::OnSpeakOnMuteNudgeOptInAction(bool opt_in) {
   });
 
   ToastManager::Get()->Show(std::move(toast_data));
+}
+
+void VideoConferenceTrayController::OnDlcDownloadStateFetched(
+    bool add_warning,
+    const std::u16string& feature_tile_title) {
+  for (auto& observer : observer_list_) {
+    observer.OnDlcDownloadStateChanged(add_warning, feature_tile_title);
+  }
 }
 
 void VideoConferenceTrayController::CloseAllVcNudges() {
@@ -391,6 +398,30 @@ bool VideoConferenceTrayController::GetHasCameraPermissions() const {
 
 bool VideoConferenceTrayController::GetHasMicrophonePermissions() const {
   return state_.has_microphone_permission;
+}
+
+void VideoConferenceTrayController::UpdateSidetoneSupportedState() {
+  CrasAudioHandler::Get()->UpdateSidetoneSupportedState();
+}
+
+bool VideoConferenceTrayController::IsSidetoneSupported() const {
+  return CrasAudioHandler::Get()->IsSidetoneSupported();
+}
+
+bool VideoConferenceTrayController::GetSidetoneEnabled() const {
+  return CrasAudioHandler::Get()->GetSidetoneEnabled();
+}
+
+void VideoConferenceTrayController::SetSidetoneEnabled(bool enabled) {
+  CrasAudioHandler::Get()->SetSidetoneEnabled(enabled);
+}
+
+void VideoConferenceTrayController::SetEwmaPowerReportEnabled(bool enabled) {
+  CrasAudioHandler::Get()->SetEwmaPowerReportEnabled(enabled);
+}
+
+double VideoConferenceTrayController::GetEwmaPower() {
+  return CrasAudioHandler::Get()->GetEwmaPower();
 }
 
 bool VideoConferenceTrayController::IsCapturingScreen() const {
@@ -902,8 +933,7 @@ void VideoConferenceTrayController::DisplayUsedWhileDisabledNudge(
       anchor_view = active_vc_tray->audio_icon();
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
-      return;
+      NOTREACHED();
   }
 
   AnchoredNudgeData nudge_data(
@@ -929,8 +959,7 @@ VideoConferenceTrayController::GetUsedWhileDisabledNudgeType(
           kMicrophone;
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
-      type = VideoConferenceTrayController::UsedWhileDisabledNudgeType::kCamera;
+      NOTREACHED();
   }
 
   return type;

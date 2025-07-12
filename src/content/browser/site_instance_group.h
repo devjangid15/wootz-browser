@@ -14,10 +14,10 @@
 #include "base/unguessable_token.h"
 #include "content/browser/browsing_instance.h"
 #include "content/browser/renderer_host/agent_scheduling_group_host.h"
-#include "content/browser/security/coop/coop_related_group.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/browsing_instance_id.h"
 #include "content/public/browser/render_process_host_observer.h"
+#include "content/public/browser/site_instance.h"
 #include "third_party/perfetto/include/perfetto/tracing/traced_proto.h"
 
 namespace perfetto::protos::pbzero {
@@ -31,8 +31,6 @@ class RenderProcessHost;
 class SiteInstance;
 class SiteInstanceImpl;
 struct ChildProcessTerminationInfo;
-
-using SiteInstanceGroupId = base::IdType32<class SiteInstanceGroupIdTag>;
 
 // A SiteInstanceGroup represents one view of a browsing context group's frame
 // trees within a renderer process. It provides a tuning knob, allowing the
@@ -98,6 +96,7 @@ class CONTENT_EXPORT SiteInstanceGroup
   SiteInstanceGroupId GetId() const;
 
   base::SafeRef<SiteInstanceGroup> GetSafeRef();
+  base::WeakPtr<SiteInstanceGroup> GetWeakPtr();
   // TODO(crbug.com/40258727): Remove this. Please don't use it.
   base::WeakPtr<SiteInstanceGroup> GetWeakPtrToAllowDangling();
 
@@ -135,12 +134,6 @@ class CONTENT_EXPORT SiteInstanceGroup
   // used when a SiteInstanceGroup is available.
   bool IsRelatedSiteInstanceGroup(SiteInstanceGroup* group);
 
-  // Returns true if `group` is in the same CoopRelatedGroup as `this`. This can
-  // be true even though IsRelatedSiteInstanceGroup returns false, if the two
-  // SiteInstanceGroups are for different BrowsingInstances in the same
-  // CoopRelatedGroup.
-  bool IsCoopRelatedSiteInstanceGroup(SiteInstanceGroup* group);
-
   // Get the number of active frames which belong to this SiteInstanceGroup. If
   // there are no active frames left, all frames in this SiteInstanceGroup can
   // be safely discarded.
@@ -159,12 +152,6 @@ class CONTENT_EXPORT SiteInstanceGroup
   // SiteInstanceGroup belongs to.
   base::UnguessableToken browsing_instance_token() const {
     return browsing_instance_->token();
-  }
-
-  // Returns the token uniquely identifying the CoopRelatedGroup this
-  // SiteInstanceGroup belongs to.
-  base::UnguessableToken coop_related_group_token() const {
-    return browsing_instance_->coop_related_group_token();
   }
 
   AgentSchedulingGroupHost& agent_scheduling_group() {

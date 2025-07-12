@@ -8,7 +8,6 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doReturn;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 
@@ -46,12 +45,16 @@ public class ActionChipsViewUnitTest {
         installAdapter();
 
         var event = new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_TAB);
+
+        doReturn(true).when(mController).selectNextItem();
         assertTrue(event.dispatch(mView));
+        verify(mController).selectNextItem();
+        verifyNoMoreInteractions(mController);
+        clearInvocations(mController);
 
-        verify(mView, times(1)).onKeyDown(event.getKeyCode(), event);
-        verifyNoMoreInteractions(mView);
-
-        verify(mController, times(1)).selectNextItem();
+        doReturn(false).when(mController).selectNextItem();
+        assertFalse(event.dispatch(mView));
+        verify(mController).selectNextItem();
         verifyNoMoreInteractions(mController);
     }
 
@@ -67,12 +70,17 @@ public class ActionChipsViewUnitTest {
                         KeyEvent.KEYCODE_TAB,
                         0,
                         KeyEvent.META_SHIFT_ON);
+
+        doReturn(true).when(mController).selectPreviousItem();
         assertTrue(event.dispatch(mView));
+        verify(mController).selectPreviousItem();
+        verifyNoMoreInteractions(mController);
 
-        verify(mView, times(1)).onKeyDown(event.getKeyCode(), event);
-        verifyNoMoreInteractions(mView);
+        clearInvocations(mController);
 
-        verify(mController, times(1)).selectPreviousItem();
+        doReturn(false).when(mController).selectPreviousItem();
+        assertFalse(event.dispatch(mView));
+        verify(mController).selectPreviousItem();
         verifyNoMoreInteractions(mController);
     }
 
@@ -83,11 +91,11 @@ public class ActionChipsViewUnitTest {
         var event = new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER);
         assertFalse(event.dispatch(mView));
 
-        verify(mView, times(1)).onKeyDown(event.getKeyCode(), event);
-        verify(mView, times(1)).superOnKeyDown(event.getKeyCode(), event);
+        verify(mView).onKeyDown(event.getKeyCode(), event);
+        verify(mView).superOnKeyDown(event.getKeyCode(), event);
         verifyNoMoreInteractions(mView);
 
-        verify(mController, times(1)).getSelectedView();
+        verify(mController).getSelectedView();
         verifyNoMoreInteractions(mController);
     }
 
@@ -102,11 +110,11 @@ public class ActionChipsViewUnitTest {
         var event = new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER);
         assertTrue(event.dispatch(mView));
 
-        verify(mChild, times(1)).performClick();
-        verify(mView, times(1)).onKeyDown(event.getKeyCode(), event);
+        verify(mChild).performClick();
+        verify(mView).onKeyDown(event.getKeyCode(), event);
         verifyNoMoreInteractions(mView);
 
-        verify(mController, times(1)).getSelectedView();
+        verify(mController).getSelectedView();
         verifyNoMoreInteractions(mController);
     }
 
@@ -117,8 +125,8 @@ public class ActionChipsViewUnitTest {
         var event = new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_T);
         assertFalse(event.dispatch(mView));
 
-        verify(mView, times(1)).onKeyDown(KeyEvent.KEYCODE_T, event);
-        verify(mView, times(1)).superOnKeyDown(KeyEvent.KEYCODE_T, event);
+        verify(mView).onKeyDown(KeyEvent.KEYCODE_T, event);
+        verify(mView).superOnKeyDown(KeyEvent.KEYCODE_T, event);
         verifyNoMoreInteractions(mView);
 
         verifyNoMoreInteractions(mController);
@@ -138,7 +146,7 @@ public class ActionChipsViewUnitTest {
         installAdapter();
 
         mView.setSelected(true);
-        verify(mController, times(1)).resetSelection();
+        verify(mController).reset();
         verifyNoMoreInteractions(mController);
     }
 
@@ -147,7 +155,7 @@ public class ActionChipsViewUnitTest {
         installAdapter();
 
         mView.setSelected(false);
-        verify(mController, times(1)).resetSelection();
+        verify(mController).reset();
         verifyNoMoreInteractions(mController);
     }
 }

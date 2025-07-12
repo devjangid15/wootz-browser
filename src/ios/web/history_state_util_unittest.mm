@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #import "ios/web/history_state_util.h"
 
 #import <stddef.h>
@@ -26,36 +31,35 @@ class HistoryStateUtilTest : public PlatformTest {
 
 const struct TestEntry HistoryStateUtilTest::tests_[] = {
     // Valid absolute changes.
-    { "http://foo.com", "http://foo.com/bar", "http://foo.com/bar" },
-    { "https://foo.com", "https://foo.com/bar", "https://foo.com/bar" },
-    { "http://foo.com/", "http://foo.com#bar", "http://foo.com#bar" },
-    { "http://foo.com:80", "http://foo.com:80/b",  "http://foo.com:80/b"},
-    { "http://foo.com:888", "http://foo.com:888/b",  "http://foo.com:888/b"},
+    {"http://foo.com", "http://foo.com/bar", "http://foo.com/bar"},
+    {"https://foo.com", "https://foo.com/bar", "https://foo.com/bar"},
+    {"http://foo.com/", "http://foo.com#bar", "http://foo.com#bar"},
+    {"http://foo.com:80", "http://foo.com:80/b", "http://foo.com:80/b"},
+    {"http://foo.com:888", "http://foo.com:888/b", "http://foo.com:888/b"},
     // Valid relative changes.
-    { "http://foo.com", "#bar", "http://foo.com#bar" },
-    { "http://foo.com/", "#bar", "http://foo.com/#bar" },
-    { "https://foo.com/", "bar", "https://foo.com/bar" },
-    { "http://foo.com/foo/1", "/bar", "http://foo.com/bar" },
-    { "http://foo.com/foo/1", "bar", "http://foo.com/foo/bar" },
-    { "http://foo.com/", "bar.com", "http://foo.com/bar.com" },
-    { "http://foo.com", "bar.com", "http://foo.com/bar.com" },
-    { "http://foo.com:888", "bar.com", "http://foo.com:888/bar.com" },
+    {"http://foo.com", "#bar", "http://foo.com#bar"},
+    {"http://foo.com/", "#bar", "http://foo.com/#bar"},
+    {"https://foo.com/", "bar", "https://foo.com/bar"},
+    {"http://foo.com/foo/1", "/bar", "http://foo.com/bar"},
+    {"http://foo.com/foo/1", "bar", "http://foo.com/foo/bar"},
+    {"http://foo.com/", "bar.com", "http://foo.com/bar.com"},
+    {"http://foo.com", "bar.com", "http://foo.com/bar.com"},
+    {"http://foo.com:888", "bar.com", "http://foo.com:888/bar.com"},
     // Invalid scheme changes.
-    { "http://foo.com", "https://foo.com#bar", "" },
-    { "https://foo.com", "http://foo.com#bar", "" },
+    {"http://foo.com", "https://foo.com#bar", ""},
+    {"https://foo.com", "http://foo.com#bar", ""},
     // Invalid domain changes.
-    { "http://foo.com/bar", "http://bar.com", "" },
-    { "http://foo.com/bar", "http://www.foo.com/bar2", "" },
+    {"http://foo.com/bar", "http://bar.com", ""},
+    {"http://foo.com/bar", "http://www.foo.com/bar2", ""},
     // Valid port change.
-    { "http://foo.com", "http://foo.com:80/bar", "http://foo.com/bar" },
-    { "http://foo.com:80", "http://foo.com/bar", "http://foo.com/bar" },
+    {"http://foo.com", "http://foo.com:80/bar", "http://foo.com/bar"},
+    {"http://foo.com:80", "http://foo.com/bar", "http://foo.com/bar"},
     // Invalid port change.
-    { "http://foo.com", "http://foo.com:42/bar", "" },
-    { "http://foo.com:42", "http://foo.com/bar", "" },
+    {"http://foo.com", "http://foo.com:42/bar", ""},
+    {"http://foo.com:42", "http://foo.com/bar", ""},
     // Invalid URL.
-    { "http://foo.com", "http://fo o.c om/ba r", "" },
-    { "http://foo.com:80", "bar", "http://foo.com:80/bar" }
-};
+    {"http://foo.com", "http://fo o.c om/ba r", ""},
+    {"http://foo.com:80", "bar", "http://foo.com:80/bar"}};
 
 TEST_F(HistoryStateUtilTest, TestIsHistoryStateChangeValid) {
   for (size_t i = 0; i < std::size(tests_); ++i) {
@@ -65,11 +69,11 @@ TEST_F(HistoryStateUtilTest, TestIsHistoryStateChangeValid) {
     bool expected_result = tests_[i].expectedUrl.size() > 0;
     bool actual_result = toUrl.is_valid();
     if (actual_result) {
-      actual_result = history_state_util::IsHistoryStateChangeValid(fromUrl,
-                                                                    toUrl);
+      actual_result =
+          history_state_util::IsHistoryStateChangeValid(fromUrl, toUrl);
     }
-    EXPECT_EQ(expected_result, actual_result) << tests_[i].fromUrl << " "
-                                              << tests_[i].toUrl;
+    EXPECT_EQ(expected_result, actual_result)
+        << tests_[i].fromUrl << " " << tests_[i].toUrl;
   }
 }
 

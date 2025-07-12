@@ -5,6 +5,7 @@
 #include "components/payments/content/secure_payment_confirmation_controller.h"
 
 #include "base/check.h"
+#include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/strings/strcat.h"
@@ -14,10 +15,13 @@
 #include "components/payments/content/content_payment_request_delegate.h"
 #include "components/payments/content/payment_request.h"
 #include "components/payments/content/secure_payment_confirmation_app.h"
+#include "components/payments/content/secure_payment_confirmation_transaction_mode.h"
 #include "components/payments/core/currency_formatter.h"
+#include "components/payments/core/features.h"
 #include "components/payments/core/method_strings.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/url_formatter/elide_url.h"
+#include "third_party/blink/public/common/features_generated.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/url_constants.h"
 
@@ -34,9 +38,8 @@ SecurePaymentConfirmationController::~SecurePaymentConfirmationController() =
 
 void SecurePaymentConfirmationController::ShowDialog() {
 #if BUILDFLAG(IS_ANDROID)
-  NOTREACHED_IN_MIGRATION();
-#endif  // BUILDFLAG(IS_ANDROID)
-
+  NOTREACHED();
+#else
   if (!request_ || !request_->spec())
     return;
 
@@ -52,6 +55,7 @@ void SecurePaymentConfirmationController::ShowDialog() {
 
   if (number_of_initialization_tasks_ == 0)
     SetupModelAndShowDialogIfApplicable();
+#endif  // BUILDFLAG(IS_ANDROID)
 }
 
 void SecurePaymentConfirmationController::
@@ -134,16 +138,6 @@ void SecurePaymentConfirmationController::
   model_.set_instrument_value(app->GetLabel());
   model_.set_instrument_icon(app->icon_bitmap());
 
-  model_.set_network_label(
-      l10n_util::GetStringUTF16(IDS_SECURE_PAYMENT_CONFIRMATION_NETWORK_LABEL));
-  model_.set_network_value(app->network_label());
-  model_.set_network_icon(app->network_icon());
-
-  model_.set_issuer_label(
-      l10n_util::GetStringUTF16(IDS_SECURE_PAYMENT_CONFIRMATION_ISSUER_LABEL));
-  model_.set_issuer_value(app->issuer_label());
-  model_.set_issuer_icon(app->issuer_icon());
-
   model_.set_total_label(
       l10n_util::GetStringUTF16(IDS_SECURE_PAYMENT_CONFIRMATION_TOTAL_LABEL));
   const mojom::PaymentItemPtr& total = request_->spec()->GetTotal(app);
@@ -186,6 +180,9 @@ void SecurePaymentConfirmationController::
   // after the dialog is created and shown to handle this, in order to keep the
   // automation codepath as close to the 'real' one as possible.
   if (request_->spc_transaction_mode() != SPCTransactionMode::NONE) {
+    // TODO(crbug.com/417426346): Once the desktop SPC controller supports the
+    // new fallback flow, it should handle SPCTransactionMode::
+    // AUTOAUTHANOTHERWAY here.
     if (request_->spc_transaction_mode() == SPCTransactionMode::AUTOACCEPT) {
       OnConfirm();
     } else if (request_->spc_transaction_mode() ==
@@ -230,7 +227,7 @@ void SecurePaymentConfirmationController::ShowPaymentHandlerScreen(
     const GURL& url,
     PaymentHandlerOpenWindowCallback callback) {
   // Payment handler screen is not supported.
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void SecurePaymentConfirmationController::ConfirmPaymentForTesting() {

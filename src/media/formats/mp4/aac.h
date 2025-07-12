@@ -58,23 +58,20 @@ class MEDIA_EXPORT AAC {
   // AudioDecoderConfig.
   ChannelLayout GetChannelLayout(bool sbr_in_mimetype) const;
 
-  // This function converts a raw AAC frame into an AAC frame with an ADTS
-  // header. On success, the function returns true, stores the converted data
-  // in the `buffer`, and sets the header size in `adts_header_size`. Otherwise
-  // the function returns false and leaves the `buffer` and `adts_header_size`
-  // unchanged.
-  bool ConvertEsdsToADTS(std::vector<uint8_t>* buffer,
-                         int* adts_header_size) const;
-
   // Converts a raw AAC frame into an AAC frame with an ADTS header. Allocates
   // new memory and copies the data from `buffer`, with the appropriate ADTS
   // header. The size of the returned array is `buffer.size` +
   // `adts_header_size`. Returns an empty HeapArray<uint8_t> on failure.
   base::HeapArray<uint8_t> CreateAdtsFromEsds(base::span<const uint8_t> buffer,
-                                              int* adts_header_size);
+                                              int* adts_header_size) const;
 
   // If known, returns the AudioCodecProfile.
   AudioCodecProfile GetProfile() const;
+
+  // If true CreateAdtsFromEsds() will return a valid ADTS packing.
+  bool fits_in_adts() const {
+    return profile_ != kXHeAAcType && frequency_index_ != 0xF;
+  }
 
   // Returns the codec specific data needed by android MediaCodec.
   std::vector<uint8_t> codec_specific_data() const {

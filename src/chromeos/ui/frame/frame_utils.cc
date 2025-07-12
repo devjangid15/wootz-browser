@@ -9,11 +9,13 @@
 #include "chromeos/ui/base/display_util.h"
 #include "chromeos/ui/base/window_properties.h"
 #include "chromeos/ui/base/window_state_type.h"
+#include "ui/aura/client/aura_constants.h"
 #include "ui/aura/env.h"
 #include "ui/aura/window.h"
 #include "ui/base/hit_test.h"
 #include "ui/display/screen.h"
 #include "ui/gfx/geometry/point.h"
+#include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_delegate.h"
 #include "ui/views/window/hit_test_utils.h"
@@ -110,36 +112,20 @@ SnapDirection GetSnapDirectionForWindow(aura::Window* window, bool left_top) {
   }
 }
 
-int GetFrameCornerRadius(const aura::Window* native_window) {
-  if (!ShouldWindowHaveRoundedCorners(native_window)) {
-    return 0;
-  }
+gfx::RoundedCornersF GetWindowRoundedCorners() {
+  const int corner_radius = features::IsRoundedWindowsEnabled()
+                                ? features::RoundedWindowsRadius()
+                                : kTopCornerRadiusWhenRestored;
 
-  const WindowStateType window_state =
-      native_window->GetProperty(kWindowStateTypeKey);
-
-  if (window_state == WindowStateType::kPip) {
-    return kPipRoundedCornerRadius;
-  }
-
-  return features::IsRoundedWindowsEnabled() ? features::RoundedWindowsRadius()
-                                             : kTopCornerRadiusWhenRestored;
+  const bool rounded_bottom_corners = features::IsRoundedWindowsEnabled();
+  return gfx::RoundedCornersF(corner_radius, corner_radius,
+                              rounded_bottom_corners ? corner_radius : 0,
+                              rounded_bottom_corners ? corner_radius : 0);
 }
 
-bool CanPropertyEffectFrameRadius(const void* class_property_key) {
-  return class_property_key == kWindowStateTypeKey;
-}
-
-bool ShouldWindowStateHaveRoundedCorners(WindowStateType type) {
-  return IsNormalWindowStateType(type) || type == WindowStateType::kFloated ||
-         type == WindowStateType::kPip;
-}
-
-bool ShouldWindowHaveRoundedCorners(const aura::Window* native_window) {
-  const WindowStateType window_state =
-      native_window->GetProperty(kWindowStateTypeKey);
-
-  return ShouldWindowStateHaveRoundedCorners(window_state);
+bool CanPropertyEffectWindowRoundedCorners(const void* class_property_key) {
+  return class_property_key == kWindowHasRoundedCornersKey ||
+         class_property_key == aura::client::kWindowRoundedCornersKey;
 }
 
 }  // namespace chromeos

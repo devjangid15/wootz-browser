@@ -7,8 +7,10 @@
 
 #include <string>
 
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "components/password_manager/core/browser/password_manager_client.h"
 
 namespace webauthn {
 class WebAuthnCredManDelegate;
@@ -26,9 +28,12 @@ class ContentPasswordManagerDriver;
 // used in Android U+ only.
 class CredManController {
  public:
-  explicit CredManController(
-      base::WeakPtr<KeyboardReplacingSurfaceVisibilityController>
-          visibility_controller);
+  using PasskeyDelayCallback =
+      base::OnceCallback<void(base::OnceCallback<void(base::OnceClosure)>)>;
+
+  CredManController(base::WeakPtr<KeyboardReplacingSurfaceVisibilityController>
+                        visibility_controller,
+                    password_manager::PasswordManagerClient* password_client);
 
   CredManController(const CredManController&) = delete;
   CredManController& operator=(const CredManController&) = delete;
@@ -38,18 +43,34 @@ class CredManController {
   // Determines if the Android Credential Manager UI should be shown and shows
   // if required. Returns true if the Android Credential Manager UI is shown,
   // false otherwise.
+  // If `delay_callback` is not null and passkeys are not yet enumerated,
+  // invokes `delay_callback` and returns true. `delay_callback` takes as an
+  // argument a callback that registers for notifications when passkeys become
+  // available. If `delay_callback` is not null and passkeys enumeration has
+  // completed, the callback will be destroyed without invocation.
   bool Show(raw_ptr<webauthn::WebAuthnCredManDelegate> cred_man_delegate,
             std::unique_ptr<PasswordCredentialFiller> filler,
             base::WeakPtr<password_manager::ContentPasswordManagerDriver>
                 frame_driver,
-            bool is_webauthn_form);
+            bool is_webauthn_form,
+            PasskeyDelayCallback delay_callback);
 
  private:
   void Dismiss(bool success);
-  void Fill(const std::u16string& username, const std::u16string& password);
+  void TriggerFilling(const std::u16string& username,
+                      const std::u16string& password);
+  void FillUsernameAndPassword(const std::u16string& username,
+                               const std::u16string& password);
+  void OnReauthCompleted(const std::u16string& username,
+                         const std::u16string& password,
+                         bool auth_successful);
 
   base::WeakPtr<KeyboardReplacingSurfaceVisibilityController>
       visibility_controller_;
+  // The password manager client is used to check whether re-auth is required.
+  const raw_ptr<password_manager::PasswordManagerClient> password_client_;
+  // The authenticator used to trigger a biometric re-auth before filling.
+  std::unique_ptr<device_reauth::DeviceAuthenticator> authenticator_;
   std::unique_ptr<PasswordCredentialFiller> filler_;
   base::WeakPtrFactory<CredManController> weak_ptr_factory_{this};
 };

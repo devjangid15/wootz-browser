@@ -20,24 +20,24 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 
 import org.chromium.base.Callback;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features;
-import org.chromium.base.test.util.JniMocker;
 import org.chromium.blink_public.common.ContextMenuDataMediaType;
 import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.components.embedder_support.contextmenu.ContextMenuNativeDelegate;
 import org.chromium.components.embedder_support.contextmenu.ContextMenuParams;
 import org.chromium.components.favicon.LargeIconBridge;
 import org.chromium.components.favicon.LargeIconBridgeJni;
 import org.chromium.ui.base.TestActivity;
+import org.chromium.ui.listmenu.MenuModelBridge;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.url.GURL;
 import org.chromium.url.JUnitTestGURLs;
@@ -45,8 +45,8 @@ import org.chromium.url.JUnitTestGURLs;
 /** Unit tests for the context menu header mediator. */
 @RunWith(BaseRobolectricTestRunner.class)
 public class ContextMenuHeaderMediatorTest {
-    @Rule public TestRule mProcessor = new Features.JUnitProcessor();
-    @Rule public JniMocker mocker = new JniMocker();
+
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
 
     @Rule
     public ActivityScenarioRule<TestActivity> mActivityScenarioRule =
@@ -54,6 +54,7 @@ public class ContextMenuHeaderMediatorTest {
 
     @Mock LargeIconBridge.Natives mMockLargeIconBridgeJni;
     @Mock ContextMenuNativeDelegate mNativeDelegate;
+    @Mock private MenuModelBridge mMenuModelBridge;
 
     private Activity mActivity;
     private final Profile mProfile = Mockito.mock(Profile.class);
@@ -64,8 +65,7 @@ public class ContextMenuHeaderMediatorTest {
     @Before
     public void setUpTest() {
         mActivityScenarioRule.getScenario().onActivity((activity) -> mActivity = activity);
-        MockitoAnnotations.initMocks(this);
-        mocker.mock(LargeIconBridgeJni.TEST_HOOKS, mMockLargeIconBridgeJni);
+        LargeIconBridgeJni.setInstanceForTesting(mMockLargeIconBridgeJni);
 
         when(mMockLargeIconBridgeJni.init()).thenReturn(1L);
     }
@@ -78,6 +78,7 @@ public class ContextMenuHeaderMediatorTest {
         final ContextMenuParams params =
                 new ContextMenuParams(
                         0,
+                        mMenuModelBridge,
                         ContextMenuDataMediaType.IMAGE,
                         url,
                         GURL.emptyGURL(),
@@ -91,6 +92,8 @@ public class ContextMenuHeaderMediatorTest {
                         0,
                         0,
                         false,
+                        /* openedFromInterestFor= */ false,
+                        /* interestForNodeID= */ 0,
                         /* additionalNavigationParams= */ null);
         final ContextMenuHeaderMediator mediator =
                 new ContextMenuHeaderMediator(mActivity, model, params, mProfile, mNativeDelegate);
@@ -124,6 +127,7 @@ public class ContextMenuHeaderMediatorTest {
         final ContextMenuParams params =
                 new ContextMenuParams(
                         0,
+                        mMenuModelBridge,
                         ContextMenuDataMediaType.VIDEO,
                         GURL.emptyGURL(),
                         GURL.emptyGURL(),
@@ -137,6 +141,8 @@ public class ContextMenuHeaderMediatorTest {
                         0,
                         0,
                         false,
+                        /* openedFromInterestFor= */ false,
+                        /* interestForNodeID= */ 0,
                         /* additionalNavigationParams= */ null);
         final ContextMenuHeaderMediator mediator =
                 new ContextMenuHeaderMediator(mActivity, model, params, mProfile, mNativeDelegate);
@@ -163,6 +169,7 @@ public class ContextMenuHeaderMediatorTest {
         final ContextMenuParams params =
                 new ContextMenuParams(
                         0,
+                        mMenuModelBridge,
                         ContextMenuDataMediaType.FILE,
                         GURL.emptyGURL(),
                         linkUrl,
@@ -176,6 +183,8 @@ public class ContextMenuHeaderMediatorTest {
                         0,
                         0,
                         false,
+                        /* openedFromInterestFor= */ false,
+                        /* interestForNodeID= */ 0,
                         /* additionalNavigationParams= */ null);
         final ContextMenuHeaderMediator mediator =
                 new ContextMenuHeaderMediator(mActivity, model, params, mProfile, mNativeDelegate);

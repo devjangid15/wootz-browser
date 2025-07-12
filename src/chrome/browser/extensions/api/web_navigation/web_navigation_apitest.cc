@@ -12,6 +12,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -34,12 +35,14 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/context_menu_params.h"
 #include "content/public/browser/navigation_handle.h"
+#include "content/public/browser/navigation_throttle_registry.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_features.h"
+#include "content/public/common/isolated_world_ids.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/test/back_forward_cache_util.h"
 #include "content/public/test/browser_test.h"
@@ -48,6 +51,7 @@
 #include "content/public/test/fenced_frame_test_util.h"
 #include "content/public/test/no_renderer_crashes_assertion.h"
 #include "content/public/test/prerender_test_util.h"
+#include "content/public/test/test_navigation_throttle_inserter.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/common/extension_features.h"
@@ -95,58 +99,72 @@ class DelayLoadStartAndExecuteJavascript : public TabStripModelObserver,
   DelayLoadStartAndExecuteJavascript& operator=(
       const DelayLoadStartAndExecuteJavascript&) = delete;
 
-  ~DelayLoadStartAndExecuteJavascript() override {}
+  ~DelayLoadStartAndExecuteJavascript() override = default;
 
   // TabStripModelObserver:
   void OnTabStripModelChanged(
       TabStripModel* tab_strip_model,
       const TabStripModelChange& change,
       const TabStripSelectionChange& selection) override {
-    if (change.type() != TabStripModelChange::kInserted)
+    if (change.type() != TabStripModelChange::kInserted) {
       return;
+    }
 
     content::WebContentsObserver::Observe(
         change.GetInsert()->contents[0].contents);
     tab_strip_model->RemoveObserver(this);
+
+    throttle_inserter_ =
+        std::make_unique<content::TestNavigationThrottleInserter>(
+            web_contents(),
+            base::BindRepeating(
+                &DelayLoadStartAndExecuteJavascript::InsertThrottle,
+                base::Unretained(this)));
   }
 
-  // WebContentsObserver:
-  void DidStartNavigation(
-      content::NavigationHandle* navigation_handle) override {
-    if (navigation_handle->GetURL() != delay_url_ || !render_frame_host_) {
+  void InsertThrottle(content::NavigationThrottleRegistry& registry) {
+    auto& navigation_handle = registry.GetNavigationHandle();
+    if (navigation_handle.GetURL() != delay_url_ || !render_frame_host_) {
       return;
     }
 
     auto throttle =
-        std::make_unique<WillStartRequestObserverThrottle>(navigation_handle);
+        std::make_unique<WillStartRequestObserverThrottle>(registry);
     throttle_ = throttle->AsWeakPtr();
-    navigation_handle->RegisterThrottleForTesting(std::move(throttle));
+    registry.AddThrottle(std::move(throttle));
 
     if (has_user_gesture_) {
       render_frame_host_->ExecuteJavaScriptWithUserGestureForTests(
-          base::UTF8ToUTF16(script_), base::NullCallback());
+          base::UTF8ToUTF16(script_), base::NullCallback(),
+          content::ISOLATED_WORLD_ID_GLOBAL);
     } else {
-      render_frame_host_->ExecuteJavaScriptForTests(base::UTF8ToUTF16(script_),
-                                                    base::NullCallback());
+      render_frame_host_->ExecuteJavaScriptForTests(
+          base::UTF8ToUTF16(script_), base::NullCallback(),
+          content::ISOLATED_WORLD_ID_GLOBAL);
     }
     script_was_executed_ = true;
   }
 
+  // WebContentsObserver:
   void DidFinishNavigation(
       content::NavigationHandle* navigation_handle) override {
-    if (!navigation_handle->HasCommitted() || navigation_handle->IsErrorPage())
+    if (!navigation_handle->HasCommitted() ||
+        navigation_handle->IsErrorPage()) {
       return;
+    }
 
     if (script_was_executed_ &&
         base::EndsWith(navigation_handle->GetURL().spec(), until_url_suffix_,
                        base::CompareCase::SENSITIVE)) {
       content::WebContentsObserver::Observe(nullptr);
-      if (throttle_)
+      if (throttle_) {
         throttle_->Unblock();
+      }
     }
 
-    if (navigation_handle->IsInMainFrame())
+    if (navigation_handle->IsInMainFrame()) {
       render_frame_host_ = navigation_handle->GetRenderFrameHost();
+    }
   }
 
   void set_has_user_gesture(bool has_user_gesture) {
@@ -156,9 +174,10 @@ class DelayLoadStartAndExecuteJavascript : public TabStripModelObserver,
  private:
   class WillStartRequestObserverThrottle : public content::NavigationThrottle {
    public:
-    explicit WillStartRequestObserverThrottle(content::NavigationHandle* handle)
-        : NavigationThrottle(handle) {}
-    ~WillStartRequestObserverThrottle() override {}
+    explicit WillStartRequestObserverThrottle(
+        content::NavigationThrottleRegistry& registry)
+        : NavigationThrottle(registry) {}
+    ~WillStartRequestObserverThrottle() override = default;
 
     const char* GetNameForLogging() override {
       return "WillStartRequestObserverThrottle";
@@ -194,6 +213,7 @@ class DelayLoadStartAndExecuteJavascript : public TabStripModelObserver,
   bool script_was_executed_ = false;
   raw_ptr<content::RenderFrameHost, AcrossTasksDanglingUntriaged>
       render_frame_host_ = nullptr;
+  std::unique_ptr<content::TestNavigationThrottleInserter> throttle_inserter_;
 };
 
 // Handles requests for URLs with paths of "/test*" sent to the test server, so
@@ -257,7 +277,7 @@ class WebNavigationApiBackForwardCacheTest : public WebNavigationApiTest {
   base::test::ScopedFeatureList feature_list_;
 };
 
-using ContextType = extensions::ExtensionBrowserTest::ContextType;
+using ContextType = extensions::browser_test_util::ContextType;
 
 class WebNavigationApiTestWithContextType
     : public WebNavigationApiTest,
@@ -310,6 +330,9 @@ IN_PROC_BROWSER_TEST_P(WebNavigationApiPrerenderTestWithContextType, GetFrame) {
 }
 
 IN_PROC_BROWSER_TEST_F(WebNavigationApiTest, GetFrameIncognito) {
+  // TODO(crbug.com/40937027): Convert test to use HTTPS and then remove.
+  ScopedAllowHttpForHostnamesForTesting allow_http({"a.com"},
+                                                   profile()->GetPrefs());
   ASSERT_TRUE(StartEmbeddedTestServer());
 
   GURL url = embedded_test_server()->GetURL("a.com", "/empty.html");
@@ -356,9 +379,7 @@ class WebNavigationApiPrerenderTestWithServiceWorker
   WebNavigationApiPrerenderTestWithServiceWorker()
       // This test uses chrome.tabs.executeScript, which is not available in
       // MV3 or later. See crbug.com/332328868.
-      : WebNavigationApiTest(ContextType::kServiceWorkerMV2) {
-
-  }
+      : WebNavigationApiTest(ContextType::kServiceWorkerMV2) {}
   ~WebNavigationApiPrerenderTestWithServiceWorker() override = default;
   WebNavigationApiPrerenderTestWithServiceWorker(
       const WebNavigationApiPrerenderTestWithServiceWorker&) = delete;
@@ -611,6 +632,7 @@ IN_PROC_BROWSER_TEST_P(WebNavigationApiTestWithContextType,
 
   Browser* otr_browser = OpenURLOffTheRecord(browser()->profile(), url);
   WebContents* tab = otr_browser->tab_strip_model()->GetActiveWebContents();
+  content::SimulateEndOfPaintHoldingOnPrimaryMainFrame(tab);
 
   // There's a link with target=_blank on a.html. Click on it to open it in a
   // new tab.

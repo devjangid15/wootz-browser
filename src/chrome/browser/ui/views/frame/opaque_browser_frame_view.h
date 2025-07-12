@@ -9,7 +9,6 @@
 
 #include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/ui/view_ids.h"
 #include "chrome/browser/ui/views/frame/browser_frame.h"
 #include "chrome/browser/ui/views/frame/browser_non_client_frame_view.h"
@@ -63,8 +62,6 @@ class OpaqueBrowserFrameView : public BrowserNonClientFrameView,
       const gfx::Size& tabstrip_minimum_size) const override;
   gfx::Rect GetBoundsForWebAppFrameToolbar(
       const gfx::Size& toolbar_preferred_size) const override;
-  void LayoutWebAppWindowTitle(const gfx::Rect& available_space,
-                               views::Label& window_title_label) const override;
   int GetTopInset(bool restored) const override;
   void UpdateThrobber(bool running) override;
   void WindowControlsOverlayEnabledChanged() override;
@@ -81,9 +78,6 @@ class OpaqueBrowserFrameView : public BrowserNonClientFrameView,
   void ResetWindowControls() override;
   void UpdateWindowIcon() override;
   void UpdateWindowTitle() override;
-
-  // views::View:
-  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
 
   // TabIconViewModel:
   bool ShouldTabIconViewAnimate() const override;
@@ -112,8 +106,7 @@ class OpaqueBrowserFrameView : public BrowserNonClientFrameView,
   bool IsFrameCondensed() const override;
   bool EverHasVisibleBackgroundTabShapes() const override;
   FrameButtonStyle GetFrameButtonStyle() const override;
-  void UpdateWindowControlsOverlay(
-      const gfx::Rect& bounding_rect) const override;
+  void UpdateWindowControlsOverlay(const gfx::Rect& bounding_rect) override;
   bool ShouldDrawRestoredFrameShadow() const override;
 #if BUILDFLAG(IS_LINUX)
   bool IsTiled() const override;

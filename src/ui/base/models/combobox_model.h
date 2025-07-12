@@ -20,6 +20,13 @@ class ImageModel;
 // A data model for a combo box.
 class COMPONENT_EXPORT(UI_BASE) ComboboxModel {
  public:
+  // Determines if selected combobox items should display a checkmark.
+  enum class ItemCheckmarkConfig {
+    kDefault,   // Use the OS-specific value of `check_selected_combobox_item`.
+    kDisabled,  // Hide the checkmark.
+    kEnabled    // Show the checkmark.
+  };
+
   ComboboxModel();
   virtual ~ComboboxModel();
 
@@ -28,10 +35,6 @@ class COMPONENT_EXPORT(UI_BASE) ComboboxModel {
 
   // Returns the string at the specified index.
   virtual std::u16string GetItemAt(size_t index) const = 0;
-
-  // Returns the string to be shown in the dropdown for the item at |index|. By
-  // default, it returns GetItemAt(index).
-  virtual std::u16string GetDropDownTextAt(size_t index) const;
 
   // Returns the secondary string at the specified index. Secondary strings are
   // displayed in a second line inside every menu item.
@@ -49,12 +52,20 @@ class COMPONENT_EXPORT(UI_BASE) ComboboxModel {
   // item.
   virtual bool IsItemSeparatorAt(size_t index) const;
 
+  // TODO(pbos): Consider replacing this (and IsItemSeparatorAt) with something
+  // that either returns or maps well to MenuModel::ItemType.
+  virtual bool IsItemTitleAt(size_t index) const;
+
   // The index of the item that is selected by default (before user
   // interaction).
   virtual std::optional<size_t> GetDefaultIndex() const;
 
   // Returns true if the item at |index| is enabled.
   virtual bool IsItemEnabledAt(size_t index) const;
+
+  // Returns the config that determines whether selected combobox items should
+  // display a checkmark.
+  virtual ItemCheckmarkConfig GetCheckmarkConfig() const;
 
   // Adds/removes an observer.
   void AddObserver(ComboboxModelObserver* observer);

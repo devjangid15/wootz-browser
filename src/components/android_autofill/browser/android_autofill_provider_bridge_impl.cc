@@ -13,9 +13,11 @@
 #include "base/memory/raw_ref.h"
 #include "components/android_autofill/browser/android_autofill_provider.h"
 #include "components/android_autofill/browser/form_data_android.h"
-#include "components/android_autofill/browser/jni_headers/AutofillProvider_jni.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/gfx/geometry/rect_f.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "components/android_autofill/browser/jni_headers/AutofillProvider_jni.h"
 
 namespace autofill {
 
@@ -129,7 +131,7 @@ void AndroidAutofillProviderBridgeImpl::ShowDatalistPopup(
   labels.reserve(options.size());
   for (const SelectOption& option : options) {
     values.push_back(option.value);
-    labels.push_back(option.content);
+    labels.push_back(option.text);
   }
 
   Java_AutofillProvider_showDatalistPopup(
@@ -232,6 +234,10 @@ void AndroidAutofillProviderBridgeImpl::DetachFromJavaAutofillProvider(
   java_ref_.reset();
 }
 
+jboolean AndroidAutofillProviderBridgeImpl::HasPasskeyRequest(JNIEnv* env) {
+  return delegate_->HasPasskeyRequest();
+}
+
 void AndroidAutofillProviderBridgeImpl::OnAutofillAvailable(JNIEnv* env) {
   delegate_->OnAutofillAvailable();
 }
@@ -258,4 +264,9 @@ void AndroidAutofillProviderBridgeImpl::OnShowBottomSheetResult(
     jboolean provided_autofill_structure) {
   delegate_->OnShowBottomSheetResult(is_shown, provided_autofill_structure);
 }
+
+void AndroidAutofillProviderBridgeImpl::OnTriggerPasskeyRequest(JNIEnv* env) {
+  delegate_->OnTriggerPasskeyRequest();
+}
+
 }  // namespace autofill

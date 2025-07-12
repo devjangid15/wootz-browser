@@ -10,14 +10,18 @@
 #include <vector>
 
 #include "base/enterprise_util.h"
+#include "base/logging.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/notreached.h"
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
+#include "chrome/enterprise_companion/device_management_storage/dm_storage.h"
 #include "chrome/updater/constants.h"
 #include "chrome/updater/policy/manager.h"
+#include "chrome/updater/protos/omaha_settings.pb.h"
+#include "device_management_backend.pb.h"
 
 namespace updater {
 
@@ -80,7 +84,7 @@ int PolicyValueFromProtoUpdateValue(
 DMPolicyManager::DMPolicyManager(
     const ::wireless_android_enterprise_devicemanagement::
         OmahaSettingsClientProto& omaha_settings,
-    const std::optional<bool>& override_is_managed_device)
+    std::optional<bool> override_is_managed_device)
     : is_managed_device_(override_is_managed_device.value_or(true)),
       omaha_settings_(omaha_settings) {}
 
@@ -256,6 +260,26 @@ std::optional<bool> DMPolicyManager::IsRollbackToTargetVersionAllowed(
               ROLLBACK_TO_TARGET_VERSION_ENABLED);
 }
 
+std::optional<int> DMPolicyManager::GetMajorVersionRolloutPolicy(
+    const std::string& app_id) const {
+  const auto* app_settings = GetAppSettings(app_id);
+  if (!app_settings || !app_settings->has_major_version_rollout_policy()) {
+    return std::nullopt;
+  }
+
+  return app_settings->major_version_rollout_policy();
+}
+
+std::optional<int> DMPolicyManager::GetMinorVersionRolloutPolicy(
+    const std::string& app_id) const {
+  const auto* app_settings = GetAppSettings(app_id);
+  if (!app_settings || !app_settings->has_minor_version_rollout_policy()) {
+    return std::nullopt;
+  }
+
+  return app_settings->minor_version_rollout_policy();
+}
+
 std::optional<std::vector<std::string>> DMPolicyManager::GetForceInstallApps()
     const {
   std::vector<std::string> force_install_apps;
@@ -304,15 +328,37 @@ std::optional<std::vector<std::string>> DMPolicyManager::GetAppsWithPolicy()
   return apps_with_policy;
 }
 
+std::optional<
+    wireless_android_enterprise_devicemanagement::OmahaSettingsClientProto>
+GetOmahaPolicySettings(
+    scoped_refptr<device_management_storage::DMStorage> dm_storage) {
+  static constexpr char kGoogleUpdatePolicyType[] =
+      "google/machine-level-omaha";
+
+  wireless_android_enterprise_devicemanagement::OmahaSettingsClientProto
+      omaha_settings;
+  std::optional<enterprise_management::PolicyData> policy_data =
+      dm_storage->ReadPolicyData(kGoogleUpdatePolicyType);
+  if (!policy_data || !policy_data->has_policy_value()) {
+    return std::nullopt;
+  }
+  if (!omaha_settings.ParseFromString(policy_data->policy_value())) {
+    VLOG(1) << "Failed to parse OmahaSettingsClientProto";
+    return std::nullopt;
+  }
+  return omaha_settings;
+}
+
 scoped_refptr<PolicyManagerInterface> CreateDMPolicyManager(
-    const std::optional<bool>& override_is_managed_device) {
-  scoped_refptr<DMStorage> default_dm_storage = GetDefaultDMStorage();
+    std::optional<bool> override_is_managed_device) {
+  scoped_refptr<device_management_storage::DMStorage> default_dm_storage =
+      device_management_storage::GetDefaultDMStorage();
   if (!default_dm_storage) {
     return nullptr;
   }
-  std::unique_ptr<
+  std::optional<
       ::wireless_android_enterprise_devicemanagement::OmahaSettingsClientProto>
-      omaha_settings = default_dm_storage->GetOmahaPolicySettings();
+      omaha_settings = GetOmahaPolicySettings(default_dm_storage);
   if (!omaha_settings) {
     return nullptr;
   }

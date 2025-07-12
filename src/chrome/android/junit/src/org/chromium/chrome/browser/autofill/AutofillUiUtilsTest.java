@@ -14,20 +14,17 @@ import androidx.test.filters.SmallTest;
 
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features;
-import org.chromium.base.test.util.Features.DisableFeatures;
-import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.browser.autofill.AutofillUiUtils.ErrorType;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
+import org.chromium.chrome.browser.autofill.AutofillUiUtils.IconSpecs;
+import org.chromium.components.autofill.ImageSize;
+import org.chromium.components.autofill.ImageType;
 import org.chromium.components.autofill.payments.LegalMessageLine;
 import org.chromium.url.GURL;
 
@@ -43,8 +40,6 @@ public class AutofillUiUtilsTest {
     private EditText mYearInput;
     private int mThisMonth;
     private int mTwoDigitThisYear;
-
-    @Rule public TestRule mProcessor = new Features.JUnitProcessor();
 
     @Before
     public void setUp() {
@@ -315,12 +310,13 @@ public class AutofillUiUtilsTest {
 
     @Test
     @SmallTest
-    @EnableFeatures(ChromeFeatureList.AUTOFILL_ENABLE_NEW_CARD_ART_AND_NETWORK_IMAGES)
     public void testResizeAndAddRoundedCornersAndGreyBorder() {
         Bitmap testImage = Bitmap.createBitmap(400, 300, Bitmap.Config.ARGB_8888);
-        AutofillUiUtils.CardIconSpecs testSpecs =
-                AutofillUiUtils.CardIconSpecs.create(
-                        ContextUtils.getApplicationContext(), AutofillUiUtils.CardIconSize.LARGE);
+        IconSpecs testSpecs =
+                IconSpecs.create(
+                        ContextUtils.getApplicationContext(),
+                        ImageType.CREDIT_CARD_ART_IMAGE,
+                        ImageSize.LARGE);
 
         Bitmap resizedTestImage =
                 AutofillUiUtils.resizeAndAddRoundedCornersAndGreyBorder(
@@ -335,8 +331,44 @@ public class AutofillUiUtilsTest {
 
     @Test
     @SmallTest
-    @DisableFeatures(ChromeFeatureList.AUTOFILL_ENABLE_CARD_ART_IMAGE)
-    public void testVirtualCardShowsCapitalOneVirtualCardIconWhenMetadataNotEnabled() {
+    public void testCreditCardIconSpec() {
+        Context context = ContextUtils.getApplicationContext();
+        IconSpecs specs =
+                IconSpecs.create(context, ImageType.CREDIT_CARD_ART_IMAGE, ImageSize.LARGE);
+
+        Assert.assertEquals(
+                context.getResources().getDimensionPixelSize(R.dimen.large_card_icon_width),
+                specs.getWidth());
+        Assert.assertEquals(
+                context.getResources().getDimensionPixelSize(R.dimen.large_card_icon_height),
+                specs.getHeight());
+        Assert.assertEquals(
+                context.getResources().getDimensionPixelSize(R.dimen.large_card_icon_corner_radius),
+                specs.getCornerRadius());
+        Assert.assertEquals(
+                context.getResources().getDimensionPixelSize(R.dimen.card_icon_border_width),
+                specs.getBorderWidth());
+    }
+
+    @Test
+    @SmallTest
+    public void testValuableIconSpec() {
+        Context context = ContextUtils.getApplicationContext();
+        IconSpecs specs = IconSpecs.create(context, ImageType.VALUABLE_IMAGE, ImageSize.LARGE);
+
+        Assert.assertEquals(
+                specs.getWidth(),
+                context.getResources().getDimensionPixelSize(R.dimen.large_valuable_icon_size));
+        Assert.assertEquals(
+                specs.getHeight(),
+                context.getResources().getDimensionPixelSize(R.dimen.large_valuable_icon_size));
+        Assert.assertEquals(0, specs.getCornerRadius());
+        Assert.assertEquals(0, specs.getBorderWidth());
+    }
+
+    @Test
+    @SmallTest
+    public void testVirtualCardShowsCapitalOneVirtualCardIcon() {
         Assert.assertTrue(
                 AutofillUiUtils.shouldShowCustomIcon(
                         new GURL(AutofillUiUtils.CAPITAL_ONE_ICON_URL), /* isVirtualCard= */ true));
@@ -344,8 +376,7 @@ public class AutofillUiUtilsTest {
 
     @Test
     @SmallTest
-    @EnableFeatures(ChromeFeatureList.AUTOFILL_ENABLE_CARD_ART_IMAGE)
-    public void testNonVirtualCardDoesNotShowCapitalOneVirtualCardIconWhenMetadataEnabled() {
+    public void testNonVirtualCardDoesNotShowCapitalOneVirtualCardIcon() {
         Assert.assertFalse(
                 AutofillUiUtils.shouldShowCustomIcon(
                         new GURL(AutofillUiUtils.CAPITAL_ONE_ICON_URL),
@@ -354,8 +385,7 @@ public class AutofillUiUtilsTest {
 
     @Test
     @SmallTest
-    @EnableFeatures(ChromeFeatureList.AUTOFILL_ENABLE_CARD_ART_IMAGE)
-    public void testBothVirtualAndNonVirtualCardsShowRichCardArtWhenMetadataEnabled() {
+    public void testBothVirtualAndNonVirtualCardsShowRichCardArt() {
         Assert.assertTrue(
                 AutofillUiUtils.shouldShowCustomIcon(
                         new GURL("https://www.richcardart.com/richcardart.png"),

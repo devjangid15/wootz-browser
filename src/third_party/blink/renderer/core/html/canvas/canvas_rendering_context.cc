@@ -25,15 +25,21 @@
 
 #include "third_party/blink/renderer/core/html/canvas/canvas_rendering_context.h"
 
+#include "base/strings/stringprintf.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/platform/platform.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_canvas_element_hit_test_region.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_canvas_hit_test_rect.h"
 #include "third_party/blink/renderer/core/animation_frame/worker_animation_frame_provider.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/html/canvas/canvas_context_creation_attributes_core.h"
 #include "third_party/blink/renderer/core/html/canvas/canvas_image_source.h"
+#include "third_party/blink/renderer/core/html/canvas/html_canvas_element.h"
 #include "third_party/blink/renderer/core/workers/worker_global_scope.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
+#include "third_party/blink/renderer/platform/graphics/static_bitmap_image.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
+#include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 
 namespace blink {
 
@@ -43,7 +49,6 @@ CanvasRenderingContext::CanvasRenderingContext(
     CanvasRenderingAPI canvas_rendering_API)
     : ActiveScriptWrappable<CanvasRenderingContext>({}),
       host_(host),
-      color_params_(attrs.color_space, attrs.pixel_format, attrs.alpha),
       creation_attributes_(attrs),
       canvas_rendering_type_(canvas_rendering_API) {
   // The following check is for investigating crbug.com/1470622
@@ -58,11 +63,6 @@ CanvasRenderingContext::CanvasRenderingContext(
   CHECK(host_);
 }
 
-SkColorInfo CanvasRenderingContext::CanvasRenderingContextSkColorInfo() const {
-  return SkColorInfo(kN32_SkColorType, kPremul_SkAlphaType,
-                     SkColorSpace::MakeSRGB());
-}
-
 void CanvasRenderingContext::Dispose() {
   RenderTaskEnded();
 
@@ -72,10 +72,96 @@ void CanvasRenderingContext::Dispose() {
   // the other in order to break the circular reference.  This is to avoid
   // an error when CanvasRenderingContext::DidProcessTask() is invoked
   // after the HTMLCanvasElement is destroyed.
-  if (CanvasRenderingContextHost* host = Host(); LIKELY(host != nullptr)) {
+  if (CanvasRenderingContextHost* host = Host()) [[likely]] {
     host->DetachContext();
     host_ = nullptr;
   }
+}
+
+bool CanvasRenderingContext::IsDrawElementEligible(
+    Element* element,
+    const String& func_name,
+    ExceptionState& exception_state) {
+  if (!Host() || Host()->IsOffscreenCanvas()) {
+    return false;
+  }
+
+  HTMLCanvasElement* canvas_element = static_cast<HTMLCanvasElement*>(Host());
+  if (!canvas_element || !canvas_element->GetDocument().View()) {
+    return false;
+  }
+
+  auto build_error = [&func_name](const char* format) {
+    StringBuilder builder;
+    builder.AppendFormat(format, func_name.Utf8().c_str());
+    return builder.ToString();
+  };
+
+  if (element->parentElement() != canvas_element) {
+    exception_state.ThrowTypeError(
+        build_error("Only immediate children of the <canvas> element can be "
+                    "passed to %s."));
+    return false;
+  }
+
+  if (!canvas_element->layoutSubtree()) {
+    exception_state.ThrowTypeError(build_error(
+        "<canvas> elements without layoutsubtree do not support %s."));
+    return false;
+  }
+
+  if (!element->GetLayoutObject()) {
+    exception_state.ThrowTypeError(build_error(
+        "The canvas and element used with %s must have been laid "
+        "out. Detached canvases are not supported, nor canvas or children that "
+        "are `display: none`."));
+    return false;
+  }
+
+  // TODO(crbug.com/413728246): Maybe we can support canvas element.
+  if (IsA<HTMLCanvasElement>(element)) {
+    exception_state.ThrowTypeError(
+        build_error("<canvas> children of a <canvas> cannot be passed to %s."));
+    return false;
+  }
+
+  return true;
+}
+
+bool CanvasRenderingContext::ConvertHitTestRegionsToHTMLCanvasRegions(
+    const HeapVector<Member<CanvasElementHitTestRegion>>& hit_test_regions,
+    VectorOf<HTMLCanvasElement::ElementHitTestRegion>& result,
+    const String& func_name,
+    ExceptionState& exception_state) {
+  for (const auto& region : hit_test_regions) {
+    if (!IsDrawElementEligible(region->element(), func_name, exception_state)) {
+      return false;
+    }
+
+    double width = [&]() -> double {
+      if (region->rect()->hasWidth()) {
+        return *region->rect()->width();
+      }
+      gfx::RectF bounds =
+          region->element()->GetBoundingClientRectNoLifecycleUpdate();
+      return bounds.width();
+    }();
+
+    double height = [&]() -> double {
+      if (region->rect()->hasHeight()) {
+        return *region->rect()->height();
+      }
+      gfx::RectF bounds =
+          region->element()->GetBoundingClientRectNoLifecycleUpdate();
+      return bounds.height();
+    }();
+
+    result.push_back(
+        MakeGarbageCollected<HTMLCanvasElement::ElementHitTestRegion>(
+            region->element(), gfx::RectF(region->rect()->x(),
+                                          region->rect()->y(), width, height)));
+  }
+  return true;
 }
 
 void CanvasRenderingContext::DidDraw(
@@ -104,7 +190,7 @@ void CanvasRenderingContext::DidProcessTask(
 
   // The end of a script task that drew content to the canvas is the point
   // at which the current frame may be considered complete.
-  if (CanvasRenderingContextHost* host = Host(); LIKELY(host != nullptr)) {
+  if (CanvasRenderingContextHost* host = Host()) [[likely]] {
     host->PreFinalizeFrame();
   }
   FlushReason reason = did_print_in_current_task_
@@ -112,7 +198,7 @@ void CanvasRenderingContext::DidProcessTask(
                            : FlushReason::kCanvasPushFrame;
   FinalizeFrame(reason);
   did_print_in_current_task_ = false;
-  if (CanvasRenderingContextHost* host = Host(); LIKELY(host != nullptr)) {
+  if (CanvasRenderingContextHost* host = Host()) [[likely]] {
     host->PostFinalizeFrame(reason);
   }
 }
@@ -124,9 +210,6 @@ void CanvasRenderingContext::RecordUMACanvasRenderingAPI() {
     WebFeature feature;
     if (host->IsOffscreenCanvas()) {
       switch (canvas_rendering_type_) {
-        default:
-          NOTREACHED_IN_MIGRATION();
-          [[fallthrough]];
         case CanvasRenderingContext::CanvasRenderingAPI::k2D:
           feature = WebFeature::kOffscreenCanvas_2D;
           break;
@@ -142,12 +225,11 @@ void CanvasRenderingContext::RecordUMACanvasRenderingAPI() {
         case CanvasRenderingContext::CanvasRenderingAPI::kWebgpu:
           feature = WebFeature::kOffscreenCanvas_WebGPU;
           break;
+        default:
+          NOTREACHED();
       }
     } else {
       switch (canvas_rendering_type_) {
-        default:
-          NOTREACHED_IN_MIGRATION();
-          [[fallthrough]];
         case CanvasRenderingContext::CanvasRenderingAPI::k2D:
           feature = WebFeature::kHTMLCanvasElement_2D;
           break;
@@ -163,6 +245,8 @@ void CanvasRenderingContext::RecordUMACanvasRenderingAPI() {
         case CanvasRenderingContext::CanvasRenderingAPI::kWebgpu:
           feature = WebFeature::kHTMLCanvasElement_WebGPU;
           break;
+        default:
+          NOTREACHED();
       }
     }
     UseCounter::Count(window->document(), feature);
@@ -227,7 +311,6 @@ CanvasRenderingContext::RenderingAPIFromId(const String& id) {
 
 void CanvasRenderingContext::Trace(Visitor* visitor) const {
   visitor->Trace(host_);
-  ScriptWrappable::Trace(visitor);
   ActiveScriptWrappable::Trace(visitor);
 }
 
@@ -244,6 +327,16 @@ CanvasRenderingContext::GetCanvasPerformanceMonitor() {
   DEFINE_THREAD_SAFE_STATIC_LOCAL(ThreadSpecific<CanvasPerformanceMonitor>,
                                   monitor, ());
   return *monitor;
+}
+
+CanvasRenderingContext::ElementHitTestRegion::ElementHitTestRegion(
+    Element* element,
+    const gfx::RectF& rect)
+    : element_(element), rect_(rect) {}
+
+void CanvasRenderingContext::ElementHitTestRegion::Trace(
+    Visitor* visitor) const {
+  visitor->Trace(element_);
 }
 
 }  // namespace blink

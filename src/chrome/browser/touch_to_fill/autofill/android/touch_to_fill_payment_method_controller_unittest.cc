@@ -5,47 +5,57 @@
 #include "chrome/browser/touch_to_fill/autofill/android/touch_to_fill_payment_method_controller.h"
 
 #include <memory>
+#include <vector>
 
-#include "chrome/browser/touch_to_fill/autofill/android/touch_to_fill_payment_method_controller.h"
+#include "chrome/browser/touch_to_fill/autofill/android/touch_to_fill_delegate_android_impl.h"
+#include "chrome/browser/touch_to_fill/autofill/android/touch_to_fill_payment_method_controller_impl.h"
 #include "chrome/browser/touch_to_fill/autofill/android/touch_to_fill_payment_method_view.h"
 #include "chrome/browser/touch_to_fill/autofill/android/touch_to_fill_payment_method_view_controller.h"
-#include "chrome/browser/touch_to_fill/autofill/android/touch_to_fill_delegate_android_impl.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "components/autofill/content/browser/test_autofill_client_injector.h"
 #include "components/autofill/content/browser/test_autofill_manager_injector.h"
 #include "components/autofill/content/browser/test_content_autofill_client.h"
-#include "components/autofill/core/browser/autofill_test_utils.h"
-#include "components/autofill/core/browser/test_autofill_client.h"
-#include "components/autofill/core/browser/test_browser_autofill_manager.h"
-#include "components/autofill/core/browser/ui/touch_to_fill_delegate.h"
+#include "components/autofill/core/browser/data_model/valuables/loyalty_card.h"
+#include "components/autofill/core/browser/foundations/test_autofill_client.h"
+#include "components/autofill/core/browser/foundations/test_browser_autofill_manager.h"
+#include "components/autofill/core/browser/integrators/touch_to_fill/touch_to_fill_delegate.h"
+#include "components/autofill/core/browser/suggestions/suggestion.h"
+#include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
+#include "components/autofill/core/browser/test_utils/valuables_data_test_utils.h"
+#include "components/autofill/core/common/autofill_test_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+namespace autofill {
+namespace {
 
 using ::testing::_;
 using ::testing::ElementsAreArray;
 using ::testing::Return;
 
-namespace autofill {
-
-namespace {
-
 class MockTouchToFillPaymentMethodViewImpl : public TouchToFillPaymentMethodView {
  public:
   MockTouchToFillPaymentMethodViewImpl() {
-    ON_CALL(*this, Show(_, _, _)).WillByDefault(Return(true));
-    ON_CALL(*this, Show(_, _)).WillByDefault(Return(true));
+    ON_CALL(*this, ShowCreditCards).WillByDefault(Return(true));
+    ON_CALL(*this, ShowIbans).WillByDefault(Return(true));
   }
   ~MockTouchToFillPaymentMethodViewImpl() override = default;
 
   MOCK_METHOD(bool,
-              Show,
-              (TouchToFillPaymentMethodViewController * controller,
-               base::span<const CreditCard> cards_to_suggest,
-               bool should_show_scan_credit_card));
+              ShowCreditCards,
+              ((TouchToFillPaymentMethodViewController * controller),
+               (base::span<const Suggestion> suggestions),
+               (bool should_show_scan_credit_card)));
   MOCK_METHOD(bool,
-              Show,
+              ShowIbans,
               (TouchToFillPaymentMethodViewController * controller,
                base::span<const Iban> ibans_to_suggest));
+  MOCK_METHOD(bool,
+              ShowLoyaltyCards,
+              (TouchToFillPaymentMethodViewController * controller,
+               base::span<const LoyaltyCard> affiliated_loyalty_cards,
+               base::span<const LoyaltyCard> all_loyalty_cards,
+               bool first_time_usage));
   MOCK_METHOD(void, Hide, ());
 };
 
@@ -55,7 +65,6 @@ class MockTouchToFillDelegateAndroidImpl
   explicit MockTouchToFillDelegateAndroidImpl(
       TestBrowserAutofillManager* autofill_manager)
       : TouchToFillDelegateAndroidImpl(autofill_manager) {
-    ON_CALL(*this, GetManager).WillByDefault(Return(autofill_manager));
     ON_CALL(*this, ShouldShowScanCreditCard).WillByDefault(Return(true));
   }
   ~MockTouchToFillDelegateAndroidImpl() override = default;
@@ -67,9 +76,8 @@ class MockTouchToFillDelegateAndroidImpl
   MOCK_METHOD(bool, IsShowingTouchToFill, (), (override));
   MOCK_METHOD(bool,
               IntendsToShowTouchToFill,
-              (FormGlobalId, FieldGlobalId, const FormData&),
+              (FormGlobalId, FieldGlobalId),
               (override));
-  MOCK_METHOD(TestBrowserAutofillManager*, GetManager, (), (override));
   MOCK_METHOD(bool, ShouldShowScanCreditCard, (), (override));
   MOCK_METHOD(void, ScanCreditCard, (), (override));
   MOCK_METHOD(void, OnCreditCardScanned, (const CreditCard& card), (override));
@@ -90,15 +98,13 @@ class TestContentAutofillClientWithTouchToFillPaymentMethodController
  public:
   using TestContentAutofillClient::TestContentAutofillClient;
 
-  TouchToFillPaymentMethodController& payment_method_controller() {
+  TouchToFillPaymentMethodControllerImpl& payment_method_controller() {
     return payment_method_controller_;
   }
 
  private:
-  TouchToFillPaymentMethodController payment_method_controller_{this};
+  TouchToFillPaymentMethodControllerImpl payment_method_controller_{this};
 };
-
-}  // namespace
 
 class TouchToFillPaymentMethodControllerTest
     : public ChromeRenderViewHostTestHarness {
@@ -121,6 +127,12 @@ class TouchToFillPaymentMethodControllerTest
     some_field_ = test::MakeFieldGlobalId();
   }
 
+  void SetUpLoyaltyCardFormField() {
+    some_form_data_ = test::CreateTestLoyaltyCardFormData();
+    some_form_ = some_form_data_.global_id();
+    some_field_ = test::MakeFieldGlobalId();
+  }
+
   void TearDown() override {
     mock_view_.reset();
     ChromeRenderViewHostTestHarness::TearDown();
@@ -135,7 +147,7 @@ class TouchToFillPaymentMethodControllerTest
     return *autofill_manager_injector_[web_contents()];
   }
 
-  TouchToFillPaymentMethodController& payment_method_controller() {
+  TouchToFillPaymentMethodControllerImpl& payment_method_controller() {
     return autofill_client().payment_method_controller();
   }
 
@@ -148,6 +160,19 @@ class TouchToFillPaymentMethodControllerTest
                                                  test::GetCreditCard2()};
   const std::vector<Iban> ibans_ = {test::GetLocalIban(),
                                     test::GetServerIban()};
+  const std::vector<LoyaltyCard> all_loyalty_cards_ = {
+      test::CreateLoyaltyCard(), test::CreateLoyaltyCard2()};
+  const std::vector<LoyaltyCard> affiliated_loyalty_cards_ = {
+      test::CreateLoyaltyCard()};
+  const std::vector<Suggestion> suggestions_{
+      test::CreateAutofillSuggestion(
+          credit_cards_[0].CardNameForAutofillDisplay(),
+          credit_cards_[0].ObfuscatedNumberWithVisibleLastFourDigits(),
+          /*has_deactivated_style=*/false),
+      test::CreateAutofillSuggestion(
+          credit_cards_[1].CardNameForAutofillDisplay(),
+          credit_cards_[1].ObfuscatedNumberWithVisibleLastFourDigits(),
+          /*has_deactivated_style=*/false)};
   std::unique_ptr<MockTouchToFillPaymentMethodViewImpl> mock_view_;
 
   void OnBeforeAskForValuesToFill() {
@@ -190,31 +215,50 @@ class TouchToFillPaymentMethodControllerTest
   FieldGlobalId some_field_ = test::MakeFieldGlobalId();
 };
 
-TEST_F(TouchToFillPaymentMethodControllerTest, ShowPassesCardsToTheView) {
+TEST_F(TouchToFillPaymentMethodControllerTest,
+       ShowCreditCardsPassesCardsToTheView) {
   // Test that the cards have propagated to the view.
-  EXPECT_CALL(*mock_view_, Show(&payment_method_controller(),
-                                ElementsAreArray(credit_cards_), true));
+  EXPECT_CALL(*mock_view_,
+              ShowCreditCards(&payment_method_controller(),
+                              ElementsAreArray(suggestions_),
+                              /*should_show_scan_credit_card=*/true));
   OnBeforeAskForValuesToFill();
-  payment_method_controller().Show(std::move(mock_view_),
-                                ttf_delegate().GetWeakPointer(), credit_cards_);
+  payment_method_controller().ShowCreditCards(
+      std::move(mock_view_), ttf_delegate().GetWeakPointer(), suggestions_);
   OnAfterAskForValuesToFill();
 }
 
-TEST_F(TouchToFillPaymentMethodControllerTest, ShowPassesIbansToTheView) {
+TEST_F(TouchToFillPaymentMethodControllerTest, ShowIbansPassesIbansToTheView) {
   SetUpIbanFormField();
   // Test that the IBANs have propagated to the view.
-  EXPECT_CALL(*mock_view_,
-              Show(&payment_method_controller(), ElementsAreArray(ibans_)));
+  EXPECT_CALL(*mock_view_, ShowIbans(&payment_method_controller(),
+                                     ElementsAreArray(ibans_)));
   OnBeforeAskForValuesToFill();
-  payment_method_controller().Show(std::move(mock_view_),
-                                   ttf_delegate().GetWeakPointer(), ibans_);
+  payment_method_controller().ShowIbans(
+      std::move(mock_view_), ttf_delegate().GetWeakPointer(), ibans_);
+  OnAfterAskForValuesToFill();
+}
+
+TEST_F(TouchToFillPaymentMethodControllerTest,
+       ShowLoyaltyCardsPassesLoyaltyCardsToTheView) {
+  SetUpLoyaltyCardFormField();
+  // Test that the loyalty cards have propagated to the view.
+  EXPECT_CALL(*mock_view_,
+              ShowLoyaltyCards(&payment_method_controller(),
+                               ElementsAreArray(affiliated_loyalty_cards_),
+                               ElementsAreArray(all_loyalty_cards_),
+                               /*first_time_usage*/ true));
+  OnBeforeAskForValuesToFill();
+  payment_method_controller().ShowLoyaltyCards(
+      std::move(mock_view_), ttf_delegate().GetWeakPointer(),
+      affiliated_loyalty_cards_, all_loyalty_cards_, /*first_time_usage*/ true);
   OnAfterAskForValuesToFill();
 }
 
 TEST_F(TouchToFillPaymentMethodControllerTest, ScanCreditCardIsCalled) {
   OnBeforeAskForValuesToFill();
-  payment_method_controller().Show(std::move(mock_view_),
-                                ttf_delegate().GetWeakPointer(), credit_cards_);
+  payment_method_controller().ShowCreditCards(
+      std::move(mock_view_), ttf_delegate().GetWeakPointer(), suggestions_);
   OnAfterAskForValuesToFill();
   EXPECT_CALL(ttf_delegate(), ScanCreditCard);
   payment_method_controller().ScanCreditCard(nullptr);
@@ -223,8 +267,8 @@ TEST_F(TouchToFillPaymentMethodControllerTest, ScanCreditCardIsCalled) {
 TEST_F(TouchToFillPaymentMethodControllerTest,
        ShowPaymentMethodSettingsIsCalledForCards) {
   OnBeforeAskForValuesToFill();
-  payment_method_controller().Show(std::move(mock_view_),
-                                ttf_delegate().GetWeakPointer(), credit_cards_);
+  payment_method_controller().ShowCreditCards(
+      std::move(mock_view_), ttf_delegate().GetWeakPointer(), suggestions_);
   OnAfterAskForValuesToFill();
   EXPECT_CALL(ttf_delegate(), ShowPaymentMethodSettings);
   payment_method_controller().ShowPaymentMethodSettings(nullptr);
@@ -234,8 +278,8 @@ TEST_F(TouchToFillPaymentMethodControllerTest,
        ShowPaymentMethodSettingsIsCalledForIbans) {
   SetUpIbanFormField();
   OnBeforeAskForValuesToFill();
-  payment_method_controller().Show(std::move(mock_view_),
-                                   ttf_delegate().GetWeakPointer(), ibans_);
+  payment_method_controller().ShowIbans(
+      std::move(mock_view_), ttf_delegate().GetWeakPointer(), ibans_);
   OnAfterAskForValuesToFill();
   EXPECT_CALL(ttf_delegate(), ShowPaymentMethodSettings);
   payment_method_controller().ShowPaymentMethodSettings(nullptr);
@@ -243,12 +287,13 @@ TEST_F(TouchToFillPaymentMethodControllerTest,
 
 TEST_F(TouchToFillPaymentMethodControllerTest, OnDismissedIsCalled) {
   OnBeforeAskForValuesToFill();
-  payment_method_controller().Show(std::move(mock_view_),
-                                ttf_delegate().GetWeakPointer(), credit_cards_);
+  payment_method_controller().ShowCreditCards(
+      std::move(mock_view_), ttf_delegate().GetWeakPointer(), suggestions_);
   OnAfterAskForValuesToFill();
 
   EXPECT_CALL(ttf_delegate(), OnDismissed);
   payment_method_controller().OnDismissed(nullptr, true);
 }
 
+}  // namespace
 }  // namespace autofill

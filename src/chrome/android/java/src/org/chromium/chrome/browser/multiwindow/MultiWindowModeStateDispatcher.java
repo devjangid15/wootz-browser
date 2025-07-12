@@ -6,8 +6,8 @@ package org.chromium.chrome.browser.multiwindow;
 
 import android.app.Activity;
 import android.content.Intent;
-import android.os.Bundle;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 
 /**
@@ -17,6 +17,7 @@ import org.chromium.chrome.browser.tabmodel.TabModelSelector;
  * Also contains methods related to multi-window/multi-instance support that require interaction
  * with the backing activity.
  */
+@NullMarked
 public interface MultiWindowModeStateDispatcher {
     /** An observer to be notified when multi-window mode changes. */
     interface MultiWindowModeObserver {
@@ -88,20 +89,13 @@ public interface MultiWindowModeStateDispatcher {
     Class<? extends Activity> getOpenInOtherWindowActivity();
 
     /**
-     * Generates an intent to use when handling "open in other window" or "move to other
-     * window" on a multi-instance capable device.
-     * @return An intent with the proper class, flags, and extras for opening a tab or link in
-     *         the other window.
+     * Generates an intent to use when handling "open in other window" or "move to other window" on
+     * a multi-instance capable device.
+     *
+     * @return An intent with the proper class, flags, and extras for opening a tab or link in the
+     *     other window.
      */
     Intent getOpenInOtherWindowIntent();
-
-    /**
-     * Generates the activity options used when handling "open in other window" or "move to other
-     * window" on a multi-instance capable device.
-     *
-     * @return The ActivityOptions needed to open the content in another display.
-     */
-    Bundle getOpenInOtherWindowActivityOptions();
 
     /**
      * @return The number of Chrome instances that can switch to or launch.

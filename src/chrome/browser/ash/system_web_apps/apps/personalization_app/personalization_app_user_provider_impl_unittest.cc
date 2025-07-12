@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ash/system_web_apps/apps/personalization_app/personalization_app_user_provider_impl.h"
 
+#include <array>
 #include <memory>
 #include <optional>
 
@@ -28,6 +29,7 @@
 #include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/ash/system_web_apps/apps/personalization_app/personalization_app_utils.h"
 #include "chrome/common/chrome_paths.h"
+#include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
@@ -35,12 +37,14 @@
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/testing_pref_service.h"
 #include "components/user_manager/scoped_user_manager.h"
+#include "components/user_manager/test_helper.h"
 #include "components/user_manager/user_image/user_image.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/browser/video_capture_service.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_web_ui.h"
+#include "google_apis/gaia/gaia_id.h"
 #include "mojo/public/cpp/base/big_buffer.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
@@ -63,10 +67,10 @@ using ash::personalization_app::GetAccountId;
 
 constexpr char kFakeTestEmail[] = "fakeemail@personalization";
 constexpr char kFakeTestName[] = "Fake Name";
-constexpr char kTestGaiaId[] = "1234567890";
+constexpr GaiaId::Literal kTestGaiaId("1234567890");
 
 mojo_base::BigBuffer FakeEncodedPngBuffer() {
-  return mojo_base::BigBuffer({0, 1});
+  return mojo_base::BigBuffer(std::to_array<uint8_t>({0, 1}));
 }
 
 class TestUserImageObserver
@@ -217,9 +221,7 @@ class PersonalizationAppUserProviderImplTest : public testing::Test {
     user_manager_->SaveUserDisplayName(
         account_id, base::UTF8ToUTF16(std::string(kFakeTestName)));
     user_manager_->UserLoggedIn(
-        account_id,
-        user_manager::FakeUserManager::GetFakeUsernameHash(account_id),
-        /*browser_restart=*/false, /*is_child=*/false);
+        account_id, user_manager::TestHelper::GetFakeUsernameHash(account_id));
 
     // Create a profile and set it as User profile.
     profile_ = profile_manager_.CreateTestingProfile(kFakeTestEmail);
@@ -317,8 +319,7 @@ class PersonalizationAppUserProviderImplTest : public testing::Test {
   user_manager::TypedScopedUserManager<ash::FakeChromeUserManager>
       user_manager_{std::make_unique<ash::FakeChromeUserManager>()};
   UserImageManagerRegistry user_image_manager_registry_{user_manager_.Get()};
-  TestingProfileManager profile_manager_{TestingBrowserProcess::GetGlobal(),
-                                         &local_state_};
+  TestingProfileManager profile_manager_{TestingBrowserProcess::GetGlobal()};
   data_decoder::test::InProcessDataDecoder data_decoder_;
   content::TestWebUI web_ui_;
   std::unique_ptr<content::WebContents> web_contents_;
@@ -419,17 +420,16 @@ TEST_F(PersonalizationAppUserProviderImplTest, EncodesUserImageToPngBuffer) {
   EXPECT_TRUE(current_user_image()->is_external_image());
 
   auto encoded_png = base::MakeRefCounted<base::RefCountedBytes>(
-      current_user_image()->get_external_image().data(),
-      current_user_image()->get_external_image().size());
+      current_user_image()->get_external_image());
 
-  std::vector<unsigned char> expected_data;
-  ASSERT_TRUE(gfx::PNGCodec::EncodeBGRASkBitmap(
-      *test_image.bitmap(), /*discard_transparency=*/false, &expected_data));
+  std::optional<std::vector<uint8_t>> expected_data =
+      gfx::PNGCodec::EncodeBGRASkBitmap(*test_image.bitmap(),
+                                        /*discard_transparency=*/false);
 
   // The BigBuffer data received from the observer should be equal to the test
   // image encoded to png.
-  ASSERT_GT(expected_data.size(), 0u);
-  EXPECT_EQ(expected_data, base::span(*encoded_png));
+  ASSERT_GT(expected_data->size(), 0u);
+  EXPECT_EQ(expected_data.value(), base::span(*encoded_png));
 }
 
 TEST_F(PersonalizationAppUserProviderImplTest,
@@ -632,7 +632,7 @@ TEST_F(PersonalizationAppUserProviderImplTest, SelectImageFromDisk) {
   ASSERT_EQ(user_manager::UserManager::Get()
                 ->FindUser(GetAccountId(profile()))
                 ->image_index(),
-            user_manager::User::USER_IMAGE_PROFILE);
+            user_manager::UserImage::Type::kProfile);
 
   base::FilePath file_path = GetTestFilePath();
   auto fake_file_selector =
@@ -645,7 +645,7 @@ TEST_F(PersonalizationAppUserProviderImplTest, SelectImageFromDisk) {
   EXPECT_EQ(user_manager::UserManager::Get()
                 ->FindUser(GetAccountId(profile()))
                 ->image_index(),
-            user_manager::User::USER_IMAGE_EXTERNAL);
+            user_manager::UserImage::Type::kExternal);
 }
 
 TEST_F(PersonalizationAppUserProviderImplTest,

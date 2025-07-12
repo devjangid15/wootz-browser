@@ -4,6 +4,7 @@
 
 #include "ash/sensor_info/sensor_provider.h"
 
+#include <array>
 #include <memory>
 #include <optional>
 #include <set>
@@ -13,6 +14,7 @@
 #include "ash/accelerometer/accelerometer_constants.h"
 #include "ash/sensor_info/sensor_types.h"
 #include "ash/test/ash_test_helper.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
@@ -36,7 +38,7 @@ constexpr int kFakeBaseAccelerometerId = 2;
 constexpr int kFakeBaseGyroscopeId = 3;
 constexpr int kFakeLidAngleId = 4;
 
-constexpr int64_t kFakeSampleData[] = {1, 2, 3};
+constexpr std::array<int64_t, 3> kFakeSampleData = {1, 2, 3};
 
 class FakeObserver : public SensorObserver {
  public:
@@ -139,7 +141,9 @@ class SensorProviderTest : public testing::Test {
 
   FakeObserver observer_;
   std::unique_ptr<chromeos::sensors::FakeSensorHalServer> sensor_hal_server_;
-  std::map<int32_t, chromeos::sensors::FakeSensorDevice*> sensor_devices_;
+  std::map<int32_t,
+           raw_ptr<chromeos::sensors::FakeSensorDevice, CtnExperimental>>
+      sensor_devices_;
   std::unique_ptr<SensorProvider> provider_;
 };
 

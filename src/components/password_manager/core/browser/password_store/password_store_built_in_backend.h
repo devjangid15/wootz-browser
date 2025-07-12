@@ -11,7 +11,11 @@
 
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
+#include "components/password_manager/core/browser/password_manager_metrics_util.h"
+#include "components/password_manager/core/browser/password_store/password_store.h"
 #include "components/password_manager/core/browser/password_store/password_store_backend.h"
+#include "components/password_manager/core/browser/password_store/password_store_change.h"
+#include "components/password_manager/core/browser/password_store/password_store_interface.h"
 #include "components/password_manager/core/browser/password_store/smart_bubble_stats_store.h"
 #include "components/prefs/pref_service.h"
 #include "components/sync/model/wipe_model_upon_sync_disabled_behavior.h"
@@ -24,11 +28,15 @@ namespace syncer {
 class SyncService;
 }  // namespace syncer
 
+namespace os_crypt_async {
+class OSCryptAsync;
+class Encryptor;
+}  // namespace os_crypt_async
+
 namespace password_manager {
 
 class LoginDatabase;
 class LoginDatabaseAsyncHelper;
-class UnsyncedCredentialsDeletionNotifier;
 
 // Simple password store implementation that delegates everything to
 // the LoginDatabaseAsyncHelper. Works only on the main sequence.
@@ -42,9 +50,15 @@ class PasswordStoreBuiltInBackend : public PasswordStoreBackend,
       syncer::WipeModelUponSyncDisabledBehavior
           wipe_model_upon_sync_disabled_behavior,
       PrefService* prefs,
-      std::unique_ptr<UnsyncedCredentialsDeletionNotifier> notifier = nullptr);
+      os_crypt_async::OSCryptAsync* os_crypt_async = nullptr,
+      UnsyncedCredentialsDeletionNotifier notifier = {});
 
   ~PasswordStoreBuiltInBackend() override;
+
+  void NotifyCredentialsChangedForTesting(
+      base::PassKey<class PasswordStoreBuiltInBackendPasswordLossMetricsTest>,
+      const PasswordStoreChangeList& changes);
+  void NotifyDeletionsHaveSyncedForTesting(bool success);
 
  private:
   // Implements PasswordStoreBackend interface.
@@ -58,8 +72,6 @@ class PasswordStoreBuiltInBackend : public PasswordStoreBackend,
   void GetAllLoginsWithAffiliationAndBrandingAsync(
       LoginsOrErrorReply callback) override;
   void GetAutofillableLoginsAsync(LoginsOrErrorReply callback) override;
-  void GetAllLoginsForAccountAsync(std::string account,
-                                   LoginsOrErrorReply callback) override;
   void FillMatchingLoginsAsync(
       LoginsOrErrorReply callback,
       bool include_psl,
@@ -77,23 +89,15 @@ class PasswordStoreBuiltInBackend : public PasswordStoreBackend,
       const base::Location& location,
       base::Time delete_begin,
       base::Time delete_end,
-      PasswordChangesOrErrorReply callback) override;
-  void RemoveLoginsByURLAndTimeAsync(
-      const base::Location& location,
-      const base::RepeatingCallback<bool(const GURL&)>& url_filter,
-      base::Time delete_begin,
-      base::Time delete_end,
       base::OnceCallback<void(bool)> sync_completion,
       PasswordChangesOrErrorReply callback) override;
   void DisableAutoSignInForOriginsAsync(
       const base::RepeatingCallback<bool(const GURL&)>& origin_filter,
       base::OnceClosure completion) override;
   SmartBubbleStatsStore* GetSmartBubbleStatsStore() override;
-  std::unique_ptr<syncer::ModelTypeControllerDelegate>
+  std::unique_ptr<syncer::DataTypeControllerDelegate>
   CreateSyncControllerDelegate() override;
   void OnSyncServiceInitialized(syncer::SyncService* sync_service) override;
-  void RecordAddLoginAsyncCalledFromTheStore() override;
-  void RecordUpdateLoginAsyncCalledFromTheStore() override;
   base::WeakPtr<PasswordStoreBackend> AsWeakPtr() override;
 
   // SmartBubbleStatsStore:
@@ -116,7 +120,24 @@ class PasswordStoreBuiltInBackend : public PasswordStoreBackend,
       LoginsOrErrorReply callback,
       LoginsResultOrError forms_or_error);
 
+  void OnEncryptorReceived(
+      RemoteChangesReceived remote_form_changes_received,
+      base::RepeatingClosure sync_enabled_or_disabled_cb,
+      base::OnceCallback<void(bool)> completion,
+      std::unique_ptr<os_crypt_async::Encryptor> encryptor);
+
+  void WritePasswordRemovalReasonPrefs(IsAccountStore is_account_store);
+
   void OnInitComplete(base::OnceCallback<void(bool)> completion, bool result);
+
+#if !BUILDFLAG(IS_ANDROID)
+  // Sets the pref responsible for maintaining groups population in
+  // the kClearUndecryptablePasswords experiment.
+  // Records the passwords removal reason prefs.
+  // TODO(b/40286735): Remove after this feature is launched.
+  void SetClearingUndecryptablePasswordsIsEnabledPref(
+      IsAccountStore is_account_store);
+#endif
 
   // Ensures that all methods are called on the main sequence.
   SEQUENCE_CHECKER(sequence_checker_);
@@ -138,6 +159,9 @@ class PasswordStoreBuiltInBackend : public PasswordStoreBackend,
 
   // Used to get information if there are any passwords saved to the login db.
   raw_ptr<PrefService> pref_service_;
+
+  raw_ptr<os_crypt_async::OSCryptAsync> const os_crypt_async_
+      GUARDED_BY_CONTEXT(sequence_checker_);
 
   base::WeakPtrFactory<PasswordStoreBuiltInBackend> weak_ptr_factory_{this};
 };

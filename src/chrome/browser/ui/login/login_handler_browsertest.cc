@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/login/login_handler.h"
 
+#include <algorithm>
 #include <list>
 #include <map>
 #include <tuple>
@@ -13,7 +14,7 @@
 #include "base/location.h"
 #include "base/metrics/field_trial.h"
 #include "base/path_service.h"
-#include "base/ranges/algorithm.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
@@ -24,17 +25,18 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_content_browser_client.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
-#include "chrome/browser/net/proxy_test_utils.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_navigator.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/login/http_auth_coordinator.h"
 #include "chrome/browser/ui/login/login_tab_helper.h"
 #include "chrome/browser/ui/tabs/tab_enums.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_paths.h"
+#include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
@@ -57,11 +59,14 @@
 #include "content/public/test/slow_http_response.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "content/public/test/test_utils.h"
+#include "extensions/browser/extension_host.h"
 #include "extensions/browser/process_manager.h"
 #include "net/base/auth.h"
+#include "net/base/host_port_pair.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/http_response.h"
+#include "net/test/embedded_test_server/register_basic_auth_handler.h"
 #include "services/network/public/cpp/features.h"
 #include "services/network/public/mojom/clear_data_filter.mojom.h"
 #include "services/network/public/mojom/network_context.mojom.h"
@@ -141,8 +146,8 @@ class LoginHandlerFake : public LoginHandler {
   ~LoginHandlerFake() override;
 
   void NotifyAuthNeeded() override;
-  void NotifyAuthSupplied(const std::u16string& username,
-                          const std::u16string& password) override;
+  void NotifyAuthSupplied(std::u16string_view username,
+                          std::u16string_view password) override;
   void NotifyAuthCancelled() override;
   bool BuildViewImpl(const std::u16string& authority,
                      const std::u16string& explanation,
@@ -164,7 +169,8 @@ class LoginTabHelperFake : public LoginTabHelper {
   std::unique_ptr<LoginHandler> CreateLoginHandler(
       const net::AuthChallengeInfo& auth_info,
       content::WebContents* web_contents,
-      LoginAuthRequiredCallback auth_required_callback) override {
+      content::LoginDelegate::LoginAuthRequiredCallback auth_required_callback)
+      override {
     return std::make_unique<LoginHandlerFake>(auth_info, web_contents,
                                               std::move(auth_required_callback),
                                               browser_client_);
@@ -239,8 +245,8 @@ void LoginHandlerFake::NotifyAuthNeeded() {
   prompt_shown_ = true;
   LoginHandler::NotifyAuthNeeded();
 }
-void LoginHandlerFake::NotifyAuthSupplied(const std::u16string& username,
-                                          const std::u16string& password) {
+void LoginHandlerFake::NotifyAuthSupplied(std::u16string_view username,
+                                          std::u16string_view password) {
   browser_client_->auth_supplied_count++;
   prompt_responded_ = true;
   LoginHandler::NotifyAuthSupplied(username, password);
@@ -355,10 +361,9 @@ class LoginPromptBrowserTest
     std::string username_;
     std::string password_;
 
-    AuthInfo() {}
+    AuthInfo() = default;
 
-    AuthInfo(const std::string& username,
-             const std::string& password)
+    AuthInfo(const std::string& username, const std::string& password)
         : username_(username), password_(password) {}
   };
 
@@ -448,7 +453,7 @@ INSTANTIATE_TEST_SUITE_P(
 const char kPrefetchAuthPage[] = "/login/prefetch.html";
 
 const char kMultiRealmTestPage[] = "/login/multi_realm.html";
-const int  kMultiRealmTestRealmCount = 2;
+const int kMultiRealmTestRealmCount = 2;
 const int kMultiRealmTestAuthRequestsCount = 4;
 
 const char kAuthBasicPage[] = "/auth-basic";
@@ -500,8 +505,9 @@ IN_PROC_BROWSER_TEST_P(LoginPromptBrowserTest, TestBasicAuth) {
   for (bool crash_network_service : {false, true}) {
     if (crash_network_service) {
       // Can't crash the network service if it isn't running out of process.
-      if (!content::IsOutOfProcessNetworkService())
+      if (!content::IsOutOfProcessNetworkService()) {
         return;
+      }
 
       SimulateNetworkServiceCrash();
       // Flush the network interface to make sure it notices the crash.
@@ -902,7 +908,7 @@ void MultiRealmLoginPromptBrowserTest::RunTest(const F& for_each_realm_func) {
   for (int i = 0; i < kMultiRealmTestRealmCount; ++i) {
     auto handlers = LoginHandler::GetAllLoginHandlersForTest();
     auto it =
-        base::ranges::find_if(handlers, [&seen_realms](LoginHandler* handler) {
+        std::ranges::find_if(handlers, [&seen_realms](LoginHandler* handler) {
           return seen_realms.count(handler->auth_info().realm) == 0;
         });
     ASSERT_TRUE(it != handlers.end());
@@ -1396,7 +1402,7 @@ IN_PROC_BROWSER_TEST_P(LoginPromptBrowserTest,
       browser()->tab_strip_model()->GetActiveWebContents();
 
   // Load a page which makes a synchronous XMLHttpRequest for an authenticated
-  // resource with the wrong credentials.  There should be no login prompt.
+  // resource with the correct credentials.  There should be no login prompt.
   {
     GURL test_page = embedded_test_server()->GetURL(kXHRTestPage);
     ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), test_page));
@@ -1422,7 +1428,7 @@ IN_PROC_BROWSER_TEST_P(LoginPromptBrowserTest,
       browser()->tab_strip_model()->GetActiveWebContents();
 
   // Load a page which makes a synchronous XMLHttpRequest for an authenticated
-  // resource with the wrong credentials.  There should be no login prompt.
+  // resource without credentials.  There should be a login prompt.
   {
     GURL test_page = embedded_test_server()->GetURL(kXHRTestPage);
     auto auth_needed_waiter = CreateAuthNeededObserver();
@@ -1482,9 +1488,60 @@ IN_PROC_BROWSER_TEST_P(LoginPromptBrowserTest,
       browser()->tab_strip_model()->GetActiveWebContents();
 
   // Load a page which makes a synchronous XMLHttpRequest for an authenticated
-  // resource with the wrong credentials.  There should be no login prompt.
+  // resource without credentials.  There should be a login prompt.
   {
     GURL test_page = embedded_test_server()->GetURL(kXHRTestPage);
+    auto auth_needed_waiter = CreateAuthNeededObserver();
+    browser()->OpenURL(
+        OpenURLParams(test_page, Referrer(), WindowOpenDisposition::CURRENT_TAB,
+                      ui::PAGE_TRANSITION_TYPED, false),
+        /*navigation_handle_callback=*/{});
+    auth_needed_waiter.Wait();
+  }
+
+  ASSERT_EQ(1u, LoginHandler::GetAllLoginHandlersForTest().size());
+  auto auth_cancelled_waiter = CreateAuthCancelledObserver();
+  LoginHandler* handler = LoginHandler::GetAllLoginHandlersForTest().front();
+
+  handler->CancelAuth(/*notify_others=*/true);
+  auth_cancelled_waiter.Wait();
+
+  content::WaitForLoadStop(
+      browser()->tab_strip_model()->GetActiveWebContents());
+
+  std::u16string expected_title(u"status=401");
+
+  EXPECT_EQ(expected_title, contents->GetTitle());
+  EXPECT_EQ(0, browser_client_->auth_supplied_count);
+  EXPECT_EQ(1, browser_client_->auth_needed_count);
+  EXPECT_EQ(1, browser_client_->auth_cancelled_count);
+}
+
+// Test the same scenario as LoginPromptForXHRWithoutCredentialsCancelled, but
+// with the page under a service worker's control.
+IN_PROC_BROWSER_TEST_P(
+    LoginPromptBrowserTest,
+    LoginPromptForXHRWithoutCredentialsCancelledWithServiceWorker) {
+  static constexpr char kXHRTestPage[] = "/login/xhr_without_credentials.html";
+
+  ASSERT_TRUE(embedded_https_test_server().Start());
+
+  content::WebContents* contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+
+  // Install a Service Worker that does nothing.
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), embedded_https_test_server().GetURL(
+                     "/service_worker/create_service_worker.html")));
+  EXPECT_EQ("DONE", content::EvalJs(contents,
+                                    "register('/service_worker/"
+                                    "empty.js', '/')"));
+
+  // Load a page which is under service worker's control and makes a synchronous
+  // XMLHttpRequest for an authenticated resource without credentials. There
+  // should be a login prompt.
+  {
+    GURL test_page = embedded_https_test_server().GetURL(kXHRTestPage);
     auto auth_needed_waiter = CreateAuthNeededObserver();
     browser()->OpenURL(
         OpenURLParams(test_page, Referrer(), WindowOpenDisposition::CURRENT_TAB,
@@ -2107,12 +2164,38 @@ IN_PROC_BROWSER_TEST_P(LoginPromptBrowserTest,
                 "document.body.innerHTML.indexOf('Unauthorized') === -1"));
 }
 
-class LoginProxyBrowserTest : public ProxyBrowserTest,
+class LoginProxyBrowserTest : public InProcessBrowserTest,
                               public LoginPromptBrowserTestHelper {
  public:
+  LoginProxyBrowserTest() {
+    // HTTPS server to be tunnelled to via a proxy server requiring basic auth.
+    // Use CERT_TEST_NAMES so the default logic on some platforms not to proxy
+    // requests to localhost doesn't cause issues.
+    embedded_https_test_server().SetSSLConfig(
+        net::EmbeddedTestServer::CERT_TEST_NAMES);
+    EXPECT_TRUE(embedded_https_test_server().Start());
+
+    // `embedded_test_server()` acts as a bogus HTTP proxy that requires auth.
+    // It returns 407s if the necessary Proxy-Authorization header is missing,
+    // and it correctly tunnels CONNECT requests to "a.test" and
+    // embedded_https_test_server()'s port to embedded_https_test_server().
+    RegisterProxyBasicAuthHandler(*embedded_test_server(), "user", "pass");
+    embedded_test_server()->EnableConnectProxy(
+        /*proxied_destinations=*/
+        {net::HostPortPair::FromURL(
+            embedded_https_test_server().GetURL("a.test", "/"))});
+    EXPECT_TRUE(embedded_test_server()->Start());
+  }
+
   void SetUpOnMainThread() override {
     SetUpLoginFakes();
     InProcessBrowserTest::SetUpOnMainThread();
+  }
+
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    command_line->AppendSwitchASCII(
+        switches::kProxyServer,
+        embedded_test_server()->host_port_pair().ToString());
   }
 
   void TestProxyAuth(Browser* browser, const GURL& test_page) {
@@ -2137,7 +2220,10 @@ class LoginProxyBrowserTest : public ProxyBrowserTest,
     }
 
     // The URL should be hidden to avoid origin confusion issues.
-    EXPECT_TRUE(browser->location_bar_model()->GetFormattedFullURL().empty());
+    EXPECT_TRUE(browser->GetFeatures()
+                    .location_bar_model()
+                    ->GetFormattedFullURL()
+                    .empty());
 
     // Cancel the prompt, which triggers a reload to read the error page content
     // from the server. On HTTPS pages, the error page content still shouldn't
@@ -2156,8 +2242,10 @@ class LoginProxyBrowserTest : public ProxyBrowserTest,
             content::EvalJs(contents, "document.documentElement.innerHTML"));
       }
 
-      EXPECT_FALSE(
-          browser->location_bar_model()->GetFormattedFullURL().empty());
+      EXPECT_FALSE(browser->GetFeatures()
+                       .location_bar_model()
+                       ->GetFormattedFullURL()
+                       .empty());
     }
 
     // Reload; this time, supply credentials and check that the page loads.
@@ -2168,18 +2256,24 @@ class LoginProxyBrowserTest : public ProxyBrowserTest,
                                      ui::PAGE_TRANSITION_TYPED, false),
                        /*navigation_handle_callback=*/{});
       auth_needed_waiter.Wait();
-      EXPECT_TRUE(browser->location_bar_model()->GetFormattedFullURL().empty());
+      EXPECT_TRUE(browser->GetFeatures()
+                      .location_bar_model()
+                      ->GetFormattedFullURL()
+                      .empty());
     }
 
     auto auth_supplied_waiter = CreateAuthSuppliedObserver();
     LoginHandler* handler = LoginHandler::GetAllLoginHandlersForTest().front();
-    handler->SetAuth(u"foo", u"bar");
+    handler->SetAuth(u"user", u"pass");
     auth_supplied_waiter.Wait();
 
     std::u16string expected_title = u"OK";
     content::TitleWatcher title_watcher(contents, expected_title);
     EXPECT_EQ(expected_title, title_watcher.WaitAndGetTitle());
-    EXPECT_FALSE(browser->location_bar_model()->GetFormattedFullURL().empty());
+    EXPECT_FALSE(browser->GetFeatures()
+                     .location_bar_model()
+                     ->GetFormattedFullURL()
+                     .empty());
   }
 };
 
@@ -2191,18 +2285,17 @@ class LoginProxyBrowserTest : public ProxyBrowserTest,
 #define MAYBE_ProxyAuthHTTPS ProxyAuthHTTPS
 #endif
 IN_PROC_BROWSER_TEST_F(LoginProxyBrowserTest, MAYBE_ProxyAuthHTTPS) {
-  net::EmbeddedTestServer https_server(net::EmbeddedTestServer::TYPE_HTTPS);
-  https_server.AddDefaultHandlers(GetChromeTestDataDir());
-  ASSERT_TRUE(https_server.Start());
-  ASSERT_NO_FATAL_FAILURE(
-      TestProxyAuth(browser(), https_server.GetURL("/simple.html")));
+  ASSERT_NO_FATAL_FAILURE(TestProxyAuth(
+      browser(),
+      embedded_https_test_server().GetURL("a.test", "/simple.html")));
 }
 
 // Tests that basic proxy auth works as expected, for HTTP pages.
 IN_PROC_BROWSER_TEST_F(LoginProxyBrowserTest, ProxyAuthHTTP) {
-  ASSERT_TRUE(embedded_test_server()->Start());
-  ASSERT_NO_FATAL_FAILURE(
-      TestProxyAuth(browser(), embedded_test_server()->GetURL("/simple.html")));
+  // Hostname doesn't matter. Not using localhost or similar bypasses default
+  // behavior on some platforms not to proxy localhost.
+  ASSERT_NO_FATAL_FAILURE(TestProxyAuth(
+      browser(), embedded_test_server()->GetURL("host.test", "/simple.html")));
 }
 
 class LoginPromptExtensionBrowserTest
@@ -2214,12 +2307,12 @@ class LoginPromptExtensionBrowserTest
     scoped_feature_list_.InitWithFeatureStates(
         {{network::features::kSplitAuthCacheByNetworkIsolationKey,
           (GetParam() == SplitAuthCacheByNetworkIsolationKey::kTrue)}});
-    }
+  }
 
-    void SetUpOnMainThread() override {
-      SetUpLoginFakes();
-      extensions::ExtensionBrowserTest::SetUpOnMainThread();
-    }
+  void SetUpOnMainThread() override {
+    SetUpLoginFakes();
+    extensions::ExtensionBrowserTest::SetUpOnMainThread();
+  }
 
   ~LoginPromptExtensionBrowserTest() override = default;
 
@@ -2246,8 +2339,9 @@ IN_PROC_BROWSER_TEST_P(LoginPromptExtensionBrowserTest,
   embedded_test_server()->RegisterRequestHandler(base::BindLambdaForTesting(
       [&](const net::test_server::HttpRequest& request)
           -> std::unique_ptr<net::test_server::HttpResponse> {
-        if (request.relative_url != kSlowResponse)
+        if (request.relative_url != kSlowResponse) {
           return nullptr;
+        }
         auto response = std::make_unique<SlowAuthResponse>(
             base::BindLambdaForTesting([&](base::OnceClosure start_response,
                                            base::OnceClosure finish_response) {
@@ -2399,8 +2493,9 @@ const char kWorkerHttpBasicAuthPath[] =
 // Serves a Basic Auth challenge.
 std::unique_ptr<net::test_server::HttpResponse> HandleHttpAuthRequest(
     const net::test_server::HttpRequest& request) {
-  if (request.relative_url != kWorkerHttpBasicAuthPath)
+  if (request.relative_url != kWorkerHttpBasicAuthPath) {
     return nullptr;
+  }
 
   auto http_response = std::make_unique<net::test_server::BasicHttpResponse>();
   http_response->set_code(net::HTTP_UNAUTHORIZED);
@@ -2536,14 +2631,14 @@ IN_PROC_BROWSER_TEST_P(LoginPromptPrerenderBrowserTest, CancelOnAuthRequested) {
   content::test::PrerenderHostRegistryObserver registry_observer(
       *GetWebContents());
   registry_observer.WaitForTrigger(kPrerenderingUrl);
-  int host_id = prerender_helper().GetHostForUrl(kPrerenderingUrl);
+  content::FrameTreeNodeId host_id =
+      prerender_helper().GetHostForUrl(kPrerenderingUrl);
   content::test::PrerenderHostObserver host_observer(*GetWebContents(),
                                                      host_id);
 
   // The prerender should be destroyed.
   host_observer.WaitForDestroyed();
-  EXPECT_EQ(prerender_helper().GetHostForUrl(kPrerenderingUrl),
-            content::RenderFrameHost::kNoFrameTreeNodeId);
+  EXPECT_TRUE(prerender_helper().GetHostForUrl(kPrerenderingUrl).is_null());
 
   // No authentication request has been prompted to the user.
   EXPECT_EQ(0, browser_client_->auth_needed_count);
@@ -2559,7 +2654,8 @@ IN_PROC_BROWSER_TEST_P(LoginPromptPrerenderBrowserTest,
 
   // Start prerendering `kPrerenderingUrl`.
   const GURL kPrerenderingUrl = embedded_test_server()->GetURL("/title1.html");
-  int host_id = prerender_helper().AddPrerender(kPrerenderingUrl);
+  content::FrameTreeNodeId host_id =
+      prerender_helper().AddPrerender(kPrerenderingUrl);
   content::test::PrerenderHostObserver host_observer(*GetWebContents(),
                                                      host_id);
   prerender_helper().WaitForPrerenderLoadCompletion(kPrerenderingUrl);
@@ -2575,8 +2671,7 @@ IN_PROC_BROWSER_TEST_P(LoginPromptPrerenderBrowserTest,
 
   // The prerender should be destroyed.
   host_observer.WaitForDestroyed();
-  EXPECT_EQ(prerender_helper().GetHostForUrl(kPrerenderingUrl),
-            content::RenderFrameHost::kNoFrameTreeNodeId);
+  EXPECT_TRUE(prerender_helper().GetHostForUrl(kPrerenderingUrl).is_null());
 
   // No authentication request has been prompted to the user.
   EXPECT_EQ(0, browser_client_->auth_needed_count);
@@ -2594,13 +2689,13 @@ IN_PROC_BROWSER_TEST_P(LoginPromptPrerenderBrowserTest,
 
   // Start prerendering `kPrerenderingUrl`.
   const GURL kPrerenderingUrl = embedded_test_server()->GetURL("/title1.html");
-  int host_id = prerender_helper().AddPrerender(kPrerenderingUrl);
+  content::FrameTreeNodeId host_id =
+      prerender_helper().AddPrerender(kPrerenderingUrl);
   content::test::PrerenderHostObserver host_observer(*GetWebContents(),
                                                      host_id);
   prerender_helper().WaitForPrerenderLoadCompletion(kPrerenderingUrl);
 
-  ASSERT_NE(prerender_helper().GetHostForUrl(kPrerenderingUrl),
-            content::RenderFrameHost::kNoFrameTreeNodeId);
+  ASSERT_TRUE(prerender_helper().GetHostForUrl(kPrerenderingUrl));
 
   // Fetch a subresrouce.
   std::string fetch_subresource_script = R"(
@@ -2613,8 +2708,7 @@ IN_PROC_BROWSER_TEST_P(LoginPromptPrerenderBrowserTest,
 
   // The prerender should be destroyed.
   host_observer.WaitForDestroyed();
-  EXPECT_EQ(prerender_helper().GetHostForUrl(kPrerenderingUrl),
-            content::RenderFrameHost::kNoFrameTreeNodeId);
+  EXPECT_TRUE(prerender_helper().GetHostForUrl(kPrerenderingUrl).is_null());
 
   // No authentication request has been prompted to the user.
   EXPECT_EQ(0, browser_client_->auth_needed_count);

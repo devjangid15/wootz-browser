@@ -20,6 +20,7 @@
 #include "ash/system/time/event_date_formatter_util.h"
 #include "base/containers/fixed_flat_map.h"
 #include "base/functional/bind.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "google_apis/calendar/calendar_api_response_types.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -248,7 +249,7 @@ CalendarEventListItemView::CalendarEventListItemView(
           IDS_ASH_CALENDAR_EVENT_POSITION_ACCESSIBLE_DESCRIPTION,
           base::NumberToString16(event_list_item_index.item_index),
           base::NumberToString16(event_list_item_index.total_count_of_events));
-  SetAccessibleName(l10n_util::GetStringFUTF16(
+  GetViewAccessibility().SetName(l10n_util::GetStringFUTF16(
       IDS_ASH_CALENDAR_EVENT_ENTRY_ACCESSIBLE_DESCRIPTION,
       event_item_index_in_list_string, base::UTF8ToUTF16(event.summary()),
       start_time_accessible_name, end_time_accessible_name,
@@ -293,6 +294,9 @@ CalendarEventListItemView::CalendarEventListItemView(
   auto horizontal_layout_manager = std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kHorizontal, kEventListItemInsets,
       kEventListItemHorizontalChildSpacing);
+  horizontal_layout_manager->set_cross_axis_alignment(
+      views::BoxLayout::CrossAxisAlignment::kCenter);
+
   views::View* horizontal_container =
       AddChildView(std::make_unique<views::View>());
   auto* horizontal_container_layout_manager =
@@ -338,24 +342,17 @@ CalendarEventListItemView::CalendarEventListItemView(
 
   // Join button. Only shows it if the event is not the past event.
   if (!video_conference_url_.is_empty() && !is_past_event_) {
-    views::View* join_button_container =
-        horizontal_container->AddChildView(std::make_unique<views::View>());
-    auto* layout_vertical_center = join_button_container->SetLayoutManager(
-        std::make_unique<views::BoxLayout>(
-            views::BoxLayout::Orientation::kVertical));
-    layout_vertical_center->set_main_axis_alignment(
-        views::BoxLayout::MainAxisAlignment::kCenter);
     auto join_button = std::make_unique<PillButton>(
         base::BindRepeating(
             &CalendarEventListItemView::OnJoinMeetingButtonPressed,
             weak_ptr_factory_.GetWeakPtr()),
         l10n_util::GetStringUTF16(IDS_ASH_CALENDAR_JOIN_BUTTON),
         PillButton::Type::kDefaultWithoutIcon);
-    join_button->SetAccessibleName(
+    join_button->GetViewAccessibility().SetName(
         l10n_util::GetStringFUTF16(IDS_ASH_CALENDAR_JOIN_BUTTON_ACCESSIBLE_NAME,
                                    base::UTF8ToUTF16(event.summary())));
     join_button->SetID(kJoinButtonID);
-    join_button_container->AddChildView(std::move(join_button));
+    horizontal_container->AddChildView(std::move(join_button));
   }
 }
 

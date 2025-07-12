@@ -8,16 +8,16 @@
 #include "components/browsing_topics/common/common_types.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
-#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
+#include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom-blink.h"
 #include "third_party/blink/public/mojom/permissions_policy/document_policy_feature.mojom-blink.h"
-#include "third_party/blink/public/mojom/permissions_policy/permissions_policy.mojom-blink.h"
-#include "third_party/blink/public/mojom/permissions_policy/permissions_policy_feature.mojom-blink.h"
 #include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom-blink.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_throw_dom_exception.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_browsing_topic.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_browsing_topics_options.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/page/page.h"
 
@@ -95,11 +95,8 @@ BrowsingTopicsDocumentSupplement::GetBrowsingTopics(
     return ScriptPromise<IDLSequence<BrowsingTopic>>();
   }
 
-  if (RuntimeEnabledFeatures::PrivacySandboxAdsAPIsEnabled(
-          document.GetExecutionContext())) {
-    UseCounter::Count(document,
-                      mojom::blink::WebFeature::kPrivacySandboxAdsAPIs);
-  }
+  UseCounter::Count(document, mojom::blink::WebFeature::kPrivacySandboxAdsAPIs);
+  UseCounter::Count(document, mojom::blink::WebFeature::kTopicsAPIAll);
 
   auto* resolver =
       MakeGarbageCollected<ScriptPromiseResolver<IDLSequence<BrowsingTopic>>>(
@@ -141,7 +138,7 @@ BrowsingTopicsDocumentSupplement::GetBrowsingTopics(
   }
 
   if (!document.GetExecutionContext()->IsFeatureEnabled(
-          mojom::blink::PermissionsPolicyFeature::kBrowsingTopics)) {
+          network::mojom::PermissionsPolicyFeature::kBrowsingTopics)) {
     resolver->Reject(V8ThrowDOMException::CreateOrEmpty(
         script_state->GetIsolate(), DOMExceptionCode::kInvalidAccessError,
         "The \"browsing-topics\" Permissions Policy denied the use of "
@@ -152,7 +149,7 @@ BrowsingTopicsDocumentSupplement::GetBrowsingTopics(
   }
 
   if (!document.GetExecutionContext()->IsFeatureEnabled(
-          mojom::blink::PermissionsPolicyFeature::
+          network::mojom::PermissionsPolicyFeature::
               kBrowsingTopicsBackwardCompatible)) {
     resolver->Reject(V8ThrowDOMException::CreateOrEmpty(
         script_state->GetIsolate(), DOMExceptionCode::kInvalidAccessError,
@@ -176,25 +173,23 @@ BrowsingTopicsDocumentSupplement::GetBrowsingTopics(
           [](ScriptPromiseResolver<IDLSequence<BrowsingTopic>>* resolver,
              BrowsingTopicsDocumentSupplement* supplement,
              base::TimeTicks start_time,
-             mojom::blink::GetBrowsingTopicsResultPtr result) {
+             mojom::blink::BrowsingTopicsDocumentService::
+                 GetBrowsingTopicsResult result) {
             DCHECK(resolver);
             DCHECK(supplement);
 
-            if (result->is_error_message()) {
+            if (!result.has_value()) {
               ScriptState* script_state = resolver->GetScriptState();
               ScriptState::Scope scope(script_state);
 
               resolver->Reject(V8ThrowDOMException::CreateOrEmpty(
                   script_state->GetIsolate(),
-                  DOMExceptionCode::kInvalidAccessError,
-                  result->get_error_message()));
+                  DOMExceptionCode::kInvalidAccessError, result.error()));
               return;
             }
 
-            DCHECK(result->is_browsing_topics());
-
             HeapVector<Member<BrowsingTopic>> result_array;
-            for (const auto& topic : result->get_browsing_topics()) {
+            for (const auto& topic : result.value()) {
               BrowsingTopic* result_topic = BrowsingTopic::Create();
               result_topic->setTopic(topic->topic);
               result_topic->setVersion(topic->version);

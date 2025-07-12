@@ -26,7 +26,7 @@ class AndroidAutofillProviderBridgeImpl : public AndroidAutofillProviderBridge {
   // AndroidAutofillProviderBridge:
   void AttachToJavaAutofillProvider(
       JNIEnv* env,
-      const base::android::JavaRef<jobject>& jcaller) override;
+      const base::android::JavaRef<jobject>& obj) override;
   void SendPrefillRequest(FormDataAndroid& form) override;
   void StartAutofillSession(FormDataAndroid& form,
                             const FieldInfo& field,
@@ -51,6 +51,9 @@ class AndroidAutofillProviderBridgeImpl : public AndroidAutofillProviderBridge {
   // Java `AutofillProvider` is destroyed. It indicates that the Java Peer is
   // about to be destroyed.
   void DetachFromJavaAutofillProvider(JNIEnv* env);
+
+  // Asks the `Delegate` whether passkeys options are available.
+  jboolean HasPasskeyRequest(JNIEnv* env);
 
   // Informs the `Delegate` that the linked form should be sent to the renderer
   // for filling. Invoked when the user has accepted Autofill.
@@ -77,6 +80,9 @@ class AndroidAutofillProviderBridgeImpl : public AndroidAutofillProviderBridge {
   void OnShowBottomSheetResult(JNIEnv* env,
                                jboolean is_shown,
                                jboolean provided_autofill_structure);
+
+  // Informs the `Delegate` that the user explicitly requested passkeys options.
+  void OnTriggerPasskeyRequest(JNIEnv* env);
 
  private:
   // The delegate of the bridge.

@@ -16,8 +16,12 @@
 #include "media/capture/video/video_capture_device.h"
 #include "media/capture/video/video_capture_device_client.h"
 #include "media/capture/video/video_capture_device_descriptor.h"
-#include "services/video_effects/public/mojom/video_effects_processor.mojom-forward.h"
+#include "services/video_effects/public/cpp/buildflags.h"
 #include "third_party/blink/public/common/mediastream/media_stream_request.h"
+
+#if BUILDFLAG(ENABLE_VIDEO_EFFECTS)
+#include "services/video_effects/public/mojom/video_effects_processor.mojom-forward.h"
+#endif
 
 namespace media {
 class FakeVideoCaptureDeviceFactory;
@@ -26,6 +30,7 @@ class FakeVideoCaptureDeviceFactory;
 namespace content {
 
 struct DesktopMediaID;
+class NativeScreenCapturePicker;
 
 // Implementation of BuildableVideoCaptureDevice that creates capture devices
 // in the same process as it is being operated on, which must be the Browser
@@ -33,8 +38,9 @@ struct DesktopMediaID;
 // Instances of this class must be operated from the Browser process IO thread.
 class InProcessVideoCaptureDeviceLauncher : public VideoCaptureDeviceLauncher {
  public:
-  explicit InProcessVideoCaptureDeviceLauncher(
-      scoped_refptr<base::SingleThreadTaskRunner> device_task_runner);
+  InProcessVideoCaptureDeviceLauncher(
+      scoped_refptr<base::SingleThreadTaskRunner> device_task_runner,
+      NativeScreenCapturePicker* picker);
   ~InProcessVideoCaptureDeviceLauncher() override;
 
   void LaunchDeviceAsync(
@@ -45,8 +51,12 @@ class InProcessVideoCaptureDeviceLauncher : public VideoCaptureDeviceLauncher {
       base::OnceClosure connection_lost_cb,
       Callbacks* callbacks,
       base::OnceClosure done_cb,
+#if BUILDFLAG(ENABLE_VIDEO_EFFECTS)
       mojo::PendingRemote<video_effects::mojom::VideoEffectsProcessor>
-          video_effects_processor) override;
+          video_effects_processor,
+#endif
+      mojo::PendingRemote<media::mojom::ReadonlyVideoEffectsManager>
+          readonly_video_effects_manager) override;
 
   void AbortLaunch() override;
 
@@ -109,6 +119,7 @@ class InProcessVideoCaptureDeviceLauncher : public VideoCaptureDeviceLauncher {
   const scoped_refptr<base::SingleThreadTaskRunner> device_task_runner_;
   State state_;
   std::unique_ptr<media::FakeVideoCaptureDeviceFactory> fake_device_factory_;
+  raw_ptr<NativeScreenCapturePicker> native_screen_capture_picker_;
 };
 
 }  // namespace content

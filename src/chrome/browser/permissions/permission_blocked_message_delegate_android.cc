@@ -15,8 +15,8 @@
 #include "components/permissions/android/permission_prompt/permission_prompt_android.h"
 #include "components/permissions/permission_request.h"
 #include "components/permissions/permission_request_manager.h"
-#include "components/permissions/permission_ui_selector.h"
 #include "components/permissions/permission_util.h"
+#include "components/permissions/prediction_service/permission_ui_selector.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/url_formatter/elide_url.h"
 #include "content/public/browser/web_contents.h"
@@ -50,7 +50,7 @@ PermissionBlockedMessageDelegate::PermissionBlockedMessageDelegate(
       icon = IDR_ANDROID_MESSAGE_LOCATION_OFF;
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
   message_->SetTitle(l10n_util::GetStringUTF16(title));
 
@@ -236,7 +236,7 @@ PermissionBlockedMessageDelegate::Delegate::~Delegate() {
   Closing();
 }
 
-PermissionBlockedMessageDelegate::Delegate::Delegate() {}
+PermissionBlockedMessageDelegate::Delegate::Delegate() = default;
 
 PermissionBlockedMessageDelegate::Delegate::Delegate(
     const base::WeakPtr<permissions::PermissionPromptAndroid>&

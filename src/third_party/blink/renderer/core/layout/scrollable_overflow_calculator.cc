@@ -15,6 +15,7 @@
 #include "third_party/blink/renderer/core/layout/logical_fragment.h"
 #include "third_party/blink/renderer/core/layout/physical_box_fragment.h"
 #include "third_party/blink/renderer/core/layout/physical_fragment.h"
+#include "third_party/blink/renderer/core/layout/transform_utils.h"
 #include "third_party/blink/renderer/core/style/style_overflow_clip_margin.h"
 #include "third_party/blink/renderer/platform/geometry/layout_unit.h"
 
@@ -129,7 +130,7 @@ void ScrollableOverflowCalculator::AddItemsInternal(
 
   // |LayoutTextCombine| doesn't not cause scrollable overflow because
   // combined text fits in 1em by using width variant font or scaling.
-  if (UNLIKELY(IsA<LayoutTextCombine>(layout_object))) {
+  if (IsA<LayoutTextCombine>(layout_object)) [[unlikely]] {
     return;
   }
 
@@ -153,8 +154,9 @@ void ScrollableOverflowCalculator::AddItemsInternal(
       PhysicalRect child_overflow = item->RectInContainerFragment();
 
       // Adjust the text's overflow if the line-box has hanging.
-      if (UNLIKELY(has_hanging))
+      if (has_hanging) [[unlikely]] {
         child_overflow = AdjustOverflowForHanging(line_rect, child_overflow);
+      }
 
       AddOverflow(child_overflow);
       continue;
@@ -278,8 +280,8 @@ PhysicalRect ScrollableOverflowCalculator::ScrollableOverflowForPropagation(
   }
 
   // Apply any transforms to the overflow.
-  if (std::optional<gfx::Transform> transform =
-          node_.GetTransformForChildFragment(child_fragment, size_)) {
+  if (std::optional<gfx::Transform> transform = GetTransformForChildFragment(
+          child_fragment, *node_.GetLayoutBox(), size_)) {
     overflow =
         PhysicalRect::EnclosingRect(transform->MapRect(gfx::RectF(overflow)));
   }

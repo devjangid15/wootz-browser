@@ -25,7 +25,7 @@
 namespace extensions {
 namespace {
 
-const std::string kSubscribePageAction = "subscribe_page_action/src";
+const std::string kSubscribePageAction = "subscribe_page_action_v2/src";
 const std::string kFeedPage = "/feeds/feed.html";
 const std::string kNoFeedPage = "/feeds/no_feed.html";
 
@@ -35,7 +35,7 @@ const std::string kHashPageAHash = kHashPageA + "#asdf";
 const std::string kHashPageB =
     "/extensions/api_test/page_action/hash_change/test_page_B.html";
 
-using ContextType = ExtensionBrowserTest::ContextType;
+using ContextType = extensions::browser_test_util::ContextType;
 
 class PageActionBrowserTest : public ExtensionBrowserTest,
                               public testing::WithParamInterface<ContextType> {
@@ -137,6 +137,8 @@ IN_PROC_BROWSER_TEST_P(PageActionBrowserTest, UnloadPageAction) {
   EXPECT_EQ(0u, extension_action_test_util::GetTotalPageActionCount(tab));
 }
 
+// TODO(crbug.com/417057394): Remove log statements once the flakiness has been
+// figured out.
 // Regression test for crbug.com/44415.
 IN_PROC_BROWSER_TEST_P(PageActionBrowserTest, PageActionRefreshCrash) {
   ExtensionRegistry* registry =
@@ -159,13 +161,16 @@ IN_PROC_BROWSER_TEST_P(PageActionBrowserTest, PageActionRefreshCrash) {
   ASSERT_EQ(size_before + 2, registry->enabled_extensions().size());
 
   std::string idA = extensionA->id();
+  LOG(INFO) << "Reloading extensionA";
   ReloadExtension(extensionA->id());
   // ExtensionA has changed, so refetch it.
   ASSERT_EQ(size_before + 2, registry->enabled_extensions().size());
   extensionA = registry->enabled_extensions().GetByID(idA);
 
+  LOG(INFO) << "Reloading extensionB";
   ReloadExtension(extensionB->id());
 
+  LOG(INFO) << "Reloading extensionA again";
   // This is where it would crash, before http://crbug.com/44415 was fixed.
   ReloadExtension(extensionA->id());
 }

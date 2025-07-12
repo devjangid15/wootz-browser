@@ -11,6 +11,7 @@
 #include "ash/public/cpp/app_list/app_list_types.h"
 #include "ash/public/mojom/accelerator_info.mojom.h"
 #include "ash/webui/shortcut_customization_ui/backend/search/fake_search_data.h"
+#include "base/strings/string_util.h"
 #include "chrome/browser/ash/app_list/search/chrome_search_result.h"
 #include "chrome/test/base/chrome_ash_test_base.h"
 #include "chromeos/ash/components/string_matching/tokenized_string.h"
@@ -87,6 +88,7 @@ class KeyboardShortcutResultTest : public ChromeAshTestBase {
         /*type=*/ash::mojom::AcceleratorType::kDefault,
         /*state=*/ash::mojom::AcceleratorState::kEnabled,
         /*locked=*/true,
+        /*accelerator_locked=*/false,
         /*layout_properties=*/
         ash::mojom::LayoutStyleProperties::NewStandardAccelerator(
             ash::mojom::StandardAcceleratorProperties::New(

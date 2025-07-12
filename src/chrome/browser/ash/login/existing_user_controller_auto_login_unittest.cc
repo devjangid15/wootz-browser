@@ -8,15 +8,15 @@
 #include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "chrome/browser/ash/login/existing_user_controller.h"
-#include "chrome/browser/ash/login/ui/mock_login_display_host.h"
 #include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
-#include "chrome/browser/ash/policy/core/device_local_account.h"
 #include "chrome/browser/ash/settings/device_settings_service.h"
 #include "chrome/browser/ash/settings/scoped_cros_settings_test_helper.h"
+#include "chrome/browser/ui/ash/login/mock_login_display_host.h"
 #include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chromeos/ash/components/dbus/session_manager/fake_session_manager_client.h"
 #include "chromeos/ash/components/login/auth/auth_events_recorder.h"
+#include "chromeos/ash/components/policy/device_local_account/device_local_account_type.h"
 #include "chromeos/ash/components/settings/cros_settings.h"
 #include "chromeos/ash/components/settings/cros_settings_names.h"
 #include "components/ownership/mock_owner_key_util.h"
@@ -60,14 +60,16 @@ class ExistingUserControllerAutoLoginTest : public ::testing::Test {
 
     settings_helper_.ReplaceDeviceSettingsProviderWithStub();
 
-    DeviceSettingsService::Get()->SetSessionManager(
+    DeviceSettingsService::Get()->StartProcessing(
+        TestingBrowserProcess::GetGlobal()->local_state(),
         FakeSessionManagerClient::Get(), new ownership::MockOwnerKeyUtil());
     DeviceSettingsService::Get()->Load();
 
     base::Value::Dict account;
     account.Set(kAccountsPrefDeviceLocalAccountsKeyId, auto_login_user_id_);
-    account.Set(kAccountsPrefDeviceLocalAccountsKeyType,
-                policy::DeviceLocalAccount::TYPE_PUBLIC_SESSION);
+    account.Set(
+        kAccountsPrefDeviceLocalAccountsKeyType,
+        static_cast<int>(policy::DeviceLocalAccountType::kPublicSession));
     base::Value::List accounts;
     accounts.Append(std::move(account));
     settings_helper_.Set(kAccountsPrefDeviceLocalAccounts,
@@ -130,7 +132,7 @@ class ExistingUserControllerAutoLoginTest : public ::testing::Test {
   const AccountId auto_login_account_id_ =
       AccountId::FromUserEmail(policy::GenerateDeviceLocalAccountUserId(
           auto_login_user_id_,
-          policy::DeviceLocalAccount::TYPE_PUBLIC_SESSION));
+          policy::DeviceLocalAccountType::kPublicSession));
 
  private:
   std::unique_ptr<MockLoginDisplayHost> mock_login_display_host_;

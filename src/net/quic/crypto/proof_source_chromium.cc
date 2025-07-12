@@ -4,6 +4,7 @@
 
 #include "net/quic/crypto/proof_source_chromium.h"
 
+#include "base/compiler_specific.h"
 #include "base/strings/string_number_conversions.h"
 #include "crypto/openssl_util.h"
 #include "net/cert/x509_util.h"
@@ -23,8 +24,6 @@ ProofSourceChromium::~ProofSourceChromium() = default;
 bool ProofSourceChromium::Initialize(const base::FilePath& cert_path,
                                      const base::FilePath& key_path,
                                      const base::FilePath& sct_path) {
-  crypto::EnsureOpenSSLInit();
-
   std::string cert_data;
   if (!base::ReadFileToString(cert_path, &cert_data)) {
     DLOG(FATAL) << "Unable to read certificates.";
@@ -53,7 +52,7 @@ bool ProofSourceChromium::Initialize(const base::FilePath& cert_path,
   }
 
   const uint8_t* p = reinterpret_cast<const uint8_t*>(key_data.data());
-  std::vector<uint8_t> input(p, p + key_data.size());
+  std::vector<uint8_t> input(p, UNSAFE_TODO(p + key_data.size()));
   private_key_ = crypto::RSAPrivateKey::CreateFromPrivateKeyInfo(input);
   if (!private_key_) {
     DLOG(FATAL) << "Unable to create private key.";
@@ -184,19 +183,18 @@ void ProofSourceChromium::ComputeTlsSignature(
                             reinterpret_cast<const uint8_t*>(in.data()),
                             in.size()) ||
       !EVP_DigestSignFinal(sign_context.get(), nullptr, &siglen)) {
-    callback->Run(false, sig, nullptr);
+    callback->Run(false, std::move(sig), nullptr);
     return;
   }
   sig.resize(siglen);
   if (!EVP_DigestSignFinal(
           sign_context.get(),
           reinterpret_cast<uint8_t*>(const_cast<char*>(sig.data())), &siglen)) {
-    callback->Run(false, sig, nullptr);
+    callback->Run(false, std::move(sig), nullptr);
     return;
   }
   sig.resize(siglen);
-
-  callback->Run(true, sig, nullptr);
+  callback->Run(true, std::move(sig), nullptr);
 }
 
 absl::InlinedVector<uint16_t, 8>

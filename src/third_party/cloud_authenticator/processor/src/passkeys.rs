@@ -25,10 +25,11 @@ use super::{
     KEY_PURPOSE_SECURITY_DOMAIN_SECRET, PUB_KEY, VAULT_HANDLE_WITHOUT_TYPE_KEY,
     WRAPPED_PIN_DATA_KEY, WRAPPED_SECRET_KEY,
 };
-use crate::pin;
+use crate::{pin, MetricsUpdate};
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
+use base64::Engine;
 use cbor::{MapKey, MapKeyRef, MapLookupKey, Value};
 use chromesync::pb::webauthn_credential_specifics::EncryptedData;
 use chromesync::pb::WebauthnCredentialSpecifics;
@@ -45,8 +46,14 @@ map_keys! {
     EVAL_BY_CREDENTIAL, EVAL_BY_CREDENTIAL_KEY = "evalByCredential",
     EXTENSIONS, EXTENSIONS_KEY = "extensions",
     FIRST, FIRST_KEY = "first",
+    LARGE_BLOB, LARGE_BLOB_KEY = "largeBlob",
+    LARGE_BLOB_READ, LARGE_BLOB_READ_KEY = "read",
+    LARGE_BLOB_WRITE, LARGE_BLOB_WRITE_KEY = "write",
+    LARGE_BLOB_DATA, LARGE_BLOB_DATA_KEY = "largeBlobData",
+    LARGE_BLOB_SIZE,   LARGE_BLOB_SIZE_KEY   = "largeBlobSize",
+    LARGE_BLOB_SUPPORTED, LARGE_BLOB_SUPPORTED_KEY = "largeBlobSupported",
+    LARGE_BLOB_WRITTEN, LARGE_BLOB_WRITTEN_KEY   = "largeBlobWritten",
     PIN_CLAIM_KEY, PIN_CLAIM_KEY_KEY = "pin_claim_key",
-    PIN_GENERATION, PIN_GENERATION_KEY = "pin_generation",
     PIN_HASH, PIN_HASH_KEY = "pin_hash",
     PRF, PRF_KEY = "prf",
     PROTOBUF, PROTOBUF_KEY = "protobuf",
@@ -88,6 +95,7 @@ fn key(k: &str) -> MapKey {
 }
 
 pub(crate) fn do_assert(
+    metrics: &mut MetricsUpdate,
     auth: &Authentication,
     state: &mut DirtyFlag<ParsedState>,
     request: BTreeMap<MapKey, Value>,
@@ -120,11 +128,12 @@ pub(crate) fn do_assert(
         return debug("protobuf is missing user ID");
     };
 
-    let entity_secrets = entity_secrets_from_proto(&security_domain_secret, &proto)?;
+    let mut entity_secrets = entity_secrets_from_proto(&security_domain_secret, &proto)?;
 
     let pin_verified =
         maybe_validate_pin_from_request(&request, state, device_id, &security_domain_secret)?;
     let user_verification = matches!(auth_level, AuthLevel::UserVerification)
+        || matches!(auth_level, AuthLevel::SoftwareUserVerification)
         || pin_verified
         // If the client provided the security domain secret itself, then it could have
         // done the signing itself too. Thus this is sufficient to claim UV.
@@ -153,18 +162,23 @@ pub(crate) fn do_assert(
     ]);
     let mut response = BTreeMap::from([(key("response"), Value::Map(assertion_response_json))]);
 
-    if let Some(ref hmac_secret) = entity_secrets.hmac_secret {
-        if let Some(prf_result) =
-            handle_prf(webauthn_request, hmac_secret, Some(credential_id.as_ref()))?
-        {
-            response.insert(key(PRF), prf_result);
-        }
+    if let Some(prf_result) =
+        handle_prf(webauthn_request, &entity_secrets.hmac_secret, Some(credential_id.as_ref()))?
+    {
+        response.insert(key(PRF), prf_result);
     }
-
+    if let Some(large_blob_out) =
+        handle_large_blob(webauthn_request,
+                          &mut entity_secrets,
+                          &security_domain_secret)? {
+       response.insert(key(LARGE_BLOB), large_blob_out);
+    }
+    metrics.passkeys_assert += 1;
     Ok(Value::Map(response))
 }
 
 pub(crate) fn do_create(
+    metrics: &mut MetricsUpdate,
     auth: &Authentication,
     state: &mut DirtyFlag<ParsedState>,
     request: BTreeMap<MapKey, Value>,
@@ -226,6 +240,8 @@ pub(crate) fn do_create(
     if let Some(prf_result) = handle_prf(webauthn_request, &hmac_secret, None)? {
         result.insert(MapKey::String(String::from(PRF)), prf_result);
     }
+    result.insert(MapKey::String(String::from(LARGE_BLOB_SUPPORTED)), Value::Boolean(true));
+    metrics.passkeys_create += 1;
     Ok(Value::Map(result))
 }
 
@@ -258,11 +274,13 @@ fn maybe_validate_pin_from_request(
 /// Contains the secrets from a specific passkey Sync entity.
 struct EntitySecrets {
     primary_key: EcdsaKeyPair,
-    hmac_secret: Option<[u8; 32]>,
-    // These fields are not yet implemented but are contained in the protobuf
+    hmac_secret: [u8; 32],
+    // The encrypted part of the WebauthnCredentialSpecifics protobuf.
+    // This is needed to update the large blob data.
+    encrypted: Option<chromesync::pb::webauthn_credential_specifics::Encrypted>,
+    // This field is not yet implemented but is contained in the protobuf
     // definition.
     // cred_blob: Option<Vec<u8>>,
-    // large_blob: Option<(Vec<u8>, u64)>,
 }
 
 /// Given a list of wrapped secrets and the wrapping key for this device,
@@ -280,7 +298,9 @@ fn entity_secrets_from_proto(
             let plaintext = decrypt(ciphertext, security_domain_secret, PRIVATE_KEY_FIELD_AAD)?;
             let primary_key = EcdsaKeyPair::from_pkcs8(&plaintext)
                 .map_err(|_| RequestError::Debug("PKCS#8 parse failed"))?;
-            Ok(EntitySecrets { primary_key, hmac_secret: None })
+            let hmac_secret = derive_hmac_secret_from_private_key(&plaintext);
+            Ok(EntitySecrets { primary_key, hmac_secret, encrypted: None })
+
         }
         EncryptedData::Encrypted(ciphertext) => {
             let plaintext = decrypt(ciphertext, security_domain_secret, ENCRYPTED_FIELD_AAD)?;
@@ -288,15 +308,32 @@ fn entity_secrets_from_proto(
                 plaintext.as_slice(),
             )
             .map_err(|_| RequestError::Debug("failed to decode encrypted data"))?;
-            let Some(private_key_bytes) = encrypted.private_key else {
+            let Some(ref private_key_bytes) = encrypted.private_key else {
                 return debug("missing private key");
             };
-            let primary_key = EcdsaKeyPair::from_pkcs8(&private_key_bytes)
+            let primary_key = EcdsaKeyPair::from_pkcs8(private_key_bytes.as_slice())
                 .map_err(|_| RequestError::Debug("PKCS#8 parse failed"))?;
-            let hmac_secret = encrypted.hmac_secret.and_then(|vec| vec.try_into().ok());
-            Ok(EntitySecrets { primary_key, hmac_secret })
+            let hmac_secret = encrypted
+                .hmac_secret
+                .as_ref()
+                .and_then(|vec| <[u8; 32]>::try_from(vec.as_slice()).ok())
+                .unwrap_or_else(|| derive_hmac_secret_from_private_key(private_key_bytes.as_slice()));
+            Ok(EntitySecrets { primary_key, hmac_secret, encrypted: Some(encrypted) })
         }
     }
+}
+
+/// Calculate an HMAC secret from a private key.
+///
+/// We want to support the PRF extension for credentials that were generated
+/// without PRF support being requested at creation time. To do so we derive an
+/// HMAC secret from the encoded private key.
+fn derive_hmac_secret_from_private_key(pkcs8_bytes: &[u8]) -> [u8; 32] {
+    let mut ret = [0u8; 32];
+    // unwrap: only fails if the output length is too long, but we know that
+    // `ret` is 32 bytes.
+    crypto::hkdf_sha256(pkcs8_bytes, &[], b"derived PRF HMAC secret", &mut ret).unwrap();
+    ret
 }
 
 /// Encrypt an entity secret using a security domain secret.
@@ -375,22 +412,16 @@ fn validate_pin(
     claim: &[u8],
     wrapped_pin_data: &[u8],
 ) -> Result<(), RequestError> {
-    let PINState { attempts, generation_high_water } = state.get_pin_state(device_id)?;
+    let PINState { attempts } = state.get_pin_state(device_id)?;
     if attempts >= MAX_PIN_ATTEMPTS {
         return Err(RequestError::PINLocked);
     }
 
     let pin_data = pin::Data::from_wrapped(wrapped_pin_data, security_domain_secret)?;
-    if pin_data.generation < generation_high_water {
-        return Err(RequestError::PINOutdated);
-    }
-
     let claimed_pin_hash = open_aes_256_gcm(&pin_data.claim_key, claim, PIN_CLAIM_AAD)
         .ok_or(RequestError::Debug("failed to decrypt PIN claim"))?;
     if !constant_time_compare(&claimed_pin_hash, &pin_data.pin_hash) {
-        state
-            .get_mut()
-            .set_pin_state(device_id, PINState { attempts: attempts + 1, generation_high_water })?;
+        state.get_mut().set_pin_state(device_id, PINState { attempts: attempts + 1 })?;
         return Err(RequestError::IncorrectPIN);
     }
 
@@ -404,36 +435,26 @@ fn validate_pin(
     // a PIN. Since the attack requires malware on the client machine, where the
     // user could probably be phished for their PIN much more effectively than
     // trying to exploit a concurrency issue, we err on the side of availability.
-    if attempts > 0 || pin_data.generation > generation_high_water {
-        state.get_mut_for_minor_change().set_pin_state(
-            device_id,
-            PINState {
-                attempts: 0,
-                generation_high_water: core::cmp::max(pin_data.generation, generation_high_water),
-            },
-        )?;
+    if attempts > 0 {
+        state.get_mut_for_minor_change().set_pin_state(device_id, PINState { attempts: 0 })?;
     }
 
     Ok(())
 }
 
 pub(crate) fn do_wrap_pin(
+    metrics: &mut MetricsUpdate,
     auth: &Authentication,
     state: &mut DirtyFlag<ParsedState>,
     request: BTreeMap<MapKey, Value>,
 ) -> Result<cbor::Value, RequestError> {
-    // Either UV or reauth is required to perform this command. The one-time
-    // UV is not enough.
+    // Reauth is required to perform this command.
     let device_id = match auth {
-        Authentication::Device(device_id, AuthLevel::UserVerification, _, _) => device_id,
         Authentication::Device(device_id, _, _, Reauth::Done) => device_id,
-        _ => return debug("not authenticated"),
+        _ => return debug("PIN change needs reauth via RAPT token"),
     };
     let Some(Value::Bytestring(pin_hash)) = request.get(PIN_HASH_KEY) else {
         return debug("pin_hash required");
-    };
-    let Some(Value::Int(generation)) = request.get(PIN_GENERATION_KEY) else {
-        return debug("pin_generation required");
     };
     let Some(Value::Bytestring(claim_key)) = request.get(PIN_CLAIM_KEY_KEY) else {
         return debug("pin_claim_key required");
@@ -457,7 +478,6 @@ pub(crate) fn do_wrap_pin(
             .as_ref()
             .try_into()
             .map_err(|_| RequestError::Debug("incorrect length PIN hash"))?,
-        generation: *generation,
         claim_key: claim_key
             .as_ref()
             .try_into()
@@ -471,6 +491,7 @@ pub(crate) fn do_wrap_pin(
             .try_into()
             .map_err(|_| RequestError::Debug("incorrect length vault handle"))?,
     };
+    metrics.passkeys_wrap_pin += 1;
     Ok(Value::from(pin_data.encrypt(&security_domain_secret)))
 }
 
@@ -514,7 +535,7 @@ impl TryFrom<&Value> for PRFValues {
             let Value::String(value) = value else {
                 return debug("invalid PRF value");
             };
-            let value = base64::decode_config(value, base64::URL_SAFE_NO_PAD)
+            let value = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(value)
                 .map_err(|_| RequestError::Debug("invalid PRF base64url"))?;
             Ok(hash_prf_value(&value))
         }
@@ -571,7 +592,7 @@ fn prf_values_by_id(
     let Some(Value::Map(by_credential)) = prf.get(EVAL_BY_CREDENTIAL_KEY) else {
         return Ok(None);
     };
-    let base64url_credential_id = base64::encode_config(credential_id, base64::URL_SAFE_NO_PAD);
+    let base64url_credential_id = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(credential_id);
     let Some(values) = by_credential.get(&MapKey::String(base64url_credential_id)) else {
         return Ok(None);
     };
@@ -586,9 +607,138 @@ fn prf_default_values(prf: &BTreeMap<MapKey, Value>) -> Result<Option<PRFValues>
     Ok(Some(eval.try_into()?))
 }
 
+/// Handle the large blob extension request.
+/// The large blob extension allows a Relying Party to associate opaque binary data
+/// with a credential. See https://w3c.github.io/webauthn/#sctn-large-blob-extension
+///
+/// Returns:
+/// - `Ok(None)` if the request doesn't contain a large blob extension.
+/// - `Ok(Some(Value))` if the request contains a large blob extension.
+///   - The returned `Value` is a map containing the large blob response fields.
+/// - `Err(RequestError)` if the request is invalid.
+fn handle_large_blob(
+    webauthn_req: &BTreeMap<MapKey, Value>,
+    entity_secrets: &mut EntitySecrets,
+    security_domain_secret: &[u8; 32],
+) -> Result<Option<Value>, RequestError> {
+    let Some(Value::Map(exts)) = webauthn_req.get(EXTENSIONS_KEY) else {
+        return Ok(None);
+    };
+    let Some(Value::Map(large_blob_req)) = exts.get(LARGE_BLOB_KEY) else {
+        return Ok(None);
+    };
+
+    // Both read and write is disallowed.
+    if large_blob_req.contains_key(LARGE_BLOB_READ_KEY)
+        && large_blob_req.contains_key(LARGE_BLOB_WRITE_KEY) {
+        return debug("invalid largeBlob request: read + write");
+    }
+
+    // Read path.
+    if let Some(read_resp) = handle_read_large_blob(large_blob_req, entity_secrets) {
+        return Ok(Some(read_resp));
+    }
+
+    // Write path.
+    if let Some(write_resp) =
+        handle_write_large_blob(large_blob_req, entity_secrets, security_domain_secret)? {
+        return Ok(Some(write_resp));
+    }
+
+    // Any other shape is invalid.
+    debug("invalid large blob request")
+}
+
+/// Helper function that handles large blob read.
+/// It returns a `Value` containing the large blob data and its size if a read
+/// was requested. Otherwise, it returns `None`.
+fn handle_read_large_blob(
+    large_blob_req: &BTreeMap<MapKey, Value>,
+    entity_secrets: &EntitySecrets,
+) -> Option<Value> {
+    if !matches!(
+        large_blob_req.get(LARGE_BLOB_READ_KEY),
+        Some(Value::Boolean(true))
+    ) {
+        return None;
+    }
+
+    let (data, size_val) = match entity_secrets.encrypted.as_ref() {
+        Some(enc) if enc.large_blob.is_some() && enc.large_blob_uncompressed_size.is_some() => {
+            let blob = enc.large_blob.as_ref().unwrap();
+            let size = enc.large_blob_uncompressed_size.unwrap();
+            (Value::from(blob.as_slice()), Value::Int(size as i64))
+        }
+        _ => (Value::from(&[] as &[u8]), Value::Int(0_i64)),
+    };
+
+    Some(Value::Map(BTreeMap::from([
+        (key(LARGE_BLOB_DATA),  data),
+        (key(LARGE_BLOB_SIZE),  size_val),
+    ])))
+}
+
+/// Helper function to write large blob data.
+///
+/// This function takes a large blob request, the entity secrets, and the
+/// security domain secret. It updates the `entity_secrets` with the new
+/// large blob data and returns a tuple containing:
+/// - A `Value` representing the response to the large blob write request.
+///
+/// It returns `None` if the request does not contain a large blob write.
+/// It returns an error if the new blob is larger than 8KiB.
+fn handle_write_large_blob(
+    large_blob_req: &BTreeMap<MapKey, Value>,
+    entity_secrets: &mut EntitySecrets,
+    security_domain_secret: &[u8; 32],
+) -> Result<Option<Value>, RequestError> {
+    let new_blob: Vec<u8> = match large_blob_req.get(LARGE_BLOB_WRITE_KEY) {
+        Some(Value::String(s)) => {
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(s)
+                .map_err(|_| RequestError::Debug("invalid base64 in largeBlob.write"))?
+        }
+        _ => return Ok(None),
+    };
+
+    const MAX_LARGE_BLOB_LEN: usize = 8 * 1024;
+    if new_blob.len() > MAX_LARGE_BLOB_LEN {
+        return Err(RequestError::Debug("large blob write > 8KiB"));
+    }
+
+    let enc = entity_secrets
+              .encrypted
+              .as_mut()
+              .unwrap();
+
+    // The caller must tell what the uncompressed length of its data is.
+    let Some(Value::Int(uncompressed_len)) =
+        large_blob_req.get(LARGE_BLOB_SIZE_KEY)
+    else {
+        return debug("largeBlobSize required");
+    };
+    if *uncompressed_len < 0 {
+        return debug("largeBlobSize must be non-negative");
+    }
+
+    enc.large_blob = Some(new_blob.to_vec());
+    enc.large_blob_uncompressed_size = Some(*uncompressed_len as u64);
+
+    let ciphertext = encrypt(security_domain_secret, enc.encode_to_vec(), ENCRYPTED_FIELD_AAD)?;
+
+    let resp = Value::Map(BTreeMap::from([
+        (key(LARGE_BLOB_WRITTEN), Value::Boolean(true)),
+        (key(ENCRYPTED), Value::from(ciphertext)),
+    ]));
+
+    Ok(Some(resp))
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use cbor::cbor;
+    use alloc::vec;
     use crate::recovery_key_store;
     use crate::tests::{
         PROTOBUF2_BYTES, PROTOBUF_BYTES, SAMPLE_SECURITY_DOMAIN_SECRET,
@@ -612,9 +762,7 @@ pub mod tests {
 
         assert!(EcdsaKeyPair::from_pkcs8(&pkcs8).is_ok());
 
-        assert!(
-            decrypt(&[0u8; 8], SAMPLE_SECURITY_DOMAIN_SECRET.try_into().unwrap(), &[]).is_err()
-        );
+        assert!(decrypt(&[0u8; 8], SAMPLE_SECURITY_DOMAIN_SECRET.try_into().unwrap(), &[]).is_err());
     }
 
     #[test]
@@ -622,15 +770,29 @@ pub mod tests {
         let protobuf1: &WebauthnCredentialSpecifics = &PROTOBUF;
         let protobuf2: &WebauthnCredentialSpecifics = &PROTOBUF2;
 
-        for (n, proto) in [protobuf1, protobuf2].iter().enumerate() {
+        for proto in [protobuf1, protobuf2] {
             let result =
                 entity_secrets_from_proto(SAMPLE_SECURITY_DOMAIN_SECRET.try_into().unwrap(), proto);
             assert!(result.is_ok(), "{:?}", proto);
-            let result = result.unwrap();
-
-            let should_have_hmac_secret = n == 1;
-            assert_eq!(matches!(result.hmac_secret, Some(_)), should_have_hmac_secret);
         }
+    }
+
+    #[test]
+    fn test_derived_hmac_secret() {
+        // This HMAC secret is derived.
+        let secrets =
+            entity_secrets_from_proto(SAMPLE_SECURITY_DOMAIN_SECRET.try_into().unwrap(), &PROTOBUF)
+                .unwrap();
+        assert_eq!(&secrets.hmac_secret, b"\x78\xbd\x3f\x1a\xbb\x66\x52\xe3\x2d\xc1\x50\x7d\x75\x83\x73\xdc\xeb\xa5\x8a\x17\x02\x9c\xe5\x12\x73\xee\x3f\x85\xd6\xc9\x2e\x21");
+
+        // This protobuf has an explicit HMAC secret and so one must not be derived from
+        // the private key.
+        let secrets = entity_secrets_from_proto(
+            SAMPLE_SECURITY_DOMAIN_SECRET.try_into().unwrap(),
+            &PROTOBUF2,
+        )
+        .unwrap();
+        assert_eq!(&secrets.hmac_secret, b"\x08\xa2\xe8\x8e\xd3\x78\xbf\xcd\x82\x5f\x0b\x06\xde\xd5\x6d\x2d\x03\xa2\x47\xff\x34\xd0\x81\x40\x52\xec\x6d\xe5\x1a\x98\x22\x91");
     }
 
     #[test]
@@ -683,7 +845,6 @@ pub mod tests {
     fn test_pin_data() {
         let pin_data = pin::Data {
             pin_hash: [1u8; 32],
-            generation: 42,
             claim_key: [2u8; 32],
             counter_id: [3u8; recovery_key_store::COUNTER_ID_LEN],
             vault_handle_without_type: [4u8; recovery_key_store::VAULT_HANDLE_LEN - 1],
@@ -695,6 +856,233 @@ pub mod tests {
         let encrypted = pin_data.encrypt(&security_domain_secret);
         let decrypted = pin::Data::from_wrapped(&encrypted, &security_domain_secret).unwrap();
         assert_eq!(pin_data, decrypted);
+    }
+
+    // Helper to generate large blob requests for testing.
+    fn make_req(large_blob_val: Value) -> BTreeMap<MapKey, Value> {
+            let Value::Map(map) = cbor!({
+                "extensions": {
+                "largeBlob": large_blob_val
+            }}) else {
+                panic!("expected map");
+            };
+            map
+        }
+
+    // Helper to return a fresh EntitySecrets with empty large blob fields.
+    // Used to test large blob handling without pre-existing blob data.
+    fn empty_secrets() -> EntitySecrets {
+        entity_secrets_from_proto(
+            &SAMPLE_SECURITY_DOMAIN_SECRET.try_into().unwrap(),
+            &PROTOBUF2,
+        )
+        .unwrap()
+    }
+
+    // Test writing a new large blob, decrypting and reading it back.
+    #[test]
+    fn test_large_blob_write_then_read() {
+        let new_blob_content = b"new blob data".to_vec();
+        let b64_blob = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&new_blob_content);
+        let uncompressed_size = new_blob_content.len() + 10;
+        let webauthn_req_write = make_req(cbor!({
+           "write": (b64_blob.as_str()),
+            "largeBlobSize": (uncompressed_size as i64),
+        }));
+
+        let mut secrets_for_write =
+            entity_secrets_from_proto(&SAMPLE_SECURITY_DOMAIN_SECRET.try_into().unwrap(), &PROTOBUF2)
+                .unwrap();
+
+        let enc = secrets_for_write.encrypted.as_mut().expect("encrypted should be present");
+        enc.large_blob = None;
+        enc.large_blob_uncompressed_size = None;
+
+        let result = handle_large_blob(
+            &webauthn_req_write,
+            &mut secrets_for_write,
+            &SAMPLE_SECURITY_DOMAIN_SECRET.try_into().unwrap(),
+        )
+        .unwrap();
+
+        let response_val = result.expect("expected a response");
+        let Value::Map(response_map) = response_val else {
+            panic!("expected a map response");
+        };
+        assert_eq!(response_map.get(LARGE_BLOB_WRITTEN_KEY), Some(&Value::Boolean(true)));
+
+        let Value::Bytestring(new_ciphertext_bs) =
+            response_map.get(ENCRYPTED_KEY).expect("ciphertext present") else {
+                panic!("encrypted not bytestring");
+        };
+
+        let plaintext = decrypt(
+            &new_ciphertext_bs,
+            &SAMPLE_SECURITY_DOMAIN_SECRET.try_into().unwrap(),
+            ENCRYPTED_FIELD_AAD,
+        )
+        .unwrap();
+        let encrypted_proto =
+            chromesync::pb::webauthn_credential_specifics::Encrypted::decode(plaintext.as_slice())
+                .unwrap();
+        assert_eq!(encrypted_proto.large_blob.unwrap(), new_blob_content);
+        assert_eq!(
+            secrets_for_write
+                .encrypted
+                .as_ref()
+                .and_then(|e| e.large_blob.as_ref()),
+            Some(&new_blob_content)
+        );
+        assert_eq!(
+            encrypted_proto.large_blob_uncompressed_size,
+            Some(uncompressed_size as u64)
+        );
+
+        use chromesync::pb::webauthn_credential_specifics::EncryptedData;
+
+        // Re-create a protobuf whose encrypted_data field is the new ciphertext.
+        let mut proto_after_write = (*PROTOBUF2).clone();
+        proto_after_write.encrypted_data =
+            Some(EncryptedData::Encrypted(new_ciphertext_bs.to_vec().into()));
+
+        let mut secrets_for_read =
+            entity_secrets_from_proto(
+                &SAMPLE_SECURITY_DOMAIN_SECRET.try_into().unwrap(),
+                &proto_after_write,
+            )
+            .unwrap();
+
+        let webauthn_req_read = make_req(cbor!({
+            "read": true
+        }));
+
+        let read_resp = handle_large_blob(
+            &webauthn_req_read,
+            &mut secrets_for_read,
+            &SAMPLE_SECURITY_DOMAIN_SECRET.try_into().unwrap(),
+        )
+        .unwrap()
+        .expect("read response");
+
+        let Value::Map(ref _read_map) = read_resp else { panic!("map"); };
+        assert_eq!(
+            read_resp,
+            cbor!({
+                "largeBlobData": (new_blob_content.clone()),
+                "largeBlobSize": (uncompressed_size as i64)
+            }));
+        }
+
+    // Test write > 8 KiB.
+    #[test]
+    fn test_large_blob_write_too_large() {
+        let huge_blob = vec![0u8; 8 * 1024 + 1];
+        let huge_blob_b64 =
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&huge_blob);
+        let req = make_req(cbor!({
+            "write": (huge_blob_b64.as_str()),
+            "largeBlobSize":  (huge_blob.len() as i64)
+        }));
+        assert!(matches!(
+            handle_large_blob(&req,
+                              &mut empty_secrets(),
+                              &SAMPLE_SECURITY_DOMAIN_SECRET.try_into().unwrap()),
+            Err(RequestError::Debug(m)) if m.contains("8KiB")
+        ));
+    }
+
+    // Test simultaneous read + write.
+    #[test]
+    fn test_large_blob_read_and_write() {
+        let b64_blob =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"abc");
+        let req = make_req(cbor!({
+            "read":  (true),
+            "write": (b64_blob.as_str()),
+            "largeBlobSize":  (3)
+        }));
+        assert!(matches!(
+            handle_large_blob(&req,
+                              &mut empty_secrets(),
+                              &SAMPLE_SECURITY_DOMAIN_SECRET.try_into().unwrap()),
+            Err(RequestError::Debug(m)) if m.contains("read + write")
+        ));
+    }
+
+    // Test missing `largeBlobSize` on write.
+    #[test]
+    fn test_large_blob_write_missing_size() {
+        let b64_blob =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"abc");
+        let req = make_req(cbor!({
+            "write": (b64_blob.as_str()),
+        }));
+        assert!(matches!(
+            handle_large_blob(&req,
+                              &mut empty_secrets(),
+                              &SAMPLE_SECURITY_DOMAIN_SECRET.try_into().unwrap()),
+            Err(RequestError::Debug(m)) if m.contains("largeBlobSize required")
+        ));
+    }
+
+    // Test negative `largeBlobSize`.
+    #[test]
+    fn test_large_blob_negative_size() {
+        let b64_blob =
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"abc");
+        let req = make_req(cbor!({
+            "write": (b64_blob.as_str()),
+            "largeBlobSize":  (-1),
+        }));
+        assert!(matches!(
+            handle_large_blob(&req,
+                              &mut empty_secrets(),
+                              &SAMPLE_SECURITY_DOMAIN_SECRET.try_into().unwrap()),
+            Err(RequestError::Debug(m)) if m.contains("non-negative")
+        ));
+    }
+
+    // Test missing `largeBlob` field entirely.
+    #[test]
+    fn test_large_blob_extension_absent() {
+        let req_no_large_blob: BTreeMap<MapKey, Value> = {
+            let Value::Map(map) = cbor!({
+                "extensions": {
+                    // no 'largeBlob' field.
+                }
+            }) else {
+                unreachable!();
+            };
+            map
+        };
+
+        let no_blob_result = handle_large_blob(
+            &req_no_large_blob,
+            &mut empty_secrets(),
+            &SAMPLE_SECURITY_DOMAIN_SECRET.try_into().unwrap(),
+        )
+        .unwrap();
+
+        assert!(no_blob_result.is_none(), "unexpected large blob handling when field is absent");
+    }
+
+    // Test invalid base64 string.
+    #[test]
+    fn test_large_blob_invalid_base64() {
+        let bad_b64 = "***not-b64***";
+        let req = make_req(cbor!({
+            "write": (bad_b64),
+            "largeBlobSize": 0_i64
+        }));
+
+        assert!(matches!(
+            handle_large_blob(
+                &req,
+                &mut empty_secrets(),
+                &SAMPLE_SECURITY_DOMAIN_SECRET.try_into().unwrap()
+            ),
+            Err(RequestError::Debug(m)) if m.contains("invalid base64 in largeBlob.write")
+        ));
     }
 
     // Integration tests of this code are done in Chromium, which builds this

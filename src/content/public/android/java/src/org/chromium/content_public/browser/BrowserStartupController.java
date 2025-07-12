@@ -5,6 +5,7 @@
 package org.chromium.content_public.browser;
 
 import org.chromium.base.library_loader.LibraryProcessType;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.content.browser.BrowserStartupControllerImpl;
 
 /**
@@ -18,6 +19,7 @@ import org.chromium.content.browser.BrowserStartupControllerImpl;
  *
  * All communication with this class must happen on the main thread.
  */
+@NullMarked
 public interface BrowserStartupController {
     /** This provides the interface to the callbacks for successful or failed startup */
     interface StartupCallback {
@@ -38,22 +40,27 @@ public interface BrowserStartupController {
     /**
      * Start the browser process asynchronously. This will set up a queue of UI thread tasks to
      * initialize the browser process.
-     * <p/>
-     * Note that this can only be called on the UI thread.
+     *
+     * <p>Note that this can only be called on the UI thread.
      *
      * @param libraryProcessType the type of process the shared library is loaded. It must be
-     *                           LibraryProcessType.PROCESS_BROWSER or
-     *                           LibraryProcessType.PROCESS_WEBVIEW.
-     * @param startGpuProcess Whether to start the GPU process if it is not started. Only has
-     *                        effect if browser isn't already started.
+     *     LibraryProcessType.PROCESS_BROWSER or LibraryProcessType.PROCESS_WEBVIEW.
+     * @param startGpuProcess Whether to start the GPU process if it is not started. Only has effect
+     *     if browser isn't already started.
      * @param startMinimalBrowser Whether browser startup will be paused after a minimal environment
-     *                                is started.
+     *     is started.
+     * @param singleProcess true iff the browser should run single-process, ie. keep renderers in
+     *     the browser process
+     * @param scheduleFlushStartupTasks Whether to post a task to flush the startup tasks instead of
+     *     letting them complete asynchronously.
      * @param callback the callback to be called when browser startup is complete.
      */
     void startBrowserProcessesAsync(
             @LibraryProcessType int libraryProcessType,
             boolean startGpuProcess,
             boolean startMinimalBrowser,
+            boolean singleProcess,
+            boolean scheduleFlushStartupTasks,
             final StartupCallback callback);
 
     /**
@@ -110,9 +117,20 @@ public interface BrowserStartupController {
     void setContentMainCallbackForTests(Runnable r);
 
     /**
-     * @return how Chrome is launched, either in minimal mode or as full browser, as
-     * well as either cold start or warm start.
-     * See {@link org.chromium.content.browser.ServicificationStartupUma} for more details.
+     * @return how Chrome is launched, either in minimal mode or as full browser, as well as either
+     *     cold start or warm start. See {@link
+     *     org.chromium.content.browser.ServicificationStartupUma} for more details.
      */
     int getStartupMode(boolean startMinimalBrowser);
+
+    /**
+     * @return how long it took to run content start.
+     */
+    long getContentStartDuration();
+
+    /**
+     * @return how long it took the longest startup task to run. If flushed, this is the total of
+     *     all the startup tasks.
+     */
+    long getStartupTasksLongestBlockingDuration();
 }

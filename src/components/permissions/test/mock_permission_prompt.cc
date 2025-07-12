@@ -58,6 +58,11 @@ MockPermissionPrompt::GetPromptVariants() const {
   return {};
 }
 
+std::optional<feature_params::PermissionElementPromptPosition>
+MockPermissionPrompt::GetPromptPosition() const {
+  return std::nullopt;
+}
+
 bool MockPermissionPrompt::IsAskPrompt() const {
   return true;
 }
@@ -65,7 +70,7 @@ bool MockPermissionPrompt::IsAskPrompt() const {
 MockPermissionPrompt::MockPermissionPrompt(MockPermissionPromptFactory* factory,
                                            Delegate* delegate)
     : factory_(factory), delegate_(delegate) {
-  for (const PermissionRequest* request : delegate_->Requests()) {
+  for (const auto& request : delegate_->Requests()) {
     RequestType request_type = request->request_type();
     // The actual prompt will call these, so test they're sane.
 #if BUILDFLAG(IS_ANDROID)

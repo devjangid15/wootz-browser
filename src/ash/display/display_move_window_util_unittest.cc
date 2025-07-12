@@ -8,6 +8,7 @@
 #include "ash/accelerators/accelerator_controller_impl.h"
 #include "ash/accelerators/accelerator_table.h"
 #include "ash/accessibility/test_accessibility_controller_client.h"
+#include "ash/constants/ash_features.h"
 #include "ash/public/cpp/shelf_config.h"
 #include "ash/root_window_controller.h"
 #include "ash/screen_util.h"
@@ -48,9 +49,9 @@ views::Widget* CreateTestWidgetWithParent(views::Widget::InitParams::Type type,
                                           gfx::NativeView parent,
                                           const gfx::Rect& bounds,
                                           bool child) {
-  views::Widget::InitParams params(type);
+  views::Widget::InitParams params(
+      views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET, type);
   params.delegate = nullptr;
-  params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   params.parent = parent;
   params.bounds = bounds;
   params.child = child;
@@ -69,19 +70,11 @@ void PerformMoveWindowAccel() {
 
 class DisplayMoveWindowUtilTest : public AshTestBase {
  public:
-  DisplayMoveWindowUtilTest() {
-    scoped_feature_list_.InitWithFeatures(
-        /*enabled_features=*/{features::kFasterSplitScreenSetup,
-                              features::kOsSettingsRevampWayfinding},
-        /*disabled_features=*/{});
-  }
+  DisplayMoveWindowUtilTest() = default;
   DisplayMoveWindowUtilTest(const DisplayMoveWindowUtilTest&) = delete;
   DisplayMoveWindowUtilTest& operator=(const DisplayMoveWindowUtilTest&) =
       delete;
   ~DisplayMoveWindowUtilTest() override = default;
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 TEST_F(DisplayMoveWindowUtilTest, SingleDisplay) {
@@ -375,7 +368,8 @@ TEST_F(DisplayMoveWindowUtilTest, WindowWithTransientChild) {
 // target instead.
 TEST_F(DisplayMoveWindowUtilTest, ActiveTransientChildWindow) {
   UpdateDisplay("400x300,400x300");
-  std::unique_ptr<views::Widget> window = CreateTestWidget();
+  std::unique_ptr<views::Widget> window =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   window->SetBounds(gfx::Rect(10, 20, 200, 100));
 
   // Create a |child| transient widget of |window|. When |child| is shown, it is
@@ -480,14 +474,14 @@ TEST_F(DisplayMoveWindowUtilTest, RestoreHistoryOnUpdatedRestoreBounds) {
   window_state->Maximize();
 
   using chromeos::WindowStateType;
-  const std::vector<chromeos::WindowStateType>& restore_stack =
-      window_state->window_state_restore_history();
   EXPECT_EQ(gfx::Rect(10, 20, 200, 100),
             window_state->GetRestoreBoundsInScreen());
 
   // Moving the window to the second display through shortcut should update both
   // the restore bounds and the restore history stack.
   PerformMoveWindowAccel();
+  std::vector<chromeos::WindowStateType> restore_stack =
+      window_state->GetWindowStateTypeRestoreHistoryForTesting();
   EXPECT_TRUE(window_state->IsMaximized());
   EXPECT_EQ(restore_bounds_in_second_display,
             window_state->GetRestoreBoundsInScreen());
@@ -497,6 +491,7 @@ TEST_F(DisplayMoveWindowUtilTest, RestoreHistoryOnUpdatedRestoreBounds) {
   // Verify the restore bounds and restore history after toggling to fullscreen
   // the window.
   accelerators::ToggleFullscreen();
+  restore_stack = window_state->GetWindowStateTypeRestoreHistoryForTesting();
   EXPECT_TRUE(window_state->IsFullscreen());
   EXPECT_EQ(gfx::Rect(400, 0, 400, 300), w->GetBoundsInScreen());
   EXPECT_EQ(restore_bounds_in_second_display,
@@ -508,6 +503,7 @@ TEST_F(DisplayMoveWindowUtilTest, RestoreHistoryOnUpdatedRestoreBounds) {
   // Verify the restore bounds and restore history after toggling to
   // restore the window to maxmized.
   accelerators::ToggleFullscreen();
+  restore_stack = window_state->GetWindowStateTypeRestoreHistoryForTesting();
   EXPECT_TRUE(window_state->IsMaximized());
   EXPECT_EQ(restore_bounds_in_second_display,
             window_state->GetRestoreBoundsInScreen());
@@ -520,6 +516,7 @@ TEST_F(DisplayMoveWindowUtilTest, RestoreHistoryOnUpdatedRestoreBounds) {
   // the window again. And the window should stay in the second display with
   // correct restore bounds.
   accelerators::ToggleFullscreen();
+  restore_stack = window_state->GetWindowStateTypeRestoreHistoryForTesting();
   EXPECT_TRUE(window_state->IsFullscreen());
   EXPECT_EQ(restore_bounds_in_second_display,
             window_state->GetRestoreBoundsInScreen());

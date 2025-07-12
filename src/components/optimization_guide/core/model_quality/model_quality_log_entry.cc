@@ -4,44 +4,85 @@
 
 #include "components/optimization_guide/core/model_quality/model_quality_log_entry.h"
 
-#include "base/check.h"
-#include "base/metrics/histogram_functions.h"
+#include "base/base64.h"
+#include "components/optimization_guide/core/feature_registry/mqls_feature_registry.h"
 #include "components/optimization_guide/core/model_execution/feature_keys.h"
 #include "components/optimization_guide/core/model_quality/model_quality_util.h"
+
+namespace {
+
+void SetMqlsLogForWebUI(
+    base::WeakPtr<optimization_guide::ModelQualityLogsUploaderService> uploader,
+    std::string feature,
+    std::string proto,
+    std::string status) {
+  if (!uploader) {
+    return;
+  }
+
+  auto mqls_log_ptr =
+      optimization_guide_internals::mojom::MqlsLog::New(feature, proto, status);
+  uploader->SetMqlsLogForWebUI(std::move(mqls_log_ptr));
+}
+
+}  // namespace
+
 namespace optimization_guide {
 
 ModelQualityLogEntry::ModelQualityLogEntry(
-    std::unique_ptr<proto::LogAiDataRequest> log_ai_data_request,
-    base::WeakPtr<ModelQualityLogsUploaderService>
-        model_quality_uploader_service)
-    : log_ai_data_request_(std::move(log_ai_data_request)),
-      model_quality_uploader_service_(model_quality_uploader_service) {}
+    base::WeakPtr<ModelQualityLogsUploaderService> uploader)
+    : log_ai_data_request_(std::make_unique<proto::LogAiDataRequest>()),
+      uploader_(uploader) {}
 
 ModelQualityLogEntry::~ModelQualityLogEntry() {
-  // Upload logs if we have reference to the uploader service and the
-  // LogAiDataRequest is not null. This can happen when the logs are not
-  // uploaded in the feature which owns the ModelQualityLogEntry for e.g when
-  // chrome is closed.
-  bool uploaded_on_destruction = false;
-  if (model_quality_uploader_service_ && log_ai_data_request_) {
-    auto key = GetModelExecutionFeature(log_ai_data_request_->feature_case());
+  // Upload logs upon destruction. Typical usage will destroy a log entry
+  // intentionally in order to trigger upload. However, uploading upon
+  // destruction also covers the case when the logs are not explicitly uploaded
+  // in the feature code -- for example, when Chrome is closed.
 
-    if (key && model_quality_uploader_service_->CanUploadLogs(*key)) {
-      // Set the system profile proto before upload. We do that here as we need
-      // to access the API on //chrome.
-      model_quality_uploader_service_->SetSystemProfileProto(
-          logging_metadata());
-
-      // We pass the ownership of the LogAiDataRequest to avoid re-uploading the
-      // logs.
-      model_quality_uploader_service_->UploadModelQualityLogs(
-          std::move(log_ai_data_request_));
-      uploaded_on_destruction = true;
-    }
+  // Bail early if there's nothing to upload. The uploader will not exist if
+  // uploading is not allowed -- for example, in Incognito mode.
+  if (!log_ai_data_request_) {
+    return;
   }
-  base::UmaHistogramBoolean(
-      "OptimizationGuide.ModelQualityLogEntry.UploadedOnDestruction",
-      uploaded_on_destruction);
+  const MqlsFeatureMetadata* metadata =
+      MqlsFeatureRegistry::GetInstance().GetFeature(
+          log_ai_data_request_->feature_case());
+  std::string serialized_proto =
+      base::Base64Encode(log_ai_data_request_->SerializeAsString());
+  if (!metadata) {
+    // The feature is not configured to use MQLS, don't upload anything.
+    SetMqlsLogForWebUI(uploader_,
+                       absl::StrFormat("Feature case: %d",
+                                       log_ai_data_request_->feature_case()),
+                       serialized_proto, "Feature not configured to use MQLS");
+    return;
+  }
+  if (!uploader_ || !uploader_->CanUploadLogs(metadata)) {
+    SetMqlsLogForWebUI(uploader_, metadata->name(), serialized_proto,
+                       "Not allowed to upload");
+    return;
+  }
+
+  SetMqlsLogForWebUI(uploader_, metadata->name(), serialized_proto,
+                     "Sent for upload");
+  uploader_->UploadModelQualityLogs(std::move(log_ai_data_request_));
+}
+
+// static
+void ModelQualityLogEntry::Upload(std::unique_ptr<ModelQualityLogEntry> entry) {
+  if (entry) {
+    // Destroying the log entry triggers an upload.
+    entry.reset();
+  }
+}
+
+// static
+void ModelQualityLogEntry::Drop(std::unique_ptr<ModelQualityLogEntry> entry) {
+  if (entry) {
+    // Clearing the data results in dropping the log.
+    entry->log_ai_data_request_.reset();
+  }
 }
 
 }  // namespace optimization_guide

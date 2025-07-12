@@ -60,6 +60,17 @@ class NoOpCronetContextCallback : public CronetContext::Callback {
   void OnStopNetLogCompleted() override {}
 
   ~NoOpCronetContextCallback() override = default;
+
+  bool OnBeforeTunnelRequest(int chain_id,
+                             net::HttpRequestHeaders* extra_headers) override {
+    return true;
+  }
+
+  bool OnTunnelHeadersReceived(
+      int chain_id,
+      const net::HttpResponseHeaders& response_headers) override {
+    return true;
+  }
 };
 
 std::unique_ptr<URLRequestContextConfig> CreateSimpleURLRequestContextConfig() {
@@ -92,7 +103,9 @@ std::unique_ptr<URLRequestContextConfig> CreateSimpleURLRequestContextConfig() {
       // Enable Public Key Pinning bypass for local trust anchors.
       true,
       // Optional network thread priority.
-      std::nullopt);
+      std::nullopt,
+      // Optional proxy options.
+      std::optional<cronet::proto::ProxyOptions>());
 }
 
 class NetworkTasksTest : public testing::Test {
@@ -135,7 +148,7 @@ class NetworkTasksTest : public testing::Test {
   }
 
   void SpawnNetworkBoundURLRequestContext(net::handles::NetworkHandle network) {
-    PostToNetworkThreadSync(base::BindLambdaForTesting([=]() {
+    PostToNetworkThreadSync(base::BindLambdaForTesting([=, this]() {
       network_tasks_->SpawnNetworkBoundURLRequestContextForTesting(network);
     }));
   }
@@ -194,11 +207,6 @@ class NetworkTasksTest : public testing::Test {
 
 TEST_F(NetworkTasksTest, NetworkBoundContextLifetime) {
 #if BUILDFLAG(IS_ANDROID)
-  if (base::android::BuildInfo::GetInstance()->sdk_int() <
-      base::android::SDK_VERSION_MARSHMALLOW) {
-    GTEST_SKIP() << "Network binding on Android requires an API level >= 23";
-  }
-
   constexpr net::handles::NetworkHandle kNetwork = 1;
 
   CheckURLRequestContextExistence(kNetwork, false);
@@ -216,11 +224,6 @@ TEST_F(NetworkTasksTest, NetworkBoundContextLifetime) {
 
 TEST_F(NetworkTasksTest, NetworkBoundContextWithPendingRequest) {
 #if BUILDFLAG(IS_ANDROID)
-  if (base::android::BuildInfo::GetInstance()->sdk_int() <
-      base::android::SDK_VERSION_MARSHMALLOW) {
-    GTEST_SKIP() << "Network binding on Android requires an API level >= 23";
-  }
-
   constexpr net::handles::NetworkHandle kNetwork = 1;
 
   CheckURLRequestContextExistence(kNetwork, false);

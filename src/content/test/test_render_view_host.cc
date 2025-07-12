@@ -8,8 +8,10 @@
 #include <optional>
 #include <tuple>
 
+#include "base/notimplemented.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
+#include "components/input/render_widget_host_input_event_router.h"
 #include "components/viz/common/surfaces/parent_local_surface_id_allocator.h"
 #include "components/viz/host/host_frame_sink_manager.h"
 #include "content/browser/blob_storage/chrome_blob_storage_context.h"
@@ -19,7 +21,6 @@
 #include "content/browser/dom_storage/session_storage_namespace_impl.h"
 #include "content/browser/renderer_host/data_transfer_util.h"
 #include "content/browser/renderer_host/render_frame_proxy_host.h"
-#include "content/browser/renderer_host/render_widget_host_input_event_router.h"
 #include "content/browser/storage_partition_impl.h"
 #include "content/common/input/synthetic_gesture_target.h"
 #include "content/public/browser/browser_context.h"
@@ -99,20 +100,19 @@ gfx::NativeView TestRenderWidgetHostView::GetNativeView() {
 }
 
 gfx::NativeViewAccessible TestRenderWidgetHostView::GetNativeViewAccessible() {
-  return nullptr;
+  return gfx::NativeViewAccessible();
 }
 
 ui::TextInputClient* TestRenderWidgetHostView::GetTextInputClient() {
 #if !BUILDFLAG(IS_IOS)
   return &text_input_client_;
 #else
-  NOTREACHED_IN_MIGRATION();
-  return nullptr;
+  NOTREACHED();
 #endif
 }
 
 bool TestRenderWidgetHostView::HasFocus() {
-  return has_focus_;
+  return true;
 }
 
 void TestRenderWidgetHostView::ShowWithVisibility(
@@ -127,7 +127,6 @@ void TestRenderWidgetHostView::Hide() {
   if (!host()->is_hidden())
     host()->WasHidden();
   is_showing_ = false;
-  has_focus_ = false;
 }
 
 bool TestRenderWidgetHostView::IsShowing() {
@@ -197,8 +196,20 @@ uint64_t TestRenderWidgetHostView::GetNSViewId() const {
 }
 #endif
 
+#if BUILDFLAG(IS_ANDROID)
+bool TestRenderWidgetHostView::IsTouchSequencePotentiallyActiveOnViz() {
+  return false;
+}
+#endif
+
 gfx::Rect TestRenderWidgetHostView::GetBoundsInRootWindow() {
   return gfx::Rect();
+}
+
+const viz::LocalSurfaceId&
+TestRenderWidgetHostView::IncrementSurfaceIdForNavigation() {
+  static constexpr viz::LocalSurfaceId kInvalidId;
+  return kInvalidId;
 }
 
 void TestRenderWidgetHostView::ClearFallbackSurfaceForCommitPending() {
@@ -234,10 +245,6 @@ viz::SurfaceId TestRenderWidgetHostView::GetCurrentSurfaceId() const {
   return viz::SurfaceId();
 }
 
-bool TestRenderWidgetHostView::IsTestRenderWidgetHostView() const {
-  return true;
-}
-
 void TestRenderWidgetHostView::OnFirstSurfaceActivation(
     const viz::SurfaceInfo& surface_info) {
   // TODO(fsamuel): Once surface synchronization is turned on, the fallback
@@ -263,7 +270,11 @@ TestRenderWidgetHostView::CreateSyntheticGestureTarget() {
 
 void TestRenderWidgetHostView::UpdateBackgroundColor() {}
 
-void TestRenderWidgetHostView::SetDisplayFeatureForTesting(
+void TestRenderWidgetHostView::DisableDisplayFeatureOverrideForEmulation() {
+  display_feature_ = std::nullopt;
+}
+
+void TestRenderWidgetHostView::OverrideDisplayFeatureForEmulation(
     const DisplayFeature* display_feature) {
   if (display_feature)
     display_feature_ = *display_feature;
@@ -331,7 +342,7 @@ ui::Compositor* TestRenderWidgetHostView::GetCompositor() {
   return compositor_;
 }
 
-CursorManager* TestRenderWidgetHostView::GetCursorManager() {
+input::CursorManager* TestRenderWidgetHostView::GetCursorManager() {
   return &cursor_manager_;
 }
 
@@ -401,13 +412,17 @@ TestRenderViewHost::~TestRenderViewHost() {
 }
 
 bool TestRenderViewHost::CreateTestRenderView() {
-  return CreateRenderView(std::nullopt, MSG_ROUTING_NONE, false);
+  return CreateRenderView(/*opener_frame_token=*/std::nullopt,
+                          /*proxy_route_id=*/MSG_ROUTING_NONE,
+                          /*window_was_created_with_opener=*/false,
+                          /*navigation_metrics_token=*/std::nullopt);
 }
 
 bool TestRenderViewHost::CreateRenderView(
     const std::optional<blink::FrameToken>& opener_frame_token,
     int proxy_route_id,
-    bool window_was_created_with_opener) {
+    bool window_was_created_with_opener,
+    const std::optional<base::UnguessableToken>& navigation_metrics_token) {
   DCHECK(!IsRenderViewLive());
   // Mark the `blink::WebView` as live, though there's nothing to do here since
   // we don't yet use mojo to talk to the RenderView.
@@ -419,11 +434,11 @@ bool TestRenderViewHost::CreateRenderView(
   RenderFrameHostImpl* main_frame = nullptr;
   RenderFrameProxyHost* proxy_host = nullptr;
   if (main_frame_routing_id_ != MSG_ROUTING_NONE) {
-    main_frame = RenderFrameHostImpl::FromID(GetProcess()->GetID(),
+    main_frame = RenderFrameHostImpl::FromID(GetProcess()->GetDeprecatedID(),
                                              main_frame_routing_id_);
   } else {
-    proxy_host =
-        RenderFrameProxyHost::FromID(GetProcess()->GetID(), proxy_route_id);
+    proxy_host = RenderFrameProxyHost::FromID(GetProcess()->GetDeprecatedID(),
+                                              proxy_route_id);
   }
 
   if (!GetWidget()->view_is_frame_sink_id_owner()) {
@@ -493,8 +508,10 @@ void TestRenderViewHost::SimulateWasShown() {
 
 blink::web_pref::WebPreferences
 TestRenderViewHost::TestComputeWebPreferences() {
-  return static_cast<WebContentsImpl*>(WebContents::FromRenderViewHost(this))
-      ->ComputeWebPreferences();
+  auto* web_contents_impl =
+      static_cast<WebContentsImpl*>(WebContents::FromRenderViewHost(this));
+  return web_contents_impl->ComputeWebPreferences(
+      web_contents_impl->GetPrimaryMainFrame());
 }
 
 bool TestRenderViewHost::IsTestRenderViewHost() const {
@@ -508,7 +525,7 @@ void TestRenderViewHost::TestStartDragging(const DropData& drop_data,
   GetMainRenderFrameHost()->StartDragging(
       DropDataToDragData(
           drop_data, storage_partition->GetFileSystemAccessManager(),
-          GetProcess()->GetID(),
+          GetProcess()->GetDeprecatedID(),
           ChromeBlobStorageContext::GetFor(GetProcess()->GetBrowserContext())),
       blink::kDragOperationEvery, std::move(bitmap), gfx::Vector2d(),
       gfx::Rect(), blink::mojom::DragEventSourceInfo::New());

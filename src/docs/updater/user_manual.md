@@ -135,9 +135,18 @@ Command line arguments for the updater client are documented in the [functional 
 
 ## Error codes
 
-The updater setup process can exit with the following error codes:
-* UNABLE_TO_ELEVATE_METAINSTALLER = 113: This error code indicates that the
-updater setup failed to elevate itself when trying to install a system app.
+To allow for the updater metainstaller process exit codes to be meaningful, all
+metainstaller and updater error codes are in a range above 0xFFFF (65535) for
+Windows only, which is the range of Windows error codes.
+
+Specifically:
+* [Metainstaller error codes](https://source.chromium.org/chromium/chromium/src/+/main:chrome/updater/win/installer/exit_code.h)
+are in the 73000 range.
+* Error codes
+[funnelled through `update_client`](https://source.chromium.org/search?q=kCustomInstallErrorBase&sq=&ss=chromium%2Fchromium%2Fsrc:chrome%2Fupdater%2F)
+are in the 74000 range.
+* [updater error codes](https://source.chromium.org/chromium/chromium/src/+/main:chrome/updater/constants.h?q=%22%2F%2F%20Error%20codes.%22&ss=chromium%2Fchromium%2Fsrc:chrome%2Fupdater%2F)
+are in the 75000 range.
 
 ## Dynamic Install Parameters
 
@@ -147,7 +156,7 @@ Windows tagged metainstallers support a number of dynamic install parameters:
 
 `needsadmin` is one of the install parameters that can be specified for
 first installs via the
-[metainstaller tag](https://source.chromium.org/chromium/chromium/src/+/main:chrome/updater/tools/tag.py).
+[metainstaller tag](https://crsrc.org/c/chrome/updater/tools/tag_main.cc).
 `needsadmin` is used to indicate whether the application needs admin rights to
 install.
 
@@ -169,6 +178,36 @@ user refuses the
 however, the application is then only installed for the current user. The
 application installer needs to be able to support the installation as system, or
 per-user, or both modes.
+
+### `lang`
+
+`lang` is one of the install parameters that can be specified for
+installs via the
+[metainstaller tag](https://source.chromium.org/chromium/chromium/src/+/main:chrome/updater/tools/tag.py).
+`lang` is used to indicate the language that the updater installation UI is
+displayed in.
+
+For example, here is a command line for the Updater on Windows that includes
+`lang` Arabic:
+```
+UpdaterSetup.exe --install="appguid=YourAppID&lang=ar"
+```
+
+The full list of supported languages for Chromium and Google Chrome respectively are listed in
+[chromium_strings.grd](https://source.chromium.org/chromium/chromium/src/+/main:chrome/app/chromium_strings.grd)
+and
+[google_chrome_strings.grd](https://source.chromium.org/chromium/chromium/src/+/main:chrome/app/google_chrome_strings.grd)
+under `<translations>`.
+
+For example:
+
+```
+<translations>
+    <file path="resources/chromium_strings_af.xtb" lang="af" />
+    ...
+```
+
+indicates that `lang=af` is a valid tag fragment.
 
 ### `installdataindex`
 
@@ -241,3 +280,21 @@ installed. Note that there are two possible product directories (one for
 system scope and one for user scope), and so there are often two log files.
 
 See [the functional spec](functional_spec.md#logging) for more details.
+
+## Force triggering an update check
+
+Update checks can be force-triggered on Windows by doing the following:
+* Edit (from an elevated editor for `system` installs)
+`{%LocalAppData%|%programfiles(x86)%}\{Company}\{Company}Updater\prefs.json`.
+* Change the value of "last_checked" to "0".
+* Save the file.
+* Run the task starting with `{Company}UpdaterTask{User|System}` in the
+Task Scheduler.
+
+The same steps apply for macOS except:
+* the path to `prefs.js` is
+`/Library/Application Support/{Company}/{Company}Updater/prefs.json`
+or, `~/Library/Application Support/{Company}/{Company}Updater/prefs.json`.
+* And to run the wake task a user should run
+`sudo launchctl start com.{Company}.{Company}Updater.wake.system` or
+`launchctl start com.{Company}.{Company}Updater.wake`.

@@ -215,7 +215,7 @@ TEST_F(DevToolsFrontendHostImplJsErrorReportingEnabledTest,
       u"chrome-untrusted://media-app",
       u"chrome-error://chromewebdata/",
       u"chrome-extension://abc123/",
-      u"wootzapp://settings",
+      u"chrome://settings",
       u"about:blank",
   };
 

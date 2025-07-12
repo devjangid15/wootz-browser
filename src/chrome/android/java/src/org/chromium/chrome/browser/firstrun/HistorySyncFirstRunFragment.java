@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.firstrun;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.res.Configuration;
 import android.os.Bundle;
 import android.view.LayoutInflater;
@@ -14,19 +16,34 @@ import android.widget.FrameLayout;
 
 import androidx.fragment.app.Fragment;
 
+import org.chromium.base.Log;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.chrome.browser.signin.services.IdentityServicesProvider;
+import org.chromium.chrome.browser.signin.services.SigninManager;
+import org.chromium.chrome.browser.signin.services.SigninMetricsUtils;
+import org.chromium.chrome.browser.ui.signin.history_sync.HistorySyncConfig;
 import org.chromium.chrome.browser.ui.signin.history_sync.HistorySyncCoordinator;
+import org.chromium.chrome.browser.ui.signin.history_sync.HistorySyncView;
+import org.chromium.components.signin.identitymanager.ConsentLevel;
 import org.chromium.components.signin.metrics.SigninAccessPoint;
+import org.chromium.components.signin.metrics.SyncButtonClicked;
 
+@NullMarked
 public class HistorySyncFirstRunFragment extends Fragment
         implements FirstRunFragment, HistorySyncCoordinator.HistorySyncDelegate {
-    private HistorySyncCoordinator mHistorySyncCoordinator;
+    private static final String TAG = "HistorySyncFREFrag";
+
+    private @Nullable HistorySyncCoordinator mHistorySyncCoordinator;
     private FrameLayout mFragmentView;
 
     @Override
     public View onCreateView(
-            LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
+            LayoutInflater inflater,
+            @Nullable ViewGroup container,
+            @Nullable Bundle savedInstanceState) {
         mFragmentView = new FrameLayout(getActivity());
 
         return mFragmentView;
@@ -35,32 +52,57 @@ public class HistorySyncFirstRunFragment extends Fragment
     @Override
     public void onResume() {
         super.onResume();
-        createCoordinatorAndAddToFragment();
-    }
-
-    @Override
-    public void onPause() {
-        super.onPause();
-        if (mHistorySyncCoordinator != null) {
-            mHistorySyncCoordinator.destroy();
-            mHistorySyncCoordinator = null;
-        }
+        createViewAndAttachToFragment();
     }
 
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
-        if (mHistorySyncCoordinator == null) {
+        createViewAndAttachToFragment();
+    }
+
+    private void createViewAndAttachToFragment() {
+        maybeCreateCoordinator();
+        if (mHistorySyncCoordinator == null) return;
+
+        HistorySyncView view = mHistorySyncCoordinator.maybeRecreateView();
+        if (view != null) {
+            // View is non-null when HistorySyncView has created a new view. This new view will
+            // replace any pre-existing view.
+            mFragmentView.removeAllViews();
+            mFragmentView.addView(mHistorySyncCoordinator.getView());
+        }
+    }
+
+    private void maybeCreateCoordinator() {
+        if (mHistorySyncCoordinator != null) return;
+
+        FirstRunPageDelegate delegate = assumeNonNull(getPageDelegate());
+        Profile profile = delegate.getProfileProviderSupplier().get().getOriginalProfile();
+        SigninManager signinManager =
+                assumeNonNull(IdentityServicesProvider.get().getSigninManager(profile));
+        if (signinManager.getIdentityManager().getPrimaryAccountInfo(ConsentLevel.SIGNIN) == null) {
+            Log.w(TAG, "No primary account set, dismissing the history sync screen.");
+            getPageDelegate().advanceToNextPage();
             return;
         }
-        createCoordinatorAndAddToFragment();
+        mHistorySyncCoordinator =
+                new HistorySyncCoordinator(
+                        getActivity(),
+                        this,
+                        profile,
+                        new HistorySyncConfig(),
+                        SigninAccessPoint.START_PAGE,
+                        false,
+                        false,
+                        null);
     }
 
     /** Implements {@link FirstRunFragment}. */
     @Override
     public void setInitialA11yFocus() {
         // Ignore calls before view is created.
-        if (getView() == null) return;
+        if (getView() == null || mHistorySyncCoordinator == null) return;
 
         final View title = getView().findViewById(R.id.history_sync_title);
         title.sendAccessibilityEvent(AccessibilityEvent.TYPE_VIEW_FOCUSED);
@@ -68,33 +110,43 @@ public class HistorySyncFirstRunFragment extends Fragment
 
     /** Implements {@link HistorySyncDelegate} */
     @Override
-    public void dismissHistorySync() {
-        getPageDelegate().advanceToNextPage();
-        mHistorySyncCoordinator.destroy();
-        mHistorySyncCoordinator = null;
+    public void dismissHistorySync(boolean isHistorySyncAccepted) {
+        assumeNonNull(getPageDelegate()).advanceToNextPage();
+        if (mHistorySyncCoordinator != null) {
+            mHistorySyncCoordinator.destroy();
+            mHistorySyncCoordinator = null;
+        }
+    }
+
+    /** Implements {@link HistorySyncDelegate} */
+    @Override
+    public void recordHistorySyncOptIn(
+            @SigninAccessPoint int accessPoint, @SyncButtonClicked int syncButtonClicked) {
+        FirstRunPageDelegate delegate = assumeNonNull(getPageDelegate());
+        switch (syncButtonClicked) {
+            case SyncButtonClicked.HISTORY_SYNC_OPT_IN_EQUAL_WEIGHTED:
+            case SyncButtonClicked.HISTORY_SYNC_OPT_IN_NOT_EQUAL_WEIGHTED:
+                delegate.recordFreProgressHistogram(MobileFreProgress.HISTORY_SYNC_ACCEPTED);
+                SigninMetricsUtils.logHistorySyncAcceptButtonClicked(
+                        SigninAccessPoint.START_PAGE, syncButtonClicked);
+                break;
+            case SyncButtonClicked.HISTORY_SYNC_CANCEL_EQUAL_WEIGHTED:
+            case SyncButtonClicked.HISTORY_SYNC_CANCEL_NOT_EQUAL_WEIGHTED:
+                delegate.recordFreProgressHistogram(MobileFreProgress.HISTORY_SYNC_DISMISSED);
+                SigninMetricsUtils.logHistorySyncDeclineButtonClicked(
+                        SigninAccessPoint.START_PAGE, syncButtonClicked);
+                break;
+            default:
+                throw new IllegalStateException("Unrecognized sync button type");
+        }
     }
 
     @Override
-    public boolean isLargeScreen() {
-        return !getPageDelegate().canUseLandscapeLayout();
-    }
-
-    private void createCoordinatorAndAddToFragment() {
+    public void onDetach() {
+        super.onDetach();
         if (mHistorySyncCoordinator != null) {
             mHistorySyncCoordinator.destroy();
+            mHistorySyncCoordinator = null;
         }
-        assert getPageDelegate().getProfileProviderSupplier().get() != null;
-        Profile profile = getPageDelegate().getProfileProviderSupplier().get().getOriginalProfile();
-        mHistorySyncCoordinator =
-                new HistorySyncCoordinator(
-                        getContext(),
-                        this,
-                        profile,
-                        SigninAccessPoint.START_PAGE,
-                        false,
-                        false,
-                        null);
-        mFragmentView.removeAllViews();
-        mFragmentView.addView(mHistorySyncCoordinator.getView());
     }
 }

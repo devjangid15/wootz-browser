@@ -5,6 +5,7 @@
 #include "ash/wm/overview/overview_window_drag_controller.h"
 
 #include <algorithm>
+#include <array>
 
 #include "ash/display/mouse_cursor_event_filter.h"
 #include "ash/public/cpp/shell_window_ids.h"
@@ -13,7 +14,7 @@
 #include "ash/shell.h"
 #include "ash/wm/desks/desk_icon_button.h"
 #include "ash/wm/desks/desks_util.h"
-#include "ash/wm/desks/legacy_desk_bar_view.h"
+#include "ash/wm/desks/overview_desk_bar_view.h"
 #include "ash/wm/float/float_controller.h"
 #include "ash/wm/overview/overview_constants.h"
 #include "ash/wm/overview/overview_controller.h"
@@ -24,6 +25,9 @@
 #include "ash/wm/overview/overview_session.h"
 #include "ash/wm/overview/overview_utils.h"
 #include "ash/wm/overview/scoped_float_container_stacker.h"
+#include "ash/wm/scoped_windows_mover.h"
+#include "ash/wm/snap_group/snap_group.h"
+#include "ash/wm/snap_group/snap_group_controller.h"
 #include "ash/wm/snap_group/snap_group_metrics.h"
 #include "ash/wm/splitview/split_view_constants.h"
 #include "ash/wm/splitview/split_view_drag_indicators.h"
@@ -33,6 +37,7 @@
 #include "ash/wm/window_util.h"
 #include "ash/wm/wm_constants.h"
 #include "base/auto_reset.h"
+#include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/numerics/safe_conversions.h"
 #include "chromeos/ui/frame/caption_buttons/snap_controller.h"
@@ -106,19 +111,18 @@ bool DraggedItemIsVisibleOnAllDesks(OverviewItemBase* item) {
 }
 
 // Returns the scaled-down size of the dragged item that should be used when
-// it's dragged over the LegacyDeskBarView that belongs to |overview_grid|.
+// it's dragged over the OverviewDeskBarView that belongs to |overview_grid|.
 // |window_original_size| is the size of the item's window before it was scaled
 // up for dragging.
 gfx::SizeF GetItemSizeWhenOnDesksBar(OverviewGrid* overview_grid,
                                      const gfx::SizeF& window_original_size) {
   DCHECK(overview_grid);
-  const LegacyDeskBarView* desks_bar_view = overview_grid->desks_bar_view();
+  const OverviewDeskBarView* desks_bar_view = overview_grid->desks_bar_view();
   DCHECK(desks_bar_view);
 
-  const int expanded_desks_bar_height =
-      LegacyDeskBarView::GetPreferredBarHeight(
-          overview_grid->root_window(), LegacyDeskBarView::Type::kOverview,
-          LegacyDeskBarView::State::kExpanded);
+  const int expanded_desks_bar_height = DeskBarViewBase::GetPreferredBarHeight(
+      overview_grid->root_window(), DeskBarViewBase::Type::kOverview,
+      DeskBarViewBase::State::kExpanded);
 
   // We should always use the expanded desks bar height here even if the desks
   // bar is actually in zero state to calculate `scale_factor`. Because if zero
@@ -166,13 +170,6 @@ void RecordDrag(OverviewDragAction action) {
   base::UmaHistogramEnumeration("Ash.Overview.WindowDrag.Workflow", action);
 }
 
-// Returns true if the `item` can to be snapped in overview, an
-// `OverviewGroupItem` with two `OverviewItem`s is not allowed to snap in
-// overview.
-bool IsEligibleForDragToSnap(OverviewItemBase* item) {
-  return (item->GetWindows().size() == 1u) && ShouldAllowSplitView();
-}
-
 // Restores the new desk button state back to the
 // `DeskIconButton::State::kExpanded` on drag ended on all `OverviewGrid`s.
 void MaybeRestoreNewDeskButtonState() {
@@ -199,14 +196,22 @@ void MaybeRestoreNewDeskButtonState() {
 // represent the window on the target root.
 class OverviewItemMoveHelper : public aura::WindowObserver {
  public:
-  // |target_item_bounds| is the bounds of the dragged overview item when the
-  // drag ends. |target_item_bounds| is used to put the new item where the old
-  // item ended, so it looks like it is the same item. Then the item is animated
-  // from there to its proper position in the grid.
-  OverviewItemMoveHelper(aura::Window* window,
+  // |windows| contains the list of windows to be moved, and |item_window| is the
+  // one currently being dragged in this list. |target_item_bounds| is the bounds
+  // of the item window when the drag ends. |target_item_bounds| is used to put
+  // the new item where the old item ended, so it looks like it is the same
+  // item. Then the item is animated from there to its proper position in the
+  // grid.
+  OverviewItemMoveHelper(aura::Window::Windows windows,
+                         aura::Window* item_window,
                          const gfx::RectF& target_item_bounds)
-      : window_(window), target_item_bounds_(target_item_bounds) {
-    window->AddObserver(this);
+      : windows_(std::move(windows)),
+        item_window_(item_window),
+        target_item_bounds_(target_item_bounds) {
+    CHECK(base::Contains(windows_, item_window_));
+    for (auto window : windows_) {
+      window->AddObserver(this);
+    }
   }
   OverviewItemMoveHelper(const OverviewItemMoveHelper&) = delete;
   OverviewItemMoveHelper& operator=(const OverviewItemMoveHelper&) = delete;
@@ -216,16 +221,18 @@ class OverviewItemMoveHelper : public aura::WindowObserver {
       overview_controller->overview_session()->PositionWindows(
           /*animate=*/true);
     }
+    DCHECK(windows_.empty());
   }
 
   // aura::WindowObserver:
   void OnWindowDestroyed(aura::Window* window) override {
-    DCHECK_EQ(window_, window);
-    delete this;
+    DCHECK(base::Contains(windows_, window));
+    ResetWindowAndDeleteIfEmpty(window);
   }
   void OnWindowAddedToRootWindow(aura::Window* window) override {
-    DCHECK_EQ(window_, window);
-    window->RemoveObserver(this);
+    DCHECK(base::Contains(windows_, window));
+    bool is_item_window = item_window_ == window;
+
     OverviewController* overview_controller = OverviewController::Get();
     if (overview_controller->InOverviewSession()) {
       // OverviewSession::AddItemInMruOrder() will add |window| to the grid
@@ -235,17 +242,35 @@ class OverviewItemMoveHelper : public aura::WindowObserver {
       session->AddItemInMruOrder(window, /*reposition=*/false,
                                  /*animate=*/false, /*restack=*/false,
                                  /*use_spawn_animation=*/false);
-      OverviewItemBase* item = session->GetOverviewItemForWindow(window);
-      DCHECK(item);
-      item->SetBounds(target_item_bounds_, OVERVIEW_ANIMATION_NONE);
-      item->set_should_restack_on_animation_end(true);
+      if (is_item_window) {
+        OverviewItemBase* item = session->GetOverviewItemForWindow(window);
+        DCHECK(item);
+        item->SetBounds(target_item_bounds_, OVERVIEW_ANIMATION_NONE);
+        item->set_should_restack_on_animation_end(true);
+      } else if (overview_controller->InOverviewSession()) {
+        // Don't animate non item window as its origin bounds isn't specified.
+        overview_controller->overview_session()->PositionWindows(
+            /*animate=*/false);
+      }
       // The destructor will call OverviewSession::PositionWindows().
     }
-    delete this;
+    ResetWindowAndDeleteIfEmpty(window);
   }
 
  private:
-  const raw_ptr<aura::Window> window_;
+  void ResetWindowAndDeleteIfEmpty(aura::Window* window) {
+    window->RemoveObserver(this);
+    if (item_window_ == window) {
+      item_window_ = nullptr;
+    }
+    std::erase(windows_, window);
+    if (windows_.empty()) {
+      delete this;
+    }
+  }
+
+  aura::Window::Windows windows_;
+  raw_ptr<aura::Window> item_window_;
   const gfx::RectF target_item_bounds_;
 };
 
@@ -261,7 +286,8 @@ OverviewWindowDragController::OverviewWindowDragController(
       event_source_item_(event_source_item),
       display_count_(Shell::GetAllRootWindows().size()),
       is_touch_dragging_(is_touch_dragging),
-      is_eligible_for_drag_to_snap_(IsEligibleForDragToSnap(item)),
+      is_eligible_for_drag_to_snap_(
+          IsEligibleForDraggingToSnapInOverview(item)),
       virtual_desks_bar_enabled_(GetVirtualDesksBarEnabled(item)) {
   CHECK(!OverviewController::Get()->IsInStartAnimation());
   CHECK(!SplitViewController::Get(item_->root_window())->IsDividerAnimating());
@@ -332,8 +358,7 @@ OverviewWindowDragController::CompleteDrag(
 
   switch (current_drag_behavior_) {
     case DragBehavior::kNoDrag:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
 
     case DragBehavior::kUndefined:
       ActivateDraggedWindow();
@@ -397,10 +422,10 @@ void OverviewWindowDragController::StartNormalDragMode(
   }
 
   item_->UpdateShadowTypeForDrag(/*is_dragging=*/true);
+  aura::Window* dragged_window = item_->GetWindow();
 
   if (is_eligible_for_drag_to_snap_) {
-    overview_session_->SetSplitViewDragIndicatorsDraggedWindow(
-        item_->GetWindow());
+    overview_session_->SetSplitViewDragIndicatorsDraggedWindow(dragged_window);
     overview_session_->UpdateSplitViewDragIndicatorsWindowDraggingStates(
         GetRootWindowBeingDraggedIn(),
         SplitViewDragIndicators::ComputeWindowDraggingState(
@@ -410,10 +435,10 @@ void OverviewWindowDragController::StartNormalDragMode(
     item_->HideCannotSnapWarning(/*animate=*/true);
 
     // Update the split view divider bar status if necessary. If splitview is
-    // active when dragging the overview window, the split divider bar should be
-    // placed below the dragged window during dragging.
+    // active when dragging the `dragged_window`, the split divider bar should
+    // be placed below the dragged window during dragging.
     SplitViewController::Get(item_->root_window())
-        ->OnWindowDragStarted(item_->GetWindow());
+        ->OnWindowDragStarted(dragged_window);
   }
 
   if (virtual_desks_bar_enabled_) {
@@ -442,9 +467,9 @@ void OverviewWindowDragController::StartNormalDragMode(
           GetItemSizeWhenOnDesksBar(grid.get(), window_original_size);
       grid_desks_bar_data.desks_bar_bounds = grid_desks_bar_data.shrink_bounds =
           gfx::RectF(grid->desks_bar_view()->GetBoundsInScreen());
-      const int expanded_height = LegacyDeskBarView::GetPreferredBarHeight(
-          grid->root_window(), LegacyDeskBarView::Type::kOverview,
-          LegacyDeskBarView::State::kExpanded);
+      const int expanded_height = DeskBarViewBase::GetPreferredBarHeight(
+          grid->root_window(), DeskBarViewBase::Type::kOverview,
+          DeskBarViewBase::State::kExpanded);
       grid_desks_bar_data.desks_bar_bounds.set_height(expanded_height);
       grid_desks_bar_data.shrink_bounds.set_height(expanded_height);
       grid_desks_bar_data.shrink_bounds.Inset(gfx::InsetsF::VH(
@@ -455,8 +480,7 @@ void OverviewWindowDragController::StartNormalDragMode(
     }
   }
 
-  overview_session_->float_container_stacker()->OnDragStarted(
-      item_->GetWindow());
+  overview_session_->float_container_stacker()->OnDragStarted(dragged_window);
 }
 
 OverviewWindowDragController::DragResult OverviewWindowDragController::Fling(
@@ -614,6 +638,7 @@ void OverviewWindowDragController::ContinueDragToClose(
   float opacity = original_opacity_;
   if (opacity > kItemMinOpacity)
     opacity = original_opacity_ - val * (original_opacity_ - kItemMinOpacity);
+
   item_->SetOpacity(opacity);
 
   // When dragging to close, only update the y component.
@@ -661,10 +686,6 @@ void OverviewWindowDragController::ContinueNormalDrag(
   // If virtual desks is enabled, we want to gradually shrink the dragged item
   // as it gets closer to get dropped into a desk mini view.
   if (virtual_desks_bar_enabled_) {
-    // TODO(sammiequon): There is a slight jump especially if we drag from the
-    // corner of a larger overview item, but this is necessary for the time
-    // being to prevent jumps from happening while shrinking. Investigate if we
-    // can satisfy all cases.
     centerpoint = location_in_screen;
 
     const auto iter = per_grid_desks_bar_data_.find(overview_grid);
@@ -855,24 +876,44 @@ OverviewWindowDragController::CompleteNormalDrag(
   if (is_dragged_to_other_display &&
       !(dragged_item_is_visible_on_all_desks &&
         item_intersects_other_display_desk_bar)) {
+    int64_t target_display_id =
+        display::Screen::GetScreen()->GetDisplayNearestWindow(target_root).id();
+    ScopedWindowsMover mover(target_display_id);
+
     // Get the window and bounds from |item_| before removing it from its grid.
     aura::Window* window = item_->GetWindow();
     const gfx::RectF target_item_bounds = item_->target_bounds();
     // Remove |item_| from overview. Leave the repositioning to the
     // |OverviewItemMoveHelper|.
-    overview_session_->RemoveItem(item_, /*item_destroying=*/false,
-                                  /*reposition=*/false);
+
+    // If snapped , breake it now.
+    if (auto* snap_group =
+            SnapGroupController::Get()->GetSnapGroupForGivenWindow(window)) {
+      mover.add_window(snap_group->window1() == window ? snap_group->window2()
+                                                       : snap_group->window1());
+      SnapGroupController::Get()->RemoveSnapGroup(
+          snap_group, SnapGroupExitPoint::kMoveToAnotherDisplay);
+
+      // Temporarily update the item.
+      item_ = overview_session_->GetOverviewItemForWindow(window);
+    }
+
+    // For the window that controls its bounds directly, wait until client moves
+    // the window.
+    if (!WindowState::Get(window)->allow_set_bounds_direct()) {
+      overview_session_->RemoveItem(item_, /*item_destroying=*/false,
+                                    /*reposition=*/false);
+    }
     item_ = nullptr;
     event_source_item_ = nullptr;
+    // Move windows to the destination. The |OverviewItemMoveHelper| will take
+    // care of the rest when the window is moved to another display's window
+    // tree.
+    mover.add_window(window);
+
     // The |OverviewItemMoveHelper| will self destruct when we move |window| to
     // |target_root|.
-    new OverviewItemMoveHelper(window, target_item_bounds);
-    // Move |window| to |target_root|. The |OverviewItemMoveHelper| will take
-    // care of the rest.
-    window_util::MoveWindowToDisplay(window,
-                                     display::Screen::GetScreen()
-                                         ->GetDisplayNearestWindow(target_root)
-                                         .id());
+    new OverviewItemMoveHelper(mover.windows(), window, target_item_bounds);
   } else {
     item_->set_should_restack_on_animation_end(true);
     overview_session_->PositionWindows(/*animate=*/true);
@@ -983,29 +1024,29 @@ void OverviewWindowDragController::RecordNormalDrag(
   if (is_dragged_to_other_display) {
     DCHECK(!is_touch_dragging_);
     if (!is_tablet) {
-      constexpr OverviewDragAction kDrag[kNormalDragActionEnumSize] = {
-          OverviewDragAction::kToGridOtherDisplayClamshellMouse,
-          OverviewDragAction::kToDeskOtherDisplayClamshellMouse,
-          OverviewDragAction::kToSnapOtherDisplayClamshellMouse};
+      constexpr std::array<OverviewDragAction, kNormalDragActionEnumSize>
+          kDrag = {OverviewDragAction::kToGridOtherDisplayClamshellMouse,
+                   OverviewDragAction::kToDeskOtherDisplayClamshellMouse,
+                   OverviewDragAction::kToSnapOtherDisplayClamshellMouse};
       RecordDrag(kDrag[action]);
     }
   } else if (is_tablet) {
     if (is_touch_dragging_) {
-      constexpr OverviewDragAction kDrag[kNormalDragActionEnumSize] = {
-          OverviewDragAction::kToGridSameDisplayTabletTouch,
-          OverviewDragAction::kToDeskSameDisplayTabletTouch,
-          OverviewDragAction::kToSnapSameDisplayTabletTouch};
+      constexpr std::array<OverviewDragAction, kNormalDragActionEnumSize>
+          kDrag = {OverviewDragAction::kToGridSameDisplayTabletTouch,
+                   OverviewDragAction::kToDeskSameDisplayTabletTouch,
+                   OverviewDragAction::kToSnapSameDisplayTabletTouch};
       RecordDrag(kDrag[action]);
     }
   } else {
-    constexpr OverviewDragAction kMouseDrag[kNormalDragActionEnumSize] = {
-        OverviewDragAction::kToGridSameDisplayClamshellMouse,
-        OverviewDragAction::kToDeskSameDisplayClamshellMouse,
-        OverviewDragAction::kToSnapSameDisplayClamshellMouse};
-    constexpr OverviewDragAction kTouchDrag[kNormalDragActionEnumSize] = {
-        OverviewDragAction::kToGridSameDisplayClamshellTouch,
-        OverviewDragAction::kToDeskSameDisplayClamshellTouch,
-        OverviewDragAction::kToSnapSameDisplayClamshellTouch};
+    constexpr std::array<OverviewDragAction, kNormalDragActionEnumSize>
+        kMouseDrag = {OverviewDragAction::kToGridSameDisplayClamshellMouse,
+                      OverviewDragAction::kToDeskSameDisplayClamshellMouse,
+                      OverviewDragAction::kToSnapSameDisplayClamshellMouse};
+    constexpr std::array<OverviewDragAction, kNormalDragActionEnumSize>
+        kTouchDrag = {OverviewDragAction::kToGridSameDisplayClamshellTouch,
+                      OverviewDragAction::kToDeskSameDisplayClamshellTouch,
+                      OverviewDragAction::kToSnapSameDisplayClamshellTouch};
     RecordDrag(is_touch_dragging_ ? kTouchDrag[action] : kMouseDrag[action]);
   }
 }
@@ -1013,14 +1054,15 @@ void OverviewWindowDragController::RecordNormalDrag(
 void OverviewWindowDragController::RecordDragToClose(
     DragToCloseAction action) const {
   DCHECK(is_touch_dragging_);
-  constexpr OverviewDragAction kClamshellDrag[kDragToCloseActionEnumSize] = {
-      OverviewDragAction::kSwipeToCloseSuccessfulClamshellTouch,
-      OverviewDragAction::kSwipeToCloseCanceledClamshellTouch,
-      OverviewDragAction::kFlingToCloseClamshellTouch};
-  constexpr OverviewDragAction kTabletDrag[kDragToCloseActionEnumSize] = {
-      OverviewDragAction::kSwipeToCloseSuccessfulTabletTouch,
-      OverviewDragAction::kSwipeToCloseCanceledTabletTouch,
-      OverviewDragAction::kFlingToCloseTabletTouch};
+  constexpr std::array<OverviewDragAction, kDragToCloseActionEnumSize>
+      kClamshellDrag = {
+          OverviewDragAction::kSwipeToCloseSuccessfulClamshellTouch,
+          OverviewDragAction::kSwipeToCloseCanceledClamshellTouch,
+          OverviewDragAction::kFlingToCloseClamshellTouch};
+  constexpr std::array<OverviewDragAction, kDragToCloseActionEnumSize>
+      kTabletDrag = {OverviewDragAction::kSwipeToCloseSuccessfulTabletTouch,
+                     OverviewDragAction::kSwipeToCloseCanceledTabletTouch,
+                     OverviewDragAction::kFlingToCloseTabletTouch};
   RecordDrag(display::Screen::GetScreen()->InTabletMode()
                  ? kTabletDrag[action]
                  : kClamshellDrag[action]);
@@ -1047,8 +1089,12 @@ void OverviewWindowDragController::MaybeScaleUpNewDeskButton() {
     return;
   }
 
+  // Do not reposition the windows while changing the desk icon button. This
+  // could cause items to shift around mid drag.
+  overview_session_->SuspendReposition();
   desks_bar_view->UpdateDeskIconButtonState(
       new_desk_button, /*target_state=*/DeskIconButton::State::kActive);
+  overview_session_->ResumeReposition();
 }
 
 }  // namespace ash

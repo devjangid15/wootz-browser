@@ -2,29 +2,34 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #import "media/capture/video/apple/video_capture_device_avfoundation.h"
-#include <optional>
-#include "base/feature_list.h"
-#include "base/time/time.h"
 
 #import <AVFoundation/AVFoundation.h>
 #import <CoreMedia/CoreMedia.h>
 #import <CoreVideo/CoreVideo.h>
 #include <stddef.h>
 #include <stdint.h>
+
 #include <optional>
 #include <sstream>
 
 #include "base/apple/foundation_util.h"
 #include "base/debug/dump_without_crashing.h"
+#include "base/feature_list.h"
 #include "base/location.h"
 #include "base/memory/raw_ptr.h"
-#include "base/metrics/histogram_macros.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #import "base/task/single_thread_task_runner.h"
+#include "base/time/time.h"
 #include "components/crash/core/common/crash_key.h"
 #include "media/base/mac/color_space_util_mac.h"
 #include "media/base/timestamp_constants.h"
@@ -60,7 +65,7 @@ constexpr NSString* kModelIdLogitech4KPro =
 constexpr gfx::ColorSpace kColorSpaceRec709Apple(
     gfx::ColorSpace::PrimaryID::BT709,
     gfx::ColorSpace::TransferID::BT709_APPLE,
-    gfx::ColorSpace::MatrixID::SMPTE170M,
+    gfx::ColorSpace::MatrixID::BT709,
     gfx::ColorSpace::RangeID::LIMITED);
 
 constexpr int kTimeToWaitBeforeStoppingPhotoOutputInSeconds = 60;
@@ -221,6 +226,7 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
   base::Lock _lock;
   // Used to avoid UAF in -captureOutput.
   base::Lock _destructionLock;
+  base::Lock _metadataLock;
   raw_ptr<media::VideoCaptureDeviceAVFoundationFrameReceiver> _frameReceiver
       GUARDED_BY(_lock);  // weak.
   bool _capturedFirstFrame GUARDED_BY(_lock);
@@ -247,6 +253,10 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
   // When enabled, converts captured frames to NV12.
   std::unique_ptr<media::SampleBufferTransformer> _sampleBufferTransformer;
 
+  // Cache the color space after transform. The cache is used to avoid log spam
+  // in case the color space cannot be correclty determined from the buffer.
+  std::optional<gfx::ColorSpace> _colorSpaceAfterTransform;
+
   AVCapturePhotoOutput* __strong _photoOutput;
 
   // Only accessed on the main thread. The takePhoto() operation is considered
@@ -257,8 +267,10 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
 
   // For testing.
   base::RepeatingCallback<void()> _onPhotoOutputStopped;
-  std::optional<bool> _isPortraitEffectSupportedForTesting;
-  std::optional<bool> _isPortraitEffectActiveForTesting;
+  std::optional<bool> _isPortraitEffectSupportedForTesting
+      GUARDED_BY(_metadataLock);
+  std::optional<bool> _isPortraitEffectActiveForTesting
+      GUARDED_BY(_metadataLock);
 
   scoped_refptr<base::SingleThreadTaskRunner> _mainThreadTaskRunner;
 }
@@ -412,9 +424,7 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
     [self stopPhotoOutput];
     if (_captureDeviceInput) {
       DCHECK(_captureDevice);
-      if (@available(macOS 12.0, *)) {
-        [_captureDevice removeObserver:self forKeyPath:@"portraitEffectActive"];
-      }
+      [_captureDevice removeObserver:self forKeyPath:@"portraitEffectActive"];
       [_captureSession stopRunning];
       [_captureSession removeInput:_captureDeviceInput];
       _captureDeviceInput = nil;
@@ -457,12 +467,10 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
   [_captureVideoDataOutput setSampleBufferDelegate:self queue:_sampleQueue];
   [_captureSession addOutput:_captureVideoDataOutput];
 
-  if (@available(macOS 12.0, *)) {
-    [_captureDevice addObserver:self
-                     forKeyPath:@"portraitEffectActive"
-                        options:0
-                        context:(__bridge void*)_captureDevice];
-  }
+  [_captureDevice addObserver:self
+                   forKeyPath:@"portraitEffectActive"
+                      options:0
+                      context:(__bridge void*)_captureDevice];
 
 #if BUILDFLAG(IS_IOS)
   _orientation = [[UIDevice currentDevice] orientation];
@@ -959,7 +967,6 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
                                           (const gfx::ColorSpace&)colorSpace {
   DCHECK(ioSurface);
   gfx::GpuMemoryBufferHandle handle;
-  handle.id = gfx::GpuMemoryBufferHandle::kInvalidId;
   handle.type = gfx::GpuMemoryBufferType::IO_SURFACE_BUFFER;
   handle.io_surface.reset(ioSurface, base::scoped_policy::RETAIN);
 
@@ -1139,9 +1146,23 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
     // TODO(hbos): Investigate how to successfully parse and/or configure the
     // color space correctly. The implications of this hack is not fully
     // understood.
+    if (!_colorSpaceAfterTransform) {
+      // Avoid log spam in case there's a problem determining the color space by
+      // only calling GetImageBufferColorSpace() once.
+      _colorSpaceAfterTransform =
+          media::GetImageBufferColorSpace(final_pixel_buffer.get());
+      base::UmaHistogramBoolean(
+          "Media.VideoCapture.Mac.ValidColorSpaceAfterTransform",
+          _colorSpaceAfterTransform->IsValid());
+
+      if (!_colorSpaceAfterTransform->IsValid()) {
+        _colorSpaceAfterTransform = kColorSpaceRec709Apple;
+      }
+    }
+
     [self processPixelBufferNV12IOSurface:final_pixel_buffer.get()
                             captureFormat:captureFormat
-                               colorSpace:kColorSpaceRec709Apple
+                               colorSpace:*_colorSpaceAfterTransform
                                 timestamp:timestamp
                        capture_begin_time:capture_begin_time];
     return;
@@ -1209,49 +1230,45 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
 
 - (void)setIsPortraitEffectSupportedForTesting:
     (bool)isPortraitEffectSupportedForTesting {
+  base::AutoLock lock(_metadataLock);
   _isPortraitEffectSupportedForTesting = isPortraitEffectSupportedForTesting;
 }
 
 - (bool)isPortraitEffectSupported {
-  DCHECK(_mainThreadTaskRunner->BelongsToCurrentThread());
+  base::AutoLock lock(_metadataLock);
   if (_isPortraitEffectSupportedForTesting.has_value()) {
     return _isPortraitEffectSupportedForTesting.value();
   }
-  if (@available(macOS 12.0, *)) {
-    return _captureDevice.activeFormat.portraitEffectSupported;
-  }
-  return false;
+  return _captureDevice.activeFormat.portraitEffectSupported;
 }
 
 - (void)setIsPortraitEffectActiveForTesting:
     (bool)isPortraitEffectActiveForTesting {
-  if (_isPortraitEffectActiveForTesting.has_value() &&
-      _isPortraitEffectActiveForTesting == isPortraitEffectActiveForTesting) {
-    return;
+  {
+    base::AutoLock lock(_metadataLock);
+    if (_isPortraitEffectActiveForTesting.has_value() &&
+        _isPortraitEffectActiveForTesting == isPortraitEffectActiveForTesting) {
+      return;
+    }
+    _isPortraitEffectActiveForTesting = isPortraitEffectActiveForTesting;
   }
-  _isPortraitEffectActiveForTesting = isPortraitEffectActiveForTesting;
   [self captureConfigurationChanged];
 }
 
 - (bool)isPortraitEffectActive {
-  DCHECK(_mainThreadTaskRunner->BelongsToCurrentThread());
+  base::AutoLock lock(_metadataLock);
   if (_isPortraitEffectActiveForTesting.has_value()) {
     return _isPortraitEffectActiveForTesting.value();
   }
-  if (@available(macOS 12.0, *)) {
-    return _captureDevice.portraitEffectActive;
-  }
-  return false;
+  return _captureDevice.portraitEffectActive;
 }
 
 - (void)observeValueForKeyPath:(NSString*)keyPath
                       ofObject:(id)object
                         change:(NSDictionary*)change
                        context:(void*)context {
-  if (@available(macOS 12.0, *)) {
-    if ([keyPath isEqual:@"portraitEffectActive"]) {
-      [self captureConfigurationChanged];
-    }
+  if ([keyPath isEqual:@"portraitEffectActive"]) {
+    [self captureConfigurationChanged];
   }
 }
 

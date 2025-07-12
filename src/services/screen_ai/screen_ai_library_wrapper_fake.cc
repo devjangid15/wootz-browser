@@ -10,7 +10,7 @@ bool ScreenAILibraryWrapperFake::Load(const base::FilePath& library_path) {
   return true;
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 void ScreenAILibraryWrapperFake::ScreenAILibraryWrapperFake::SetLogger() {}
 #endif
 
@@ -28,34 +28,28 @@ void ScreenAILibraryWrapperFake::SetFileContentFunctions(
 
 void ScreenAILibraryWrapperFake::EnableDebugMode() {}
 
-bool ScreenAILibraryWrapperFake::InitLayoutExtraction() {
-  return true;
-}
-
 bool ScreenAILibraryWrapperFake::InitOCR() {
   return true;
 }
+
+void ScreenAILibraryWrapperFake::SetOCRLightMode(bool enabled) {}
 
 bool ScreenAILibraryWrapperFake::InitMainContentExtraction() {
   return true;
 }
 
-std::optional<chrome_screen_ai::VisualAnnotation>
-ScreenAILibraryWrapperFake::PerformOcr(const SkBitmap& image) {
-  // TODO(crbug.com/41489544): Add returning preloaded result.
-  return std::nullopt;
+uint32_t ScreenAILibraryWrapperFake::GetMaxImageDimension() {
+  return 2048;
 }
 
 std::optional<chrome_screen_ai::VisualAnnotation>
-ScreenAILibraryWrapperFake::ExtractLayout(const SkBitmap& image) {
-  // TODO(crbug.com/41489544): Add returning preloaded result.
+ScreenAILibraryWrapperFake::PerformOcr(const SkBitmap& image) {
   return std::nullopt;
 }
 
 std::optional<std::vector<int32_t>>
 ScreenAILibraryWrapperFake::ExtractMainContent(
     const std::string& serialized_view_hierarchy) {
-  // TODO(crbug.com/41489544): Add returning preloaded result.
   return std::nullopt;
 }
 

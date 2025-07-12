@@ -7,6 +7,8 @@
 #import <AppKit/AppKit.h>
 #include <stddef.h>
 
+#include <string_view>
+
 #include "base/apple/bundle_locations.h"
 #include "base/apple/foundation_util.h"
 #include "base/files/file_path.h"
@@ -64,8 +66,7 @@ void ResourceBundle::LoadCommonResources() {
 }
 
 // static
-base::FilePath ResourceBundle::GetLocaleFilePath(
-    const std::string& app_locale) {
+base::FilePath ResourceBundle::GetLocaleFilePath(std::string_view app_locale) {
   NSString* mac_locale = base::SysUTF8ToNSString(app_locale);
 
   // macOS uses "_" instead of "-", so swap to get a Mac-style value.
@@ -119,11 +120,7 @@ gfx::Image& ResourceBundle::GetNativeImageNamed(int resource_id) {
       }
     }
 
-    if (!ns_image) {
-      LOG(WARNING) << "Unable to load image with id " << resource_id;
-      NOTREACHED_IN_MIGRATION();  // Want to assert in debug mode.
-      return GetEmptyImage();
-    }
+    CHECK(ns_image) << "Unable to load image with id " << resource_id;
 
     image = gfx::Image(ns_image);
   }

@@ -9,7 +9,7 @@
 #include <string>
 
 #include "base/memory/raw_ptr.h"
-#include "base/memory/weak_ptr.h"
+#include "base/scoped_observation.h"
 #include "base/time/time.h"
 #include "chrome/browser/devtools/devtools_contents_resizing_strategy.h"
 #include "chrome/browser/devtools/devtools_toggle_action.h"
@@ -18,7 +18,13 @@
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/web_contents_observer.h"
 
+#if !BUILDFLAG(IS_ANDROID)
+#include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/browser_list_observer.h"
+#endif
+
 class Browser;
+class BrowserList;
 class BrowserWindow;
 class DevToolsWindowTesting;
 class DevToolsEventForwarder;
@@ -28,7 +34,7 @@ namespace content {
 class DevToolsAgentHost;
 struct NativeWebKeyboardEvent;
 class NavigationHandle;
-class NavigationThrottle;
+class NavigationThrottleRegistry;
 class RenderFrameHost;
 }
 
@@ -83,6 +89,9 @@ enum class DevToolsClosedByAction {
 class DevToolsWindow : public DevToolsUIBindings::Delegate,
                        public content::WebContentsDelegate,
                        public content::WebContentsObserver,
+#if !BUILDFLAG(IS_ANDROID)
+                       public BrowserListObserver,
+#endif
                        public infobars::InfoBarManager::Observer {
  public:
   static const char kDevToolsApp[];
@@ -180,21 +189,15 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   // Logs UKM event when DevTools is opened.
   static void LogDevToolsOpenedUKM(content::WebContents* web_contents);
 
-  static std::unique_ptr<content::NavigationThrottle>
-  MaybeCreateNavigationThrottle(content::NavigationHandle* handle);
-
-  // Updates the WebContents inspected by the DevToolsWindow by reattaching
-  // the binding to |new_web_contents|. Called when swapping an outer
-  // WebContents with its inner WebContents.
-  void UpdateInspectedWebContents(content::WebContents* new_web_contents,
-                                  base::OnceCallback<void()> callback);
+  static void MaybeCreateAndAddNavigationThrottle(
+      content::NavigationThrottleRegistry& registry);
 
   // Sets closure to be called after load is done. If already loaded, calls
   // closure immediately.
   void SetLoadCompletedCallback(base::OnceClosure closure);
 
   // Forwards an unhandled keyboard event to the DevTools frontend.
-  bool ForwardKeyboardEvent(const content::NativeWebKeyboardEvent& event);
+  bool ForwardKeyboardEvent(const input::NativeWebKeyboardEvent& event);
 
   // Reloads inspected web contents as if it was triggered from DevTools.
   // Returns true if it has successfully handled reload, false if the caller
@@ -284,10 +287,13 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   // by user.
   static void OnPageCloseCanceled(content::WebContents* contents);
 
-  content::WebContents* GetInspectedWebContents();
-
   // content::DevToolsUIBindings::Delegate overrides
+  content::WebContents* GetInspectedWebContents() override;
   void ActivateWindow() override;
+
+  void MainWebContentRenderFrameHostChanged(
+      content::RenderFrameHost* old_frame,
+      content::RenderFrameHost* new_frame);
 
  private:
   friend class DevToolsWindowTesting;
@@ -335,6 +341,7 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
     kFrontendNode,
     kFrontendRemote,
     kFrontendRemoteWorker,
+    kFrontendRemoteTab,
   };
 
   DevToolsWindow(FrontendType frontend_type,
@@ -388,13 +395,14 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
 
   // content::WebContentsDelegate:
   void ActivateContents(content::WebContents* contents) override;
-  void AddNewContents(content::WebContents* source,
-                      std::unique_ptr<content::WebContents> new_contents,
-                      const GURL& target_url,
-                      WindowOpenDisposition disposition,
-                      const blink::mojom::WindowFeatures& window_features,
-                      bool user_gesture,
-                      bool* was_blocked) override;
+  content::WebContents* AddNewContents(
+      content::WebContents* source,
+      std::unique_ptr<content::WebContents> new_contents,
+      const GURL& target_url,
+      WindowOpenDisposition disposition,
+      const blink::mojom::WindowFeatures& window_features,
+      bool user_gesture,
+      bool* was_blocked) override;
   void WebContentsCreated(content::WebContents* source_contents,
                           int opener_render_process_id,
                           int opener_render_frame_id,
@@ -408,10 +416,9 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
                          bool* proceed_to_fire_unload) override;
   content::KeyboardEventProcessingResult PreHandleKeyboardEvent(
       content::WebContents* source,
-      const content::NativeWebKeyboardEvent& event) override;
-  bool HandleKeyboardEvent(
-      content::WebContents* source,
-      const content::NativeWebKeyboardEvent& event) override;
+      const input::NativeWebKeyboardEvent& event) override;
+  bool HandleKeyboardEvent(content::WebContents* source,
+                           const input::NativeWebKeyboardEvent& event) override;
   content::JavaScriptDialogManager* GetJavaScriptDialogManager(
       content::WebContents* source) override;
   std::unique_ptr<content::EyeDropper> OpenEyeDropper(
@@ -454,6 +461,11 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   using content::WebContentsObserver::BeforeUnloadFired;
   void PrimaryPageChanged(content::Page& page) override;
 
+#if !BUILDFLAG(IS_ANDROID)
+  // BrowserListObserver:
+  void OnBrowserRemoved(Browser* browser) override;
+#endif
+
   // infobars::InfoBarManager::Observer
   void OnInfoBarRemoved(infobars::InfoBar* infobar, bool animate) override;
 
@@ -472,8 +484,6 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   // display web modal dialogs triggered by it.
   void RegisterModalDialogManager(Browser* browser);
 
-  void OnReattachMainTargetComplete(base::Value);
-
   // Called when the accepted language changes. |navigator.language| of the
   // DevTools window should match the application language. When the user
   // changes the accepted language then this listener flips the language back
@@ -488,6 +498,21 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   FrontendType frontend_type_;
   raw_ptr<Profile> profile_;
   raw_ptr<content::WebContents> main_web_contents_;
+
+  class MainWebContentsObserver : public content::WebContentsObserver {
+   public:
+    MainWebContentsObserver(content::WebContents& web_contents,
+                            DevToolsWindow& window)
+        : WebContentsObserver(&web_contents), window_(window) {}
+    ~MainWebContentsObserver() override;
+
+   private:
+    void RenderFrameHostChanged(content::RenderFrameHost* old_frame,
+                                content::RenderFrameHost* new_frame) override;
+
+    raw_ref<DevToolsWindow> window_;
+  };
+  MainWebContentsObserver main_web_contents_observer_;
 
   // DevToolsWindow is informed of the creation of the |toolbox_web_contents_|
   // in WebContentsCreated right before ownership is passed to to DevToolsWindow
@@ -535,7 +560,10 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   raw_ptr<infobars::InfoBar> sharing_infobar_ = nullptr;
   int checked_sharing_process_id_ = content::ChildProcessHost::kInvalidUniqueID;
 
-  base::OnceCallback<void()> reattach_complete_callback_;
+#if !BUILDFLAG(IS_ANDROID)
+  base::ScopedObservation<BrowserList, BrowserListObserver>
+      browser_list_observation_{this};
+#endif
 
   PrefChangeRegistrar pref_change_registrar_;
 

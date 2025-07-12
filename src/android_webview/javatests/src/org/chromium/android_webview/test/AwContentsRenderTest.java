@@ -22,18 +22,25 @@ import org.junit.runners.Parameterized.UseParametersRunnerFactory;
 import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.AwContents.VisualStateCallback;
 import org.chromium.android_webview.test.util.GraphicsTestUtils;
+import org.chromium.base.ThreadUtils;
+import org.chromium.base.test.util.Batch;
+import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.RequiresRestart;
 import org.chromium.base.test.util.UrlUtils;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
+import org.chromium.content_public.browser.WebContentsObserver;
+import org.chromium.content_public.browser.test.util.JavaScriptUtils;
 import org.chromium.content_public.common.ContentUrlConstants;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /** AwContents rendering / pixel tests. */
 @RunWith(Parameterized.class)
 @UseParametersRunnerFactory(AwJUnit4ClassRunnerWithParameters.Factory.class)
+@Batch(Batch.PER_CLASS)
 public class AwContentsRenderTest extends AwParameterizedTest {
     @Rule public AwActivityTestRule mActivityTestRule;
 
@@ -53,7 +60,7 @@ public class AwContentsRenderTest extends AwParameterizedTest {
     }
 
     void setBackgroundColorOnUiThread(final int c) {
-        TestThreadUtils.runOnUiThreadBlocking(() -> mAwContents.setBackgroundColor(c));
+        ThreadUtils.runOnUiThreadBlocking(() -> mAwContents.setBackgroundColor(c));
     }
 
     @Test
@@ -106,7 +113,7 @@ public class AwContentsRenderTest extends AwParameterizedTest {
     @SmallTest
     @Feature({"AndroidWebView"})
     public void testPictureListener() throws Throwable {
-        TestThreadUtils.runOnUiThreadBlocking(() -> mAwContents.enableOnNewPicture(true, true));
+        ThreadUtils.runOnUiThreadBlocking(() -> mAwContents.enableOnNewPicture(true, true));
 
         int pictureCount = mContentsClient.getPictureListenerHelper().getCallCount();
         mActivityTestRule.loadUrlSync(
@@ -151,10 +158,8 @@ public class AwContentsRenderTest extends AwParameterizedTest {
         Assert.assertTrue(
                 latch.await(AwActivityTestRule.SCALED_WAIT_TIMEOUT_MS, TimeUnit.MILLISECONDS));
 
-        final int width =
-                TestThreadUtils.runOnUiThreadBlockingNoException(() -> mContainerView.getWidth());
-        final int height =
-                TestThreadUtils.runOnUiThreadBlockingNoException(() -> mContainerView.getHeight());
+        final int width = ThreadUtils.runOnUiThreadBlocking(() -> mContainerView.getWidth());
+        final int height = ThreadUtils.runOnUiThreadBlocking(() -> mContainerView.getHeight());
         visibleBitmap = GraphicsTestUtils.drawAwContentsOnUiThread(mAwContents, width, height);
 
         // Things that affect DOM page visibility:
@@ -175,7 +180,7 @@ public class AwContentsRenderTest extends AwParameterizedTest {
 
                             // Simulate a window visibility change. WebView test app can't
                             // manipulate the window visibility directly.
-                            mAwContents.onWindowVisibilityChanged(View.INVISIBLE);
+                            mAwContents.getViewMethods().onWindowVisibilityChanged(View.INVISIBLE);
                             Assert.assertFalse(mAwContents.isPageVisible());
                         });
 
@@ -192,8 +197,9 @@ public class AwContentsRenderTest extends AwParameterizedTest {
     @SmallTest
     @Feature({"AndroidWebView"})
     public void testSoftwareCanvas() throws Throwable {
-        TestThreadUtils.runOnUiThreadBlocking(
-                () -> mAwContents.setLayerType(View.LAYER_TYPE_SOFTWARE, null));
+        mAwContents.getSettings().setAllowFileAccess(true);
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> mAwContents.getViewMethods().setLayerType(View.LAYER_TYPE_SOFTWARE, null));
 
         String testFile = "android_webview/test/data/green_canvas.html";
         String url = UrlUtils.getIsolatedTestFileUrl(testFile);
@@ -207,5 +213,92 @@ public class AwContentsRenderTest extends AwParameterizedTest {
                             GraphicsTestUtils.drawAwContentsOnUiThread(mAwContents, 500, 500);
                     return Color.GREEN == bitmap.getPixel(250, 250);
                 });
+    }
+
+    private static class TitleUpdatedHelper extends CallbackHelper {
+        private String mTitle;
+
+        public String getTitle() {
+            return mTitle;
+        }
+
+        public void setTitle(String title) {
+            mTitle = title;
+            notifyCalled();
+        }
+    }
+
+    private static final String CALL_RAF = "window.requestAnimationFrame(window.onAnimationFrame);";
+
+    @Test
+    @SmallTest
+    @Feature({"AndroidWebView"})
+    @RequiresRestart("Tests pause feature which will prevent rendering")
+    public void testPausePreventsRAF() throws Throwable {
+        final String html =
+                "<html><head><style>body {background-color:#227788}</style></head>"
+                        + "<body>"
+                        + "<script>"
+                        + "    var raf_count = 0;"
+                        + "    window.onAnimationFrame = function(timestamp) {"
+                        + "        document.title=++raf_count;"
+                        + "    };"
+                        + "</script>"
+                        + " Hello world!</body></html>";
+        AwActivityTestRule.enableJavaScriptOnUiThread(mAwContents);
+        // Loading the html via a data URI requires us to encode '#' symbols as '%23'.
+        mActivityTestRule.loadUrlSync(
+                mAwContents,
+                mContentsClient.getOnPageFinishedHelper(),
+                "data:text/html," + html.replace("#", "%23"));
+
+        final TitleUpdatedHelper onTitleUpdatedHelper = new TitleUpdatedHelper();
+        final WebContentsObserver web_contents_observer =
+                ThreadUtils.runOnUiThreadBlocking(
+                        () ->
+                                new WebContentsObserver(mAwContents.getWebContents()) {
+                                    @Override
+                                    public void titleWasSet(String title) {
+                                        onTitleUpdatedHelper.setTitle(title);
+                                    }
+                                });
+
+        int callCount = onTitleUpdatedHelper.getCallCount();
+        JavaScriptUtils.executeJavaScriptAndWaitForResult(mAwContents.getWebContents(), CALL_RAF);
+        onTitleUpdatedHelper.waitForCallback(callCount);
+        Assert.assertEquals("1", onTitleUpdatedHelper.getTitle());
+        callCount = onTitleUpdatedHelper.getCallCount();
+
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    mAwContents.onPause();
+                    Assert.assertFalse(mAwContents.isPageVisible());
+                });
+
+        // VisualStateCallback#onComplete won't be called when WebView is
+        // invisible. So there is no reliable way to tell if View#setVisibility
+        // has taken effect. Instead we will continue to run rAF until either frame production stops
+        // or the polling times out in 1.5s. This timeout will emit a test failure.
+        AwActivityTestRule.pollInstrumentationThread(
+                () -> {
+                    int callCount2 = onTitleUpdatedHelper.getCallCount();
+                    // Even though we are hidden, the JS should successfully run to request the rAF.
+                    // However frame production should be disabled, so the actual frame should not
+                    // run, nor update the title.
+                    JavaScriptUtils.executeJavaScriptAndWaitForResult(
+                            mAwContents.getWebContents(), CALL_RAF);
+
+                    try {
+                        onTitleUpdatedHelper.waitForCallback(
+                                callCount2, 1, 500, TimeUnit.MILLISECONDS);
+                        // If we produced a frame fail this run of the polling. Polling will re-run
+                        // until success or timeout.
+                        return false;
+                    } catch (TimeoutException e) {
+                        // Timeout is expected.
+                        return true;
+                    }
+                });
+        ThreadUtils.runOnUiThreadBlocking(() -> web_contents_observer.observe(null));
     }
 }

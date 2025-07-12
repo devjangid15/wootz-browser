@@ -2,11 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 // This file contains the ContextState class.
 
 #ifndef GPU_COMMAND_BUFFER_SERVICE_CONTEXT_STATE_H_
 #define GPU_COMMAND_BUFFER_SERVICE_CONTEXT_STATE_H_
 
+#include <array>
 #include <memory>
 #include <vector>
 
@@ -51,7 +57,7 @@ struct GPU_GLES2_EXPORT TextureUnit {
   // glBindTexture
   scoped_refptr<TextureRef> bound_texture_external_oes;
 
-  // texture currently bound to this unit's GL_TEXTURE_RECTANGLE_ARB with
+  // texture currently bound to this unit's GL_TEXTURE_RECTANGLE_ANGLE with
   // glBindTexture
   scoped_refptr<TextureRef> bound_texture_rectangle_arb;
 
@@ -82,7 +88,7 @@ struct GPU_GLES2_EXPORT TextureUnit {
         return bound_texture_cube_map.get();
       case GL_SAMPLER_EXTERNAL_OES:
         return bound_texture_external_oes.get();
-      case GL_SAMPLER_2D_RECT_ARB:
+      case GL_SAMPLER_2D_RECT_ANGLE:
         return bound_texture_rectangle_arb.get();
       case GL_SAMPLER_3D:
       case GL_INT_SAMPLER_3D:
@@ -94,8 +100,7 @@ struct GPU_GLES2_EXPORT TextureUnit {
       case GL_UNSIGNED_INT_SAMPLER_2D_ARRAY:
         return bound_texture_2d_array.get();
       default:
-        NOTREACHED_IN_MIGRATION();
-        return nullptr;
+        NOTREACHED();
     }
   }
 
@@ -107,15 +112,14 @@ struct GPU_GLES2_EXPORT TextureUnit {
         return bound_texture_cube_map.get();
       case GL_TEXTURE_EXTERNAL_OES:
         return bound_texture_external_oes.get();
-      case GL_TEXTURE_RECTANGLE_ARB:
+      case GL_TEXTURE_RECTANGLE_ANGLE:
         return bound_texture_rectangle_arb.get();
       case GL_TEXTURE_3D:
         return bound_texture_3d.get();
       case GL_TEXTURE_2D_ARRAY:
         return bound_texture_2d_array.get();
       default:
-        NOTREACHED_IN_MIGRATION();
-        return nullptr;
+        NOTREACHED();
     }
   }
 
@@ -130,7 +134,7 @@ struct GPU_GLES2_EXPORT TextureUnit {
       case GL_TEXTURE_EXTERNAL_OES:
         bound_texture_external_oes = texture_ref;
         break;
-      case GL_TEXTURE_RECTANGLE_ARB:
+      case GL_TEXTURE_RECTANGLE_ANGLE:
         bound_texture_rectangle_arb = texture_ref;
         break;
       case GL_TEXTURE_3D:
@@ -140,7 +144,7 @@ struct GPU_GLES2_EXPORT TextureUnit {
         bound_texture_2d_array = texture_ref;
         break;
       default:
-        NOTREACHED_IN_MIGRATION();
+        NOTREACHED();
     }
   }
 };
@@ -172,7 +176,7 @@ class GPU_GLES2_EXPORT Vec4 {
     GLuint uint_value;
   };
 
-  ValueUnion v_[4];
+  std::array<ValueUnion, 4> v_;
   ShaderVariableBaseType type_;
 };
 
@@ -275,8 +279,7 @@ struct GPU_GLES2_EXPORT ContextState {
         return;
       cached_stencil_back_writemask = mask;
     } else {
-      NOTREACHED_IN_MIGRATION();
-      return;
+      NOTREACHED();
     }
     api()->glStencilMaskSeparateFn(op, mask);
   }

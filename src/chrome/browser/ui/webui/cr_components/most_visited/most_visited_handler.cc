@@ -16,7 +16,7 @@
 #include "chrome/browser/predictors/loading_predictor_config.h"
 #include "chrome/browser/predictors/loading_predictor_factory.h"
 #include "chrome/browser/preloading/chrome_preloading.h"
-#include "chrome/browser/preloading/prerender/prerender_manager.h"
+#include "chrome/browser/preloading/new_tab_page_preload/new_tab_page_preload_pipeline_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/web_applications/preinstalled_web_app_manager.h"
@@ -180,10 +180,6 @@ void MostVisitedHandler::OnMostVisitedTileNavigation(
     bool shift_key) {
   logger_.LogMostVisitedNavigation(MakeNTPTileImpression(*tile, index));
 
-  if (!base::FeatureList::IsEnabled(
-          ntp_features::kNtpHandleMostVisitedNavigationExplicitly))
-    return;
-
   WindowOpenDisposition disposition = ui::DispositionFromClick(
       /*middle_button=*/mouse_button == 1, alt_key, ctrl_key, meta_key,
       shift_key);
@@ -234,13 +230,12 @@ void MostVisitedHandler::PrerenderMostVisitedTile(
         "when kPrerenderNewTabPageOnMousePressedTrigger is true.");
     return;
   }
-  PrerenderManager::CreateForWebContents(web_contents_);
-  auto* prerender_manager = PrerenderManager::FromWebContents(web_contents_);
-
-  prerender_handle_ = prerender_manager->StartPrerenderNewTabPage(
-      tile->url, is_hover_trigger
-                     ? chrome_preloading_predictor::kMouseHoverOnNewTabPage
-                     : chrome_preloading_predictor::kPointerDownOnNewTabPage);
+  new_tab_page_preload_manager_ =
+      NewTabPagePreloadPipelineManager::GetOrCreateForWebContents(web_contents_)
+          ->GetWeakPtr();
+  new_tab_page_preload_manager_->StartPrerender(
+      tile->url,
+      chrome_preloading_predictor::kMouseHoverOrMouseDownOnNewTabPage);
 }
 
 void MostVisitedHandler::PreconnectMostVisitedTile(
@@ -256,7 +251,8 @@ void MostVisitedHandler::PreconnectMostVisitedTile(
   auto* loading_predictor =
       predictors::LoadingPredictorFactory::GetForProfile(profile_);
   if (loading_predictor) {
-    loading_predictor->PrepareForPageLoad(tile->url,
+    loading_predictor->PrepareForPageLoad(/*initiator_origin=*/std::nullopt,
+                                          tile->url,
                                           predictors::HintOrigin::NEW_TAB_PAGE,
                                           /*preconnectable=*/true);
   }
@@ -271,12 +267,13 @@ void MostVisitedHandler::CancelPrerender() {
     return;
   }
 
-  auto* prerender_manager = PrerenderManager::FromWebContents(web_contents_);
-  prerender_manager->StopPrerenderNewTabPage(prerender_handle_);
-  prerender_handle_ = nullptr;
+  if (new_tab_page_preload_manager_) {
+    new_tab_page_preload_manager_->ResetPrerender();
+  }
 }
 
 void MostVisitedHandler::OnURLsAvailable(
+    bool is_user_triggered,
     const std::map<ntp_tiles::SectionType, ntp_tiles::NTPTilesVector>&
         sections) {
   auto* template_url_service =
@@ -316,6 +313,7 @@ void MostVisitedHandler::OnMigrationRun() {
 }
 
 void MostVisitedHandler::OnDestroyed() {
-  if (preinstalled_web_app_observer_.IsObserving())
+  if (preinstalled_web_app_observer_.IsObserving()) {
     preinstalled_web_app_observer_.Reset();
+  }
 }

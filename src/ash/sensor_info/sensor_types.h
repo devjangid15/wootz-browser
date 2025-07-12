@@ -5,6 +5,7 @@
 #ifndef ASH_SENSOR_INFO_SENSOR_TYPES_H_
 #define ASH_SENSOR_INFO_SENSOR_TYPES_H_
 
+#include <array>
 #include <optional>
 #include <vector>
 
@@ -56,11 +57,11 @@ class ASH_EXPORT SensorUpdate {
 
   // Returns true if `source` has a valid value in this update.
   bool has(SensorType source) const {
-    return data_[static_cast<int>(source)].has_value();
+    return data_.at(static_cast<int>(source)).has_value();
   }
   // Returns the last known value for |source|.
   const std::optional<SensorReading>& get(SensorType source) const {
-    return data_[static_cast<int>(source)];
+    return data_.at(static_cast<int>(source));
   }
 
   // Returns the last known value for `source` as a vector.
@@ -73,8 +74,9 @@ class ASH_EXPORT SensorUpdate {
   void Reset();
 
  protected:
-  std::optional<SensorReading>
-      data_[static_cast<int>(SensorType::kSensorTypeCount)];
+  std::array<std::optional<SensorReading>,
+             static_cast<int>(SensorType::kSensorTypeCount)>
+      data_;
 };
 
 // Class for all potential observers for sensor updates.

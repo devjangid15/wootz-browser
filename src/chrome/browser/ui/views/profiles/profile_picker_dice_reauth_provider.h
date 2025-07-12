@@ -8,9 +8,11 @@
 #include "base/scoped_observation.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/profiles/keep_alive/scoped_profile_keep_alive.h"
+#include "chrome/browser/ui/views/profiles/profile_management_types.h"
 #include "chrome/browser/ui/webui/signin/signin_ui_error.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "google_apis/gaia/gaia_id.h"
 
 struct CoreAccountInfo;
 class ForceSigninVerifier;
@@ -51,12 +53,13 @@ class ProfilePickerDiceReauthProvider
     : public signin::IdentityManager::Observer,
       public content::WebContentsObserver {
  public:
-  explicit ProfilePickerDiceReauthProvider(
+  ProfilePickerDiceReauthProvider(
       ProfilePickerWebContentsHost* host,
       Profile* profile,
+      const GaiaId& gaia_id_to_reauth,
       const std::string& email_to_reauth,
-      const std::string& gaia_id_to_reauth,
-      base::OnceCallback<void(bool, ReauthUIError)> on_reauth_completed);
+      base::OnceCallback<void(bool, const ForceSigninUIError&)>
+          on_reauth_completed);
   ~ProfilePickerDiceReauthProvider() override;
 
   ProfilePickerDiceReauthProvider(const ProfilePickerDiceReauthProvider&) =
@@ -67,7 +70,7 @@ class ProfilePickerDiceReauthProvider
   content::WebContents* contents() const { return contents_.get(); }
 
   // Start the reauth process.
-  void SwitchToReauth();
+  void SwitchToReauth(StepSwitchFinishedCallback step_switch_callback);
 
   // signin::IdentityManager::Observer:
   void OnRefreshTokensLoaded() override;
@@ -109,9 +112,14 @@ class ProfilePickerDiceReauthProvider
   const raw_ref<ProfilePickerWebContentsHost> host_;
   raw_ref<Profile> profile_;
   raw_ref<signin::IdentityManager> identity_manager_;
-  const std::string gaia_id_to_reauth_;
+  const GaiaId gaia_id_to_reauth_;
   const std::string email_to_reauth_;
-  base::OnceCallback<void(bool, ReauthUIError)> on_reauth_completed_;
+  base::OnceCallback<void(bool, const ForceSigninUIError&)>
+      on_reauth_completed_;
+
+  // This callback will only return once we know whether the step should be
+  // shown or not.
+  StepSwitchFinishedCallback step_switch_callback_;
 
   // Prevent `profile_` from being destroyed first.
   std::unique_ptr<ScopedProfileKeepAlive> profile_keep_alive_;

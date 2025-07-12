@@ -17,7 +17,7 @@
 
 namespace content {
 
-gin::WrapperInfo DomAutomationController::kWrapperInfo = {
+gin::DeprecatedWrapperInfo DomAutomationController::kWrapperInfo = {
     gin::kEmbedderNativeGin};
 
 // static
@@ -51,8 +51,8 @@ DomAutomationController::~DomAutomationController() {}
 
 gin::ObjectTemplateBuilder DomAutomationController::GetObjectTemplateBuilder(
     v8::Isolate* isolate) {
-  return gin::Wrappable<DomAutomationController>::GetObjectTemplateBuilder(
-             isolate)
+  return gin::DeprecatedWrappable<
+             DomAutomationController>::GetObjectTemplateBuilder(isolate)
       .SetMethod("send", &DomAutomationController::SendMsg);
 }
 
@@ -102,9 +102,7 @@ bool DomAutomationController::SendMsg(const gin::Arguments& args) {
     value =
         conv.FromV8Value(args.PeekNext(), args.isolate()->GetCurrentContext());
   } else {
-    NOTREACHED_IN_MIGRATION()
-        << "No arguments passed to domAutomationController.send";
-    return false;
+    NOTREACHED() << "No arguments passed to domAutomationController.send";
   }
 
   if (!value || !serializer.Serialize(*value))

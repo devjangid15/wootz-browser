@@ -13,16 +13,18 @@
 #include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
 #include "components/keyed_service/core/service_access_type.h"
-#include "components/payments/content/android/jni_headers/PaymentManifestWebDataService_jni.h"
 #include "components/webdata/common/web_data_results.h"
 #include "components/webdata_services/web_data_service_wrapper_factory.h"
 #include "content/public/browser/web_contents.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "components/payments/content/android/jni_headers/PaymentManifestWebDataService_jni.h"
 
 namespace payments {
 
 PaymentManifestWebDataServiceAndroid::PaymentManifestWebDataServiceAndroid(
     JNIEnv* env,
-    jobject obj,
+    const jni_zero::JavaRef<jobject>& obj,
     content::WebContents* web_contents)
     : web_contents_(web_contents->GetWeakPtr()), weak_java_obj_(env, obj) {}
 
@@ -53,7 +55,7 @@ void PaymentManifestWebDataServiceAndroid::OnWebDataServiceRequestDone(
       OnPaymentMethodManifestRequestDone(env, h, std::move(result));
       break;
     default:
-      NOTREACHED_IN_MIGRATION() << "unsupported data type";
+      NOTREACHED() << "unsupported data type";
   }
 }
 
@@ -112,9 +114,7 @@ void PaymentManifestWebDataServiceAndroid::OnPaymentMethodManifestRequestDone(
   web_data_service_requests_.erase(h);
 }
 
-void PaymentManifestWebDataServiceAndroid::Destroy(
-    JNIEnv* env,
-    const base::android::JavaParamRef<jobject>& unused_obj) {
+void PaymentManifestWebDataServiceAndroid::Destroy(JNIEnv* env) {
   scoped_refptr<payments::PaymentManifestWebDataService> web_data_service =
       GetPaymentManifestWebDataService();
   if (web_data_service) {
@@ -129,7 +129,6 @@ void PaymentManifestWebDataServiceAndroid::Destroy(
 
 void PaymentManifestWebDataServiceAndroid::AddPaymentMethodManifest(
     JNIEnv* env,
-    const base::android::JavaParamRef<jobject>& unused_obj,
     const base::android::JavaParamRef<jstring>& jmethod_name,
     const base::android::JavaParamRef<jobjectArray>& japps_package_names) {
   std::vector<std::string> apps_package_names;
@@ -149,7 +148,6 @@ void PaymentManifestWebDataServiceAndroid::AddPaymentMethodManifest(
 
 void PaymentManifestWebDataServiceAndroid::AddPaymentWebAppManifest(
     JNIEnv* env,
-    const base::android::JavaParamRef<jobject>& unused_obj,
     const base::android::JavaParamRef<jobjectArray>& jmanifest_sections) {
   scoped_refptr<payments::PaymentManifestWebDataService> web_data_service =
       GetPaymentManifestWebDataService();
@@ -185,7 +183,6 @@ void PaymentManifestWebDataServiceAndroid::AddPaymentWebAppManifest(
 
 bool PaymentManifestWebDataServiceAndroid::GetPaymentMethodManifest(
     JNIEnv* env,
-    const base::android::JavaParamRef<jobject>& unused_obj,
     const base::android::JavaParamRef<jstring>& jmethod_name,
     const base::android::JavaParamRef<jobject>& jcallback) {
   scoped_refptr<payments::PaymentManifestWebDataService> web_data_service =
@@ -205,7 +202,6 @@ bool PaymentManifestWebDataServiceAndroid::GetPaymentMethodManifest(
 
 bool PaymentManifestWebDataServiceAndroid::GetPaymentWebAppManifest(
     JNIEnv* env,
-    const base::android::JavaParamRef<jobject>& unused_obj,
     const base::android::JavaParamRef<jstring>& japp_package_name,
     const base::android::JavaParamRef<jobject>& jcallback) {
   scoped_refptr<payments::PaymentManifestWebDataService> web_data_service =

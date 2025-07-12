@@ -4,6 +4,7 @@
 
 #include "device/bluetooth/test/fake_local_gatt_characteristic.h"
 
+#include "base/notimplemented.h"
 #include "device/bluetooth/bluetooth_local_gatt_service.h"
 
 namespace bluetooth {
@@ -52,6 +53,11 @@ FakeLocalGattCharacteristic::NotifyValueChanged(
 device::BluetoothLocalGattService* FakeLocalGattCharacteristic::GetService()
     const {
   return service_.get();
+}
+
+std::vector<device::BluetoothLocalGattDescriptor*>
+FakeLocalGattCharacteristic::GetDescriptors() const {
+  return {};
 }
 
 }  // namespace bluetooth

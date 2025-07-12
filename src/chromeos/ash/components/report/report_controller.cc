@@ -127,8 +127,6 @@ void ReportController::RegisterPrefs(PrefRegistrySimple* registry) {
   registry->RegisterIntegerPref(prefs::kDeviceActiveLastKnownChurnActiveStatus,
                                 0);
   registry->RegisterBooleanPref(
-      prefs::kDeviceActiveChurnObservationFirstObservedNewChurnMetadata, false);
-  registry->RegisterBooleanPref(
       prefs::kDeviceActiveLastKnownIsActiveCurrentPeriodMinus0, false);
   registry->RegisterBooleanPref(
       prefs::kDeviceActiveLastKnownIsActiveCurrentPeriodMinus1, false);
@@ -158,7 +156,7 @@ ReportController::ReportController(
   g_ash_report_controller = this;
 
   // Halt if device is a testimage/unknown channel.
-  if (chrome_device_params.WOOTZAPP_CHANNEL == version_info::Channel::UNKNOWN) {
+  if (chrome_device_params.chrome_channel == version_info::Channel::UNKNOWN) {
     LOG(ERROR) << "Halt - Client should enter device active reporting logic. "
                << "Unknown and test image channels should not be counted as "
                << "legitimate device counts.";
@@ -363,7 +361,7 @@ void ReportController::StartReport() {
   // Create callbacks to report use cases in a specific order, and also a
   // callback that updates the preserved file using the latest local state.
   // Note that the order of the use case callbacks is important.
-  // Contact hirthanan@ or qianwan@ before making changes here.
+  // Contact chromeos-data-eng@ before making changes here.
   base::OnceClosure save_preserved_file_cb =
       CreateSavePreservedFileCallback(local_state_, weak_factory_.GetWeakPtr());
   base::OnceClosure report_observation_cb = CreateReportObservationCallback(

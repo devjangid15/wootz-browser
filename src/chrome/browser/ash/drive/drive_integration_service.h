@@ -7,13 +7,13 @@
 
 #include <memory>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "base/files/file_path.h"
 #include "base/functional/callback.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/singleton.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/observer_list_types.h"
@@ -21,13 +21,13 @@
 #include "base/time/time.h"
 #include "chrome/browser/ash/drive/file_system_util.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/profiles/profile_keyed_service_factory.h"
 #include "chromeos/ash/components/drivefs/drivefs_host.h"
 #include "chromeos/ash/components/drivefs/drivefs_pinning_manager.h"
+#include "chromeos/ash/components/drivefs/mojom/drivefs.mojom.h"
+#include "chromeos/ash/components/drivefs/mojom/notifications.mojom.h"
 #include "chromeos/ash/components/network/network_state.h"
 #include "chromeos/ash/components/network/network_state_handler.h"
 #include "chromeos/ash/components/network/network_state_handler_observer.h"
-#include "chromeos/crosapi/mojom/drive_integration_service.mojom.h"
 #include "components/drive/event_logger.h"
 #include "components/drive/file_errors.h"
 #include "components/drive/file_system_core_util.h"
@@ -35,7 +35,6 @@
 #include "components/prefs/pref_change_registrar.h"
 #include "google_apis/common/api_error_codes.h"
 #include "google_apis/common/auth_service_interface.h"
-#include "mojo/public/cpp/bindings/pending_remote.h"
 
 class PrefService;
 
@@ -45,6 +44,7 @@ class SequencedTaskRunner;
 
 namespace drivefs {
 class DriveFsHost;
+class DriveFsSearchQuery;
 
 namespace mojom {
 class DriveFs;
@@ -78,6 +78,26 @@ struct QuickAccessItem {
   double confidence;
 };
 
+// Notifications/Errors coming from DriveFs side which we need to persist in
+// the Chrome side.
+struct PersistedMessage {
+  // Where does the message come from in DriveFs.
+  enum Source {
+    kNotification = 0,
+    kError = 1,
+  };
+  Source source;
+
+  // DriveFs Notification/Error types which require persistence.
+  using Type = std::variant<drivefs::mojom::DriveFsNotification::Tag,
+                            drivefs::mojom::MirrorSyncError::Type>;
+  Type type;
+
+  base::FilePath path;
+
+  int64_t stable_id;
+};
+
 // DriveIntegrationService is used to integrate Drive to Chrome. This class
 // exposes the file system representation built on top of Drive and some
 // other Drive related objects to the file manager, and some other sub
@@ -96,8 +116,7 @@ class DriveIntegrationService : public KeyedService,
   using GetQuickAccessItemsCallback =
       base::OnceCallback<void(FileError, std::vector<QuickAccessItem>)>;
   using SearchDriveByFileNameCallback =
-      base::OnceCallback<void(FileError,
-                              std::vector<drivefs::mojom::QueryItemPtr>)>;
+      drivefs::mojom::SearchQuery::GetNextPageCallback;
   using GetThumbnailCallback =
       base::OnceCallback<void(const std::optional<std::vector<uint8_t>>&)>;
   using GetReadOnlyAuthenticationTokenCallback =
@@ -108,7 +127,9 @@ class DriveIntegrationService : public KeyedService,
   // test_drivefs_mojo_listener_factory are used by tests to inject customized
   // instances.
   // Pass NULL or the empty value when not interested.
+  // `local_state` must be non-null and must outlive `this`.
   DriveIntegrationService(
+      PrefService* local_state,
       Profile* profile,
       const std::string& test_mount_point_name,
       const base::FilePath& test_cache_root,
@@ -239,6 +260,13 @@ class DriveIntegrationService : public KeyedService,
       drivefs::mojom::QueryParameters::SortDirection sort_direction,
       drivefs::mojom::QueryParameters::QuerySource query_source,
       SearchDriveByFileNameCallback callback) const;
+  // Returns nullptr if DriveFS is not mounted.
+  std::unique_ptr<drivefs::DriveFsSearchQuery> CreateSearchQueryByFileName(
+      std::string query,
+      int max_results,
+      drivefs::mojom::QueryParameters::SortField sort_field,
+      drivefs::mojom::QueryParameters::SortDirection sort_direction,
+      drivefs::mojom::QueryParameters::QuerySource query_source) const;
 
   // Returns the metadata for Drive file at |local_path|.
   void GetMetadata(const base::FilePath& local_path,
@@ -344,12 +372,6 @@ class DriveIntegrationService : public KeyedService,
   void ImmediatelyUpload(
       const base::FilePath& path,
       drivefs::mojom::DriveFs::ImmediatelyUploadCallback callback);
-
-  // Called by lacros to register a bridge that this service can call into when
-  // DriveFS wants to initiate a connection to an extension in lacros.
-  void RegisterDriveFsNativeMessageHostBridge(
-      mojo::PendingRemote<crosapi::mojom::DriveFsNativeMessageHostBridge>
-          bridge);
 
   // Gets counts of files in docs offline extension.
   void GetDocsOfflineStats(
@@ -479,13 +501,17 @@ class DriveIntegrationService : public KeyedService,
       std::optional<std::vector<drivefs::mojom::QueryItemPtr>> items);
 
   void OnEnableMirroringStatusUpdate(drivefs::mojom::MirrorSyncStatus status);
-  void OnMyFilesSyncRootAdded(drive::FileError status);
+  void OnMyFilesSyncPathAdded(drive::FileError status);
 
-  void OnGetSyncPathsForRemovingAllRoots(
-      drive::FileError status,
-      const std::vector<::base::FilePath>& paths);
-  void OnSyncRootRemoved(const base::FilePath& path, drive::FileError status);
   void OnDisableMirroringStatusUpdate(drivefs::mojom::MirrorSyncStatus status);
+
+  // Before adding a new root, get all existing roots first to see if it exists
+  // or not. If it exists, do nothing.
+  void OnGetSyncPathsForAddingPath(
+      const base::FilePath& path_to_add,
+      drivefs::mojom::DriveFs::ToggleSyncForPathCallback callback,
+      drive::FileError status,
+      const std::vector<base::FilePath>& paths);
 
   // Toggle syncing for |path| if the the directory exists.
   void ToggleSyncForPathIfDirectoryExists(
@@ -526,9 +552,6 @@ class DriveIntegrationService : public KeyedService,
   bool is_online_ = true;
   bool remount_when_online_ = false;
 
-  // -1 means no sync roots to remove.
-  int number_of_sync_roots_to_remove_ = -1;
-
   // Custom mount point name that can be injected for testing in constructor.
   std::string mount_point_name_;
   base::FilePath cache_root_directory_;
@@ -565,51 +588,6 @@ class DriveIntegrationService : public KeyedService,
   base::WeakPtrFactory<DriveIntegrationService> weak_ptr_factory_{this};
 
   FRIEND_TEST_ALL_PREFIXES(DriveIntegrationServiceTest, EnsureDirectoryExists);
-};
-
-// Singleton that owns all instances of DriveIntegrationService and
-// associates them with Profiles.
-class DriveIntegrationServiceFactory : public ProfileKeyedServiceFactory {
- public:
-  // Factory function used by tests.
-  using FactoryCallback =
-      base::RepeatingCallback<DriveIntegrationService*(Profile* profile)>;
-
-  // Sets and resets a factory function for tests. See below for why we can't
-  // use BrowserContextKeyedServiceFactory::SetTestingFactory().
-  class ScopedFactoryForTest {
-   public:
-    explicit ScopedFactoryForTest(FactoryCallback* factory_for_test);
-    ~ScopedFactoryForTest();
-  };
-
-  // Returns the DriveIntegrationService for |profile|, creating it if it is
-  // not yet created.
-  static DriveIntegrationService* GetForProfile(Profile* profile);
-
-  // Returns the DriveIntegrationService that is already associated with
-  // |profile|, if it is not yet created it will return NULL.
-  static DriveIntegrationService* FindForProfile(Profile* profile);
-
-  // Returns the DriveIntegrationServiceFactory instance.
-  static DriveIntegrationServiceFactory* GetInstance();
-
- private:
-  friend struct base::DefaultSingletonTraits<DriveIntegrationServiceFactory>;
-
-  DriveIntegrationServiceFactory();
-  ~DriveIntegrationServiceFactory() override;
-
-  // BrowserContextKeyedServiceFactory overrides.
-  std::unique_ptr<KeyedService> BuildServiceInstanceForBrowserContext(
-      content::BrowserContext* context) const override;
-
-  // This is static so it can be set without instantiating the factory. This
-  // allows factory creation to be delayed until it normally happens (on profile
-  // creation) rather than when tests are set up. DriveIntegrationServiceFactory
-  // transitively depends on ExtensionSystemFactory which crashes if created too
-  // soon (i.e. before the BrowserProcess exists).
-  static FactoryCallback* factory_for_test_;
 };
 
 }  // namespace drive

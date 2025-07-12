@@ -36,9 +36,10 @@
 #include "third_party/blink/renderer/core/css/css_unparsed_declaration_value.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_context.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_impl.h"
-#include "third_party/blink/renderer/core/css/parser/css_parser_token_range.h"
-#include "third_party/blink/renderer/core/css/parser/css_tokenized_value.h"
+#include "third_party/blink/renderer/core/css/parser/css_parser_token.h"
+#include "third_party/blink/renderer/core/css/parser/css_parser_token_stream.h"
 #include "third_party/blink/renderer/core/css/parser/css_variable_parser.h"
+#include "third_party/blink/renderer/core/css/parser/media_query_parser.h"
 #include "third_party/blink/renderer/core/css/properties/css_parsing_utils.h"
 #include "third_party/blink/renderer/core/html/parser/html_parser_idioms.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
@@ -62,8 +63,7 @@ static inline bool FeatureWithValidIdent(const String& media_feature,
            ident == CSSValueID::kMinimalUi ||
            ident == CSSValueID::kWindowControlsOverlay ||
            ident == CSSValueID::kBrowser || ident == CSSValueID::kTabbed ||
-           (RuntimeEnabledFeatures::CSSDisplayModePictureInPictureEnabled() &&
-            ident == CSSValueID::kPictureInPicture);
+           ident == CSSValueID::kPictureInPicture;
   }
 
   if (RuntimeEnabledFeatures::DesktopPWAsAdditionalWindowingControlsEnabled() &&
@@ -172,22 +172,20 @@ static inline bool FeatureWithValidIdent(const String& media_feature,
            ident == CSSValueID::kSlow;
   }
 
-  if (RuntimeEnabledFeatures::CSSStickyContainerQueriesEnabled()) {
-    if (media_feature == media_feature_names::kStuckMediaFeature) {
-      switch (ident) {
-        case CSSValueID::kNone:
-        case CSSValueID::kTop:
-        case CSSValueID::kLeft:
-        case CSSValueID::kBottom:
-        case CSSValueID::kRight:
-        case CSSValueID::kInsetBlockStart:
-        case CSSValueID::kInsetBlockEnd:
-        case CSSValueID::kInsetInlineStart:
-        case CSSValueID::kInsetInlineEnd:
-          return true;
-        default:
-          return false;
-      }
+  if (media_feature == media_feature_names::kStuckMediaFeature) {
+    switch (ident) {
+      case CSSValueID::kNone:
+      case CSSValueID::kTop:
+      case CSSValueID::kLeft:
+      case CSSValueID::kBottom:
+      case CSSValueID::kRight:
+      case CSSValueID::kBlockStart:
+      case CSSValueID::kBlockEnd:
+      case CSSValueID::kInlineStart:
+      case CSSValueID::kInlineEnd:
+        return true;
+      default:
+        return false;
     }
   }
 
@@ -196,17 +194,67 @@ static inline bool FeatureWithValidIdent(const String& media_feature,
            ident == CSSValueID::kNone;
   }
 
-  if (RuntimeEnabledFeatures::CSSSnapContainerQueriesEnabled()) {
-    if (media_feature == media_feature_names::kSnappedMediaFeature) {
+  if (media_feature == media_feature_names::kSnappedMediaFeature) {
+    switch (ident) {
+      case CSSValueID::kNone:
+      case CSSValueID::kBlock:
+      case CSSValueID::kInline:
+      case CSSValueID::kX:
+      case CSSValueID::kY:
+      case CSSValueID::kBoth:
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  if (media_feature == media_feature_names::kScrollableMediaFeature) {
+    switch (ident) {
+      case CSSValueID::kNone:
+      case CSSValueID::kTop:
+      case CSSValueID::kLeft:
+      case CSSValueID::kBottom:
+      case CSSValueID::kRight:
+      case CSSValueID::kBlockStart:
+      case CSSValueID::kBlockEnd:
+      case CSSValueID::kInlineStart:
+      case CSSValueID::kInlineEnd:
+      case CSSValueID::kBlock:
+      case CSSValueID::kInline:
+      case CSSValueID::kX:
+      case CSSValueID::kY:
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  if (RuntimeEnabledFeatures::CSSScrollDirectionContainerQueriesEnabled()) {
+    if (media_feature == media_feature_names::kDirectionMediaFeature) {
       switch (ident) {
         case CSSValueID::kNone:
+        case CSSValueID::kTop:
+        case CSSValueID::kLeft:
+        case CSSValueID::kBottom:
+        case CSSValueID::kRight:
+        case CSSValueID::kBlockStart:
+        case CSSValueID::kBlockEnd:
+        case CSSValueID::kInlineStart:
+        case CSSValueID::kInlineEnd:
         case CSSValueID::kBlock:
         case CSSValueID::kInline:
+        case CSSValueID::kX:
+        case CSSValueID::kY:
           return true;
         default:
           return false;
       }
     }
+  }
+
+  if (RuntimeEnabledFeatures::CSSFallbackContainerQueriesEnabled() &&
+      media_feature == media_feature_names::kFallbackMediaFeature) {
+    return ident == CSSValueID::kNone;
   }
 
   return false;
@@ -215,7 +263,7 @@ static inline bool FeatureWithValidIdent(const String& media_feature,
 static inline bool FeatureWithValidLength(const String& media_feature,
                                           const CSSPrimitiveValue* value) {
   if (!(value->IsLength() ||
-        (value->IsNumber() && value->GetDoubleValue() == 0))) {
+        (value->IsNumber() && value->GetValueIfKnown() == 0.0))) {
     return false;
   }
 
@@ -244,7 +292,8 @@ static inline bool FeatureWithValidDensity(const String& media_feature,
   // NOTE: The allowed range of <resolution> values always excludes negative
   // values, in addition to any explicit ranges that might be specified.
   // https://drafts.csswg.org/css-values/#resolution
-  if (!value->IsResolution() || value->GetDoubleValue() < 0) {
+  if (!value->IsResolution() || (value->GetValueIfKnown().has_value() &&
+                                 *value->GetValueIfKnown() < 0.0)) {
     return false;
   }
 
@@ -304,7 +353,8 @@ static inline bool FeatureWithNumber(const String& media_feature,
 static inline bool FeatureWithZeroOrOne(const String& media_feature,
                                         const CSSPrimitiveValue* value) {
   if (!value->IsInteger() ||
-      !(value->GetDoubleValue() == 1 || !value->GetDoubleValue())) {
+      (value->GetValueIfKnown().has_value() &&
+       *value->GetValueIfKnown() != 1.0 && *value->GetValueIfKnown() != 0.0)) {
     return false;
   }
 
@@ -321,6 +371,9 @@ static inline bool FeatureWithAspectRatio(const String& media_feature) {
 }
 
 bool MediaQueryExp::IsViewportDependent() const {
+  if (!HasMediaFeature()) {
+    return false;
+  }
   return media_feature_ == media_feature_names::kWidthMediaFeature ||
          media_feature_ == media_feature_names::kHeightMediaFeature ||
          media_feature_ == media_feature_names::kMinWidthMediaFeature ||
@@ -339,6 +392,9 @@ bool MediaQueryExp::IsViewportDependent() const {
 }
 
 bool MediaQueryExp::IsDeviceDependent() const {
+  if (!HasMediaFeature()) {
+    return false;
+  }
   return media_feature_ ==
              media_feature_names::kDeviceAspectRatioMediaFeature ||
          media_feature_ == media_feature_names::kDeviceWidthMediaFeature ||
@@ -354,6 +410,9 @@ bool MediaQueryExp::IsDeviceDependent() const {
 }
 
 bool MediaQueryExp::IsWidthDependent() const {
+  if (!HasMediaFeature()) {
+    return false;
+  }
   return media_feature_ == media_feature_names::kWidthMediaFeature ||
          media_feature_ == media_feature_names::kMinWidthMediaFeature ||
          media_feature_ == media_feature_names::kMaxWidthMediaFeature ||
@@ -364,6 +423,9 @@ bool MediaQueryExp::IsWidthDependent() const {
 }
 
 bool MediaQueryExp::IsHeightDependent() const {
+  if (!HasMediaFeature()) {
+    return false;
+  }
   return media_feature_ == media_feature_names::kHeightMediaFeature ||
          media_feature_ == media_feature_names::kMinHeightMediaFeature ||
          media_feature_ == media_feature_names::kMaxHeightMediaFeature ||
@@ -374,19 +436,28 @@ bool MediaQueryExp::IsHeightDependent() const {
 }
 
 bool MediaQueryExp::IsInlineSizeDependent() const {
+  if (!HasMediaFeature()) {
+    return false;
+  }
   return media_feature_ == media_feature_names::kInlineSizeMediaFeature ||
          media_feature_ == media_feature_names::kMinInlineSizeMediaFeature ||
          media_feature_ == media_feature_names::kMaxInlineSizeMediaFeature;
 }
 
 bool MediaQueryExp::IsBlockSizeDependent() const {
+  if (!HasMediaFeature()) {
+    return false;
+  }
   return media_feature_ == media_feature_names::kBlockSizeMediaFeature ||
          media_feature_ == media_feature_names::kMinBlockSizeMediaFeature ||
          media_feature_ == media_feature_names::kMaxBlockSizeMediaFeature;
 }
 
 MediaQueryExp::MediaQueryExp(const MediaQueryExp& other)
-    : media_feature_(other.MediaFeature()), bounds_(other.bounds_) {}
+    : type_(other.type_),
+      media_feature_(other.media_feature_),
+      reference_value_(other.reference_value_),
+      bounds_(other.bounds_) {}
 
 MediaQueryExp::MediaQueryExp(const String& media_feature,
                              const MediaQueryExpValue& value)
@@ -395,77 +466,45 @@ MediaQueryExp::MediaQueryExp(const String& media_feature,
 
 MediaQueryExp::MediaQueryExp(const String& media_feature,
                              const MediaQueryExpBounds& bounds)
-    : media_feature_(media_feature), bounds_(bounds) {}
+    : type_(Type::kMediaFeature),
+      media_feature_(media_feature),
+      bounds_(bounds) {}
 
-MediaQueryExp MediaQueryExp::Create(const String& media_feature,
-                                    CSSParserTokenRange& range,
-                                    const CSSParserTokenOffsets& offsets,
-                                    const CSSParserContext& context) {
-  String feature = AttemptStaticStringCreation(media_feature);
-  if (auto value =
-          MediaQueryExpValue::Consume(feature, range, offsets, context)) {
-    return MediaQueryExp(feature, *value);
+MediaQueryExp::MediaQueryExp(const CSSUnparsedDeclarationValue& reference_value,
+                             const MediaQueryExpBounds& bounds)
+    : type_(Type::kStyleRange),
+      reference_value_(reference_value),
+      bounds_(bounds) {}
+
+MediaQueryExp MediaQueryExp::Create(const AtomicString& media_feature,
+                                    CSSParserTokenStream& stream,
+                                    const CSSParserContext& context,
+                                    bool supports_element_dependent) {
+  std::optional<MediaQueryExpValue> value = MediaQueryExpValue::Consume(
+      media_feature, stream, context, supports_element_dependent);
+  if (value.has_value()) {
+    return MediaQueryExp(media_feature, value.value());
   }
   return Invalid();
 }
 
-bool MediaQueryExpValue::IsResolution() const {
-  switch (type_) {
-    case Type::kNumeric:
-      return CSSPrimitiveValue::IsResolution(Unit());
-    case Type::kCSSValue:
-      if (const auto* math_function =
-              DynamicTo<CSSMathFunctionValue>(css_value_.Get())) {
-        return math_function->IsResolution();
-      }
-      return false;
-    default:
-      return false;
-  }
-}
-
-double MediaQueryExpValue::Value() const {
-  if (const auto* math_function =
-          DynamicTo<CSSMathFunctionValue>(css_value_.Get())) {
-    if (math_function->IsResolution()) {
-      return math_function->ComputeDotsPerPixel();
-    }
-  }
-
-  DCHECK(IsNumeric());
-  return numeric_.value;
-}
-
-CSSPrimitiveValue::UnitType MediaQueryExpValue::Unit() const {
-  if (const auto* math_function =
-          DynamicTo<CSSMathFunctionValue>(css_value_.Get())) {
-    if (math_function->IsResolution()) {
-      return CSSPrimitiveValue::UnitType::kDotsPerPixel;
-    }
-  }
-
-  DCHECK(IsNumeric());
-  return numeric_.unit;
-}
-
 std::optional<MediaQueryExpValue> MediaQueryExpValue::Consume(
     const String& media_feature,
-    CSSParserTokenRange& range,
-    const CSSParserTokenOffsets& offsets,
-    const CSSParserContext& context) {
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context,
+    bool supports_element_dependent) {
   CSSParserContext::ParserModeOverridingScope scope(context, kHTMLStandardMode);
 
   if (CSSVariableParser::IsValidVariableName(media_feature)) {
-    base::span span = range.RemainingSpan();
-    StringView original_string =
-        offsets.StringForTokens(span.data(), span.data() + span.size());
-    CSSTokenizedValue tokenized_value{range, original_string};
-    CSSParserImpl::RemoveImportantAnnotationIfPresent(tokenized_value);
+    // Parse style queries for container queries, e.g. “style(--foo: bar)”.
+    // (These look like a declaration, but are really a test as part of
+    // a media query expression.) !important, if present, is stripped
+    // and ignored.
     if (const CSSValue* value =
-            CSSVariableParser::ParseDeclarationIncludingCSSWide(
-                tokenized_value, false, context)) {
-      while (!range.AtEnd()) {
-        range.Consume();
+            CSSVariableParser::ParseDeclarationIncludingCSSWide(stream, false,
+                                                                context)) {
+      while (!stream.AtEnd()) {
+        stream.Consume();
       }
       return MediaQueryExpValue(*value);
     }
@@ -476,22 +515,30 @@ std::optional<MediaQueryExpValue> MediaQueryExpValue::Consume(
       << "Under the assumption that custom properties in style() container "
          "queries are currently the only case sensitive features";
 
+  if (media_feature == media_feature_names::kFallbackMediaFeature) {
+    if (CSSValue* fallback_value =
+            css_parsing_utils::ConsumeSinglePositionTryFallback(stream,
+                                                                context)) {
+      return MediaQueryExpValue(*fallback_value);
+    }
+  }
+
   CSSPrimitiveValue* value = css_parsing_utils::ConsumeInteger(
-      range, context, -std::numeric_limits<double>::max() /* minimum_value */);
+      stream, context, -std::numeric_limits<double>::max() /* minimum_value */);
   if (!value && !FeatureExpectingInteger(media_feature, context)) {
     value = css_parsing_utils::ConsumeNumber(
-        range, context, CSSPrimitiveValue::ValueRange::kAll);
+        stream, context, CSSPrimitiveValue::ValueRange::kAll);
   }
   if (!value) {
     value = css_parsing_utils::ConsumeLength(
-        range, context, CSSPrimitiveValue::ValueRange::kAll);
+        stream, context, CSSPrimitiveValue::ValueRange::kAll);
   }
   if (!value) {
-    value = css_parsing_utils::ConsumeResolution(range, context);
+    value = css_parsing_utils::ConsumeResolution(stream, context);
   }
 
   if (!value) {
-    if (CSSIdentifierValue* ident = css_parsing_utils::ConsumeIdent(range)) {
+    if (CSSIdentifierValue* ident = css_parsing_utils::ConsumeIdent(stream)) {
       CSSValueID ident_id = ident->GetValueID();
       if (!FeatureWithValidIdent(media_feature, ident_id, context)) {
         return std::nullopt;
@@ -501,59 +548,42 @@ std::optional<MediaQueryExpValue> MediaQueryExpValue::Consume(
     return std::nullopt;
   }
 
+  if (!supports_element_dependent && value->IsElementDependent()) {
+    return std::nullopt;
+  }
+
   // Now we have |value| as a number, length or resolution
   // Create value for media query expression that must have 1 or more values.
   if (FeatureWithAspectRatio(media_feature)) {
-    if (value->GetDoubleValue() < 0) {
+    if (value->GetValueIfKnown().has_value() &&
+        *value->GetValueIfKnown() < 0.0) {
       return std::nullopt;
     }
-    if (!css_parsing_utils::ConsumeSlashIncludingWhitespace(range)) {
-      return MediaQueryExpValue(value->GetDoubleValue(), 1);
+    if (!css_parsing_utils::ConsumeSlashIncludingWhitespace(stream)) {
+      return MediaQueryExpValue(*value,
+                                *CSSNumericLiteralValue::Create(
+                                    1, CSSPrimitiveValue::UnitType::kNumber));
     }
     CSSPrimitiveValue* denominator = css_parsing_utils::ConsumeNumber(
-        range, context, CSSPrimitiveValue::ValueRange::kNonNegative);
+        stream, context, CSSPrimitiveValue::ValueRange::kNonNegative);
     if (!denominator) {
       return std::nullopt;
     }
-    if (value->GetDoubleValue() == 0 && denominator->GetDoubleValue() == 0) {
-      return MediaQueryExpValue(1, 0);
+    if (value->GetValueIfKnown() == 0.0 &&
+        denominator->GetValueIfKnown() == 0.0) {
+      return MediaQueryExpValue(*CSSNumericLiteralValue::Create(
+                                    1, CSSPrimitiveValue::UnitType::kNumber),
+                                *CSSNumericLiteralValue::Create(
+                                    0, CSSPrimitiveValue::UnitType::kNumber));
     }
-    return MediaQueryExpValue(value->GetDoubleValue(),
-                              denominator->GetDoubleValue());
-  }
-
-  if (FeatureWithValidDensity(media_feature, value)) {
-    DCHECK(value->IsResolution());
-
-    if (const auto* math_function = DynamicTo<CSSMathFunctionValue>(value)) {
-      return MediaQueryExpValue(*math_function);
-    }
-
-    const auto* numeric_literal = To<CSSNumericLiteralValue>(value);
-    return MediaQueryExpValue(numeric_literal->DoubleValue(),
-                              numeric_literal->GetType());
+    return MediaQueryExpValue(*value, *denominator);
   }
 
   if (FeatureWithInteger(media_feature, value, context) ||
       FeatureWithNumber(media_feature, value) ||
-      FeatureWithZeroOrOne(media_feature, value)) {
-    return MediaQueryExpValue(value->GetDoubleValue(),
-                              CSSPrimitiveValue::UnitType::kNumber);
-  }
-
-  if (FeatureWithValidLength(media_feature, value)) {
-    if (value->IsNumber()) {
-      return MediaQueryExpValue(value->GetDoubleValue(),
-                                CSSPrimitiveValue::UnitType::kNumber);
-    }
-
-    DCHECK(value->IsLength());
-    if (const auto* numeric_literal =
-            DynamicTo<CSSNumericLiteralValue>(value)) {
-      return MediaQueryExpValue(numeric_literal->GetDoubleValue(),
-                                numeric_literal->GetType());
-    }
-
+      FeatureWithZeroOrOne(media_feature, value) ||
+      FeatureWithValidLength(media_feature, value) ||
+      FeatureWithValidDensity(media_feature, value)) {
     return MediaQueryExpValue(*value);
   }
 
@@ -578,25 +608,36 @@ const char* MediaQueryOperatorToString(MediaQueryOperator op) {
       return ">=";
   }
 
-  NOTREACHED_IN_MIGRATION();
-  return "";
+  NOTREACHED();
 }
 
 }  // namespace
 
-MediaQueryExp MediaQueryExp::Create(const String& media_feature,
+MediaQueryExp MediaQueryExp::Create(const AtomicString& media_feature,
                                     const MediaQueryExpBounds& bounds) {
   return MediaQueryExp(media_feature, bounds);
+}
+
+MediaQueryExp MediaQueryExp::Create(const MediaQueryExpValue& reference_value,
+                                    const MediaQueryExpBounds& bounds) {
+  DCHECK(RuntimeEnabledFeatures::CSSContainerStyleQueriesRangeEnabled());
+  const CSSUnparsedDeclarationValue* value =
+      DynamicTo<CSSUnparsedDeclarationValue>(reference_value.GetCSSValue());
+  DCHECK(value);
+  return MediaQueryExp(*value, bounds);
 }
 
 MediaQueryExp::~MediaQueryExp() = default;
 
 void MediaQueryExp::Trace(Visitor* visitor) const {
+  visitor->Trace(reference_value_);
   visitor->Trace(bounds_);
 }
 
 bool MediaQueryExp::operator==(const MediaQueryExp& other) const {
-  return (other.media_feature_ == media_feature_) && (bounds_ == other.bounds_);
+  return (other.type_ == type_) && (other.media_feature_ == media_feature_) &&
+         (other.reference_value_ == reference_value_) &&
+         (bounds_ == other.bounds_);
 }
 
 String MediaQueryExp::Serialize() const {
@@ -604,7 +645,11 @@ String MediaQueryExp::Serialize() const {
   // <mf-boolean> e.g. (color)
   // <mf-plain>  e.g. (width: 100px)
   if (!bounds_.IsRange()) {
-    result.Append(media_feature_);
+    if (HasMediaFeature()) {
+      result.Append(media_feature_);
+    } else {
+      result.Append(reference_value_->CssText());
+    }
     if (bounds_.right.IsValid()) {
       result.Append(": ");
       result.Append(bounds_.right.value.CssText());
@@ -616,7 +661,11 @@ String MediaQueryExp::Serialize() const {
       result.Append(MediaQueryOperatorToString(bounds_.left.op));
       result.Append(" ");
     }
-    result.Append(media_feature_);
+    if (HasMediaFeature()) {
+      result.Append(media_feature_);
+    } else {
+      result.Append(reference_value_->CssText());
+    }
     if (bounds_.right.IsValid()) {
       result.Append(" ");
       result.Append(MediaQueryOperatorToString(bounds_.right.op));
@@ -639,29 +688,21 @@ unsigned MediaQueryExp::GetUnitFlags() const {
   return unit_flags;
 }
 
-static inline String PrintNumber(double number) {
-  return Decimal::FromDouble(number).ToString();
-}
-
 String MediaQueryExpValue::CssText() const {
   StringBuilder output;
   switch (type_) {
     case Type::kInvalid:
       break;
-    case Type::kNumeric:
-      output.Append(PrintNumber(Value()));
-      output.Append(CSSPrimitiveValue::UnitTypeToString(Unit()));
+    case Type::kValue:
+      output.Append(GetCSSValue().CssText());
       break;
     case Type::kRatio:
-      output.Append(PrintNumber(Numerator()));
+      output.Append(Numerator().CssText());
       output.Append(" / ");
-      output.Append(PrintNumber(Denominator()));
+      output.Append(Denominator().CssText());
       break;
     case Type::kId:
-      output.Append(getValueName(Id()));
-      break;
-    case Type::kCSSValue:
-      output.Append(GetCSSValue().CssText());
+      output.Append(GetCSSValueNameAs<StringView>(Id()));
       break;
   }
 
@@ -671,20 +712,16 @@ String MediaQueryExpValue::CssText() const {
 unsigned MediaQueryExpValue::GetUnitFlags() const {
   CSSPrimitiveValue::LengthTypeFlags length_type_flags;
 
-  if (IsCSSValue()) {
+  unsigned unit_flags = 0;
+
+  if (IsValue()) {
     if (auto* primitive = DynamicTo<CSSPrimitiveValue>(GetCSSValue())) {
       primitive->AccumulateLengthUnitTypes(length_type_flags);
+      if (primitive->IsElementDependent()) {
+        unit_flags |= UnitFlags::kTreeCounting;
+      }
     }
   }
-  if (IsNumeric() && CSSPrimitiveValue::IsLength(Unit())) {
-    CSSPrimitiveValue::LengthUnitType length_unit_type;
-    bool ok =
-        CSSPrimitiveValue::UnitTypeToLengthUnitType(Unit(), length_unit_type);
-    DCHECK(ok);
-    length_type_flags.set(length_unit_type);
-  }
-
-  unsigned unit_flags = 0;
 
   if (length_type_flags.test(CSSPrimitiveValue::kUnitTypeFontSize) ||
       length_type_flags.test(CSSPrimitiveValue::kUnitTypeFontXSize) ||
@@ -815,24 +852,35 @@ void MediaQueryFeatureExpNode::CollectExpressions(
 
 MediaQueryExpNode::FeatureFlags MediaQueryFeatureExpNode::CollectFeatureFlags()
     const {
-  if (exp_.MediaFeature() == media_feature_names::kStuckMediaFeature) {
-    return kFeatureSticky;
-  } else if (exp_.MediaFeature() == media_feature_names::kSnappedMediaFeature) {
-    return kFeatureSnap;
-  } else if (exp_.IsInlineSizeDependent()) {
-    return kFeatureInlineSize;
-  } else if (exp_.IsBlockSizeDependent()) {
-    return kFeatureBlockSize;
-  } else {
-    FeatureFlags flags = 0;
-    if (exp_.IsWidthDependent()) {
-      flags |= kFeatureWidth;
+  if (exp_.HasMediaFeature()) {
+    if (exp_.MediaFeature() == media_feature_names::kStuckMediaFeature) {
+      return kFeatureSticky;
+    } else if (exp_.MediaFeature() ==
+               media_feature_names::kSnappedMediaFeature) {
+      return kFeatureSnap;
+    } else if (exp_.MediaFeature() ==
+               media_feature_names::kScrollableMediaFeature) {
+      return kFeatureScrollable;
+    } else if (exp_.MediaFeature() ==
+               media_feature_names::kDirectionMediaFeature) {
+      return kFeatureScrollDirection;
+    } else if (exp_.MediaFeature() ==
+               media_feature_names::kFallbackMediaFeature) {
+      return kFeatureAnchored;
+    } else if (exp_.IsInlineSizeDependent()) {
+      return kFeatureInlineSize;
+    } else if (exp_.IsBlockSizeDependent()) {
+      return kFeatureBlockSize;
     }
-    if (exp_.IsHeightDependent()) {
-      flags |= kFeatureHeight;
-    }
-    return flags;
   }
+  FeatureFlags flags = 0;
+  if (exp_.IsWidthDependent()) {
+    flags |= kFeatureWidth;
+  }
+  if (exp_.IsHeightDependent()) {
+    flags |= kFeatureHeight;
+  }
+  return flags;
 }
 
 void MediaQueryFeatureExpNode::Trace(Visitor* visitor) const {

@@ -23,23 +23,24 @@ import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.util.DisplayMetrics;
 import android.view.View;
-import android.view.ViewGroup;
 import android.view.ViewStub;
 
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.Mockito;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features;
+import org.chromium.base.test.util.Features.DisableFeatures;
+import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.native_page.ContextMenuManager;
 import org.chromium.chrome.browser.offlinepages.OfflinePageBridge;
 import org.chromium.chrome.browser.profiles.Profile;
@@ -47,6 +48,7 @@ import org.chromium.chrome.browser.search_engines.TemplateUrlServiceFactory;
 import org.chromium.chrome.browser.suggestions.SiteSuggestion;
 import org.chromium.chrome.browser.suggestions.SuggestionsUiDelegate;
 import org.chromium.chrome.browser.suggestions.mostvisited.MostVisitedSites;
+import org.chromium.chrome.browser.user_education.UserEducationHelper;
 import org.chromium.chrome.test.util.browser.suggestions.mostvisited.FakeMostVisitedSites;
 import org.chromium.components.browser_ui.widget.displaystyle.HorizontalDisplayStyle;
 import org.chromium.components.browser_ui.widget.displaystyle.UiConfig;
@@ -62,17 +64,19 @@ import java.util.ArrayList;
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public class MostVisitedMediatorUnitTest {
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     @Mock Resources mResources;
     @Mock Configuration mConfiguration;
     @Mock UiConfig mUiConfig;
     @Mock DisplayMetrics mDisplayMetrics;
-    @Mock ViewGroup mMvTilesLayout;
+    @Mock MostVisitedTilesLayout mMvTilesLayout;
     @Mock ViewStub mNoMvPlaceholderStub;
     @Mock View mNoMvPlaceholder;
     @Mock Tile mTile;
     @Mock SuggestionsTileView mTileView;
     @Mock SiteSuggestion mData;
     @Mock TileRenderer mTileRenderer;
+    @Mock UserEducationHelper mUserEducationHelper;
     @Mock SuggestionsUiDelegate mSuggestionsUiDelegate;
     @Mock ContextMenuManager mContextMenuManager;
     @Mock TileGroup.Delegate mTileGroupDelegate;
@@ -86,11 +90,8 @@ public class MostVisitedMediatorUnitTest {
     private PropertyModel mModel;
     private MostVisitedTilesMediator mMediator;
 
-    @Rule public TestRule mProcessor = new Features.JUnitProcessor();
-
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
         mModel = new PropertyModel(MostVisitedTilesProperties.ALL_KEYS);
         when(mResources.getConfiguration()).thenReturn(mConfiguration);
         mDisplayMetrics.widthPixels = 1000;
@@ -129,7 +130,7 @@ public class MostVisitedMediatorUnitTest {
 
         verify(mTileRenderer, atLeastOnce())
                 .renderTileSection(anyList(), eq(mMvTilesLayout), any());
-        verify(mMvTilesLayout).addView(any());
+        verify(mMvTilesLayout).addTile(any());
         verify(mSnapshotTileGridChangedRunnable, atLeastOnce()).run();
     }
 
@@ -167,7 +168,18 @@ public class MostVisitedMediatorUnitTest {
     }
 
     @Test
-    public void testMvtContainerOnTileCountChanged() {
+    @DisableFeatures({ChromeFeatureList.MOST_VISITED_TILES_CUSTOMIZATION})
+    public void testMvtContainerOnTileCountChanged_DisableMvtCustomization() {
+        doTestMvtContainerOnTileCountChanged();
+    }
+
+    @Test
+    @EnableFeatures({ChromeFeatureList.MOST_VISITED_TILES_CUSTOMIZATION})
+    public void testMvtContainerOnTileCountChanged_EndableMvtCustomization() {
+        doTestMvtContainerOnTileCountChanged();
+    }
+
+    private void doTestMvtContainerOnTileCountChanged() {
         ArrayList<SiteSuggestion> array = new ArrayList<>();
         array.add(mData);
         mMostVisitedSites.setTileSuggestions(array);
@@ -175,10 +187,16 @@ public class MostVisitedMediatorUnitTest {
 
         Assert.assertTrue(mModel.get(IS_CONTAINER_VISIBLE));
 
-        // When there's no mv tile, the mv tiles container should be hidden.
         mMostVisitedSites.setTileSuggestions(new ArrayList<>());
         mMediator.onTileCountChanged();
-        Assert.assertFalse(mModel.get(IS_CONTAINER_VISIBLE));
+        if (ChromeFeatureList.isEnabled(ChromeFeatureList.MOST_VISITED_TILES_CUSTOMIZATION)) {
+            // When there's no mv tile, the mv tiles container should show (with the "Add new"
+            // button).
+            Assert.assertTrue(mModel.get(IS_CONTAINER_VISIBLE));
+        } else {
+            // When there's no mv tile, the mv tiles container should be hidden.
+            Assert.assertFalse(mModel.get(IS_CONTAINER_VISIBLE));
+        }
 
         // When there is mv tile, the mv tiles container should be shown.
         mMostVisitedSites.setTileSuggestions(JUnitTestGURLs.HTTP_URL.getSpec());
@@ -239,7 +257,7 @@ public class MostVisitedMediatorUnitTest {
 
         Assert.assertEquals(
                 mResources.getDimensionPixelSize(R.dimen.tile_view_padding_edge_portrait),
-                (int) (mModel.get(HORIZONTAL_EDGE_PADDINGS)));
+                (int) mModel.get(HORIZONTAL_EDGE_PADDINGS));
         int tileViewWidth = mResources.getDimensionPixelOffset(R.dimen.tile_view_width);
         Assert.assertEquals(
                 (int)
@@ -247,7 +265,7 @@ public class MostVisitedMediatorUnitTest {
                                         - mModel.get(HORIZONTAL_EDGE_PADDINGS)
                                         - tileViewWidth * 4.5)
                                 / 4),
-                (int) (mModel.get(HORIZONTAL_INTERVAL_PADDINGS)));
+                (int) mModel.get(HORIZONTAL_INTERVAL_PADDINGS));
     }
 
     @Test
@@ -261,7 +279,7 @@ public class MostVisitedMediatorUnitTest {
 
         Assert.assertEquals(
                 mResources.getDimensionPixelSize(R.dimen.tile_view_padding_edge_portrait),
-                (int) (mModel.get(HORIZONTAL_EDGE_PADDINGS)));
+                (int) mModel.get(HORIZONTAL_EDGE_PADDINGS));
         int tileViewWidth = mResources.getDimensionPixelOffset(R.dimen.tile_view_width_condensed);
         Assert.assertEquals(
                 Integer.max(
@@ -271,7 +289,7 @@ public class MostVisitedMediatorUnitTest {
                                                 - mModel.get(HORIZONTAL_EDGE_PADDINGS)
                                                 - tileViewWidth * 4.5)
                                         / 4)),
-                (int) (mModel.get(HORIZONTAL_INTERVAL_PADDINGS)));
+                (int) mModel.get(HORIZONTAL_INTERVAL_PADDINGS));
     }
 
     @Test
@@ -282,10 +300,10 @@ public class MostVisitedMediatorUnitTest {
 
         Assert.assertEquals(
                 mResources.getDimensionPixelSize(R.dimen.tile_view_padding_landscape),
-                (int) (mModel.get(HORIZONTAL_EDGE_PADDINGS)));
+                (int) mModel.get(HORIZONTAL_EDGE_PADDINGS));
         Assert.assertEquals(
                 mResources.getDimensionPixelSize(R.dimen.tile_view_padding_landscape),
-                (int) (mModel.get(HORIZONTAL_INTERVAL_PADDINGS)));
+                (int) mModel.get(HORIZONTAL_INTERVAL_PADDINGS));
     }
 
     @Test
@@ -294,16 +312,16 @@ public class MostVisitedMediatorUnitTest {
 
         mMediator.destroy();
 
-        verify((MostVisitedTilesCarouselLayout) mMvTilesLayout).destroy();
+        verify(mMvTilesLayout).destroy();
         verify(mTemplateUrlService).removeObserver(mMediator);
     }
 
     @Test
-    public void testUpdateTilesViewForCarouselLayout_Tablet() {
+    public void testUpdateTilesView_Tablet() {
         int expectedTileViewEdgePadding =
-                mResources.getDimensionPixelSize(R.dimen.tile_view_padding_edge_tablet_polish);
+                mResources.getDimensionPixelSize(R.dimen.tile_view_padding_edge_tablet);
         int expectedTileViewIntervalPadding =
-                mResources.getDimensionPixelSize(R.dimen.tile_view_padding_interval_tablet_polish);
+                mResources.getDimensionPixelSize(R.dimen.tile_view_padding_interval_tablet);
         mConfiguration.orientation = Configuration.ORIENTATION_PORTRAIT;
         createMediator(/* isTablet= */ true);
         mMediator.onTileDataChanged();
@@ -330,7 +348,7 @@ public class MostVisitedMediatorUnitTest {
     }
 
     @Test
-    public void testUpdateTilesViewForCarouselLayout_Phone() {
+    public void testUpdateTilesView_Phone() {
         mConfiguration.orientation = Configuration.ORIENTATION_PORTRAIT;
         createMediator(/* isTablet= */ false);
         mMediator.onTileDataChanged();
@@ -354,11 +372,15 @@ public class MostVisitedMediatorUnitTest {
     }
 
     private void createMediator(boolean isTablet) {
-        mMvTilesLayout = Mockito.mock(MostVisitedTilesCarouselLayout.class);
+        mMvTilesLayout = Mockito.mock(MostVisitedTilesLayout.class);
 
-        mMvTilesLayout.addView(mTileView);
+        when(mMvTilesLayout.getResources()).thenReturn(mResources);
         when(mMvTilesLayout.getChildCount()).thenReturn(1);
         when(mMvTilesLayout.getChildAt(0)).thenReturn(mTileView);
+        when(mMvTilesLayout.getTileCount()).thenReturn(1);
+        when(mMvTilesLayout.getTileAt(0)).thenReturn(mTileView);
+        mMvTilesLayout.addTile(mTileView);
+
         when(mNoMvPlaceholderStub.inflate()).thenReturn(mNoMvPlaceholder);
 
         mMediator =
@@ -369,12 +391,12 @@ public class MostVisitedMediatorUnitTest {
                         mNoMvPlaceholderStub,
                         mTileRenderer,
                         mModel,
-                        /* isScrollableMVTEnabled= */ true,
                         isTablet,
                         mSnapshotTileGridChangedRunnable,
                         mTileCountChangedRunnable);
         mMediator.initWithNative(
                 mProfile,
+                mUserEducationHelper,
                 mSuggestionsUiDelegate,
                 mContextMenuManager,
                 mTileGroupDelegate,

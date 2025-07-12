@@ -16,7 +16,6 @@
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/event_router_forwarder.h"
-#include "chrome/browser/extensions/extension_service.h"
 #include "chrome/common/extensions/api/activity_log_private.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_context.h"
@@ -44,8 +43,7 @@ ActivityLogAPI::GetFactoryInstance() {
 template <>
 void
 BrowserContextKeyedAPIFactory<ActivityLogAPI>::DeclareFactoryDependencies() {
-  if (extensions::ExtensionsBrowserClient::Get())
-    DependsOn(ExtensionsBrowserClient::Get()->GetExtensionSystemFactory());
+  DependsOn(ExtensionsBrowserClient::Get()->GetExtensionSystemFactory());
   DependsOn(ActivityLog::GetFactoryInstance());
 }
 

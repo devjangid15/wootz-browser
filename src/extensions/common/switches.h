@@ -5,7 +5,7 @@
 #ifndef EXTENSIONS_COMMON_SWITCHES_H_
 #define EXTENSIONS_COMMON_SWITCHES_H_
 
-#include "build/chromeos_buildflags.h"
+#include "build/build_config.h"
 
 namespace extensions::switches {
 
@@ -26,6 +26,12 @@ extern const char kDisableAppContentVerification[];
 // Disable checking for user opt-in for extensions that want to inject script
 // into file URLs (ie, always allow it). This is used during automated testing.
 extern const char kDisableExtensionsFileAccessCheck[];
+
+// Disables extensions.
+inline constexpr char kDisableExtensions[] = "disable-extensions";
+
+// Disable extensions except those specified in a comma-separated list.
+inline constexpr char kDisableExtensionsExcept[] = "disable-extensions-except";
 
 // Disable the net::URLRequestThrottlerManager functionality for
 // requests originating from extensions.
@@ -49,8 +55,10 @@ extern const char kExtensionProcess[];
 // manifest.
 extern const char kExtensionsOnChromeURLs[];
 
-// Whether to force developer mode extensions highlighting.
-extern const char kForceDevModeHighlighting[];
+// Enables extensions running scripts on chrome-extension:// URLs.
+// Extensions still need to explicitly request access to chrome-extension://
+// URLs in the manifest.
+extern const char kExtensionsOnExtensionURLs[];
 
 // Comma-separated list of paths to apps to load at startup. The first app in
 // the list will be launched.
@@ -59,7 +67,7 @@ extern const char kLoadApps[];
 // Comma-separated list of paths to extensions to load at startup.
 extern const char kLoadExtension[];
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 // Path to the unpacked test extension to load into the signin profile. The ID
 // extension loaded must match kTestSigninProfileExtensionId.
 extern const char kLoadSigninProfileTestExtension[];
@@ -87,6 +95,36 @@ extern const char kEnableCrxHashCheck[];
 
 // Mute extension errors while working with new manifest version.
 extern const char kAllowFutureManifestVersion[];
+
+// Allow the chrome.test API to be exposed on web page contexts for testing.
+// TODO(tjudkins): This will need to be added to the list of flags that get
+// copied from the browser to the renderer in ChromeContentBrowserClient to
+// actually use it in browser tests.
+extern const char kExtensionTestApiOnWebPages[];
+
+// The feature parameter name that controls the variant of IPH shown when the
+// user has no extensions installed.
+extern const char kZeroStatePromoIphVariantParamName[];
+
+// When the user has no extensions installed, display a custom action IPH
+// that upon triggering, opens a new tab to the Chrome Web Store.
+extern const char kZeroStatePromoCustomActionIph[];
+
+// When the user has no extensions installed, display a custom UI IPH that
+// presents the user with different collections of extensions to explore,
+// each in a cr-chip button.
+extern const char kZeroStatePromoCustomUiChipIph[];
+
+// When the user has no extensions installed, display a custom UI IPH that
+// presents the user with different collections of extensions to explore,
+// each in a plain text link.
+extern const char kZeroStatePromoCustomUiPlainLinkIph[];
+
+// Checks if extensions are allowed to run on chrome:// URLs.
+bool AreExtensionsOnChromeURLsAllowed();
+
+// Checks if extensions are allowed to run on chrome-extension:// URLs.
+bool AreExtensionsOnExtensionURLsAllowed();
 
 }  // namespace extensions::switches
 

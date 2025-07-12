@@ -8,6 +8,7 @@
  */
 import 'chrome://resources/cr_elements/cr_button/cr_button.js';
 import 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
+import 'chrome://resources/cr_elements/cr_icon/cr_icon.js';
 import 'chrome://resources/cr_elements/cr_input/cr_input.js';
 
 import type {CrButtonElement} from 'chrome://resources/cr_elements/cr_button/cr_button.js';
@@ -66,7 +67,7 @@ export class SettingsSearchEngineEditDialogElement extends
       queryUrl_: String,
       dialogTitle_: String,
       actionButtonText_: String,
-      cancelButtonHidden_: Boolean,
+      showPolicySubtitle_: Boolean,
       readonly_: Boolean,
       urlIsReadonly_: {
         type: Boolean,
@@ -75,15 +76,15 @@ export class SettingsSearchEngineEditDialogElement extends
     };
   }
 
-  model: SearchEngine|null;
-  private searchEngine_: string;
-  private keyword_: string;
-  private queryUrl_: string;
-  private dialogTitle_: string;
-  private actionButtonText_: string;
-  private cancelButtonHidden_: boolean;
-  private readonly_: boolean;
-  private urlIsReadonly_: boolean;
+  declare model: SearchEngine|null;
+  declare private searchEngine_: string;
+  declare private keyword_: string;
+  declare private queryUrl_: string;
+  declare private dialogTitle_: string;
+  declare private actionButtonText_: string;
+  declare private showPolicySubtitle_: boolean;
+  declare private readonly_: boolean;
+  declare private urlIsReadonly_: boolean;
   private browserProxy_: SearchEnginesBrowserProxy =
       SearchEnginesBrowserProxyImpl.getInstance();
 
@@ -91,28 +92,30 @@ export class SettingsSearchEngineEditDialogElement extends
     super.ready();
 
     if (this.model) {
+      this.readonly_ = this.model.isManaged && !this.model.canBeEdited;
       if (this.model.isPrepopulated || this.model.default) {
-        this.dialogTitle_ =
-            loadTimeData.getString('searchEnginesEditSearchEngine');
+        this.dialogTitle_ = loadTimeData.getString(
+            this.readonly_ ? 'searchEnginesViewSearchEngine' :
+                             'searchEnginesEditSearchEngine');
       } else {
         this.dialogTitle_ = loadTimeData.getString(
-            this.model.isManaged ? 'searchEnginesViewSiteSearch' :
-                                   'searchEnginesEditSiteSearch');
+            this.readonly_ ? 'searchEnginesViewSiteSearch' :
+                             'searchEnginesEditSiteSearch');
       }
 
       this.actionButtonText_ =
-          loadTimeData.getString(this.model.isManaged ? 'done' : 'save');
-      this.cancelButtonHidden_ = this.model.isManaged;
+          loadTimeData.getString(this.readonly_ ? 'done' : 'save');
+      this.showPolicySubtitle_ = this.model.isManaged;
 
       // If editing an existing search engine, pre-populate the input fields.
       this.searchEngine_ = this.model.name;
       this.keyword_ = this.model.keyword;
       this.queryUrl_ = this.model.url;
-      this.readonly_ = this.model.isManaged;
     } else {
       this.dialogTitle_ = loadTimeData.getString('searchEnginesAddSiteSearch');
       this.actionButtonText_ = loadTimeData.getString('add');
       this.readonly_ = false;
+      this.showPolicySubtitle_ = false;
     }
 
     this.addEventListener('cancel', () => {
@@ -159,6 +162,13 @@ export class SettingsSearchEngineEditDialogElement extends
   }
 
   private validateElement_(inputElement: CrInputElement) {
+    // No need to validate fields if the search engine is read-only, i.e.
+    // created by policy. Those have been validated when the policy was
+    // processed (b/348165485).
+    if (this.readonly_) {
+      return;
+    }
+
     // If element is empty, disable the action button, but don't show the red
     // invalid message.
     if (inputElement.value === '') {
@@ -192,7 +202,7 @@ export class SettingsSearchEngineEditDialogElement extends
   }
 
   private computeUrlIsReadonly_(): boolean {
-    return this.readonly_ || (!!this.model && this.model!.urlLocked);
+    return this.readonly_ || (!!this.model && this.model.urlLocked);
   }
 }
 

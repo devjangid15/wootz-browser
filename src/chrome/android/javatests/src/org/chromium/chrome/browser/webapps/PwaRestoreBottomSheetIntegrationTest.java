@@ -25,7 +25,6 @@ import androidx.test.filters.SmallTest;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -33,6 +32,7 @@ import org.junit.runner.RunWith;
 import org.chromium.base.Log;
 import org.chromium.base.shared_preferences.SharedPreferencesManager;
 import org.chromium.base.test.util.CommandLineFlags;
+import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.DoNotBatch;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.Features.DisableFeatures;
@@ -49,7 +49,6 @@ import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.components.webapps.R;
 import org.chromium.content_public.browser.test.NativeLibraryTestUtils;
 import org.chromium.net.test.EmbeddedTestServer;
-import org.chromium.ui.test.util.DisableAnimationsTestRule;
 
 /** Test the showing of the PWA Restore Bottom Sheet dialog. */
 @RunWith(ChromeJUnit4ClassRunner.class)
@@ -64,21 +63,17 @@ public class PwaRestoreBottomSheetIntegrationTest {
     public final ChromeTabbedActivityTestRule mActivityTestRule =
             new ChromeTabbedActivityTestRule();
 
-    @ClassRule
-    public static DisableAnimationsTestRule sDisableAnimationsRule =
-            new DisableAnimationsTestRule();
-
-    private static @DisplayStage int sFlagValueMissing = DisplayStage.UNKNOWN_STATUS;
+    private static final @DisplayStage int sFlagValueMissing = DisplayStage.UNKNOWN_STATUS;
 
     private static final String ICON_URL1 = "/chrome/test/data/banners/256x256-green.png";
     private static final String ICON_URL2 = "/chrome/test/data/banners/256x256-red.png";
 
-    private static String[][] sDefaultApps = {
+    private static final String[][] sDefaultApps = {
         {"https://example.com/app1/", "App 1", ICON_URL1},
         {"https://example.com/app2/", "App 2", ICON_URL2},
         {"https://example.com/app3/", "App 3", ICON_URL1}
     };
-    private static int[] sDefaultLastUsed = {1, 2, 3};
+    private static final int[] sDefaultLastUsed = {1, 2, 3};
 
     private static final String TAG = "PwaRestoreIntegrTest";
 
@@ -222,24 +217,7 @@ public class PwaRestoreBottomSheetIntegrationTest {
     @Test
     @SmallTest
     @Feature({"PwaRestore"})
-    public void testNoOlderAppsShown() {
-        // This test is about ensuring that when all apps are recent,  we don't
-        // show the separate ("Older") app list.
-        Assert.assertTrue(setTestAppsForRestoring(sDefaultApps, sDefaultLastUsed));
-
-        // Ensure the promo dialog shows.
-        setAppsAvailableAndPromoStage(true, DisplayStage.SHOW_PROMO);
-
-        mActivityTestRule.startMainActivityFromLauncher();
-        assertDialogShown(true);
-        onView(withId(R.id.review_button)).perform(click());
-
-        onView(withText("Older")).check(doesNotExist());
-    }
-
-    @Test
-    @SmallTest
-    @Feature({"PwaRestore"})
+    @DisabledTest(message = "https://crbug.com/425736622")
     public void testBackButton() {
         // This test opens the dialog, clicks the Review button to expand the bottom sheet dialog
         // and then presses the Back in the OS twice to see what happens (first click should
@@ -272,6 +250,7 @@ public class PwaRestoreBottomSheetIntegrationTest {
     @Test
     @SmallTest
     @Feature({"PwaRestore"})
+    @DisabledTest(message = "https://crbug.com/425736622")
     public void testClickForwarding() {
         Assert.assertTrue(setTestAppsForRestoring(sDefaultApps, sDefaultLastUsed));
 
@@ -291,6 +270,23 @@ public class PwaRestoreBottomSheetIntegrationTest {
     @Test
     @SmallTest
     @Feature({"PwaRestore"})
+    public void testButtonsInitiallyDisabled() throws Exception {
+        // Ensure the promo dialog shows.
+        setAppsAvailableAndPromoStage(true, DisplayStage.SHOW_PROMO);
+
+        mActivityTestRule.startMainActivityFromLauncher();
+        assertDialogShown(true);
+        onView(withId(R.id.review_button)).perform(click());
+
+        // Deselect and Restore buttons should now be disabled (nothing to act on).
+        onView(withId(R.id.deselect_button)).check(matches(isNotEnabled()));
+        onView(withId(R.id.restore_button)).check(matches(isNotEnabled()));
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"PwaRestore"})
+    @DisabledTest(message = "https://crbug.com/425736622")
     public void testDeselectAll() throws Exception {
         Assert.assertTrue(setTestAppsForRestoring(sDefaultApps, sDefaultLastUsed));
 
@@ -341,6 +337,7 @@ public class PwaRestoreBottomSheetIntegrationTest {
     @Test
     @SmallTest
     @Feature({"PwaRestore"})
+    @DisabledTest(message = "https://crbug.com/425736622")
     public void testRestoreClosesUi() throws Exception {
         Assert.assertTrue(setTestAppsForRestoring(sDefaultApps, sDefaultLastUsed));
 

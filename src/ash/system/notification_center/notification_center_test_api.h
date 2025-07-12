@@ -9,7 +9,6 @@
 #include <string>
 
 #include "ash/system/unified/notification_icons_controller.h"
-#include "base/strings/string_util.h"
 #include "ui/base/models/image_model.h"
 #include "ui/message_center/public/cpp/notification.h"
 #include "ui/message_center/public/cpp/notifier_id.h"
@@ -86,6 +85,10 @@ class NotificationCenterTestApi {
   // Adds a notification with the source url and notifier id corresponding to
   // the provided url as a string. Useful for testing notification grouping.
   std::string AddNotificationWithSourceUrl(const std::string& url);
+
+  // Adds a pinned notification with a source URL, which creates a `NotifierId`
+  // object with type `WEB_PAGE`.
+  std::string AddPinnedNotificationWithSourceUrl(const std::string& url);
 
   // Adds a pinned notification and return the associated id.
   std::string AddPinnedNotification();

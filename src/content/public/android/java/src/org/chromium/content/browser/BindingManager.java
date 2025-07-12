@@ -8,13 +8,13 @@ import android.content.ComponentCallbacks2;
 import android.content.Context;
 import android.content.res.Configuration;
 
-import androidx.annotation.VisibleForTesting;
 import androidx.collection.ArraySet;
 
 import org.chromium.base.Log;
-import org.chromium.base.ResettersForTesting;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.process_launcher.ChildProcessConnection;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 
 import java.util.Iterator;
 import java.util.Set;
@@ -23,6 +23,7 @@ import java.util.Set;
  * Manages oom bindings used to bound child services.
  * This object must only be accessed from the launcher thread.
  */
+@NullMarked
 class BindingManager implements ComponentCallbacks2 {
     private static final String TAG = "BindingManager";
 
@@ -36,8 +37,6 @@ class BindingManager implements ComponentCallbacks2 {
     // Delays used when clearing moderate binding pool when onSentToBackground happens.
     private static final long BINDING_POOL_CLEARER_DELAY_MILLIS = 10 * 1000;
 
-    private static Boolean sUseNotPerceptibleBindingForTesting;
-
     private final Set<ChildProcessConnection> mConnections = new ArraySet<ChildProcessConnection>();
     // Can be -1 to mean no max size.
     private final int mMaxSize;
@@ -46,7 +45,7 @@ class BindingManager implements ComponentCallbacks2 {
 
     // If not null, this is the connection in |mConnections| that does not have a binding added
     // by BindingManager.
-    private ChildProcessConnection mWaivedConnection;
+    private @Nullable ChildProcessConnection mWaivedConnection;
 
     private int mConnectionsDroppedDueToMaxSize;
 
@@ -168,7 +167,7 @@ class BindingManager implements ComponentCallbacks2 {
     int getExclusiveBindingCount() {
         int exclusiveBindingCount = 0;
         for (ChildProcessConnection connection : mConnections) {
-            if ((useNotPerceptibleBinding())
+            if (ChildProcessConnection.supportNotPerceptibleBinding()
                     ? isExclusiveNotPerceptibleBinding(connection)
                     : isExclusiveVisibleBinding(connection)) {
                 exclusiveBindingCount++;
@@ -182,26 +181,9 @@ class BindingManager implements ComponentCallbacks2 {
      * @return whether this BindingManager has an exclusive moderate connection.
      */
     boolean hasExclusiveVisibleBinding(ChildProcessConnection connection) {
-        return !useNotPerceptibleBinding()
+        return !ChildProcessConnection.supportNotPerceptibleBinding()
                 && mConnections.contains(connection)
                 && isExclusiveVisibleBinding(connection);
-    }
-
-    /**
-     * Override the default behavior which is based on Android version. This can be removed once
-     * Android P support ends.
-     */
-    static void setUseNotPerceptibleBindingForTesting(boolean useNotPerceptibleBinding) {
-        sUseNotPerceptibleBindingForTesting = useNotPerceptibleBinding;
-        ResettersForTesting.register(() -> sUseNotPerceptibleBindingForTesting = null);
-    }
-
-    @VisibleForTesting
-    static boolean useNotPerceptibleBinding() {
-        if (sUseNotPerceptibleBindingForTesting != null) {
-            return sUseNotPerceptibleBindingForTesting;
-        }
-        return ChildProcessConnection.supportNotPerceptibleBinding();
     }
 
     private boolean isExclusiveNotPerceptibleBinding(ChildProcessConnection connection) {
@@ -281,7 +263,7 @@ class BindingManager implements ComponentCallbacks2 {
     }
 
     private void addBinding(ChildProcessConnection connection) {
-        if (useNotPerceptibleBinding()) {
+        if (ChildProcessConnection.supportNotPerceptibleBinding()) {
             connection.addNotPerceptibleBinding();
             return;
         }
@@ -289,7 +271,7 @@ class BindingManager implements ComponentCallbacks2 {
     }
 
     private void removeBinding(ChildProcessConnection connection) {
-        if (useNotPerceptibleBinding()) {
+        if (ChildProcessConnection.supportNotPerceptibleBinding()) {
             connection.removeNotPerceptibleBinding();
             return;
         }

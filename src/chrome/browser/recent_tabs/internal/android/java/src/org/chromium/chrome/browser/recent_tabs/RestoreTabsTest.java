@@ -23,8 +23,6 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
-import android.os.Build;
-
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.test.filters.MediumTest;
@@ -44,9 +42,7 @@ import org.mockito.Spy;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Criteria;
 import org.chromium.base.test.util.CriteriaHelper;
-import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.DoNotBatch;
-import org.chromium.base.test.util.JniMocker;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
@@ -60,7 +56,7 @@ import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 import org.chromium.components.feature_engagement.FeatureConstants;
 import org.chromium.components.feature_engagement.Tracker;
 import org.chromium.components.sync_device_info.FormFactor;
-import org.chromium.ui.test.util.UiRestriction;
+import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.url.JUnitTestGURLs;
 
 import java.util.ArrayList;
@@ -69,15 +65,13 @@ import java.util.List;
 /** Integration tests for the RestoreTabs feature. */
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
-@Restriction(UiRestriction.RESTRICTION_TYPE_PHONE)
+@Restriction(DeviceFormFactor.PHONE)
 @DoNotBatch(reason = "Tests startup behaviors that trigger per-session")
 public class RestoreTabsTest {
     private static final String RESTORE_TABS_FEATURE = FeatureConstants.RESTORE_TABS_ON_FRE_FEATURE;
 
     @Rule
     public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
-
-    @Rule public JniMocker jniMocker = new JniMocker();
 
     @Spy ForeignSessionHelper.Natives mForeignSessionHelperJniSpy;
     // Tell R8 not to break the ability to mock the class.
@@ -94,7 +88,7 @@ public class RestoreTabsTest {
         TrackerFactory.setTrackerForTests(mMockTracker);
 
         mForeignSessionHelperJniSpy = Mockito.spy(ForeignSessionHelperJni.get());
-        jniMocker.mock(ForeignSessionHelperJni.TEST_HOOKS, mForeignSessionHelperJniSpy);
+        ForeignSessionHelperJni.setInstanceForTesting(mForeignSessionHelperJniSpy);
         doReturn(true).when(mForeignSessionHelperJniSpy).isTabSyncEnabled(anyLong());
 
         mBottomSheetController =
@@ -111,10 +105,6 @@ public class RestoreTabsTest {
 
     @Test
     @MediumTest
-    @DisableIf.Build(
-            supported_abis_includes = "armeabi-v7a",
-            sdk_is_less_than = Build.VERSION_CODES.O,
-            message = "Flaky only on test-n-phone, crbug.com/1469008")
     public void testRestoreTabsPromo_triggerBottomSheetView() {
         // Setup mock data
         ForeignSessionTab tab = new ForeignSessionTab(JUnitTestGURLs.URL_1, "title", 32L, 32L, 0);
@@ -128,8 +118,8 @@ public class RestoreTabsTest {
         List<ForeignSession> sessions = new ArrayList<>();
         sessions.add(session);
 
-        doReturn(true).when(mMockTracker).wouldTriggerHelpUI(eq(RESTORE_TABS_FEATURE));
-        doReturn(true).when(mMockTracker).shouldTriggerHelpUI(eq(RESTORE_TABS_FEATURE));
+        doReturn(true).when(mMockTracker).wouldTriggerHelpUi(eq(RESTORE_TABS_FEATURE));
+        doReturn(true).when(mMockTracker).shouldTriggerHelpUi(eq(RESTORE_TABS_FEATURE));
         doAnswer(
                         invocation -> {
                             List<ForeignSession> invoked_sessions = invocation.getArgument(1);
@@ -159,7 +149,7 @@ public class RestoreTabsTest {
     @MediumTest
     public void testRestoreTabsPromo_noSyncedDevicesNoTrigger() {
         TabUiTestHelper.enterTabSwitcher(mActivityTestRule.getActivity());
-        verify(mMockTracker, never()).shouldTriggerHelpUI(eq(RESTORE_TABS_FEATURE));
+        verify(mMockTracker, never()).shouldTriggerHelpUi(eq(RESTORE_TABS_FEATURE));
         Assert.assertFalse(mBottomSheetController.isSheetOpen());
         verify(mMockTracker, never()).dismissed(eq(RESTORE_TABS_FEATURE));
     }
@@ -215,6 +205,7 @@ public class RestoreTabsTest {
         int tabSwitcherAncestorViewId =
                 TabUiTestHelper.getTabSwitcherAncestorId(mActivityTestRule.getActivity());
         // Make sure the grid tab switcher is scrolled down to show the selected tab.
+        // With the addition of hub search, check that the last tab is completely visible to verify.
         onView(
                         allOf(
                                 withId(org.chromium.chrome.test.R.id.tab_list_recycler_view),
@@ -226,7 +217,7 @@ public class RestoreTabsTest {
                             LinearLayoutManager layoutManager =
                                     (LinearLayoutManager) ((RecyclerView) v).getLayoutManager();
                             Assert.assertEquals(
-                                    4, layoutManager.findFirstCompletelyVisibleItemPosition());
+                                    6, layoutManager.findLastCompletelyVisibleItemPosition());
                         });
     }
 
@@ -428,8 +419,8 @@ public class RestoreTabsTest {
         sessions.add(session1);
         sessions.add(session2);
 
-        doReturn(true).when(mMockTracker).wouldTriggerHelpUI(eq(RESTORE_TABS_FEATURE));
-        doReturn(true).when(mMockTracker).shouldTriggerHelpUI(eq(RESTORE_TABS_FEATURE));
+        doReturn(true).when(mMockTracker).wouldTriggerHelpUi(eq(RESTORE_TABS_FEATURE));
+        doReturn(true).when(mMockTracker).shouldTriggerHelpUi(eq(RESTORE_TABS_FEATURE));
         doAnswer(
                         invocation -> {
                             List<ForeignSession> invoked_sessions = invocation.getArgument(1);

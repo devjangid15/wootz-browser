@@ -2,12 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "components/eye_dropper/eye_dropper_view.h"
 
 #include <utility>
 
 #include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
+#include "base/timer/timer.h"
 #include "build/build_config.h"
 #include "components/color/color_id.h"
 #include "components/eye_dropper/features.h"
@@ -17,6 +23,7 @@
 #include "content/public/browser/web_contents.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/display/screen.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/color_palette.h"
@@ -28,7 +35,7 @@
 #include "base/win/windows_version.h"
 #endif
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "ui/aura/window_tree_host.h"
 #endif
 
@@ -58,7 +65,7 @@ EyeDropperView::ViewPositionHandler::ViewPositionHandler(EyeDropperView* owner)
 }
 
 EyeDropperView::ViewPositionHandler::~ViewPositionHandler() {
-  timer_.AbandonAndStop();
+  timer_.Stop();
 }
 
 void EyeDropperView::ViewPositionHandler::UpdateViewPosition() {
@@ -94,7 +101,7 @@ class EyeDropperView::ScreenCapturer
 
 EyeDropperView::ScreenCapturer::ScreenCapturer(EyeDropperView* owner)
     : owner_(owner) {
-  static bool allow_wgc_screen_capture =
+  static bool allow_wgc_screen_capturer =
 #if BUILDFLAG(IS_WIN)
       // Allow WGC screen capture if Windows version is greater or equal
       // than 10.0.20348.0, as the following API, which controls if a border is
@@ -104,13 +111,21 @@ EyeDropperView::ScreenCapturer::ScreenCapturer(EyeDropperView* owner)
       base::win::GetVersion() >= base::win::Version::SERVER_2022 &&
 #endif  // BUILDFLAG(IS_WIN)
       base::FeatureList::IsEnabled(features::kAllowEyeDropperWGCScreenCapture);
+  auto options = content::desktop_capture::CreateDesktopCaptureOptions();
+
+#if defined(RTC_ENABLE_WIN_WGC)
+  if (allow_wgc_screen_capturer) {
+    options.set_allow_wgc_screen_capturer(true);
+  }
+#endif  // defined(RTC_ENABLE_WIN_WGC)
+
   // TODO(iopopesc): Update the captured frame after a period of time to match
   // latest content on screen.
-  capturer_ =
-      content::desktop_capture::CreateScreenCapturer(allow_wgc_screen_capture);
+  capturer_ = content::desktop_capture::CreateScreenCapturer(
+      options, /*for_snapshot=*/true);
   if (capturer_) {
     capturer_->Start(this);
-    if (allow_wgc_screen_capture) {
+    if (allow_wgc_screen_capturer) {
       capturer_->SelectSource(webrtc::kFullDesktopScreenId);
     }
   }
@@ -195,19 +210,21 @@ EyeDropperView::EyeDropperView(gfx::NativeView parent,
     : listener_(listener),
       view_position_handler_(std::make_unique<ViewPositionHandler>(this)),
       screen_capturer_(std::make_unique<ScreenCapturer>(this)) {
-  SetModalType(ui::MODAL_TYPE_WINDOW);
-  // This is owned as a unique_ptr<EyeDropper> elsewhere.
-  SetOwnedByWidget(false);
+  SetModalType(ui::mojom::ModalType::kWindow);
   // TODO(pbos): Remove this, perhaps by separating the contents view from the
   // EyeDropper/WidgetDelegate.
-  set_owned_by_client();
+  set_owned_by_client(OwnedByClientPassKey());
   SetPreferredSize(GetSize());
 #if BUILDFLAG(IS_LINUX)
   // Use TYPE_MENU for Linux to ensure that the eye dropper view is displayed
   // above the color picker.
-  views::Widget::InitParams params(views::Widget::InitParams::TYPE_MENU);
+  views::Widget::InitParams params(
+      views::Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET,
+      views::Widget::InitParams::TYPE_MENU);
 #else
-  views::Widget::InitParams params(views::Widget::InitParams::TYPE_POPUP);
+  views::Widget::InitParams params(
+      views::Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET,
+      views::Widget::InitParams::TYPE_POPUP);
 #endif
   params.opacity = views::Widget::InitParams::WindowOpacity::kTranslucent;
   // Use software compositing to prevent situations when the widget is not
@@ -229,7 +246,7 @@ EyeDropperView::EyeDropperView(gfx::NativeView parent,
   CaptureInput();
   auto* screen = display::Screen::GetScreen();
   gfx::Point initial_position = screen->GetCursorScreenPoint();
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   if (screen->InTabletMode()) {
     initial_position =
         screen->GetDisplayForNewWindows().work_area().CenterPoint();
@@ -241,7 +258,7 @@ EyeDropperView::EyeDropperView(gfx::NativeView parent,
   // the UI.
   ignore_selection_time_ = base::TimeTicks::Now() + base::Milliseconds(500);
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   // Add an observation so the capture can be updated as the eye dropper window
   // moves between displays.
   window_observation_.Observe(GetWidget()->GetNativeWindow());
@@ -288,7 +305,7 @@ void EyeDropperView::OnPaint(gfx::Canvas* view_canvas) {
   const SkBitmap frame = screen_capturer_->GetBitmap();
   gfx::Point center_position_px;
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   // ChromeOS only captures a single display at a time, and we need to convert
   // the cursor position to display (root window) local pixel coordinates.
   aura::Window* window = GetWidget()->GetNativeWindow();
@@ -379,7 +396,7 @@ void EyeDropperView::OnWidgetMove() {
   SchedulePaint();
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 void EyeDropperView::OnWindowAddedToRootWindow(aura::Window* window) {
   display::Display display =
       display::Screen::GetScreen()->GetDisplayNearestWindow(window);

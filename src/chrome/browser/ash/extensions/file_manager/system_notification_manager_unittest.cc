@@ -8,12 +8,12 @@
 #include <set>
 #include <string_view>
 
-#include "ash/components/arc/arc_prefs.h"
 #include "ash/webui/file_manager/url_constants.h"
 #include "base/containers/flat_map.h"
 #include "base/files/file.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/memory/raw_ptr.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
@@ -37,6 +37,8 @@
 #include "chromeos/ash/components/dbus/cros_disks/cros_disks_client.h"
 #include "chromeos/ash/components/disks/disk.h"
 #include "chromeos/ash/components/disks/fake_disk_mount_manager.h"
+#include "chromeos/ash/experiences/arc/arc_prefs.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/test/browser_task_environment.h"
 #include "storage/browser/file_system/file_system_url.h"
 #include "storage/browser/quota/quota_manager_proxy.h"
@@ -167,10 +169,6 @@ class DeviceEventRouterImpl : public DeviceEventRouter {
 
     system_notification_manager()->HandleDeviceEvent(event);
   }
-
-  // DeviceEventRouter overrides.
-  // Hard set to disabled for the ExternalStorageDisabled test to work.
-  bool IsExternalStorageDisabled() override { return true; }
 };
 
 constexpr char kDevicePath[] = "/device/test";
@@ -304,8 +302,8 @@ class SystemNotificationManagerTest
 
 TEST_F(SystemNotificationManagerTest, ExternalStorageDisabled) {
   base::HistogramTester histogram_tester;
-  // Send a removable volume mounted event.
-  event_router_->OnDeviceAdded(kDevicePath);
+  // Send the event.
+  event_router_->OnDiskAddBlockedByPolicy(kDevicePath);
   // Get the number of notifications from the NotificationDisplayService.
   NotificationDisplayServiceFactory::GetForProfile(profile_)->GetDisplayed(
       BindOnce(&SystemNotificationManagerTest::GetNotificationsCallback,

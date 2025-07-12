@@ -6,14 +6,18 @@
 
 #include <stdint.h>
 
+#include <cstdint>
+
 #include "base/base64.h"
 #include "base/check.h"
 #include "base/containers/span.h"
 #include "base/hash/sha1.h"
+#include "base/strings/string_view_util.h"
 #include "components/policy/core/common/cloud/test/policy_builder.h"
 #include "components/policy/proto/device_management_backend.pb.h"
+#include "crypto/keypair.h"
 #include "crypto/rsa_private_key.h"
-#include "crypto/signature_creator.h"
+#include "crypto/sign.h"
 #include "device_management_backend.pb.h"
 
 namespace em = enterprise_management;
@@ -96,18 +100,20 @@ constexpr char kWildCard[] = "*";
 std::unique_ptr<crypto::RSAPrivateKey> DecodePrivateKey(
     const char* const encoded) {
   std::string to_decrypt;
-  if (!base::Base64Decode(encoded, &to_decrypt))
+  if (!base::Base64Decode(encoded, &to_decrypt)) {
     return nullptr;
+  }
 
   return crypto::RSAPrivateKey::CreateFromPrivateKeyInfo(
-      base::as_bytes(base::make_span(to_decrypt)));
+      base::as_byte_span(to_decrypt));
 }
 
 bool ExportPublicKeyAsString(const crypto::RSAPrivateKey& private_key,
                              std::string* public_key) {
   std::vector<uint8_t> public_key_vec;
-  if (!private_key.ExportPublicKey(&public_key_vec))
+  if (!private_key.ExportPublicKey(&public_key_vec)) {
     return false;
+  }
 
   public_key->assign(reinterpret_cast<const char*>(public_key_vec.data()),
                      public_key_vec.size());
@@ -182,27 +188,21 @@ bool SignatureProvider::SigningKey::Sign(
     const std::string& str,
     em::PolicyFetchRequest::SignatureType signature_type,
     std::string* signature) const {
-  crypto::SignatureCreator::HashAlgorithm crypto_hash_alg;
+  crypto::sign::SignatureKind kind;
   switch (signature_type) {
     case em::PolicyFetchRequest::SHA256_RSA:
-      crypto_hash_alg = crypto::SignatureCreator::SHA256;
+      kind = crypto::sign::SignatureKind::RSA_PKCS1_SHA256;
       break;
     case em::PolicyFetchRequest::NONE:
     case em::PolicyFetchRequest::SHA1_RSA:
-      crypto_hash_alg = crypto::SignatureCreator::SHA1;
+      kind = crypto::sign::SignatureKind::RSA_PKCS1_SHA1;
       break;
   }
 
-  std::unique_ptr<crypto::SignatureCreator> signer =
-      crypto::SignatureCreator::Create(private_key_.get(), crypto_hash_alg);
-
-  std::vector<uint8_t> input(str.begin(), str.end());
-  std::vector<uint8_t> result;
-
-  if (!signer->Update(input.data(), input.size()) || !signer->Final(&result)) {
-    return false;
-  }
-
+  auto wrapped_key = crypto::keypair::PrivateKey::FromDeprecatedRSAPrivateKey(
+      private_key_.get());
+  std::vector<uint8_t> result =
+      crypto::sign::Sign(kind, wrapped_key, base::as_byte_span(str));
   signature->assign(std::string(result.begin(), result.end()));
 
   return true;
@@ -225,7 +225,30 @@ void SignatureProvider::SetSigningKeysForChildDomain() {
   set_signing_keys(std::move(universal_signing_keys));
 }
 
-SignatureProvider::SignatureProvider() {
+bool SignatureProvider::SignVerificationData(const std::string& data,
+                                             std::string* signature) const {
+  auto wrapped_key = crypto::keypair::PrivateKey::FromDeprecatedRSAPrivateKey(
+      verification_key_.get());
+  std::vector<uint8_t> result =
+      crypto::sign::Sign(crypto::sign::SignatureKind::RSA_PKCS1_SHA256,
+                         wrapped_key, base::as_byte_span(data));
+  signature->assign(std::string(result.begin(), result.end()));
+
+  return true;
+}
+
+std::string SignatureProvider::GetVerificationPublicKey() {
+  std::string public_key;
+  std::vector<uint8_t> public_key_vec;
+  CHECK(verification_key_->ExportPublicKey(&public_key_vec));
+  public_key.assign(reinterpret_cast<const char*>(public_key_vec.data()),
+                    public_key_vec.size());
+  return public_key;
+}
+
+SignatureProvider::SignatureProvider()
+    : verification_key_(crypto::RSAPrivateKey::CreateFromPrivateKeyInfo(
+          base::span(kVerificationPrivateKey))) {
   InitSigningKeys(&signing_keys_);
 }
 
@@ -240,12 +263,14 @@ SignatureProvider::~SignatureProvider() = default;
 const SignatureProvider::SigningKey* SignatureProvider::GetKeyByVersion(
     int key_version) const {
   // |key_version| is 1-based.
-  if (key_version < 1)
+  if (key_version < 1) {
     return nullptr;
+  }
   size_t key_index = static_cast<size_t>(key_version) - 1;
   if (key_index >= signing_keys_.size()) {
-    if (!rotate_keys())
+    if (!rotate_keys()) {
       return nullptr;
+    }
     key_index %= signing_keys_.size();
   }
   return &signing_keys_[key_index];

@@ -22,10 +22,11 @@
 #include "components/history/core/browser/visit_annotations_database.h"
 #include "components/sync/base/page_transition_conversion.h"
 #include "components/sync/model/conflict_resolution.h"
+#include "components/sync/model/data_type_local_change_processor.h"
 #include "components/sync/model/entity_change.h"
 #include "components/sync/model/metadata_batch.h"
 #include "components/sync/model/metadata_change_list.h"
-#include "components/sync/model/model_type_change_processor.h"
+#include "components/sync/model/model_error.h"
 #include "components/sync/model/mutable_data_batch.h"
 #include "components/sync/model/sync_metadata_store_change_list.h"
 #include "components/sync/protocol/history_specifics.pb.h"
@@ -109,6 +110,8 @@ sync_pb::SyncEnums::BrowserType BrowserTypeToProto(
       return sync_pb::SyncEnums_BrowserType_TYPE_POPUP;
     case VisitContextAnnotations::BrowserType::kCustomTab:
       return sync_pb::SyncEnums_BrowserType_TYPE_CUSTOM_TAB;
+    case VisitContextAnnotations::BrowserType::kAuthTab:
+      return sync_pb::SyncEnums_BrowserType_TYPE_AUTH_TAB;
   }
   return sync_pb::SyncEnums_BrowserType_BROWSER_TYPE_UNKNOWN;
 }
@@ -124,6 +127,8 @@ VisitContextAnnotations::BrowserType BrowserTypeFromProto(
       return VisitContextAnnotations::BrowserType::kPopup;
     case sync_pb::SyncEnums_BrowserType_TYPE_CUSTOM_TAB:
       return VisitContextAnnotations::BrowserType::kCustomTab;
+    case sync_pb::SyncEnums_BrowserType_TYPE_AUTH_TAB:
+      return VisitContextAnnotations::BrowserType::kAuthTab;
   }
   return VisitContextAnnotations::BrowserType::kUnknown;
 }
@@ -480,9 +485,6 @@ bool SpecificsContainsOnlyValidURLs(
   return true;
 }
 
-// These values are persisted to logs. Entries should not be renumbered and
-// numeric values should never be reused.
-// LINT.IfChange(SyncHistorySpecificsError)
 enum class SpecificsError {
   kMissingRequiredFields = 0,
   kTooOld = 1,
@@ -490,7 +492,6 @@ enum class SpecificsError {
   kUnwantedURL = 3,
   kMaxValue = kUnwantedURL
 };
-// LINT.ThenChange(/tools/metrics/histograms/metadata/sync/enums.xml:SyncHistorySpecificsError)
 
 // Checks the given `specifics` for validity, i.e. whether it passes some basic
 // validation checks, and returns the appropriate error if it doesn't.
@@ -529,17 +530,13 @@ std::optional<SpecificsError> GetSpecificsError(
   return {};
 }
 
-void RecordSpecificsError(SpecificsError error) {
-  base::UmaHistogramEnumeration("Sync.History.IncomingSpecificsError", error);
-}
-
 }  // namespace
 
 HistorySyncBridge::HistorySyncBridge(
     HistoryBackendForSync* history_backend,
     HistorySyncMetadataDatabase* sync_metadata_database,
-    std::unique_ptr<syncer::ModelTypeChangeProcessor> change_processor)
-    : ModelTypeSyncBridge(std::move(change_processor)),
+    std::unique_ptr<syncer::DataTypeLocalChangeProcessor> change_processor)
+    : DataTypeSyncBridge(std::move(change_processor)),
       history_backend_(history_backend),
       sync_metadata_database_(sync_metadata_database) {
   DCHECK(history_backend_);
@@ -555,7 +552,7 @@ HistorySyncBridge::CreateMetadataChangeList() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return std::make_unique<syncer::SyncMetadataStoreChangeList>(
       sync_metadata_database_, syncer::HISTORY,
-      base::BindRepeating(&syncer::ModelTypeChangeProcessor::ReportError,
+      base::BindRepeating(&syncer::DataTypeLocalChangeProcessor::ReportError,
                           change_processor()->GetWeakPtr()));
 }
 
@@ -564,8 +561,7 @@ std::optional<syncer::ModelError> HistorySyncBridge::MergeFullSyncData(
     syncer::EntityChangeList entity_data) {
   // Since HISTORY is in ApplyUpdatesImmediatelyTypes(), MergeFullSyncData()
   // should never be called.
-  NOTREACHED_IN_MIGRATION();
-  return {};
+  NOTREACHED();
 }
 
 std::optional<syncer::ModelError>
@@ -592,7 +588,6 @@ HistorySyncBridge::ApplyIncrementalSyncChanges(
     if (specifics_error.has_value()) {
       DVLOG(1) << "Skipping invalid visit, reason "
                << static_cast<int>(*specifics_error);
-      RecordSpecificsError(*specifics_error);
       continue;
     }
 
@@ -639,8 +634,7 @@ HistorySyncBridge::ApplyIncrementalSyncChanges(
         // entities *is* tracked, but then an incoming tombstone would result in
         // a conflict that'd be resolved as "local edit wins over remote
         // deletion", so still no ACTION_DELETE would arrive here.]
-        NOTREACHED_IN_MIGRATION();
-        break;
+        NOTREACHED();
     }
   }
 
@@ -669,17 +663,17 @@ void HistorySyncBridge::ApplyDisableSyncChanges(
   // Delete all foreign visits from the DB.
   history_backend_->DeleteAllForeignVisitsAndResetIsKnownToSync();
 
-  ModelTypeSyncBridge::ApplyDisableSyncChanges(
+  DataTypeSyncBridge::ApplyDisableSyncChanges(
       std::move(delete_metadata_change_list));
 }
 
-void HistorySyncBridge::GetDataForCommit(StorageKeyList storage_keys,
-                                         DataCallback callback) {
-  GetDataImpl(storage_keys, std::move(callback));
+std::unique_ptr<syncer::DataBatch> HistorySyncBridge::GetDataForCommit(
+    StorageKeyList storage_keys) {
+  return GetDataImpl(storage_keys);
 }
 
-void HistorySyncBridge::GetDataImpl(StorageKeyList storage_keys,
-                                    DataCallback callback) {
+std::unique_ptr<syncer::DataBatch> HistorySyncBridge::GetDataImpl(
+    StorageKeyList storage_keys) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   auto batch = std::make_unique<syncer::MutableDataBatch>();
@@ -714,14 +708,14 @@ void HistorySyncBridge::GetDataImpl(StorageKeyList storage_keys,
     batch->Put(key, std::move(entity_data));
   }
 
-  std::move(callback).Run(std::move(batch));
+  return batch;
 }
 
-void HistorySyncBridge::GetAllDataForDebugging(DataCallback callback) {
+std::unique_ptr<syncer::DataBatch> HistorySyncBridge::GetAllDataForDebugging() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (!sync_metadata_database_) {
-    return;
+    return nullptr;
   }
 
   auto metadata_batch = std::make_unique<syncer::MetadataBatch>();
@@ -729,17 +723,17 @@ void HistorySyncBridge::GetAllDataForDebugging(DataCallback callback) {
     RecordDatabaseError(SyncHistoryDatabaseError::kGetAllDataReadMetadata);
     change_processor()->ReportError(
         {FROM_HERE,
-         "Failed reading metadata from HistorySyncMetadataDatabase."});
+         syncer::ModelError::Type::kHistoryFailedToLoadMetadataForDebugging});
   }
   StorageKeyList storage_keys;
   for (const auto& [storage_key, metadata] : metadata_batch->GetAllMetadata()) {
     storage_keys.push_back(storage_key);
   }
-  GetDataImpl(std::move(storage_keys), std::move(callback));
+  return GetDataImpl(std::move(storage_keys));
 }
 
 std::string HistorySyncBridge::GetClientTag(
-    const syncer::EntityData& entity_data) {
+    const syncer::EntityData& entity_data) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(entity_data.specifics.has_history())
       << "EntityData does not have history specifics.";
@@ -749,7 +743,7 @@ std::string HistorySyncBridge::GetClientTag(
 }
 
 std::string HistorySyncBridge::GetStorageKey(
-    const syncer::EntityData& entity_data) {
+    const syncer::EntityData& entity_data) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(entity_data.specifics.has_history())
       << "EntityData does not have history specifics.";
@@ -782,7 +776,7 @@ syncer::ConflictResolution HistorySyncBridge::ResolveConflict(
       GetLocalCacheGuid()) {
     return syncer::ConflictResolution::kUseLocal;
   }
-  return ModelTypeSyncBridge::ResolveConflict(storage_key, remote_data);
+  return DataTypeSyncBridge::ResolveConflict(storage_key, remote_data);
 }
 
 void HistorySyncBridge::OnURLVisited(HistoryBackend* history_backend,
@@ -892,7 +886,7 @@ void HistorySyncBridge::OnDatabaseError() {
   sync_metadata_database_ = nullptr;
   RecordDatabaseError(SyncHistoryDatabaseError::kOnDatabaseError);
   change_processor()->ReportError(
-      {FROM_HERE, "HistoryDatabase encountered error"});
+      {FROM_HERE, syncer::ModelError::Type::kHistoryDatabaseError});
 }
 
 void HistorySyncBridge::LoadMetadata() {
@@ -904,8 +898,7 @@ void HistorySyncBridge::LoadMetadata() {
   if (!sync_metadata_database_->GetAllSyncMetadata(batch.get())) {
     RecordDatabaseError(SyncHistoryDatabaseError::kLoadMetadata);
     change_processor()->ReportError(
-        {FROM_HERE,
-         "Failed reading metadata from HistorySyncMetadataDatabase."});
+        {FROM_HERE, syncer::ModelError::Type::kHistoryFailedToLoadMetadata});
     return;
   }
   change_processor()->ModelReadyToSync(std::move(batch));

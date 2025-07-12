@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/notimplemented.h"
 #include "base/task/single_thread_task_runner.h"
 #include "net/cookies/site_for_cookies.h"
 #include "services/network/public/cpp/resource_request.h"
@@ -64,7 +65,7 @@ void URLLoaderMock::ServeAsynchronousRequest(
 
   if (data) {
     for (const auto& span : *data) {
-      delegate->DidReceiveData(client_, span.data(), span.size());
+      delegate->DidReceiveData(client_, span);
       // DidReceiveData() may clear the |self| weak ptr.  We stop iterating
       // when that happens.
       if (!self) {

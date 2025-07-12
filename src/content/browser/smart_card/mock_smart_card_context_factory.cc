@@ -39,24 +39,28 @@ void MockSmartCardContextFactory::CreateContext(
 
 void MockSmartCardContextFactory::ExpectConnectFakeReaderSharedT1(
     mojo::Receiver<device::mojom::SmartCardConnection>& connection_receiver) {
-  EXPECT_CALL(*this, Connect("Fake reader", SmartCardShareMode::kShared, _, _))
-      .WillOnce([&connection_receiver](
-                    const std::string& reader,
-                    device::mojom::SmartCardShareMode share_mode,
-                    device::mojom::SmartCardProtocolsPtr preferred_protocols,
-                    SmartCardContext::ConnectCallback callback) {
-        EXPECT_FALSE(preferred_protocols->t0);
-        EXPECT_TRUE(preferred_protocols->t1);
-        EXPECT_FALSE(preferred_protocols->raw);
+  EXPECT_CALL(*this,
+              Connect("Fake reader", SmartCardShareMode::kShared, _, _, _))
+      .WillOnce(
+          [&connection_receiver](
+              const std::string& reader,
+              device::mojom::SmartCardShareMode share_mode,
+              device::mojom::SmartCardProtocolsPtr preferred_protocols,
+              mojo::PendingRemote<device::mojom::SmartCardConnectionWatcher>
+                  connection_watcher,
+              SmartCardContext::ConnectCallback callback) {
+            EXPECT_FALSE(preferred_protocols->t0);
+            EXPECT_TRUE(preferred_protocols->t1);
+            EXPECT_FALSE(preferred_protocols->raw);
 
-        auto success = device::mojom::SmartCardConnectSuccess::New(
-            connection_receiver.BindNewPipeAndPassRemote(),
-            SmartCardProtocol::kT1);
+            auto success = device::mojom::SmartCardConnectSuccess::New(
+                connection_receiver.BindNewPipeAndPassRemote(),
+                SmartCardProtocol::kT1);
 
-        std::move(callback).Run(
-            device::mojom::SmartCardConnectResult::NewSuccess(
-                std::move(success)));
-      });
+            std::move(callback).Run(
+                device::mojom::SmartCardConnectResult::NewSuccess(
+                    std::move(success)));
+          });
 }
 
 void MockSmartCardContextFactory::ExpectListReaders(
@@ -65,6 +69,13 @@ void MockSmartCardContextFactory::ExpectListReaders(
       .WillOnce(RunOnceCallback<0>(
           device::mojom::SmartCardListReadersResult::NewReaders(
               std::move(readers))));
+}
+
+void MockSmartCardContextFactory::ExpectListReadersError(
+    device::mojom::SmartCardError error) {
+  EXPECT_CALL(*this, ListReaders(_))
+      .WillOnce(RunOnceCallback<0>(
+          device::mojom::SmartCardListReadersResult::NewError(error)));
 }
 
 void MockSmartCardContextFactory::ClearContextReceivers() {

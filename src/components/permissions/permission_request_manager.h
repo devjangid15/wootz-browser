@@ -6,7 +6,9 @@
 #define COMPONENTS_PERMISSIONS_PERMISSION_REQUEST_MANAGER_H_
 
 #include <algorithm>
+#include <memory>
 #include <optional>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -18,9 +20,11 @@
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "components/content_settings/browser/page_specific_content_settings.h"
+#include "components/content_settings/core/common/content_settings.h"
+#include "components/permissions/features.h"
 #include "components/permissions/permission_prompt.h"
 #include "components/permissions/permission_request_queue.h"
-#include "components/permissions/permission_ui_selector.h"
+#include "components/permissions/prediction_service/permission_ui_selector.h"
 #include "components/permissions/permission_uma_util.h"
 #include "components/permissions/request_type.h"
 #include "content/public/browser/global_routing_id.h"
@@ -30,7 +34,7 @@
 #include "ui/gfx/geometry/rect.h"
 
 class GURL;
-class WidevinePermissionAndroidTest;
+
 namespace content {
 class RenderFrameHost;
 }
@@ -112,15 +116,15 @@ class PermissionRequestManager
 
   ~PermissionRequestManager() override;
 
-  // Adds a new request to the permission bubble. Ownership of the request
-  // remains with the caller. The caller must arrange for the request to
-  // outlive the PermissionRequestManager. If a bubble is visible when this
-  // call is made, the request will be queued up and shown after the current
-  // bubble closes. A request with message text identical to an outstanding
-  // request will be merged with the outstanding request, and will have the same
-  // callbacks called as the outstanding request.
+  // Takes ownership of a new request and adds it to the permission bubble. The
+  // PermissionRequestManager will destroy the request after handling it.
+  // If a bubble is visible when this call is made, the request will be queued
+  // up and shown after the current bubble closes. A request with message text
+  // identical to an outstanding request will be merged with the outstanding
+  // request, and will have the same callbacks called as the outstanding
+  // request.
   void AddRequest(content::RenderFrameHost* source_frame,
-                  PermissionRequest* request);
+                  std::unique_ptr<PermissionRequest> request);
 
   // Will reposition the bubble (may change parent if necessary).
   void UpdateAnchor();
@@ -157,8 +161,7 @@ class PermissionRequestManager
   void OnVisibilityChanged(content::Visibility visibility) override;
 
   // PermissionPrompt::Delegate:
-  const std::vector<raw_ptr<PermissionRequest, VectorExperimental>>& Requests()
-      override;
+  const std::vector<std::unique_ptr<PermissionRequest>>& Requests() override;
   GURL GetRequestingOrigin() const override;
   GURL GetEmbeddingOrigin() const override;
   void Accept() override;
@@ -182,6 +185,10 @@ class PermissionRequestManager
   base::WeakPtr<PermissionPrompt::Delegate> GetWeakPtr() override;
   content::WebContents* GetAssociatedWebContents() override;
   bool RecreateView() override;
+  const PermissionPrompt* GetCurrentPrompt() const override;
+  // Returns true if there is a request in progress that is initiated by an
+  // embedded permission element.
+  bool IsCurrentRequestEmbeddedPermissionElementInitiated() const;
 
   // Returns the bounds of the active permission prompt view if we're
   // displaying one.
@@ -222,29 +229,26 @@ class PermissionRequestManager
     return permission_ui_selectors_;
   }
 
-  void AcceptDenyCancel(const std::vector<PermissionRequest*>& accepted_requests,  
-                   const std::vector<PermissionRequest*>& denied_requests,    
-                   const std::vector<PermissionRequest*>& cancelled_requests);
-  bool ShouldGroupRequests(PermissionRequest* a, PermissionRequest* b) const; 
-                                                                              
- private:                                                                     
-  bool ShouldBeGrouppedInRequests(PermissionRequest* a) const;                
-  friend class ::WidevinePermissionAndroidTest;                               
-                                                                              
- public:                                                                      
   void set_view_factory_for_testing(PermissionPrompt::Factory view_factory) {
     view_factory_ = std::move(view_factory);
   }
-
-  PermissionPrompt* view_for_testing() const { return view_.get(); }
 
   void set_current_request_first_display_time_for_testing(base::Time time) {
     current_request_first_display_time_ = time;
   }
 
-  std::optional<PermissionUmaUtil::PredictionGrantLikelihood>
+  std::optional<PermissionUiSelector::PredictionGrantLikelihood>
   prediction_grant_likelihood_for_testing() const {
     return prediction_grant_likelihood_;
+  }
+
+  std::optional<bool> was_decision_held_back_for_testing() const {
+    return was_decision_held_back_;
+  }
+
+  std::optional<PermissionRequestRelevance>
+  permission_request_relevance_for_testing() const {
+    return permission_request_relevance_;
   }
 
   std::optional<permissions::PermissionPromptDisposition>
@@ -303,6 +307,14 @@ class PermissionRequestManager
     kFinalize
   };
 
+  struct lex_compare {
+    bool operator()(const base::WeakPtr<PermissionRequest>& lhs,
+                    const base::WeakPtr<PermissionRequest>& rhs) const {
+      CHECK(lhs);
+      CHECK(rhs);
+      return lhs.get() < rhs.get();
+    }
+  };
   // Reprioritize the current requests (preempting, finalizing) based on what
   // type of UI has been shown for `requests_` and current pending requests
   // queue.
@@ -311,15 +323,30 @@ class PermissionRequestManager
   // Return true if we keep showing the current request, otherwise return false
   bool ReprioritizeCurrentRequestIfNeeded();
 
-  // Validate the input request. If the request is invalid and
-  // |should_finalize| is set, cancel and remove it from *_map_ and *_set_.
-  // Return true if the request is valid, otherwise false.
-  bool ValidateRequest(PermissionRequest* request, bool should_finalize = true);
+  // Returns true if the request's source frame can be found and is active.
+  // This means, its render frame host is committed and lives inside a page
+  // presented to the user, i.e. its not a prerendered or back-forward cached
+  // page. Side effect: In the case of the RenderFrameHost is inactive, this
+  // ensures it will be never activated through the following:
+  //
+  // - For BackForwardCache: it evicts the document from the cache and
+  //   triggers deletion.
+  // - For Prerendering: it cancels prerendering and triggers deletion.
+  //
+  //  For more information see
+  //  RenderFrameHost::IsInactiveAndDisallowActivation()
+
+  bool HasActiveSourceFrameOrDisallowActivationOtherwise(
+      PermissionRequest* request) const;
+
+  // Cancels a request and removes it from |request_sources_map_| and
+  // |validated_requests_|.
+  void FinalizeAndCancelRequest(PermissionRequest* request);
 
   // Adds `request` into `pending_permission_requests_`, and request's
   // `source_frame` into `request_sources_map_`.
   void QueueRequest(content::RenderFrameHost* source_frame,
-                    PermissionRequest* request);
+                    std::unique_ptr<PermissionRequest> request);
 
   // Because the requests are shown in a different order for Normal and Quiet
   // Chip, pending requests are returned back to pending_permission_requests_ to
@@ -365,9 +392,9 @@ class PermissionRequestManager
   // or duplicate_requests_.end() if no match. The matching list contains all
   // the weak requests which are duplicate of the given |request| (see
   // |IsDuplicateOf|)
-  using WeakPermissionRequestList =
-      std::list<std::list<base::WeakPtr<PermissionRequest>>>;
-  WeakPermissionRequestList::iterator FindDuplicateRequestList(
+  using PermissionRequestList =
+      std::list<std::list<std::unique_ptr<PermissionRequest>>>;
+  PermissionRequestList::iterator FindDuplicateRequestList(
       PermissionRequest* request);
 
   // Trigger |visitor| for each live weak request which matches the given
@@ -375,8 +402,8 @@ class PermissionRequestManager
   // iterator into |duplicate_requests_|, points the matching list, or
   // duplicate_requests_.end() if no match.
   using DuplicateRequestVisitor =
-      base::RepeatingCallback<void(const base::WeakPtr<PermissionRequest>&)>;
-  WeakPermissionRequestList::iterator VisitDuplicateRequests(
+      base::RepeatingCallback<void(const std::unique_ptr<PermissionRequest>&)>;
+  PermissionRequestList::iterator VisitDuplicateRequests(
       DuplicateRequestVisitor visitor,
       PermissionRequest* request);
 
@@ -386,10 +413,10 @@ class PermissionRequestManager
   // Calls PermissionDenied on a request and all its duplicates.
   void PermissionDeniedIncludingDuplicates(PermissionRequest* request);
   // Calls Cancelled on a request and all its duplicates.
-  void CancelledIncludingDuplicates(PermissionRequest* request,
-                                    bool is_final_decision = true);
-  // Calls RequestFinished on a request and all its duplicates.
-  void RequestFinishedIncludingDuplicates(PermissionRequest* request);
+  void CancelRequestIncludingDuplicates(PermissionRequest* request,
+                                        bool is_final_decision = true);
+  // Erases a request and all its duplicates.
+  void FinishRequestIncludingDuplicates(PermissionRequest* request);
 
   void NotifyTabVisibilityChanged(content::Visibility visibility);
   void NotifyPromptAdded();
@@ -415,9 +442,9 @@ class PermissionRequestManager
 
   void PreIgnoreQuietPromptInternal();
 
-  // Returns true if there is a request in progress that is initiated by an
-  // embedded permission element.
-  bool IsCurrentRequestEmbeddedPermissionElementInitiated() const;
+  // Returns true if there is a request in progress that is for exclusive
+  // access.
+  bool IsCurrentRequestExclusiveAccess() const;
 
   // Returns true when the current request should be finalized together with the
   // permission decision.
@@ -428,6 +455,14 @@ class PermissionRequestManager
       content::BrowserContext* browser_context,
       PermissionRequest* request,
       PermissionAction permission_action);
+
+  // Take a snapshot of the content setting status for the current requests,
+  // which can change based on the user's decision. Used in HaTS as a filter.
+  // This defaults to "DEFAULT" if there's no ContentSettingsType associated
+  // with the PermissionType.
+  void SetCurrentRequestsInitialStatuses();
+
+  ContentSetting GetRequestInitialStatus(PermissionRequest* request);
 
   // Factory to be used to create views when needed.
   PermissionPrompt::Factory view_factory_;
@@ -450,7 +485,7 @@ class PermissionRequestManager
   // The request (or requests) that the user is currently being prompted for.
   // When this is non-empty, the |view_| is generally non-null as long as the
   // tab is visible.
-  std::vector<raw_ptr<PermissionRequest, VectorExperimental>> requests_;
+  std::vector<std::unique_ptr<PermissionRequest>> requests_;
 
   struct PermissionRequestSource {
     content::GlobalRenderFrameHostId requesting_frame_id;
@@ -460,8 +495,8 @@ class PermissionRequestManager
 
   PermissionRequestQueue pending_permission_requests_;
 
-  // Stores the weak pointers of duplicated requests in a 2D list.
-  WeakPermissionRequestList duplicate_requests_;
+  // Stores the unique pointers of duplicated requests in a 2D list.
+  PermissionRequestList duplicate_requests_;
 
   // Maps each PermissionRequest currently in |requests_| or
   // |pending_permission_requests_| to which RenderFrameHost it originated from.
@@ -472,7 +507,7 @@ class PermissionRequestManager
   // we are extracting a group of requests from the queue to show to user. This
   // is an immature solution to avoid an infinitive loop of preempting, we would
   // not prempt a request if the incoming request is already validated.
-  std::set<raw_ptr<PermissionRequest, SetExperimental>> validated_requests_set_;
+  std::vector<base::WeakPtr<PermissionRequest>> validated_requests_;
 
   base::ObserverList<Observer> observer_list_;
   AutoResponseType auto_response_for_test_ = NONE;
@@ -506,9 +541,13 @@ class PermissionRequestManager
   std::optional<UiDecision> current_request_ui_to_use_;
 
   // The likelihood value returned by the Web Permission Predictions Service,
-  // to be recoreded in UKM.
-  std::optional<PermissionUmaUtil::PredictionGrantLikelihood>
+  // to be recorded in UKM.
+  std::optional<PermissionUiSelector::PredictionGrantLikelihood>
       prediction_grant_likelihood_;
+
+  // The permission request relevance returned by an on-device ML model,
+  // to be recorded in UKM.
+  std::optional<PermissionRequestRelevance> permission_request_relevance_;
 
   // Status of the decision made by the Web Permission Prediction Service, if
   // it was held back or not.
@@ -538,6 +577,12 @@ class PermissionRequestManager
 
   bool did_click_learn_more_ = false;
 
+  // Whether the current request can be preempted or not. This is set when
+  // callbacks are being issued to prevent potential re-entrant behavior of
+  // those callbacks requesting a permission that would preempt the current one
+  // and thus invalidate the iterator being used to issue the callback.
+  bool can_preempt_current_request_ = true;
+
   std::optional<base::TimeDelta> time_to_decision_for_test_;
 
   std::optional<bool> enabled_app_level_notification_permission_for_testing_;
@@ -549,6 +594,16 @@ class PermissionRequestManager
   base::OneShotTimer preignore_timer_;
 
   std::optional<base::OnceCallback<void()>> hats_shown_callback_;
+
+  // Holds the position of the current prompt, only relevant for permission
+  // element prompts.
+  std::optional<feature_params::PermissionElementPromptPosition>
+      current_request_pepc_prompt_position_;
+
+  // Holds the initial statuses of the current requests, one for each request in
+  // |requests_|.
+  std::map<PermissionRequest*, ContentSetting>
+      current_requests_initial_statuses_;
 
   base::WeakPtrFactory<PermissionRequestManager> weak_factory_{this};
   WEB_CONTENTS_USER_DATA_KEY_DECL();

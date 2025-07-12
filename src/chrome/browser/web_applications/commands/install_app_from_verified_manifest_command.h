@@ -6,12 +6,14 @@
 #define CHROME_BROWSER_WEB_APPLICATIONS_COMMANDS_INSTALL_APP_FROM_VERIFIED_MANIFEST_COMMAND_H_
 
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
 #include "base/values.h"
 #include "chrome/browser/web_applications/commands/web_app_command.h"
+#include "chrome/browser/web_applications/jobs/manifest_to_web_app_install_info_job.h"
 #include "chrome/browser/web_applications/locks/shared_web_contents_lock.h"
 #include "chrome/browser/web_applications/web_app_install_info.h"
 #include "chrome/browser/web_applications/web_app_install_params.h"
@@ -61,6 +63,11 @@ class InstallAppFromVerifiedManifestCommand
   // `verified_manifest_contents`: JSON string of a web app manifest to install.
   // `expected_id`: Expected hashed App ID for the installed app. If the ID does
   // not match, installation will abort with an error.
+  // `is_diy_app`: When true, treat this install as "DIY", meaning that the
+  // manifest content may be incomplete or supplemented from alternative
+  // sources.
+  // `install_params`: Additional optional params applied to customize the
+  // installed app.
   // `callback`: Called when installation completes.
   InstallAppFromVerifiedManifestCommand(
       webapps::WebappInstallSource install_source,
@@ -68,6 +75,8 @@ class InstallAppFromVerifiedManifestCommand
       GURL verified_manifest_url,
       std::string verified_manifest_contents,
       webapps::AppId expected_id,
+      bool is_diy_app,
+      std::optional<WebAppInstallParams> install_params,
       OnceInstallCallback callback);
 
   ~InstallAppFromVerifiedManifestCommand() override;
@@ -79,11 +88,9 @@ class InstallAppFromVerifiedManifestCommand
  private:
   void OnAboutBlankLoaded(webapps::WebAppUrlLoaderResult result);
   void OnManifestParsed(blink::mojom::ManifestPtr manifest);
-  void OnIconsRetrieved(IconsDownloadedResult result,
-                        IconsMap icons_map,
-                        DownloadedIconsHttpResults icons_http_results);
-  void OnAppLockAcquired(
-      std::unique_ptr<SharedWebContentsWithAppLock> app_lock);
+  void OnInstallInfoParsedFromManifest(
+      std::unique_ptr<WebAppInstallInfo> install_info);
+  void OnAppLockAcquired();
   void OnInstallFinalized(const webapps::AppId& app_id,
                           webapps::InstallResultCode code);
 
@@ -94,6 +101,8 @@ class InstallAppFromVerifiedManifestCommand
   GURL verified_manifest_url_;
   std::string verified_manifest_contents_;
   webapps::AppId expected_id_;
+  bool is_diy_app_;
+  std::optional<WebAppInstallParams> install_params_;
 
   // SharedWebContentsLock is held while parsing the manifest.
   std::unique_ptr<SharedWebContentsLock> web_contents_lock_;
@@ -103,8 +112,8 @@ class InstallAppFromVerifiedManifestCommand
 
   std::unique_ptr<webapps::WebAppUrlLoader> url_loader_;
   std::unique_ptr<WebAppDataRetriever> data_retriever_;
-
   std::unique_ptr<WebAppInstallInfo> web_app_info_;
+  std::unique_ptr<ManifestToWebAppInstallInfoJob> manifest_to_install_info_job_;
 
   mojo::Remote<blink::mojom::ManifestManager> manifest_manager_;
 

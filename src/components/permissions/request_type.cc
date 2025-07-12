@@ -4,24 +4,23 @@
 
 #include "components/permissions/request_type.h"
 
+#include <algorithm>
+
 #include "base/check.h"
 #include "base/containers/contains.h"
 #include "base/containers/fixed_flat_set.h"
 #include "base/feature_list.h"
 #include "base/notreached.h"
-#include "base/ranges/algorithm.h"
 #include "build/build_config.h"
 #include "components/permissions/features.h"
 #include "components/permissions/permission_request.h"
 #include "components/permissions/permissions_client.h"
-#include "ui/base/ui_base_features.h"
 
 #if BUILDFLAG(IS_ANDROID)
 #include "components/resources/android/theme_resources.h"
 #else
 #include "components/permissions/vector_icons/vector_icons.h"
 #include "components/vector_icons/vector_icons.h"
-#include "ui/gfx/paint_vector_icon.h"
 #include "ui/gfx/vector_icon_types.h"
 #endif  // BUILDFLAG(IS_ANDROID)
 
@@ -32,14 +31,7 @@ namespace {
 #if BUILDFLAG(IS_ANDROID)
 int GetIconIdAndroid(RequestType type) {
   switch (type) {
-    case RequestType::kAccessibilityEvents:
-      return IDR_ANDROID_INFOBAR_ACCESSIBILITY_EVENTS;
     case RequestType::kArSession:
-    case RequestType::kWootzEthereum:                  
-    case RequestType::kWootzSolana: 
-    case RequestType::kWootzGoogleSignInPermission: 
-    case RequestType::kWootzLocalhostAccessPermission:
-    case RequestType::kWidevine:
     case RequestType::kVrSession:
       return IDR_ANDROID_INFOBAR_VR_HEADSET;
     case RequestType::kCameraStream:
@@ -48,12 +40,18 @@ int GetIconIdAndroid(RequestType type) {
       return IDR_ANDROID_INFOBAR_CLIPBOARD;
     case RequestType::kDiskQuota:
       return IDR_ANDROID_INFOBAR_FOLDER;
+    case RequestType::kFileSystemAccess:
+      NOTREACHED();
     case RequestType::kGeolocation:
       return IDR_ANDROID_INFOBAR_GEOLOCATION;
+    case RequestType::kHandTracking:
+      return IDR_ANDROID_INFOBAR_HAND_TRACKING;
     case RequestType::kIdentityProvider:
       return IDR_ANDROID_INFOBAR_IDENTITY_PROVIDER;
     case RequestType::kIdleDetection:
       return IDR_ANDROID_INFOBAR_IDLE_DETECTION;
+    case RequestType::kLocalNetworkAccess:
+      return IDR_ANDROID_INFOBAR_LOCAL_NETWORK_ACCESS;
     case RequestType::kMicStream:
       return IDR_ANDROID_INFOBAR_MEDIA_STREAM_MIC;
     case RequestType::kMidiSysex:
@@ -69,9 +67,10 @@ int GetIconIdAndroid(RequestType type) {
     case RequestType::kStorageAccess:
     case RequestType::kTopLevelStorageAccess:
       return IDR_ANDROID_STORAGE_ACCESS;
+    case RequestType::kWindowManagement:
+      return IDR_ANDROID_INFOBAR_WINDOW_MANAGEMENT;
   }
-  NOTREACHED_IN_MIGRATION();
-  return 0;
+  NOTREACHED();
 }
 #endif  // BUILDFLAG(IS_ANDROID)
 
@@ -81,14 +80,7 @@ int GetIconIdAndroid(RequestType type) {
 // 2 - In a separate change, remove the refresh icons.
 const gfx::VectorIcon& GetIconIdDesktop(RequestType type) {
   switch (type) {
-    case RequestType::kAccessibilityEvents:
-      return kAccessibilityIcon;
     case RequestType::kArSession:
-    case RequestType::kWootzEthereum:                  
-    case RequestType::kWootzSolana: 
-    case RequestType::kWootzGoogleSignInPermission:
-    case RequestType::kWootzLocalhostAccessPermission:
-    case RequestType::kWidevine:
     case RequestType::kVrSession:
       return vector_icons::kVrHeadsetChromeRefreshIcon;
     case RequestType::kCameraPanTiltZoom:
@@ -97,17 +89,21 @@ const gfx::VectorIcon& GetIconIdDesktop(RequestType type) {
     case RequestType::kCapturedSurfaceControl:
       return vector_icons::kTouchpadMouseIcon;
     case RequestType::kClipboard:
-      return vector_icons::kContentPasteChromeRefreshIcon;
+      return vector_icons::kContentPasteIcon;
     case RequestType::kDiskQuota:
       return vector_icons::kFolderChromeRefreshIcon;
     case RequestType::kGeolocation:
       return vector_icons::kLocationOnChromeRefreshIcon;
+    case RequestType::kHandTracking:
+      return vector_icons::kHandGestureIcon;
     case RequestType::kIdleDetection:
       return vector_icons::kDevicesIcon;
     case RequestType::kKeyboardLock:
       return vector_icons::kKeyboardLockIcon;
     case RequestType::kLocalFonts:
       return vector_icons::kFontDownloadChromeRefreshIcon;
+    case RequestType::kLocalNetworkAccess:
+      return vector_icons::kRouterIcon;
     case RequestType::kMicStream:
       return vector_icons::kMicChromeRefreshIcon;
     case RequestType::kMidiSysex:
@@ -121,16 +117,16 @@ const gfx::VectorIcon& GetIconIdDesktop(RequestType type) {
 #if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_WIN)
     case RequestType::kProtectedMediaIdentifier:
       // This icon is provided by ChromePermissionsClient::GetOverrideIconId.
-      NOTREACHED_IN_MIGRATION();
-      return gfx::kNoneIcon;
+      NOTREACHED();
 #endif
     case RequestType::kRegisterProtocolHandler:
       return vector_icons::kProtocolHandlerIcon;
 #if BUILDFLAG(IS_CHROMEOS)
     case RequestType::kSmartCard:
-      // TODO(crbug.com/40944087): Use a proper smart card icon.
-      return vector_icons::kDevicesIcon;
+      return vector_icons::kSmartCardReaderIcon;
 #endif
+    case RequestType::kWebAppInstallation:
+      return vector_icons::kInstallDesktopIcon;
 #if BUILDFLAG(IS_CHROMEOS) && BUILDFLAG(USE_CUPS)
     case RequestType::kWebPrinting:
       return vector_icons::kPrinterIcon;
@@ -146,55 +142,48 @@ const gfx::VectorIcon& GetIconIdDesktop(RequestType type) {
       // TODO(crbug.com/40252825): provide a dedicated icon.
       return vector_icons::kFolderIcon;
   }
-  NOTREACHED_IN_MIGRATION();
-  return gfx::kNoneIcon;
+  NOTREACHED();
 }
 
 const gfx::VectorIcon& GetBlockedIconIdDesktop(RequestType type) {
-  const bool cr23 = ::features::IsChromeRefresh2023();
   switch (type) {
     case RequestType::kGeolocation:
-      return cr23 ? vector_icons::kLocationOffChromeRefreshIcon
-                  : vector_icons::kLocationOffIcon;
+      return vector_icons::kLocationOffChromeRefreshIcon;
     case RequestType::kNotifications:
-      return cr23 ? vector_icons::kNotificationsOffChromeRefreshIcon
-                  : vector_icons::kNotificationsOffIcon;
+      return vector_icons::kNotificationsOffChromeRefreshIcon;
     case RequestType::kArSession:
-    case RequestType::kWootzEthereum:                  
-    case RequestType::kWootzSolana: 
-    case RequestType::kWootzGoogleSignInPermission:
-    case RequestType::kWootzLocalhostAccessPermission:
-    case RequestType::kWidevine: 
     case RequestType::kVrSession:
-      return cr23 ? vector_icons::kVrHeadsetOffChromeRefreshIcon
-                  : vector_icons::kVrHeadsetOffIcon;
+      return vector_icons::kVrHeadsetOffChromeRefreshIcon;
     case RequestType::kCameraStream:
-      return cr23 ? vector_icons::kVideocamOffChromeRefreshIcon
-                  : vector_icons::kVideocamOffIcon;
+      return vector_icons::kVideocamOffChromeRefreshIcon;
     case RequestType::kCapturedSurfaceControl:
       return vector_icons::kTouchpadMouseOffIcon;
     case RequestType::kClipboard:
-      return cr23 ? vector_icons::kContentPasteOffChromeRefreshIcon
-                  : vector_icons::kContentPasteOffIcon;
+      return vector_icons::kContentPasteOffIcon;
+    case RequestType::kHandTracking:
+      return vector_icons::kHandGestureOffIcon;
     case RequestType::kIdleDetection:
-      return cr23 ? vector_icons::kDevicesOffChromeRefreshIcon
-                  : vector_icons::kDevicesOffIcon;
+      return vector_icons::kDevicesOffIcon;
+    case RequestType::kLocalNetworkAccess:
+      return vector_icons::kRouterOffIcon;
     case RequestType::kMicStream:
-      return cr23 ? vector_icons::kMicOffChromeRefreshIcon
-                  : vector_icons::kMicOffIcon;
+      return vector_icons::kMicOffChromeRefreshIcon;
     case RequestType::kMidiSysex:
-      return cr23 ? vector_icons::kMidiOffChromeRefreshIcon
-                  : vector_icons::kMidiOffIcon;
+      return vector_icons::kMidiOffChromeRefreshIcon;
     case RequestType::kStorageAccess:
       return vector_icons::kStorageAccessOffIcon;
     case RequestType::kIdentityProvider:
       // TODO(crbug.com/40252825): use a dedicated icon
-      return gfx::kNoneIcon;
+      return gfx::VectorIcon::EmptyIcon();
+    case RequestType::kKeyboardLock:
+      return vector_icons::kKeyboardLockOffIcon;
+    case RequestType::kPointerLock:
+      return vector_icons::kPointerLockOffIcon;
+    case RequestType::kWebAppInstallation:
+      return vector_icons::kInstallDesktopOffIcon;
     default:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
-  NOTREACHED_IN_MIGRATION();
-  return gfx::kNoneIcon;
 }
 #endif  // !BUILDFLAG(IS_ANDROID)
 
@@ -207,20 +196,8 @@ bool IsRequestablePermissionType(ContentSettingsType content_settings_type) {
 std::optional<RequestType> ContentSettingsTypeToRequestTypeIfExists(
     ContentSettingsType content_settings_type) {
   switch (content_settings_type) {
-    case ContentSettingsType::ACCESSIBILITY_EVENTS:
-      return RequestType::kAccessibilityEvents;
     case ContentSettingsType::AR:
       return RequestType::kArSession;
-    case ContentSettingsType::WOOTZ_ETHEREUM:
-      return RequestType::kWootzEthereum;
-    case ContentSettingsType::WOOTZ_SOLANA:
-      return RequestType::kWootzSolana;
-    case ContentSettingsType::WOOTZ_GOOGLE_SIGN_IN:
-      return RequestType::kWootzGoogleSignInPermission;
-    case ContentSettingsType::WOOTZ_LOCALHOST_ACCESS:
-      return RequestType::kWootzLocalhostAccessPermission;
-    case ContentSettingsType::DEFAULT:
-      return RequestType::kWidevine;
 #if !BUILDFLAG(IS_ANDROID)
     case ContentSettingsType::CAMERA_PAN_TILT_ZOOM:
       return RequestType::kCameraPanTiltZoom;
@@ -236,7 +213,10 @@ std::optional<RequestType> ContentSettingsTypeToRequestTypeIfExists(
       return RequestType::kLocalFonts;
 #endif
     case ContentSettingsType::GEOLOCATION:
+    case ContentSettingsType::GEOLOCATION_WITH_OPTIONS:
       return RequestType::kGeolocation;
+    case ContentSettingsType::HAND_TRACKING:
+      return RequestType::kHandTracking;
     case ContentSettingsType::IDLE_DETECTION:
       return RequestType::kIdleDetection;
 #if !BUILDFLAG(IS_ANDROID)
@@ -265,16 +245,14 @@ std::optional<RequestType> ContentSettingsTypeToRequestTypeIfExists(
       return RequestType::kStorageAccess;
     case ContentSettingsType::VR:
       return RequestType::kVrSession;
-#if !BUILDFLAG(IS_ANDROID)
     case ContentSettingsType::WINDOW_MANAGEMENT:
       return RequestType::kWindowManagement;
-#endif
+    case ContentSettingsType::LOCAL_NETWORK_ACCESS:
+      return RequestType::kLocalNetworkAccess;
     case ContentSettingsType::TOP_LEVEL_STORAGE_ACCESS:
       return RequestType::kTopLevelStorageAccess;
-#if !BUILDFLAG(IS_ANDROID)
     case ContentSettingsType::FILE_SYSTEM_WRITE_GUARD:
       return RequestType::kFileSystemAccess;
-#endif
 #if BUILDFLAG(IS_CHROMEOS)
     case ContentSettingsType::SMART_CARD_DATA:
       return RequestType::kSmartCard;
@@ -287,6 +265,10 @@ std::optional<RequestType> ContentSettingsTypeToRequestTypeIfExists(
       return RequestType::kIdentityProvider;
     default:
       return std::nullopt;
+#if !BUILDFLAG(IS_ANDROID)
+    case ContentSettingsType::WEB_APP_INSTALLATION:
+      return RequestType::kWebAppInstallation;
+#endif  // !BUILDFLAG(IS_ANDROID)
   }
 }
 
@@ -301,18 +283,8 @@ RequestType ContentSettingsTypeToRequestType(
 std::optional<ContentSettingsType> RequestTypeToContentSettingsType(
     RequestType request_type) {
   switch (request_type) {
-    case RequestType::kAccessibilityEvents:
-      return ContentSettingsType::ACCESSIBILITY_EVENTS;
     case RequestType::kArSession:
       return ContentSettingsType::AR;
-    case RequestType::kWootzEthereum:
-      return ContentSettingsType::WOOTZ_ETHEREUM;
-    case RequestType::kWootzSolana:
-      return ContentSettingsType::WOOTZ_SOLANA;
-    case RequestType::kWootzGoogleSignInPermission:
-      return ContentSettingsType::WOOTZ_GOOGLE_SIGN_IN;
-    case RequestType::kWootzLocalhostAccessPermission:
-      return ContentSettingsType::WOOTZ_LOCALHOST_ACCESS;
 #if !BUILDFLAG(IS_ANDROID)
     case RequestType::kCameraPanTiltZoom:
       return ContentSettingsType::CAMERA_PAN_TILT_ZOOM;
@@ -328,9 +300,13 @@ std::optional<ContentSettingsType> RequestTypeToContentSettingsType(
 #if !BUILDFLAG(IS_ANDROID)
     case RequestType::kLocalFonts:
       return ContentSettingsType::LOCAL_FONTS;
+    case RequestType::kLocalNetworkAccess:
+      return ContentSettingsType::LOCAL_NETWORK_ACCESS;
 #endif
     case RequestType::kGeolocation:
       return ContentSettingsType::GEOLOCATION;
+    case RequestType::kHandTracking:
+      return ContentSettingsType::HAND_TRACKING;
     case RequestType::kIdleDetection:
       return ContentSettingsType::IDLE_DETECTION;
 #if !BUILDFLAG(IS_ANDROID)
@@ -367,12 +343,14 @@ std::optional<ContentSettingsType> RequestTypeToContentSettingsType(
     case RequestType::kWebPrinting:
       return ContentSettingsType::WEB_PRINTING;
 #endif
-#if !BUILDFLAG(IS_ANDROID)
     case RequestType::kWindowManagement:
       return ContentSettingsType::WINDOW_MANAGEMENT;
-#endif
     case RequestType::kTopLevelStorageAccess:
       return ContentSettingsType::TOP_LEVEL_STORAGE_ACCESS;
+#if !BUILDFLAG(IS_ANDROID)
+    case RequestType::kWebAppInstallation:
+      return ContentSettingsType::WEB_APP_INSTALLATION;
+#endif  // !BUILDFLAG(IS_ANDROID)
     default:
       // Not associated with a ContentSettingsType.
       return std::nullopt;
@@ -396,12 +374,14 @@ bool IsConfirmationChipSupported(RequestType for_request_type) {
 IconId GetIconId(RequestType type) {
   IconId override_id = PermissionsClient::Get()->GetOverrideIconId(type);
 #if BUILDFLAG(IS_ANDROID)
-  if (override_id)
+  if (override_id) {
     return override_id;
+  }
   return GetIconIdAndroid(type);
 #else
-  if (!override_id.is_empty())
+  if (!override_id.is_empty()) {
     return override_id;
+  }
   return GetIconIdDesktop(type);
 #endif
 }
@@ -414,20 +394,8 @@ IconId GetBlockedIconId(RequestType type) {
 
 const char* PermissionKeyForRequestType(permissions::RequestType request_type) {
   switch (request_type) {
-    case permissions::RequestType::kAccessibilityEvents:
-      return "accessibility_events";
     case permissions::RequestType::kArSession:
       return "ar_session";
-    case permissions::RequestType::kWootzEthereum:                  
-      return "wootz_ethereum";                                      
-    case permissions::RequestType::kWootzSolana:                    
-      return "wootz_solana";
-    case permissions::RequestType::kWootzGoogleSignInPermission:    
-      return "wootz_google_sign_in";                                
-    case permissions::RequestType::kWootzLocalhostAccessPermission: 
-      return "wootz_localhost_access";  
-    case permissions::RequestType::kWidevine:                       
-      return "widevine";      
 #if !BUILDFLAG(IS_ANDROID)
     case permissions::RequestType::kCameraPanTiltZoom:
       return "camera_pan_tilt_zoom";
@@ -442,12 +410,12 @@ const char* PermissionKeyForRequestType(permissions::RequestType request_type) {
       return "clipboard";
     case permissions::RequestType::kDiskQuota:
       return "disk_quota";
-#if !BUILDFLAG(IS_ANDROID)
     case permissions::RequestType::kFileSystemAccess:
       return "file_system";
-#endif
     case permissions::RequestType::kGeolocation:
       return "geolocation";
+    case permissions::RequestType::kHandTracking:
+      return "hand_tracking";
     case permissions::RequestType::kIdleDetection:
       return "idle_detection";
 #if !BUILDFLAG(IS_ANDROID)
@@ -456,6 +424,8 @@ const char* PermissionKeyForRequestType(permissions::RequestType request_type) {
     case permissions::RequestType::kLocalFonts:
       return "local_fonts";
 #endif
+    case permissions::RequestType::kLocalNetworkAccess:
+      return "local_network_access";
     case permissions::RequestType::kMicStream:
       return "mic_stream";
     case permissions::RequestType::kMidiSysex:
@@ -495,9 +465,11 @@ const char* PermissionKeyForRequestType(permissions::RequestType request_type) {
       return "web_printing";
 #endif
 #if !BUILDFLAG(IS_ANDROID)
+    case permissions::RequestType::kWebAppInstallation:
+      return "web_app_installation";
+#endif
     case permissions::RequestType::kWindowManagement:
       return "window_management";
-#endif
     case permissions::RequestType::kIdentityProvider:
       return "identity_provider";
   }

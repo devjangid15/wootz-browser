@@ -17,8 +17,10 @@
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
 #include "base/synchronization/lock.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/task/thread_pool.h"
 #include "base/thread_annotations.h"
-#include "components/optimization_guide/core/optimization_target_model_observer.h"
+#include "components/optimization_guide/core/delivery/optimization_target_model_observer.h"
 #include "components/safe_browsing/core/common/fbs/client_model_generated.h"
 #include "components/safe_browsing/core/common/proto/client_model.pb.h"
 #include "components/safe_browsing/core/common/proto/csd.pb.h"
@@ -44,8 +46,7 @@ class ClientSidePhishingModel
     : public optimization_guide::OptimizationTargetModelObserver {
  public:
   ClientSidePhishingModel(
-      optimization_guide::OptimizationGuideModelProvider* opt_guide,
-      const scoped_refptr<base::SequencedTaskRunner>& background_task_runner);
+      optimization_guide::OptimizationGuideModelProvider* opt_guide);
 
   ~ClientSidePhishingModel() override;
 

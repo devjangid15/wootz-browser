@@ -17,7 +17,6 @@ import org.chromium.chrome.browser.compositor.bottombar.OverlayPanel.PanelState;
 import org.chromium.chrome.browser.compositor.bottombar.OverlayPanel.StateChangeReason;
 import org.chromium.chrome.browser.contextualsearch.ResolvedSearchTerm.CardTag;
 import org.chromium.chrome.browser.profiles.Profile;
-import org.chromium.components.sync.SyncService;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -139,15 +138,11 @@ public class ContextualSearchUma {
     static {
         final boolean unseen = false;
         final boolean seen = true;
-        Map<Pair<Boolean, Boolean>, Integer> codes = new HashMap<Pair<Boolean, Boolean>, Integer>();
-        codes.put(new Pair<Boolean, Boolean>(seen, TAP), ResultsByGesture.SEEN_FROM_TAP);
-        codes.put(new Pair<Boolean, Boolean>(unseen, TAP), ResultsByGesture.NOT_SEEN_FROM_TAP);
-        codes.put(
-                new Pair<Boolean, Boolean>(seen, LONG_PRESS),
-                ResultsByGesture.SEEN_FROM_LONG_PRESS);
-        codes.put(
-                new Pair<Boolean, Boolean>(unseen, LONG_PRESS),
-                ResultsByGesture.NOT_SEEN_FROM_LONG_PRESS);
+        Map<Pair<Boolean, Boolean>, Integer> codes = new HashMap<>();
+        codes.put(new Pair<>(seen, TAP), ResultsByGesture.SEEN_FROM_TAP);
+        codes.put(new Pair<>(unseen, TAP), ResultsByGesture.NOT_SEEN_FROM_TAP);
+        codes.put(new Pair<>(seen, LONG_PRESS), ResultsByGesture.SEEN_FROM_LONG_PRESS);
+        codes.put(new Pair<>(unseen, LONG_PRESS), ResultsByGesture.NOT_SEEN_FROM_LONG_PRESS);
         SEEN_BY_GESTURE_CODES = Collections.unmodifiableMap(codes);
     }
 
@@ -233,23 +228,8 @@ public class ContextualSearchUma {
     }
 
     /**
-     * Logs whether search results were seen for a Tap gesture, for all users and sync-enabled
-     * users. For sync-enabled users we log to a separate histogram for that sub-population in order
-     * to help validate the Ranker Tap Suppression model results (since they are trained on UKM data
-     * which approximately reflects this sync-enabled population).
-     * @param wasPanelSeen Whether the panel was seen.
-     */
-    public static void logTapResultsSeen(boolean wasPanelSeen, @Nullable SyncService syncService) {
-        RecordHistogram.recordBooleanHistogram(
-                "Search.ContextualSearch.Tap.ResultsSeen", wasPanelSeen);
-        if (syncService != null && syncService.isSyncFeatureEnabled()) {
-            RecordHistogram.recordBooleanHistogram(
-                    "Search.ContextualSearch.Tap.SyncEnabled.ResultsSeen", wasPanelSeen);
-        }
-    }
-
-    /**
-     * Logs whether search results were seen for all gestures.  Recorded for all users.
+     * Logs whether search results were seen for all gestures. Recorded for all users.
+     *
      * @param wasPanelSeen Whether the panel was seen.
      */
     public static void logAllResultsSeen(boolean wasPanelSeen) {
@@ -574,12 +554,13 @@ public class ContextualSearchUma {
     /**
      * Gets the panel-seen code for the given parameters by doing a lookup in the seen-by-gesture
      * map.
+     *
      * @param wasPanelSeen Whether the panel was seen.
      * @param wasTap Whether the gesture that originally caused the panel to show was a Tap.
      * @return The code to write into a panel-seen histogram.
      */
     private static int getPanelSeenByGestureStateCode(boolean wasPanelSeen, boolean wasTap) {
-        return SEEN_BY_GESTURE_CODES.get(new Pair<Boolean, Boolean>(wasPanelSeen, wasTap));
+        return SEEN_BY_GESTURE_CODES.get(new Pair<>(wasPanelSeen, wasTap));
     }
 
     /**

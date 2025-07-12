@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.autofill.editors;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.ItemType.DROPDOWN;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.ItemType.TEXT_INPUT;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.isDropdownField;
@@ -30,13 +31,17 @@ import android.widget.RelativeLayout.LayoutParams;
 import android.widget.Spinner;
 import android.widget.TextView;
 
-import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
 import androidx.core.view.MarginLayoutParamsCompat;
 
+import org.chromium.base.ResettersForTesting;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.autofill.R;
 import org.chromium.chrome.browser.autofill.editors.EditorProperties.FieldItem;
-import org.chromium.chrome.browser.feedback.HelpAndFeedbackLauncher;
+import org.chromium.chrome.browser.feedback.HelpAndFeedbackLauncherFactory;
+import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeUtils;
 import org.chromium.chrome.browser.util.ChromeAccessibilityUtil;
 import org.chromium.components.browser_ui.settings.SettingsUtils;
 import org.chromium.components.browser_ui.styles.SemanticColorUtils;
@@ -55,7 +60,6 @@ import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
 
 /**
  * The editor dialog. Can be used for editing contact information, shipping address, billing
@@ -63,6 +67,7 @@ import java.util.stream.Collectors;
  *
  * <p>TODO(crbug.com/41363594): Move payment specific functionality to separate class.
  */
+@NullMarked
 public class EditorDialogView extends AlwaysDismissedDialog
         implements OnClickListener,
                 DialogInterface.OnShowListener,
@@ -76,10 +81,10 @@ public class EditorDialogView extends AlwaysDismissedDialog
     /** Duration of the animation to hide the UI. */
     private static final int DIALOG_EXIT_ANIMATION_MS = 195;
 
-    @Nullable private static EditorObserverForTest sObserverForTest;
+    private @Nullable static EditorObserverForTest sObserverForTest;
 
     private final Activity mActivity;
-    private final HelpAndFeedbackLauncher mHelpLauncher;
+    private final Profile mProfile;
     private final Handler mHandler;
     private final int mHalfRowMargin;
     private final List<FieldView> mFieldViews;
@@ -96,32 +101,35 @@ public class EditorDialogView extends AlwaysDismissedDialog
     private final View mFooter;
     private Button mDoneButton;
 
-    private Animator mDialogInOutAnimator;
+    private @Nullable Animator mDialogInOutAnimator;
     private boolean mIsDismissed;
-    @Nullable private UiConfig mUiConfig;
-    @Nullable private AlertDialog mConfirmationDialog;
+    private @Nullable UiConfig mUiConfig;
+    private @Nullable AlertDialog mConfirmationDialog;
 
-    @Nullable private String mDeleteConfirmationTitle;
-    @Nullable private String mDeleteConfirmationText;
+    private @Nullable String mDeleteConfirmationTitle;
+    private @Nullable String mDeleteConfirmationText;
 
-    private Runnable mDeleteRunnable;
-    private Runnable mDoneRunnable;
-    private Runnable mCancelRunnable;
+    private @Nullable Runnable mDeleteRunnable;
+    private @Nullable Runnable mDoneRunnable;
+    private @Nullable Runnable mCancelRunnable;
 
     private boolean mValidateOnShow;
 
     /**
      * Builds the editor dialog.
      *
-     * @param activity             The activity on top of which the UI should be displayed.
-     * @param helpLauncher         The launcher of user help activity.
+     * @param activity The activity on top of which the UI should be displayed.
+     * @param profile The Profile being edited.
      */
-    public EditorDialogView(Activity activity, HelpAndFeedbackLauncher helpLauncher) {
-        super(activity, R.style.ThemeOverlay_BrowserUI_Fullscreen);
+    public EditorDialogView(Activity activity, Profile profile) {
+        super(
+                activity,
+                R.style.ThemeOverlay_BrowserUI_Fullscreen,
+                EdgeToEdgeUtils.isEdgeToEdgeEverywhereEnabled());
         // Sets transparent background for animating content view.
-        getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        assumeNonNull(getWindow()).setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
         mActivity = activity;
-        mHelpLauncher = helpLauncher;
+        mProfile = profile;
         mHandler = new Handler();
         mIsDismissed = false;
 
@@ -138,7 +146,7 @@ public class EditorDialogView extends AlwaysDismissedDialog
         setOnDismissListener(this);
 
         mContainerView =
-                LayoutInflater.from(mActivity).inflate(R.layout.payment_request_editor, null);
+                LayoutInflater.from(mActivity).inflate(R.layout.autofill_editor_dialog, null);
         setContentView(mContainerView);
 
         prepareToolbar();
@@ -185,19 +193,13 @@ public class EditorDialogView extends AlwaysDismissedDialog
         mDeleteConfirmationText = deleteConfirmationText;
     }
 
-    public void setShowRequiredIndicator(boolean showRequiredIndicator) {
-        for (FieldView view : mFieldViews) {
-            view.setShowRequiredIndicator(showRequiredIndicator);
-        }
-
+    public void maybeShowRequiredFieldNotice() {
         TextView requiredFieldsNotice = mFooter.findViewById(R.id.required_fields_notice);
         int requiredFieldsNoticeVisibility = View.GONE;
-        if (showRequiredIndicator) {
-            for (int i = 0; i < mFieldViews.size(); i++) {
-                if (mFieldViews.get(i).isRequired()) {
-                    requiredFieldsNoticeVisibility = View.VISIBLE;
-                    break;
-                }
+        for (int i = 0; i < mFieldViews.size(); i++) {
+            if (mFieldViews.get(i).isRequired()) {
+                requiredFieldsNoticeVisibility = View.VISIBLE;
+                break;
             }
         }
         requiredFieldsNotice.setVisibility(requiredFieldsNoticeVisibility);
@@ -241,14 +243,13 @@ public class EditorDialogView extends AlwaysDismissedDialog
         }
     }
 
-    public void setEditorFields(
-            ListModel<FieldItem> editorFields, boolean shouldShowRequiredIndicator) {
-        prepareEditor(editorFields, shouldShowRequiredIndicator);
+    public void setEditorFields(ListModel<FieldItem> editorFields) {
+        prepareEditor(editorFields);
     }
 
     /** Prevents screenshots of this editor. */
     public void disableScreenshots() {
-        WindowManager.LayoutParams attributes = getWindow().getAttributes();
+        WindowManager.LayoutParams attributes = assumeNonNull(getWindow()).getAttributes();
         attributes.flags |= WindowManager.LayoutParams.FLAG_SECURE;
         getWindow().setAttributes(attributes);
     }
@@ -278,10 +279,11 @@ public class EditorDialogView extends AlwaysDismissedDialog
                             handleDelete();
                         }
                     } else if (item.getItemId() == R.id.help_menu_id) {
-                        mHelpLauncher.show(
-                                mActivity,
-                                mActivity.getString(R.string.help_context_autofill),
-                                null);
+                        HelpAndFeedbackLauncherFactory.getForProfile(mProfile)
+                                .show(
+                                        mActivity,
+                                        mActivity.getString(R.string.help_context_autofill),
+                                        null);
                     }
                     return true;
                 });
@@ -289,7 +291,7 @@ public class EditorDialogView extends AlwaysDismissedDialog
         // Cancel editing when the user hits the back arrow.
         toolbar.setNavigationContentDescription(R.string.cancel);
         toolbar.setNavigationIcon(getTintedBackIcon());
-        toolbar.setNavigationOnClickListener(view -> mCancelRunnable.run());
+        toolbar.setNavigationOnClickListener(view -> assumeNonNull(mCancelRunnable).run());
 
         // The top shadow is handled by the toolbar, so hide the one used in the field editor.
         FadingEdgeScrollView scrollView =
@@ -307,27 +309,15 @@ public class EditorDialogView extends AlwaysDismissedDialog
                         SettingsUtils.getShowShadowOnScrollListener(scrollView, shadow));
     }
 
-    /** @return The validatable item for the given view. */
-    @Nullable
-    private FieldView getTextFieldView(View v) {
-        if (v instanceof TextView && v.getParent() != null && v.getParent() instanceof FieldView) {
-            return (FieldView) v.getParent();
-        } else if (v instanceof Spinner && v.getTag() != null) {
-            return (FieldView) v.getTag();
-        } else {
-            return null;
-        }
-    }
-
     @Override
     public void onClick(View view) {
         // Disable interaction during animation.
         if (mDialogInOutAnimator != null) return;
 
         if (view.getId() == R.id.editor_dialog_done_button) {
-            mDoneRunnable.run();
+            assumeNonNull(mDoneRunnable).run();
         } else if (view.getId() == R.id.payments_edit_cancel_button) {
-            mCancelRunnable.run();
+            assumeNonNull(mCancelRunnable).run();
         }
     }
 
@@ -386,12 +376,13 @@ public class EditorDialogView extends AlwaysDismissedDialog
     /**
      * Create the visual representation of the PropertyModel defined by {@link EditorProperties}.
      *
-     * This would be more optimal as a RelativeLayout, but because it's dynamically generated, it's
-     * much more human-parsable with inefficient LinearLayouts for half-width controls sharing rows.
+     * <p>This would be more optimal as a RelativeLayout, but because it's dynamically generated,
+     * it's much more human-parsable with inefficient LinearLayouts for half-width controls sharing
+     * rows.
      *
      * @param editorFields the list of fields this editor should display.
      */
-    private void prepareEditor(ListModel<FieldItem> editorFields, boolean showRequiredIndicator) {
+    private void prepareEditor(ListModel<FieldItem> editorFields) {
         // Ensure the layout is empty.
         removeTextChangedListeners();
         mContentView.removeAllViews();
@@ -420,20 +411,20 @@ public class EditorDialogView extends AlwaysDismissedDialog
             // differences.
             if (!isLastField
                     && !useFullLine
-                    && isDropdownField(fieldItem) != isDropdownField(nextFieldItem)) {
+                    && isDropdownField(fieldItem)
+                            != isDropdownField(assumeNonNull(nextFieldItem))) {
                 useFullLine = true;
             }
 
             if (useFullLine || isLastField) {
-                addFieldViewToEditor(mContentView, fieldItem, showRequiredIndicator);
+                addFieldViewToEditor(mContentView, fieldItem);
             } else {
                 // Create a LinearLayout to put it and the next view side by side.
                 LinearLayout rowLayout = new LinearLayout(mActivity);
                 mContentView.addView(rowLayout);
 
-                View firstView = addFieldViewToEditor(rowLayout, fieldItem, showRequiredIndicator);
-                View lastView =
-                        addFieldViewToEditor(rowLayout, nextFieldItem, showRequiredIndicator);
+                View firstView = addFieldViewToEditor(rowLayout, fieldItem);
+                View lastView = addFieldViewToEditor(rowLayout, assumeNonNull(nextFieldItem));
 
                 LinearLayout.LayoutParams firstParams =
                         (LinearLayout.LayoutParams) firstView.getLayoutParams();
@@ -449,11 +440,12 @@ public class EditorDialogView extends AlwaysDismissedDialog
                 i = i + 1;
             }
         }
-        setDoneRunnableToFields(mDoneRunnable);
+        setDoneRunnableToFields(assumeNonNull(mDoneRunnable));
 
         // Add the footer.
         mContentView.addView(mFooter);
-        setShowRequiredIndicator(showRequiredIndicator);
+
+        maybeShowRequiredFieldNotice();
     }
 
     /**
@@ -484,8 +476,7 @@ public class EditorDialogView extends AlwaysDismissedDialog
         }
     }
 
-    private View addFieldViewToEditor(
-            ViewGroup parent, final FieldItem fieldItem, boolean showRequiredIndicator) {
+    private View addFieldViewToEditor(ViewGroup parent, final FieldItem fieldItem) {
         View childView = null;
 
         switch (fieldItem.type) {
@@ -517,6 +508,7 @@ public class EditorDialogView extends AlwaysDismissedDialog
                     break;
                 }
         }
+        assumeNonNull(childView);
         parent.addView(childView);
         return childView;
     }
@@ -579,10 +571,11 @@ public class EditorDialogView extends AlwaysDismissedDialog
                 () -> {
                     List<FieldView> invalidViews = new ArrayList<>();
                     if (mValidateOnShow) {
-                        invalidViews =
-                                mFieldViews.stream()
-                                        .filter(view -> !view.validate())
-                                        .collect(Collectors.toList());
+                        for (FieldView view : mFieldViews) {
+                            if (!view.validate()) {
+                                invalidViews.add(view);
+                            }
+                        }
                     }
 
                     // If TalkBack is enabled, we want to keep the focus at the top
@@ -668,7 +661,7 @@ public class EditorDialogView extends AlwaysDismissedDialog
         return mDropdownFields;
     }
 
-    public AlertDialog getConfirmationDialogForTest() {
+    public @Nullable AlertDialog getConfirmationDialogForTest() {
         return mConfirmationDialog;
     }
 
@@ -676,6 +669,7 @@ public class EditorDialogView extends AlwaysDismissedDialog
         sObserverForTest = observerForTest;
         DropdownFieldView.setEditorObserverForTest(sObserverForTest);
         TextFieldView.setEditorObserverForTest(sObserverForTest);
+        ResettersForTesting.register(() -> sObserverForTest = null);
     }
 
     private Drawable getTintedBackIcon() {

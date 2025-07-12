@@ -57,7 +57,7 @@ public class SyncErrorNotifier implements SyncService.SyncStateChangedListener {
 
     private static final String TAG = "SyncUI";
 
-    private static ProfileKeyedMap<SyncErrorNotifier> sProfileMap =
+    private static final ProfileKeyedMap<SyncErrorNotifier> sProfileMap =
             new ProfileKeyedMap<>(ProfileKeyedMap.NO_REQUIRED_CLEANUP_ACTION);
 
     private final BaseNotificationManagerProxy mNotificationManager;
@@ -81,7 +81,7 @@ public class SyncErrorNotifier implements SyncService.SyncStateChangedListener {
 
     private static SyncErrorNotifier buildForProfile(Profile profile) {
         return new SyncErrorNotifier(
-                BaseNotificationManagerProxyFactory.create(ContextUtils.getApplicationContext()),
+                BaseNotificationManagerProxyFactory.create(),
                 SyncServiceFactory.getForProfile(profile),
                 TrustedVaultClient.get());
     }
@@ -245,7 +245,7 @@ public class SyncErrorNotifier implements SyncService.SyncStateChangedListener {
     /** Creates an intent that launches an activity that retrieves the trusted vault key. */
     private Promise<Intent> createTrustedVaultKeyRetrievalIntent() {
         assert mSyncService.getAccountInfo() != null;
-        Promise<Intent> promise = new Promise<Intent>();
+        Promise<Intent> promise = new Promise<>();
         mTrustedVaultClient
                 .createKeyRetrievalIntent(mSyncService.getAccountInfo())
                 // Cf. SyncTrustedVaultProxyActivity as to why use a proxy intent.

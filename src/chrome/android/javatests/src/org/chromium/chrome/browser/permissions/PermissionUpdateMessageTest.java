@@ -17,6 +17,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Criteria;
 import org.chromium.base.test.util.CriteriaHelper;
@@ -37,7 +38,6 @@ import org.chromium.components.messages.MessageIdentifier;
 import org.chromium.components.messages.MessageStateHandler;
 import org.chromium.components.messages.MessagesTestHelper;
 import org.chromium.content_public.browser.WebContents;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.net.test.EmbeddedTestServer;
 import org.chromium.ui.base.WindowAndroid;
 import org.chromium.ui.modelutil.PropertyModel;
@@ -79,17 +79,16 @@ public class PermissionUpdateMessageTest {
                 List<String> requestablePermissions,
                 List<String> policyRevokedPermissions) {
             mHasPermissions =
-                    new HashSet<>(
-                            hasPermissions == null ? new ArrayList<String>() : hasPermissions);
+                    new HashSet<>(hasPermissions == null ? new ArrayList<>() : hasPermissions);
             mRequestablePermissions =
                     new HashSet<>(
                             requestablePermissions == null
-                                    ? new ArrayList<String>()
+                                    ? new ArrayList<>()
                                     : requestablePermissions);
             mPolicyRevokedPermissions =
                     new HashSet<>(
                             policyRevokedPermissions == null
-                                    ? new ArrayList<String>()
+                                    ? new ArrayList<>()
                                     : policyRevokedPermissions);
         }
 
@@ -148,12 +147,11 @@ public class PermissionUpdateMessageTest {
      * @param windowAndroid The WindowAndroid to get the messages from.
      * @return The {@link PropertyModel} of an enqueued permission update message, null if the
      *     message is not present.
-     * @throws ExecutionException
      */
     public static PropertyModel getPermissionUpdateMessage(WindowAndroid windowAndroid)
             throws ExecutionException {
         MessageDispatcher messageDispatcher =
-                TestThreadUtils.runOnUiThreadBlocking(
+                ThreadUtils.runOnUiThreadBlocking(
                         () -> MessageDispatcherProvider.from(windowAndroid));
         List<MessageStateHandler> messages =
                 MessagesTestHelper.getEnqueuedMessages(
@@ -174,7 +172,7 @@ public class PermissionUpdateMessageTest {
             @ContentSettingsType.EnumType int type,
             final String origin,
             @ContentSettingValues int value) {
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     WebsitePreferenceBridgeJni.get()
                             .setPermissionSettingForOrigin(
@@ -223,7 +221,7 @@ public class PermissionUpdateMessageTest {
 
             expectMessagesCount(windowAndroid, 1);
             final WebContents webContents =
-                    TestThreadUtils.runOnUiThreadBlockingNoException(
+                    ThreadUtils.runOnUiThreadBlocking(
                             () ->
                                     mActivityTestRule
                                             .getActivity()
@@ -344,8 +342,8 @@ public class PermissionUpdateMessageTest {
         final var windowAndroid = mActivityTestRule.getActivity().getWindowAndroid();
         final String locationUrl = mTestServer.getURL(GEOLOCATION_PAGE);
         final PermissionInfo geolocationSettings =
-                TestThreadUtils.runOnUiThreadBlockingNoException(
-                        new Callable<PermissionInfo>() {
+                ThreadUtils.runOnUiThreadBlocking(
+                        new Callable<>() {
                             @Override
                             public PermissionInfo call() {
                                 return new PermissionInfo(
@@ -368,7 +366,7 @@ public class PermissionUpdateMessageTest {
         LocationSettingsTestUtil.setSystemLocationSettingEnabled(true);
 
         try {
-            TestThreadUtils.runOnUiThreadBlocking(
+            ThreadUtils.runOnUiThreadBlocking(
                     () ->
                             geolocationSettings.setContentSetting(
                                     ProfileManager.getLastUsedRegularProfile(),
@@ -380,14 +378,14 @@ public class PermissionUpdateMessageTest {
                         return MessagesTestHelper.getMessageIdentifier(windowAndroid, 0)
                                 == MessageIdentifier.PERMISSION_UPDATE;
                     });
-            TestThreadUtils.runOnUiThreadBlocking(
+            ThreadUtils.runOnUiThreadBlocking(
                     () -> {
                         Assert.assertEquals(1, MessagesTestHelper.getMessageCount(windowAndroid));
                     });
 
             final WebContents webContents =
-                    TestThreadUtils.runOnUiThreadBlockingNoException(
-                            new Callable<WebContents>() {
+                    ThreadUtils.runOnUiThreadBlocking(
+                            new Callable<>() {
                                 @Override
                                 public WebContents call() {
                                     return mActivityTestRule
@@ -413,7 +411,7 @@ public class PermissionUpdateMessageTest {
                                 Matchers.is(1));
                     });
         } finally {
-            TestThreadUtils.runOnUiThreadBlocking(
+            ThreadUtils.runOnUiThreadBlocking(
                     () ->
                             geolocationSettings.setContentSetting(
                                     ProfileManager.getLastUsedRegularProfile(),

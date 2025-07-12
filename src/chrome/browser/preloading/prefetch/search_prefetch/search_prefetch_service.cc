@@ -7,6 +7,7 @@
 #include <iterator>
 #include <memory>
 
+#include "base/containers/contains.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/json/values_util.h"
@@ -14,7 +15,10 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/time/time.h"
+#include "base/trace_event/named_trigger.h"
 #include "base/values.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/prefetch/pref_names.h"
 #include "chrome/browser/preloading/chrome_preloading.h"
@@ -26,6 +30,7 @@
 #include "chrome/browser/preloading/preloading_prefs.h"
 #include "chrome/browser/preloading/prerender/prerender_manager.h"
 #include "chrome/browser/preloading/prerender/prerender_utils.h"
+#include "chrome/browser/preloading/search_preload/search_preload_features.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/search_engines/ui_thread_search_terms_data.h"
@@ -40,39 +45,19 @@
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "components/search_engines/template_url_service.h"
+#include "content/public/browser/browser_context.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/preloading_data.h"
+#include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "net/base/load_flags.h"
 #include "net/base/url_util.h"
+#include "services/network/public/cpp/network_quality_tracker.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "ui/base/page_transition_types.h"
 #include "url/origin.h"
 
 using omnibox::mojom::NavigationPredictor;
-
-namespace {
-void SetIsNavigationInDomainCallback(content::PreloadingData* preloading_data) {
-  constexpr content::PreloadingPredictor kPredictors[] = {
-      chrome_preloading_predictor::kDefaultSearchEngine,
-      chrome_preloading_predictor::kOmniboxSearchSuggestDefaultMatch,
-      chrome_preloading_predictor::kOmniboxMousePredictor,
-      chrome_preloading_predictor::kOmniboxSearchPredictor,
-      chrome_preloading_predictor::kOmniboxTouchDownPredictor};
-  for (const auto& predictor : kPredictors) {
-    preloading_data->SetIsNavigationInDomainCallback(
-        predictor,
-        base::BindRepeating(
-            [](content::NavigationHandle* navigation_handle) -> bool {
-              auto transition_type = navigation_handle->GetPageTransition();
-              return (transition_type & ui::PAGE_TRANSITION_FROM_ADDRESS_BAR) &&
-                     ui::PageTransitionCoreTypeIs(
-                         transition_type,
-                         ui::PageTransition::PAGE_TRANSITION_GENERATED);
-            }));
-  }
-}
-}  // namespace
 
 namespace {
 
@@ -82,16 +67,17 @@ namespace {
 // otherwise set to false if it is for client-internal use only.
 GURL GetPreloadURLFromMatch(
     const TemplateURLRef::SearchTermsArgs& search_terms_args_from_match,
-    TemplateURLService* template_url_service,
+    TemplateURLService& template_url_service,
     std::string prefetch_param) {
   // Copy the search term args, so we can modify them for just the prefetch.
   auto search_terms_args = search_terms_args_from_match;
   search_terms_args.prefetch_param = prefetch_param;
   const TemplateURL* default_provider =
-      template_url_service->GetDefaultSearchProvider();
+      template_url_service.GetDefaultSearchProvider();
   DCHECK(default_provider);
-  return GURL(default_provider->url_ref().ReplaceSearchTerms(
-      search_terms_args, template_url_service->search_terms_data(), nullptr));
+  GURL prefetch_url = GURL(default_provider->url_ref().ReplaceSearchTerms(
+      search_terms_args, template_url_service.search_terms_data(), nullptr));
+  return prefetch_url;
 }
 
 struct SearchPrefetchEligibilityReasonRecorder {
@@ -194,22 +180,118 @@ content::PreloadingFailureReason ToPreloadingFailureReason(
                            kPreloadingFailureReasonContentEnd));
 }
 
+bool IsSlowNetwork() {
+  static const base::TimeDelta kSlowNetworkThreshold =
+      kSuppressesSearchPrefetchOnSlowNetworkThreshold.Get();
+  if (g_browser_process->network_quality_tracker() &&
+      g_browser_process->network_quality_tracker()->GetHttpRTT() >
+          kSlowNetworkThreshold) {
+    return true;
+  }
+  return false;
+}
+
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+// LINT.IfChange(DuplicateNavigationServingResult)
+enum class DuplicateNavigationServingResult : uint8_t {
+  kNotServedThenNotServed = 0,
+  kNotServedThenServed = 1,
+  kServedThenNotServed = 2,
+  kServedThenServed = 3,
+  kMaxValue = kServedThenServed
+};
+// LINT.ThenChange(/tools/metrics/histograms/metadata/omnibox/enums.xml:DuplicateNavigationServingResult)
+DuplicateNavigationServingResult ConvertToDuplicateNavigationServingResult(
+    bool first_navigation_served_from_prefetch_cache,
+    bool second_navigation_served_from_prefetch_cache) {
+  if (first_navigation_served_from_prefetch_cache &&
+      second_navigation_served_from_prefetch_cache) {
+    return DuplicateNavigationServingResult::kServedThenServed;
+  }
+  if (first_navigation_served_from_prefetch_cache &&
+      !second_navigation_served_from_prefetch_cache) {
+    return DuplicateNavigationServingResult::kServedThenNotServed;
+  }
+  if (!first_navigation_served_from_prefetch_cache &&
+      second_navigation_served_from_prefetch_cache) {
+    return DuplicateNavigationServingResult::kNotServedThenServed;
+  }
+  return DuplicateNavigationServingResult::kNotServedThenNotServed;
+}
+
 }  // namespace
+
+GURL GetPrefetchUrlFromMatch(
+    const TemplateURLRef::SearchTermsArgs& search_terms_args_from_match,
+    TemplateURLService& template_url_service,
+    bool is_navigation_likely) {
+  if (is_navigation_likely) {
+    return GetPreloadURLFromMatch(search_terms_args_from_match,
+                                  template_url_service,
+                                  kNavigationPrefetchParam.Get());
+  } else {
+    return GetPreloadURLFromMatch(search_terms_args_from_match,
+                                  template_url_service,
+                                  kSuggestPrefetchParam.Get());
+  }
+}
+
+GURL GetPrerenderUrlFromMatch(
+    const TemplateURLRef::SearchTermsArgs& search_terms_args_from_match,
+    TemplateURLService& template_url_service) {
+  return GetPreloadURLFromMatch(search_terms_args_from_match,
+                                template_url_service,
+                                /*prefetch_param=*/"");
+}
+
+void SetIsNavigationInDomainCallback(content::PreloadingData* preloading_data) {
+  constexpr content::PreloadingPredictor kPredictors[] = {
+      chrome_preloading_predictor::kDefaultSearchEngine,
+      chrome_preloading_predictor::kOmniboxSearchSuggestDefaultMatch,
+      chrome_preloading_predictor::kOmniboxMousePredictor,
+      chrome_preloading_predictor::kOmniboxSearchPredictor,
+      chrome_preloading_predictor::kOmniboxTouchDownPredictor};
+  for (const auto& predictor : kPredictors) {
+    preloading_data->SetIsNavigationInDomainCallback(
+        predictor,
+        base::BindRepeating(
+            [](content::NavigationHandle* navigation_handle) -> bool {
+              auto transition_type = navigation_handle->GetPageTransition();
+              return (transition_type & ui::PAGE_TRANSITION_FROM_ADDRESS_BAR) &&
+                     ui::PageTransitionCoreTypeIs(
+                         transition_type,
+                         ui::PageTransition::PAGE_TRANSITION_GENERATED) &&
+                     ui::PageTransitionIsNewNavigation(transition_type);
+            }));
+  }
+}
 
 struct SearchPrefetchService::SearchPrefetchServingReasonRecorder {
  public:
-  explicit SearchPrefetchServingReasonRecorder(bool for_prerender)
-      : for_prerender_(for_prerender) {}
+  // Passing the SearchPrefetchService pointer is optional. If it is passed,
+  // the recorder will ask the service to track the search terms it in its dtor.
+  explicit SearchPrefetchServingReasonRecorder(
+      bool for_prerender,
+      SearchPrefetchService* service = nullptr)
+      : for_prerender_(for_prerender), service_(service) {}
   ~SearchPrefetchServingReasonRecorder() {
     base::UmaHistogramEnumeration(
         for_prerender_
             ? "Omnibox.SearchPrefetch.PrefetchServingReason2.Prerender"
             : "Omnibox.SearchPrefetch.PrefetchServingReason2",
         reason_);
+    if (service_) {
+      service_->RecordInterceptionMetrics(search_terms_, reason_);
+    }
   }
 
-  SearchPrefetchServingReason reason_ = SearchPrefetchServingReason::kServed;
   const bool for_prerender_ = false;
+  // A method of SearchPrefetchService holds this instance, so it is safe to
+  // refer to it with pointer.
+  raw_ptr<SearchPrefetchService> service_;
+  SearchPrefetchServingReason reason_ = SearchPrefetchServingReason::kServed;
+  std::u16string search_terms_;
 };
 
 // static
@@ -222,7 +304,8 @@ void SearchPrefetchService::RegisterProfilePrefs(PrefRegistrySimple* registry) {
 
 SearchPrefetchService::SearchPrefetchService(Profile* profile)
     : profile_(profile) {
-  DCHECK(!profile_->IsOffTheRecord());
+  CHECK(!profile_->IsOffTheRecord() || IsPrefetchIncognitoEnabled());
+  CHECK(!features::IsDsePreload2Enabled());
 
   if (LoadFromPrefs())
     SaveToPrefs();
@@ -265,7 +348,7 @@ bool SearchPrefetchService::MaybePrefetchURL(
   ObserveTemplateURLService(template_url_service);
 
   GURL canonical_search_url;
-  bool search_with_terms = HasCanoncialPreloadingOmniboxSearchURL(
+  bool search_with_terms = HasCanonicalPreloadingOmniboxSearchURL(
       url, profile_, &canonical_search_url);
 
   // It is possible that the current page doesn't exist. Don't create
@@ -317,6 +400,14 @@ bool SearchPrefetchService::MaybePrefetchURL(
     recorder.reason_ = SearchPrefetchEligibilityReason::kJavascriptDisabled;
     SetEligibility(attempt,
                    content::PreloadingEligibility::kJavascriptDisabled);
+    return false;
+  }
+
+  static const bool kSuppressesSearchPrefetchOnSlowNetworkIsEnabled =
+      base::FeatureList::IsEnabled(kSuppressesSearchPrefetchOnSlowNetwork);
+  if (kSuppressesSearchPrefetchOnSlowNetworkIsEnabled && IsSlowNetwork()) {
+    recorder.reason_ = SearchPrefetchEligibilityReason::kSlowNetwork;
+    SetEligibility(attempt, content::PreloadingEligibility::kSlowNetwork);
     return false;
   }
 
@@ -433,7 +524,7 @@ void SearchPrefetchService::OnURLOpenedFromOmnibox(OmniboxLog* log) {
 
   GURL canonical_search_url;
 
-  HasCanoncialPreloadingOmniboxSearchURL(opened_url, profile_,
+  HasCanonicalPreloadingOmniboxSearchURL(opened_url, profile_,
                                          &canonical_search_url);
 
   if (prefetches_.find(canonical_search_url) == prefetches_.end()) {
@@ -441,13 +532,6 @@ void SearchPrefetchService::OnURLOpenedFromOmnibox(OmniboxLog* log) {
   }
   SearchPrefetchRequest& prefetch = *prefetches_[canonical_search_url];
   prefetch.RecordClickTime();
-
-  if (prefetch.current_status() != SearchPrefetchStatus::kCanBeServed &&
-      prefetch.current_status() != SearchPrefetchStatus::kPrerendered) {
-    return;
-  }
-
-  prefetch.MarkPrefetchAsClicked();
 }
 
 void SearchPrefetchService::OnPrerenderedRequestUsed(
@@ -462,50 +546,12 @@ void SearchPrefetchService::OnPrerenderedRequestUsed(
     return;
   }
   AddCacheEntry(navigation_url, request_it->second->prefetch_url());
-  if (!prerender_utils::SearchPreloadShareableCacheIsEnabled()) {
-    // For the shareable cases, it is possible that a response is used for two
-    // real navigations. So do not use the prefetch request to track the final
-    // status.
-    request_it->second->MarkPrefetchAsPrerenderActivated();
-  }
   DeletePrefetch(canonical_search_url);
-}
-
-SearchPrefetchURLLoader::RequestHandler
-SearchPrefetchService::TakePrerenderFromMemoryCache(
-    const network::ResourceRequest& tentative_resource_request) {
-  DCHECK(!prerender_utils::SearchPreloadShareableCacheIsEnabled());
-  SearchPrefetchServingReasonRecorder recorder{/*for_prerender=*/true};
-  auto iter =
-      RetrieveSearchTermsInMemoryCache(tentative_resource_request, recorder);
-  if (iter == prefetches_.end()) {
-    // TODO(crbug.com/40255935): Recorder's state should not be
-    // kPrerendered, but it happened unexpectedly due to
-    // restarting/serviceworker interception within prerender navigation stack
-    // on ChromeOS.
-    return {};
-  }
-
-  // TODO(crbug.com/40214220): Do not use the prefetched response if it
-  // is about to expire.
-  DCHECK_NE(iter->second->current_status(),
-            SearchPrefetchStatus::kRequestFailed);
-  recorder.reason_ = SearchPrefetchServingReason::kServed;
-
-  iter->second->MarkPrefetchAsPrerendered();
-  scoped_refptr<StreamingSearchPrefetchURLLoader> loader =
-      iter->second->TakeSearchPrefetchURLLoader();
-  return StreamingSearchPrefetchURLLoader::GetServingResponseHandler(
-      std::move(loader));
-  // Do not remove the corresponding entry from `prefetches_` for now, to avoid
-  // prefetching the same response over again. The entry will be removed on
-  // prerendering activation or other cases.
 }
 
 SearchPrefetchURLLoader::RequestHandler
 SearchPrefetchService::MaybeCreateResponseReader(
     const network::ResourceRequest& tentative_resource_request) {
-  DCHECK(prerender_utils::SearchPreloadShareableCacheIsEnabled());
   SearchPrefetchServingReasonRecorder recorder{/*for_prerender=*/true};
   auto iter =
       RetrieveSearchTermsInMemoryCache(tentative_resource_request, recorder);
@@ -526,11 +572,24 @@ SearchPrefetchService::GetSearchPrefetchStatusForTesting(
   return prefetches_[canonical_search_url]->current_status();
 }
 
+GURL SearchPrefetchService::GetRealPrefetchUrlForTesting(
+    const GURL& canonical_search_url) {
+  if (prefetches_.find(canonical_search_url) == prefetches_.end()) {
+    return GURL();
+  }
+  return prefetches_[canonical_search_url]->prefetch_url();
+}
+
 SearchPrefetchURLLoader::RequestHandler
 SearchPrefetchService::TakePrefetchResponseFromMemoryCache(
     const network::ResourceRequest& tentative_resource_request) {
   const GURL& navigation_url = tentative_resource_request.url;
-  SearchPrefetchServingReasonRecorder recorder(/*for_prerender=*/false);
+  SearchPrefetchServingReasonRecorder recorder(
+      /*for_prerender=*/false,
+      // Not to track back/forward style navigation.
+      tentative_resource_request.load_flags & net::LOAD_SKIP_CACHE_VALIDATION
+          ? nullptr
+          : this);
 
   auto iter =
       RetrieveSearchTermsInMemoryCache(tentative_resource_request, recorder);
@@ -541,23 +600,9 @@ SearchPrefetchService::TakePrefetchResponseFromMemoryCache(
 
   auto status = iter->second->current_status();
 
-  if (status == SearchPrefetchStatus::kInFlight) {
-    recorder.reason_ = SearchPrefetchServingReason::kRequestInFlightNotReady;
-    // Set the failure reason when prefetch is not served.
-    iter->second->SetPrefetchAttemptFailureReason(ToPreloadingFailureReason(
-        SearchPrefetchServingReason::kRequestInFlightNotReady));
-    return {};
-  }
-
   bool is_servable =
       status == SearchPrefetchStatus::kComplete ||
-      status == SearchPrefetchStatus::kCanBeServedAndUserClicked ||
-      (prerender_utils::IsSearchSuggestionPrerenderEnabled() &&
-       prerender_utils::SearchPreloadShareableCacheIsEnabled() &&
-       (status == SearchPrefetchStatus::kPrerendered ||
-        status == SearchPrefetchStatus::kPrerenderedAndClicked)) ||
-      (SearchPrefetchSkipsCancel() &&
-       status == SearchPrefetchStatus::kCanBeServed);
+      status == SearchPrefetchStatus::kCanBeServed;
 
   if (!is_servable) {
     recorder.reason_ = SearchPrefetchServingReason::kNotServedOtherReason;
@@ -583,6 +628,7 @@ SearchPrefetchService::TakePrefetchResponseFromMemoryCache(
 SearchPrefetchURLLoader::RequestHandler
 SearchPrefetchService::TakePrefetchResponseFromDiskCache(
     const GURL& navigation_url) {
+  DCHECK(!IsNoVarySearchDiskCacheEnabled());
   GURL navigation_url_without_ref(net::SimplifyUrlForRequest(navigation_url));
   if (prefetch_cache_.find(navigation_url_without_ref) ==
       prefetch_cache_.end()) {
@@ -637,49 +683,22 @@ void SearchPrefetchService::OnResultChanged(content::WebContents* web_contents,
   // Lazily observe Template URL Service.
   ObserveTemplateURLService(template_url_service);
 
-  // Cancel Unneeded prefetch requests. Since we limit the number of prefetches
-  // in the map, this should be fast despite the two loops.
+  // Don't cancel unneeded prefetch requests, but reset all pending prerenders.
+  // It will be set soon if service still wants clients to prerender a
+  // SearchTerms.
+  // TODO(crbug.com/40214220): Unlike prefetch, which does not discard completed
+  // response to avoid wasting, prerender would like to cancel itself given the
+  // cost of a prerender. For now prenderer is canceled when the prerender hints
+  // changed, we need to revisit this decision.
   for (const auto& kv_pair : prefetches_) {
-    const auto& canonical_search_url = kv_pair.first;
     auto& prefetch_request = kv_pair.second;
-
-    if (!prefetch_request->ShouldBeCancelledOnResultChanges()) {
-      // Reset all pending prerenders. It will be set soon if service still
-      // wants clients to prerender a SearchTerms.
-      // TODO(crbug.com/40214220): Unlike prefetch, which does not
-      // discard completed response to avoid wasting, prerender would like
-      // to cancel itself given the cost of a prerender. For now prenderer is
-      // canceled when the prerender hints changed, we need to revisit this
-      // decision.
-      prefetch_request->ResetPrerenderUpgrader();
-      continue;
-    }
-    bool should_cancel_request = true;
-    for (const auto& match : result) {
-      GURL match_canonical_search_url;
-      default_search->KeepSearchTermsInURL(
-          match.destination_url, template_url_service->search_terms_data(),
-          true, true, &match_canonical_search_url);
-
-      if (canonical_search_url == match_canonical_search_url) {
-        should_cancel_request = false;
-        break;
-      }
-    }
-
-    // Cancel the inflight request and mark it as canceled.
-    if (should_cancel_request) {
-      prefetch_request->CancelPrefetch();
-    }
-
-    // Reset all pending prerenders. It will be set soon if service still wants
-    // clients to prerender a SearchTerms.
     prefetch_request->ResetPrerenderUpgrader();
   }
 
   // Do not perform preloading if there is no active tab.
   if (!web_contents)
     return;
+
   for (const auto& match : result) {
     // Return early if neither prefetch nor prerender are enabled for the match.
     if (!ShouldPrefetch(match)) {
@@ -696,7 +715,7 @@ void SearchPrefetchService::OnResultChanged(content::WebContents* web_contents,
         content::PreloadingData::GetOrCreateForWebContents(web_contents);
     SetIsNavigationInDomainCallback(preloading_data);
     GURL canonical_search_url;
-    HasCanoncialPreloadingOmniboxSearchURL(match.destination_url, profile_,
+    HasCanonicalPreloadingOmniboxSearchURL(match.destination_url, profile_,
                                            &canonical_search_url);
 
     content::PreloadingURLMatchCallback same_url_matcher =
@@ -729,18 +748,8 @@ void SearchPrefetchService::OnResultChanged(content::WebContents* web_contents,
       continue;
     }
 
-    if (prerender_utils::IsSearchSuggestionPrerenderEnabled()) {
-      CoordinatePrefetchWithPrerender(match, web_contents, template_url_service,
-                                      canonical_search_url);
-      continue;
-    }
-
-    if (BaseSearchProvider::ShouldPrefetch(match)) {
-      MaybePrefetchURL(
-          GetPreloadURLFromMatch(*match.search_terms_args, template_url_service,
-                                 kSuggestPrefetchParam.Get()),
-          web_contents);
-    }
+    CoordinatePrefetchWithPrerender(match, web_contents, template_url_service,
+                                    canonical_search_url);
   }
 }
 
@@ -789,20 +798,18 @@ bool SearchPrefetchService::OnNavigationLikely(
   }
 
   GURL canonical_search_url;
-  if (!HasCanoncialPreloadingOmniboxSearchURL(match.destination_url, profile_,
-                                              &canonical_search_url)) {
+  std::u16string search_terms;
+  if (!HasCanonicalPreloadingOmniboxSearchURL(match.destination_url, profile_,
+                                              &canonical_search_url,
+                                              &search_terms)) {
+    return false;
+  }
+  // Normalized search terms can be empty.
+  if (search_terms.empty()) {
     return false;
   }
 
-  // Parse the search terms from the match URL to verify this is a valid search
-  // query.
-  std::u16string search_terms;
-  template_url_service->GetDefaultSearchProvider()->ExtractSearchTermsFromURL(
-      match.destination_url, template_url_service->search_terms_data(),
-      &search_terms);
-
-  if (search_terms.size() == 0)
-    return false;
+  RecordPotentialDuplicateSearchTermsAheadOfNavigationalPrefetch(search_terms);
 
   // Search history suggestions (those that are not also server suggestions)
   // don't have search term args. If search history suggestions are enabled,
@@ -819,9 +826,9 @@ bool SearchPrefetchService::OnNavigationLikely(
     search_terms_args_for_prefetch = match.search_terms_args.get();
   }
 
-  GURL preload_url = GetPreloadURLFromMatch(*search_terms_args_for_prefetch,
-                                            template_url_service,
-                                            kNavigationPrefetchParam.Get());
+  GURL preload_url = GetPrefetchUrlFromMatch(*search_terms_args_for_prefetch,
+                                             *template_url_service,
+                                             /*is_navigation_likely=*/true);
 
   content::PreloadingURLMatchCallback same_url_matcher =
       base::BindRepeating(&IsSearchDestinationMatch, canonical_search_url,
@@ -891,6 +898,9 @@ void SearchPrefetchService::OnTemplateURLServiceChanged() {
 }
 
 void SearchPrefetchService::ClearCacheEntry(const GURL& navigation_url) {
+  if (IsNoVarySearchDiskCacheEnabled()) {
+    return;
+  }
   GURL navigation_url_without_ref(net::SimplifyUrlForRequest(navigation_url));
   if (prefetch_cache_.find(navigation_url_without_ref) ==
       prefetch_cache_.end()) {
@@ -902,6 +912,7 @@ void SearchPrefetchService::ClearCacheEntry(const GURL& navigation_url) {
 }
 
 void SearchPrefetchService::UpdateServeTime(const GURL& navigation_url) {
+  DCHECK(!IsNoVarySearchDiskCacheEnabled());
   GURL navigation_url_without_ref(net::SimplifyUrlForRequest(navigation_url));
   if (prefetch_cache_.find(navigation_url_without_ref) == prefetch_cache_.end())
     return;
@@ -912,6 +923,11 @@ void SearchPrefetchService::UpdateServeTime(const GURL& navigation_url) {
 
 void SearchPrefetchService::AddCacheEntry(const GURL& navigation_url,
                                           const GURL& prefetch_url) {
+  // Disk cache is responsible for retrieving the cache and we do not need to
+  // modify the URL to help the disk cache retrieve the cache.
+  if (IsNoVarySearchDiskCacheEnabled()) {
+    return;
+  }
   GURL navigation_url_without_ref(net::SimplifyUrlForRequest(navigation_url));
   GURL prefetch_url_without_ref(net::SimplifyUrlForRequest(prefetch_url));
   if (navigation_url_without_ref == prefetch_url_without_ref) {
@@ -1004,6 +1020,13 @@ bool SearchPrefetchService::LoadFromPrefs() {
 
     prefetch_cache_.emplace(navigation_url,
                             std::make_pair(prefetch_url, last_update.value()));
+
+    // The max size of the cache entries can be changed from the previous
+    // session. Stop loading the entries if the limit is reached.
+    // TODO(crbug.com/353628436): We may want to prioritize newer entries.
+    if (prefetch_cache_.size() == SearchPrefetchMaxCacheEntries()) {
+      break;
+    }
   }
   return dictionary.size() > prefetch_cache_.size();
 }
@@ -1045,8 +1068,8 @@ void SearchPrefetchService::CoordinatePrefetchWithPrerender(
     const GURL& canonical_search_url) {
   DCHECK(web_contents);
   GURL prefetch_url =
-      GetPreloadURLFromMatch(*match.search_terms_args, template_url_service,
-                             kSuggestPrefetchParam.Get());
+      GetPrefetchUrlFromMatch(*match.search_terms_args, *template_url_service,
+                              /*is_navigation_likely=*/false);
   MaybePrefetchURL(prefetch_url, web_contents);
   if (!BaseSearchProvider::ShouldPrerender(match))
     return;
@@ -1080,8 +1103,7 @@ void SearchPrefetchService::CoordinatePrefetchWithPrerender(
   // Prerender URL need not contain the prefetch information to help servers to
   // recognize prefetch traffic, because it should not send network requests.
   GURL prerender_url =
-      GetPreloadURLFromMatch(*match.search_terms_args, template_url_service,
-                             /*prefetch_param=*/"");
+      GetPrerenderUrlFromMatch(*match.search_terms_args, *template_url_service);
   prefetch_request_iter->second->MaybeStartPrerenderSearchResult(
       *prerender_manager, prerender_url, *preloading_attempt);
 }
@@ -1101,14 +1123,19 @@ SearchPrefetchService::RetrieveSearchTermsInMemoryCache(
   }
 
   GURL canonical_search_url;
-  if (!HasCanoncialPreloadingOmniboxSearchURL(navigation_url, profile_,
-                                              &canonical_search_url) ||
-      !IsSearchDestinationMatch(canonical_search_url, profile_,
-                                navigation_url)) {
+  std::u16string search_terms;
+  if (!HasCanonicalPreloadingOmniboxSearchURL(
+          navigation_url, profile_, &canonical_search_url, &search_terms)) {
     recorder.reason_ = SearchPrefetchServingReason::kNotDefaultSearchWithTerms;
     return prefetches_.end();
   }
-
+  // TODO(https://crbug.com/417978876): figure out the reason why search_terms
+  // can be empty when `HasCanonicalPreloadingOmniboxSearchURL` returns true.
+  if (search_terms.empty()) {
+    recorder.reason_ = SearchPrefetchServingReason::kNotDefaultSearchWithTerms;
+    return prefetches_.end();
+  }
+  recorder.search_terms_ = search_terms;
   const auto& iter = prefetches_.find(canonical_search_url);
 
   // Return early if there is no prefetch found before checking for other
@@ -1156,21 +1183,11 @@ SearchPrefetchService::RetrieveSearchTermsInMemoryCache(
   }
 
   switch (iter->second->current_status()) {
-    case SearchPrefetchStatus::kRequestCancelled:
-      recorder.reason_ = SearchPrefetchServingReason::kRequestWasCancelled;
-      // Set the corresponding failure reason.
-      iter->second->SetPrefetchAttemptFailureReason(ToPreloadingFailureReason(
-          SearchPrefetchServingReason::kRequestWasCancelled));
-      break;
     case SearchPrefetchStatus::kRequestFailed:
       recorder.reason_ = SearchPrefetchServingReason::kRequestFailed;
       // Set the corresponding failure reason.
       iter->second->SetPrefetchAttemptFailureReason(ToPreloadingFailureReason(
           SearchPrefetchServingReason::kRequestFailed));
-      break;
-    case SearchPrefetchStatus::kPrerendered:
-    case SearchPrefetchStatus::kPrerenderedAndClicked:
-      recorder.reason_ = SearchPrefetchServingReason::kPrerendered;
       break;
     default:
       break;
@@ -1237,4 +1254,72 @@ void SearchPrefetchService::SetLoaderDestructionCallbackForTesting(
   return prefetches_[canonical_search_url]
       ->SetLoaderDestructionCallbackForTesting(  // IN-TEST
           std::move(streaming_url_loader_destruction_callback));
+}
+
+void SearchPrefetchService::RecordInterceptionMetrics(
+    const std::u16string& search_terms,
+    SearchPrefetchServingReason serving_status) {
+  // Do not track empty search terms.
+  if (search_terms.empty()) {
+    return;
+  }
+  switch (serving_status) {
+    // Do not track non-DSE navigations.
+    case SearchPrefetchServingReason::kSearchEngineNotValid:
+    case SearchPrefetchServingReason::kJavascriptDisabled:
+    case SearchPrefetchServingReason::kNotDefaultSearchWithTerms:
+      return;
+    case SearchPrefetchServingReason::kServed:
+    case SearchPrefetchServingReason::kNoPrefetch:
+    case SearchPrefetchServingReason::kPrefetchWasForDifferentOrigin:
+    case SearchPrefetchServingReason::kRequestFailed:
+    case SearchPrefetchServingReason::kNotServedOtherReason:
+    case SearchPrefetchServingReason::kPostReloadFormOrLink:
+      break;
+    case SearchPrefetchServingReason::kRequestInFlightNotReady:
+      NOTREACHED();
+  }
+  const bool is_served = serving_status == SearchPrefetchServingReason::kServed;
+  auto iter = search_terms_cache_.Get(search_terms);
+  if (iter != search_terms_cache_.end()) {
+    base::TimeDelta age = base::Time::Now() - iter->second.last_navigation_time;
+    base::UmaHistogramCustomTimes(
+        "Omnibox.SearchPrefetch.DuplicateSearchTermsAge", age,
+        base::Milliseconds(1), base::Hours(10), 100);
+    if (age < base::Milliseconds(30)) {
+      base::trace_event::EmitNamedTrigger("second-search-request-within30");
+    }
+    if (age < base::Seconds(1)) {
+      // Limit the age to 1 second to rule out the case where restarting chrome
+      // affects the distribution.
+      base::UmaHistogramCustomTimes(
+          "Omnibox.SearchPrefetch.Within1sDuplicateSearchTermsAge", age,
+          base::Milliseconds(1), base::Seconds(1), 20);
+      base::UmaHistogramEnumeration(
+          "Omnibox.SearchPrefetch.Within1sDuplicateSearchTermsRelationship",
+          ConvertToDuplicateNavigationServingResult(
+              iter->second.served_from_prefetch_cache, is_served));
+    }
+  }
+  RealNaivigationServingResult result = {
+      .served_from_prefetch_cache = is_served,
+      .last_navigation_time = base::Time::Now()};
+  search_terms_cache_.Put(search_terms, std::move(result));
+  base::trace_event::EmitNamedTrigger("first-search-request");
+}
+
+void SearchPrefetchService::
+    RecordPotentialDuplicateSearchTermsAheadOfNavigationalPrefetch(
+        const std::u16string& search_terms) {
+  // Do not affect the order.
+  const auto& iter = search_terms_cache_.Peek(search_terms);
+  if (iter != search_terms_cache_.end()) {
+    // For now we just want to track the very recent duplicate terms which might
+    // be a bug.
+    base::UmaHistogramCustomTimes(
+        "Omnibox.SearchPrefetch."
+        "DuplicateSearchTermsAgeAheadOfNavigationalPrefetch",
+        base::Time::Now() - iter->second.last_navigation_time, base::Milliseconds(1),
+        base::Minutes(2), 50);
+  }
 }

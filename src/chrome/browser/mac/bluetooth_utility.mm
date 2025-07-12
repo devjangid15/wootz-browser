@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/mac/bluetooth_utility.h"
 
 #import <Foundation/Foundation.h>
@@ -23,8 +28,8 @@ BluetoothAvailability GetBluetoothAvailability() {
 
   // IOServiceGetMatchingServices takes ownership of matching_dict.
   io_iterator_t iter;
-  int kr = IOServiceGetMatchingServices(
-      kIOMasterPortDefault, matching_dict.release(), &iter);
+  int kr = IOServiceGetMatchingServices(kIOMainPortDefault,
+                                        matching_dict.release(), &iter);
   if (kr != KERN_SUCCESS)
     return BLUETOOTH_NOT_AVAILABLE;
   base::mac::ScopedIOObject<io_iterator_t> scoped_iter(iter);

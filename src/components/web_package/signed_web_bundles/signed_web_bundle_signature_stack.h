@@ -9,11 +9,11 @@
 
 #include "base/check.h"
 #include "base/containers/span.h"
-#include "base/functional/overloaded.h"
 #include "base/notreached.h"
 #include "components/web_package/mojom/web_bundle_parser.mojom-forward.h"
 #include "components/web_package/signed_web_bundles/signed_web_bundle_id.h"
 #include "components/web_package/signed_web_bundles/signed_web_bundle_signature_stack_entry.h"
+#include "components/web_package/signed_web_bundles/types.h"
 
 namespace web_package {
 
@@ -35,8 +35,8 @@ class SignedWebBundleSignatureStack {
 
   ~SignedWebBundleSignatureStack();
 
-  bool operator==(const SignedWebBundleSignatureStack& other) const;
-  bool operator!=(const SignedWebBundleSignatureStack& other) const;
+  friend bool operator==(const SignedWebBundleSignatureStack&,
+                         const SignedWebBundleSignatureStack&) = default;
 
   // Returns the signature stack entries. There is guaranteed to be at least one
   // entry. The first entry corresponds to the entry at the bottom of the stack.
@@ -45,30 +45,11 @@ class SignedWebBundleSignatureStack {
     return entries_;
   }
 
+  std::vector<PublicKey> public_keys() const;
+
   // Returns the number of entries in the signature stack. This is guaranteed to
   // be at least 1.
   size_t size() const { return entries().size(); }
-
-  // Returns the Web Bundle ID derived from the signature stack.
-  SignedWebBundleId derived_web_bundle_id() const {
-    auto bundle_id =
-        absl::visit(base::Overloaded{
-                        [](const SignedWebBundleSignatureInfoEd25519&
-                               ed25519_signature_info) -> SignedWebBundleId {
-                          return SignedWebBundleId::CreateForEd25519PublicKey(
-                              ed25519_signature_info.public_key());
-                        },
-                        [](const SignedWebBundleSignatureInfoEcdsaP256SHA256&
-                               ecdsa_p256_sha256_signature_info) {
-                          return SignedWebBundleId::CreateForEcdsaP256PublicKey(
-                              ecdsa_p256_sha256_signature_info.public_key());
-                        },
-                        [](const SignedWebBundleSignatureInfoUnknown&)
-                            -> SignedWebBundleId { NOTREACHED_NORETURN(); }},
-                    entries()[0].signature_info());
-
-    return bundle_id;
-  }
 
  private:
   explicit SignedWebBundleSignatureStack(

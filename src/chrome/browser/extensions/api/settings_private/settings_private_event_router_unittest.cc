@@ -129,7 +129,7 @@ TEST_F(SettingsPrivateEventRouterTest, IncognitoEventRouting) {
   // Add event listeners, as if we had created two real WebUIs, one in a regular
   // profile and one in an otr profile. Note that the string chrome://settings
   // is hardcoded into the api permissions of settingsPrivate.
-  GURL kDummyURL("wootzapp://settings");
+  GURL kDummyURL("chrome://settings");
   regular_event_router->AddEventListenerForURL(
       api::settings_private::OnPrefsChanged::kEventName, &regular_rph,
       kDummyURL);
@@ -137,9 +137,9 @@ TEST_F(SettingsPrivateEventRouterTest, IncognitoEventRouting) {
       api::settings_private::OnPrefsChanged::kEventName, &otr_rph, kDummyURL);
 
   // Hook up some test observers
-  EventRouterObserver regular_counter(regular_rph.GetID());
+  EventRouterObserver regular_counter(regular_rph.GetDeprecatedID());
   regular_event_router->AddObserverForTesting(&regular_counter);
-  EventRouterObserver otr_counter(otr_rph.GetID());
+  EventRouterObserver otr_counter(otr_rph.GetDeprecatedID());
   otr_event_router->AddObserverForTesting(&otr_counter);
 
   EXPECT_EQ(0, regular_counter.dispatch_count);

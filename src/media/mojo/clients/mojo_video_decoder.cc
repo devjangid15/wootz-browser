@@ -5,7 +5,6 @@
 #include "media/mojo/clients/mojo_video_decoder.h"
 
 #include "base/check.h"
-#include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
@@ -18,7 +17,6 @@
 #include "base/trace_event/trace_event.h"
 #include "base/unguessable_token.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "media/base/decoder_buffer.h"
 #include "media/base/demuxer_stream.h"
 #include "media/base/media_switches.h"
@@ -98,7 +96,7 @@ MojoVideoDecoder::MojoVideoDecoder(
     : task_runner_(task_runner),
       pending_remote_decoder_(std::move(pending_remote_decoder)),
       gpu_factories_(gpu_factories),
-      media_log_(media_log),
+      media_log_(media_log->Clone()),
       timestamps_(128),
       writer_capacity_(
           GetDefaultDecoderBufferConverterCapacity(DemuxerStream::VIDEO)),
@@ -123,12 +121,6 @@ bool MojoVideoDecoder::SupportsDecryption() const {
   // Currently only the Android backends and specific ChromeOS configurations
   // support decryption.
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(USE_CHROMEOS_PROTECTED_MEDIA)
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kLacrosUseChromeosProtectedMedia)) {
-    return false;
-  }
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
   return true;
 #else
   return false;
@@ -161,7 +153,7 @@ void MojoVideoDecoder::Initialize(const VideoDecoderConfig& config,
   if (gpu_factories_ &&
       gpu_factories_->IsDecoderConfigSupported(config) ==
           GpuVideoAcceleratorFactories::Supported::kFalse &&
-      IsBuiltInVideoCodec(config.codec())) {
+      IsDecoderBuiltInVideoCodec(config.codec())) {
     FailInit(std::move(init_cb), DecoderStatus::Codes::kUnsupportedConfig);
     return;
   }
@@ -207,7 +199,8 @@ void MojoVideoDecoder::InitializeRemoteDecoder(
   }
 
   remote_decoder_->Initialize(
-      config, low_delay, cdm_id,
+      config, low_delay,
+      cdm_id ? mojom::Cdm::NewCdmId(cdm_id.value()) : nullptr,
       base::BindOnce(&MojoVideoDecoder::OnInitializeDone,
                      base::Unretained(this)));
 }
@@ -215,7 +208,8 @@ void MojoVideoDecoder::InitializeRemoteDecoder(
 void MojoVideoDecoder::OnInitializeDone(const DecoderStatus& status,
                                         bool needs_bitstream_conversion,
                                         int32_t max_decode_requests,
-                                        VideoDecoderType decoder_type) {
+                                        VideoDecoderType decoder_type,
+                                        bool needs_transcryption) {
   DVLOG(1) << __func__ << ": status = " << status.group() << ":"
            << static_cast<int>(status.code());
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -325,10 +319,6 @@ void MojoVideoDecoder::Reset(base::OnceClosure reset_cb) {
     task_runner_->PostTask(FROM_HERE, std::move(reset_cb));
     return;
   }
-
-  // TODO(crbug.com/335001233): rollback the change or replace it with a CHECK
-  // before closing the bug.
-  DUMP_WILL_BE_CHECK(reset_cb);
 
   reset_cb_ = std::move(reset_cb);
   remote_decoder_->Reset(
@@ -492,6 +482,9 @@ void MojoVideoDecoder::Stop() {
 
   if (reset_cb_)
     std::move(reset_cb_).Run();
+
+  // Drop any outstanding callbacks.
+  weak_factory_.InvalidateWeakPtrs();
 }
 
 }  // namespace media

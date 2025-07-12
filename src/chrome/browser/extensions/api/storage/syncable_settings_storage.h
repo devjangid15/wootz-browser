@@ -34,7 +34,7 @@ class SyncableSettingsStorage : public value_store::ValueStore {
                           const ExtensionId& extension_id,
                           // Ownership taken.
                           value_store::ValueStore* delegate,
-                          syncer::ModelType sync_type,
+                          syncer::DataType sync_type,
                           const syncer::SyncableService::StartSyncFlare& flare);
 
   SyncableSettingsStorage(const SyncableSettingsStorage&) = delete;
@@ -46,6 +46,7 @@ class SyncableSettingsStorage : public value_store::ValueStore {
   size_t GetBytesInUse(const std::string& key) override;
   size_t GetBytesInUse(const std::vector<std::string>& keys) override;
   size_t GetBytesInUse() override;
+  ReadResult GetKeys() override;
   ReadResult Get(const std::string& key) override;
   ReadResult Get(const std::vector<std::string>& keys) override;
   ReadResult Get() override;
@@ -64,8 +65,8 @@ class SyncableSettingsStorage : public value_store::ValueStore {
 
   // Starts syncing this storage area. Must only be called if sync isn't
   // already active.
-  // |sync_state| is the current state of the extension settings in sync.
-  // |sync_processor| is used to write out any changes.
+  // `sync_state` is the current state of the extension settings in sync.
+  // `sync_processor` is used to write out any changes.
   // Returns any error when trying to sync, or std::nullopt on success.
   std::optional<syncer::ModelError> StartSyncing(
       base::Value::Dict sync_state,
@@ -81,7 +82,7 @@ class SyncableSettingsStorage : public value_store::ValueStore {
       std::unique_ptr<SettingSyncDataList> sync_changes);
 
  private:
-  // Sends the changes from |result| to sync if it's enabled.
+  // Sends the changes from `result` to sync if it's enabled.
   void SyncResultIfEnabled(const value_store::ValueStore::WriteResult& result);
 
   // Analyze the result returned by a call to the delegate, and take appropriate
@@ -128,7 +129,7 @@ class SyncableSettingsStorage : public value_store::ValueStore {
   // Object which sends changes to sync.
   std::unique_ptr<SettingsSyncProcessor> sync_processor_;
 
-  const syncer::ModelType sync_type_;
+  const syncer::DataType sync_type_;
   const syncer::SyncableService::StartSyncFlare flare_;
 };
 

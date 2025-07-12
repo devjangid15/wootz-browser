@@ -1,15 +1,15 @@
 import pytest
 
-from tests.support.sync import AsyncPoll
 from webdriver.bidi.modules.script import ContextTarget
 from webdriver.error import TimeoutException
 
+from tests.bidi import wait_for_bidi_events
 from ... import any_int, recursive_compare, int_interval
 from .. import assert_navigation_info
 
 pytestmark = pytest.mark.asyncio
 
-EMPTY_PAGE = "/webdriver/tests/bidi/support/empty.html"
+EMPTY_PAGE = "/webdriver/tests/bidi/browsing_context/support/empty.html"
 FRAGMENT_NAVIGATED_EVENT = "browsingContext.fragmentNavigated"
 
 
@@ -88,7 +88,7 @@ async def test_navigation_id(
 
     await subscribe_events([FRAGMENT_NAVIGATED_EVENT])
 
-    on_frame_navigated = wait_for_event(FRAGMENT_NAVIGATED_EVENT)
+    on_fragment_navigated = wait_for_event(FRAGMENT_NAVIGATED_EVENT)
 
     target_url = url(EMPTY_PAGE + '#foo')
     result = await bidi_session.browsing_context.navigate(
@@ -101,7 +101,7 @@ async def test_navigation_id(
             'timestamp': any_int,
             'url': target_url
         },
-        await wait_for_future_safe(on_frame_navigated),
+        await wait_for_future_safe(on_fragment_navigated),
     )
 
 
@@ -111,7 +111,7 @@ async def test_url_with_base_tag(bidi_session, subscribe_events, inline, new_tab
 
     await subscribe_events(events=[FRAGMENT_NAVIGATED_EVENT])
 
-    on_frame_navigated = wait_for_event(FRAGMENT_NAVIGATED_EVENT)
+    on_fragment_navigated = wait_for_event(FRAGMENT_NAVIGATED_EVENT)
 
     target_url = url + '#foo'
     await bidi_session.browsing_context.navigate(context=new_tab["context"], url=target_url, wait="complete")
@@ -121,7 +121,7 @@ async def test_url_with_base_tag(bidi_session, subscribe_events, inline, new_tab
             'context': new_tab["context"],
             'url': target_url
         },
-        await wait_for_future_safe(on_frame_navigated),
+        await wait_for_future_safe(on_fragment_navigated),
     )
 
 
@@ -143,7 +143,17 @@ async def test_iframe(
 
     await subscribe_events([FRAGMENT_NAVIGATED_EVENT])
 
-    on_frame_navigated = wait_for_event(FRAGMENT_NAVIGATED_EVENT)
+    # Track all received browsingContext.fragmentNavigated events in the events array
+    events = []
+
+    async def on_event(method, data):
+        events.append(data)
+
+    remove_listener = bidi_session.add_event_listener(
+        FRAGMENT_NAVIGATED_EVENT, on_event
+    )
+
+    on_fragment_navigated = wait_for_event(FRAGMENT_NAVIGATED_EVENT)
 
     target_url = url(EMPTY_PAGE + '#bar')
     await bidi_session.browsing_context.navigate(
@@ -155,8 +165,12 @@ async def test_iframe(
             'timestamp': any_int,
             'url': target_url
         },
-        await wait_for_future_safe(on_frame_navigated),
+        await wait_for_future_safe(on_fragment_navigated),
     )
+
+    # Check that we only received one event for the iframe navigation.
+    assert len(events) == 1
+    remove_listener()
 
 
 @pytest.mark.parametrize(
@@ -178,7 +192,7 @@ async def test_document_location(
 
     await subscribe_events([FRAGMENT_NAVIGATED_EVENT])
 
-    on_frame_navigated = wait_for_event(FRAGMENT_NAVIGATED_EVENT)
+    on_fragment_navigated = wait_for_event(FRAGMENT_NAVIGATED_EVENT)
 
     target_url = url(EMPTY_PAGE + hash_after)
 
@@ -200,7 +214,7 @@ async def test_document_location(
             'timestamp': any_int,
             'url': target_url
         },
-        await wait_for_future_safe(on_frame_navigated),
+        await wait_for_future_safe(on_fragment_navigated),
     )
 
 
@@ -223,7 +237,7 @@ async def test_browsing_context_navigate(
 
     await subscribe_events([FRAGMENT_NAVIGATED_EVENT])
 
-    on_frame_navigated = wait_for_event(FRAGMENT_NAVIGATED_EVENT)
+    on_fragment_navigated = wait_for_event(FRAGMENT_NAVIGATED_EVENT)
 
     target_url = url(EMPTY_PAGE + hash_after)
 
@@ -236,7 +250,7 @@ async def test_browsing_context_navigate(
             'timestamp': any_int,
             'url': target_url
         },
-        await wait_for_future_safe(on_frame_navigated),
+        await wait_for_future_safe(on_fragment_navigated),
     )
 
 
@@ -253,14 +267,14 @@ async def test_new_context(bidi_session, subscribe_events, type_hint):
 
     await bidi_session.browsing_context.create(type_hint=type_hint)
 
-    wait = AsyncPoll(bidi_session, timeout=0.5)
     with pytest.raises(TimeoutException):
-        await wait.until(lambda _: len(events) > 0)
+        await wait_for_bidi_events(bidi_session, events, 1, timeout=0.5)
 
     remove_listener()
 
 
-async def test_document_write(bidi_session, subscribe_events, top_context):
+@pytest.mark.parametrize("sandbox", [None, "sandbox_1"])
+async def test_document_write(bidi_session, subscribe_events, new_tab, sandbox):
     await subscribe_events(events=[FRAGMENT_NAVIGATED_EVENT])
 
     events = []
@@ -272,13 +286,12 @@ async def test_document_write(bidi_session, subscribe_events, top_context):
 
     await bidi_session.script.evaluate(
         expression="""document.open(); document.write("<h1>Replaced</h1>"); document.close();""",
-        target=ContextTarget(top_context["context"]),
+        target=ContextTarget(new_tab["context"], sandbox),
         await_promise=False
     )
 
-    wait = AsyncPoll(bidi_session, timeout=0.5)
     with pytest.raises(TimeoutException):
-        await wait.until(lambda _: len(events) > 0)
+        await wait_for_bidi_events(bidi_session, events, 1, timeout=0.5)
 
     remove_listener()
 
@@ -304,8 +317,7 @@ async def test_regular_navigation(bidi_session, subscribe_events, url, new_tab, 
 
     await bidi_session.browsing_context.navigate(context=new_tab["context"], url=url(EMPTY_PAGE + after), wait="complete")
 
-    wait = AsyncPoll(bidi_session, timeout=0.5)
     with pytest.raises(TimeoutException):
-        await wait.until(lambda _: len(events) > 0)
+        await wait_for_bidi_events(bidi_session, events, 1, timeout=0.5)
 
     remove_listener()

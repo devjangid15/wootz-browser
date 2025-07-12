@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chromecast/media/audio/cast_audio_manager_alsa.h"
 
 #include <string_view>
@@ -9,6 +14,7 @@
 
 #include "base/logging.h"
 #include "base/memory/free_deleter.h"
+#include "base/notimplemented.h"
 #include "base/task/single_thread_task_runner.h"
 #include "chromecast/media/api/cma_backend_factory.h"
 #include "chromecast/media/audio/audio_buildflags.h"

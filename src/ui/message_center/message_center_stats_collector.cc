@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 #include "ui/message_center/message_center_stats_collector.h"
 
 #include <stddef.h>
@@ -14,7 +15,7 @@
 
 namespace message_center {
 
-MessageCenterStatsCollector::NotificationStats::NotificationStats() {}
+MessageCenterStatsCollector::NotificationStats::NotificationStats() = default;
 
 MessageCenterStatsCollector::NotificationStats::NotificationStats(
     const std::string& id)
@@ -24,7 +25,7 @@ MessageCenterStatsCollector::NotificationStats::NotificationStats(
   }
 }
 
-MessageCenterStatsCollector::NotificationStats::~NotificationStats() {}
+MessageCenterStatsCollector::NotificationStats::~NotificationStats() = default;
 
 void MessageCenterStatsCollector::NotificationStats::CollectAction(
     NotificationActionType type) {
@@ -66,7 +67,7 @@ void MessageCenterStatsCollector::OnNotificationAdded(
   stats_[notification_id] = NotificationStats(notification_id);
 
   auto iter = stats_.find(notification_id);
-  DCHECK(iter != stats_.end());
+  CHECK(iter != stats_.end());
 
   stats_[notification_id].CollectAction(NOTIFICATION_ACTION_ADD);
 

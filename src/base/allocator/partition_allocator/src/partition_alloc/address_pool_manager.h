@@ -10,12 +10,11 @@
 
 #include "partition_alloc/address_pool_manager_types.h"
 #include "partition_alloc/build_config.h"
+#include "partition_alloc/buildflags.h"
 #include "partition_alloc/partition_address_space.h"
 #include "partition_alloc/partition_alloc_base/compiler_specific.h"
 #include "partition_alloc/partition_alloc_base/component_export.h"
-#include "partition_alloc/partition_alloc_base/debug/debugging_buildflags.h"
 #include "partition_alloc/partition_alloc_base/thread_annotations.h"
-#include "partition_alloc/partition_alloc_buildflags.h"
 #include "partition_alloc/partition_alloc_check.h"
 #include "partition_alloc/partition_alloc_constants.h"
 #include "partition_alloc/partition_lock.h"
@@ -114,6 +113,8 @@ class PA_COMPONENT_EXPORT(PARTITION_ALLOC)
   bool GetStats(AddressSpaceStats* stats);
 
 #if PA_BUILDFLAG(ENABLE_THREAD_ISOLATION)
+  // This function just exists to static_assert the layout of the private fields
+  // in Pool. It is never called.
   static void AssertThreadIsolatedLayout();
 #endif  // PA_BUILDFLAG(ENABLE_THREAD_ISOLATION)
 
@@ -127,19 +128,21 @@ class PA_COMPONENT_EXPORT(PARTITION_ALLOC)
     Pool(const Pool&) = delete;
     Pool& operator=(const Pool&) = delete;
 
-    void Initialize(uintptr_t ptr, size_t length);
+    void Initialize(uintptr_t ptr, size_t length) PA_LOCKS_EXCLUDED(lock_);
     bool IsInitialized();
     void Reset();
 
-    uintptr_t FindChunk(size_t size);
-    void FreeChunk(uintptr_t address, size_t size);
+    uintptr_t FindChunk(size_t size) PA_LOCKS_EXCLUDED(lock_);
+    void FreeChunk(uintptr_t address, size_t size) PA_LOCKS_EXCLUDED(lock_);
 
-    bool TryReserveChunk(uintptr_t address, size_t size);
+    bool TryReserveChunk(uintptr_t address, size_t size)
+        PA_LOCKS_EXCLUDED(lock_);
 
-    void GetUsedSuperPages(std::bitset<kMaxSuperPagesInPool>& used);
+    void GetUsedSuperPages(std::bitset<kMaxSuperPagesInPool>& used)
+        PA_LOCKS_EXCLUDED(lock_);
     uintptr_t GetBaseAddress();
 
-    void GetStats(PoolStats* stats);
+    void GetStats(PoolStats* stats) PA_LOCKS_EXCLUDED(lock_);
 
    private:
     // The lock needs to be the first field in this class.
@@ -162,7 +165,7 @@ class PA_COMPONENT_EXPORT(PARTITION_ALLOC)
 
     size_t total_bits_ = 0;
     uintptr_t address_begin_ = 0;
-#if PA_BUILDFLAG(PA_DCHECK_IS_ON)
+#if PA_BUILDFLAG(DCHECKS_ARE_ON)
     uintptr_t address_end_ = 0;
 #endif
 
@@ -201,7 +204,7 @@ class PA_COMPONENT_EXPORT(PARTITION_ALLOC)
 
 #endif  // PA_BUILDFLAG(HAS_64_BIT_POINTERS)
 
-  static PA_CONSTINIT AddressPoolManager singleton_;
+  PA_CONSTINIT static AddressPoolManager singleton_;
 };
 
 }  // namespace partition_alloc::internal

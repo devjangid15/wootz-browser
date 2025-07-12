@@ -6,6 +6,7 @@ package org.chromium.content.browser;
 
 import android.content.Context;
 import android.os.StrictMode;
+import android.os.SystemClock;
 
 import androidx.annotation.IntDef;
 import androidx.annotation.VisibleForTesting;
@@ -17,6 +18,7 @@ import org.jni_zero.NativeMethods;
 import org.chromium.base.BuildInfo;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
+import org.chromium.base.ResettersForTesting;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.library_loader.LibraryLoader;
 import org.chromium.base.library_loader.LibraryProcessType;
@@ -25,6 +27,8 @@ import org.chromium.base.library_loader.ProcessInitException;
 import org.chromium.base.metrics.ScopedSysTraceEvent;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.content.app.ContentMain;
 import org.chromium.content.browser.ServicificationStartupUma.ServicificationStartup;
 import org.chromium.content_public.browser.BrowserStartupController;
@@ -39,6 +43,7 @@ import java.util.List;
  * This is a singleton, and stores a reference to the application context.
  */
 @JNINamespace("content")
+@NullMarked
 public class BrowserStartupControllerImpl implements BrowserStartupController {
     private static final String TAG = "BrowserStartup";
 
@@ -53,15 +58,16 @@ public class BrowserStartupControllerImpl implements BrowserStartupController {
         int MINIMAL_BROWSER = 1;
     }
 
-    private static BrowserStartupControllerImpl sInstance;
+    private static @Nullable BrowserStartupControllerImpl sInstance;
 
     private static boolean sShouldStartGpuProcessOnBrowserStartup;
 
     @VisibleForTesting
     @CalledByNative
-    static void browserStartupComplete(int result) {
+    static void browserStartupComplete(int result, long longestBlockingDuration) {
         if (sInstance != null) {
             sInstance.executeEnqueuedCallbacks(result);
+            sInstance.recordStartupTasksLongestBlockingDuration(longestBlockingDuration);
         }
     }
 
@@ -106,7 +112,7 @@ public class BrowserStartupControllerImpl implements BrowserStartupController {
 
     // Tests may inject a method to be run instead of calling ContentMain() in order for them to
     // initialize the C++ system via another means.
-    private Runnable mContentMainCallbackForTests;
+    private @Nullable Runnable mContentMainCallbackForTests;
 
     // Browser start up type. If the type is |BROWSER_START_TYPE_MINIMAL|, start up
     // will be paused after the minimal environment is setup. Additional request to launch the full
@@ -122,7 +128,10 @@ public class BrowserStartupControllerImpl implements BrowserStartupController {
     // Whether the minimal browser environment is set up.
     private boolean mMinimalBrowserStarted;
 
-    private TracingControllerAndroidImpl mTracingController;
+    private @Nullable TracingControllerAndroidImpl mTracingController;
+
+    private long mContentStartDurationMs;
+    private long mStartupTasksLongestBlockingDurationMs;
 
     BrowserStartupControllerImpl() {
         mAsyncStartupCallbacks = new ArrayList<>();
@@ -135,7 +144,6 @@ public class BrowserStartupControllerImpl implements BrowserStartupController {
                     new Runnable() {
                         @Override
                         public void run() {
-                            Log.e("lalala", "run");
                             addStartupCompletedObserver(
                                     new StartupCallback() {
                                         @Override
@@ -144,7 +152,6 @@ public class BrowserStartupControllerImpl implements BrowserStartupController {
                                             Context context = ContextUtils.getApplicationContext();
                                             mTracingController =
                                                     new TracingControllerAndroidImpl(context);
-                                            Log.e("lalala", "" + mTracingController);
                                             mTracingController.registerReceiver(context);
                                         }
 
@@ -172,8 +179,11 @@ public class BrowserStartupControllerImpl implements BrowserStartupController {
         return sInstance;
     }
 
-    public static void overrideInstanceForTest(BrowserStartupController controller) {
-        sInstance = (BrowserStartupControllerImpl) controller;
+    @VisibleForTesting
+    public static void overrideInstanceForTest(BrowserStartupControllerImpl controller) {
+        var oldValue = sInstance;
+        sInstance = controller;
+        ResettersForTesting.register(() -> sInstance = oldValue);
     }
 
     @Override
@@ -181,8 +191,12 @@ public class BrowserStartupControllerImpl implements BrowserStartupController {
             @LibraryProcessType int libraryProcessType,
             boolean startGpuProcess,
             boolean startMinimalBrowser,
+            boolean singleProcess,
+            boolean scheduleFlushStartupTasks,
             final StartupCallback callback) {
-        assert !LibraryLoader.isBrowserProcessStartupBlockedForTesting();
+        assert !LibraryLoader.isBrowserProcessStartupBlockedForTesting()
+                : "Tried to start the browser process, likely in a unit test. Tests that start the"
+                        + " browser process need are restricted to instrumentation test apks.";
         assertProcessTypeSupported(libraryProcessType);
         assert ThreadUtils.runningOnUiThread() : "Tried to start the browser on the wrong thread.";
         ServicificationStartupUma.getInstance()
@@ -223,7 +237,7 @@ public class BrowserStartupControllerImpl implements BrowserStartupController {
             // and let prepareToStartBrowserProcess() decide whether to defer it by a frame (in
             // production) or not (overridden in tests). http://b/181151614#comment6
             prepareToStartBrowserProcess(
-                    false,
+                    singleProcess,
                     new Runnable() {
                         @Override
                         public void run() {
@@ -233,7 +247,7 @@ public class BrowserStartupControllerImpl implements BrowserStartupController {
                                     startMinimalBrowser
                                             ? BrowserStartType.MINIMAL_BROWSER
                                             : BrowserStartType.FULL_BROWSER;
-                            if (contentStart() > 0) {
+                            if (contentStart(scheduleFlushStartupTasks) > 0) {
                                 // Failed. The callbacks may not have run, so run them.
                                 enqueueCallbackExecutionOnStartupFailure();
                             }
@@ -244,7 +258,9 @@ public class BrowserStartupControllerImpl implements BrowserStartupController {
             // If we missed the minimalBrowserStarted() call, launch the full browser now if needed.
             // Otherwise, minimalBrowserStarted() will handle the full browser launch.
             mCurrentBrowserStartType = BrowserStartType.FULL_BROWSER;
-            if (contentStart() > 0) enqueueCallbackExecutionOnStartupFailure();
+            if (contentStart(scheduleFlushStartupTasks) > 0) {
+                enqueueCallbackExecutionOnStartupFailure();
+            }
         }
     }
 
@@ -274,7 +290,7 @@ public class BrowserStartupControllerImpl implements BrowserStartupController {
             if (!mHasCalledContentStart
                     || mCurrentBrowserStartType == BrowserStartType.MINIMAL_BROWSER) {
                 mCurrentBrowserStartType = BrowserStartType.FULL_BROWSER;
-                if (contentStart() > 0) {
+                if (contentStart(false) > 0) {
                     // Failed. The callbacks may not have run, so run them.
                     enqueueCallbackExecutionOnStartupFailure();
                     startedSuccessfully = false;
@@ -293,7 +309,8 @@ public class BrowserStartupControllerImpl implements BrowserStartupController {
     }
 
     /** Start the browser process by calling ContentMain.start(). */
-    int contentStart() {
+    int contentStart(boolean scheduleFlushStartupTasks) {
+        long startTime = SystemClock.uptimeMillis();
         int result = 0;
         if (mContentMainCallbackForTests == null) {
             boolean startMinimalBrowser =
@@ -308,6 +325,10 @@ public class BrowserStartupControllerImpl implements BrowserStartupController {
             mLaunchFullBrowserAfterMinimalBrowserStart = false;
         }
         mHasCalledContentStart = true;
+        if (result <= 0 && scheduleFlushStartupTasks) {
+            PostTask.postTask(TaskTraits.UI_STARTUP, () -> flushStartupTasks());
+        }
+        recordContentStartDuration(SystemClock.uptimeMillis() - startTime);
         return result;
     }
 
@@ -325,7 +346,11 @@ public class BrowserStartupControllerImpl implements BrowserStartupController {
 
     @VisibleForTesting
     void flushStartupTasks() {
-        BrowserStartupControllerImplJni.get().flushStartupTasks();
+        try (ScopedSysTraceEvent e = ScopedSysTraceEvent.scoped("flushStartupTasks")) {
+            long startTime = SystemClock.uptimeMillis();
+            BrowserStartupControllerImplJni.get().flushStartupTasks();
+            recordStartupTasksLongestBlockingDuration(SystemClock.uptimeMillis() - startTime);
+        }
     }
 
     @Override
@@ -362,11 +387,21 @@ public class BrowserStartupControllerImpl implements BrowserStartupController {
                 mFullBrowserStartupDone, mMinimalBrowserStarted, startMinimalBrowser);
     }
 
+    @Override
+    public long getContentStartDuration() {
+        return mContentStartDurationMs;
+    }
+
+    @Override
+    public long getStartupTasksLongestBlockingDuration() {
+        return mStartupTasksLongestBlockingDurationMs;
+    }
+
     /**
      * Asserts that library process type is one of the supported types.
+     *
      * @param libraryProcessType the type of process the shared library is loaded. It must be
-     *                           LibraryProcessType.PROCESS_BROWSER or
-     *                           LibraryProcessType.PROCESS_WEBVIEW.
+     *     LibraryProcessType.PROCESS_BROWSER or LibraryProcessType.PROCESS_WEBVIEW.
      */
     private void assertProcessTypeSupported(@LibraryProcessType int libraryProcessType) {
         assert LibraryProcessType.PROCESS_BROWSER == libraryProcessType
@@ -381,7 +416,7 @@ public class BrowserStartupControllerImpl implements BrowserStartupController {
             // If startFullBrowser() fails, execute the callbacks right away. Otherwise,
             // callbacks will be deferred until browser startup completes.
             mCurrentBrowserStartType = BrowserStartType.FULL_BROWSER;
-            if (contentStart() > 0) enqueueCallbackExecutionOnStartupFailure();
+            if (contentStart(false) > 0) enqueueCallbackExecutionOnStartupFailure();
             return;
         }
 
@@ -428,7 +463,6 @@ public class BrowserStartupControllerImpl implements BrowserStartupController {
     }
 
     private void postStartupCompleted(final StartupCallback callback) {
-        Log.e("lalala", "post startup");
         PostTask.postTask(
                 TaskTraits.UI_DEFAULT,
                 new Runnable() {
@@ -443,8 +477,18 @@ public class BrowserStartupControllerImpl implements BrowserStartupController {
                 });
     }
 
+    private void recordContentStartDuration(long contentStartDurationMs) {
+        mContentStartDurationMs = Math.max(mContentStartDurationMs, contentStartDurationMs);
+    }
+
+    private void recordStartupTasksLongestBlockingDuration(long startupTasksDurationMaxMs) {
+        mStartupTasksLongestBlockingDurationMs =
+                Math.max(mStartupTasksLongestBlockingDurationMs, startupTasksDurationMaxMs);
+    }
+
     @VisibleForTesting
-    void prepareToStartBrowserProcess(final boolean singleProcess, final Runnable deferrableTask) {
+    void prepareToStartBrowserProcess(
+            final boolean singleProcess, final @Nullable Runnable deferrableTask) {
         if (mPrepareToStartCompleted) {
             return;
         }
@@ -467,12 +511,13 @@ public class BrowserStartupControllerImpl implements BrowserStartupController {
             }
 
             // TODO(yfriedman): Remove dependency on a command line flag for this.
-            DeviceUtilsImpl.addDeviceSpecificUserAgentSwitch();
+            DeviceUtilsImpl.updateDeviceSpecificUserAgentSwitch(
+                    ContextUtils.getApplicationContext());
             BrowserStartupControllerImplJni.get().setCommandLineFlags(singleProcess);
         }
 
         if (deferrableTask != null) {
-            PostTask.postTask(TaskTraits.UI_USER_BLOCKING, deferrableTask);
+            PostTask.postTask(TaskTraits.UI_STARTUP, deferrableTask);
         }
     }
 

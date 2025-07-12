@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/mac/auth_session_request.h"
 
 #import <AuthenticationServices/AuthenticationServices.h>
@@ -10,6 +15,7 @@
 #include <memory>
 #include <string>
 
+#include "base/memory/weak_ptr.h"
 #include "base/no_destructor.h"
 #include "base/strings/sys_string_conversions.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
@@ -34,10 +40,10 @@ class AuthNavigationThrottle : public content::NavigationThrottle {
  public:
   using SchemeURLFoundCallback = base::OnceCallback<void(const GURL&)>;
 
-  AuthNavigationThrottle(content::NavigationHandle* handle,
+  AuthNavigationThrottle(content::NavigationThrottleRegistry& registry,
                          const std::string& scheme,
                          SchemeURLFoundCallback scheme_found)
-      : content::NavigationThrottle(handle),
+      : content::NavigationThrottle(registry),
         scheme_(scheme),
         scheme_found_(std::move(scheme_found)) {
     DCHECK(!scheme_found_.is_null());
@@ -59,14 +65,16 @@ class AuthNavigationThrottle : public content::NavigationThrottle {
     }
 
     GURL url = navigation_handle()->GetURL();
-    if (!url.SchemeIs(scheme_))
+    if (!url.SchemeIs(scheme_)) {
       return PROCEED;
+    }
 
     // Paranoia; if the callback was already fired, ignore all further
     // navigations that somehow get through before the WebContents deletion
     // happens.
-    if (scheme_found_.is_null())
+    if (scheme_found_.is_null()) {
       return CANCEL_AND_IGNORE;
+    }
 
     // Post the callback; triggering the deletion of the WebContents that owns
     // the navigation that is in the middle of being throttled would likely not
@@ -90,8 +98,9 @@ AuthSessionRequest::~AuthSessionRequest() {
   std::string uuid = base::SysNSStringToUTF8(request_.UUID.UUIDString);
 
   auto iter = GetMap().find(uuid);
-  if (iter == GetMap().end())
+  if (iter == GetMap().end()) {
     return;
+  }
 
   GetMap().erase(iter);
 }
@@ -160,8 +169,9 @@ void AuthSessionRequest::CancelAuthSession(
   std::string uuid = base::SysNSStringToUTF8(request.UUID.UUIDString);
 
   auto iter = GetMap().find(uuid);
-  if (iter == GetMap().end())
+  if (iter == GetMap().end()) {
     return;
+  }
 
   iter->second->CancelAuthSession();
 }
@@ -171,36 +181,33 @@ std::optional<std::string> AuthSessionRequest::CanonicalizeScheme(
     std::string scheme) {
   url::RawCanonOutputT<char> canon_output;
   url::Component component;
-  bool result = url::CanonicalizeScheme(
-      scheme.data(), url::Component(0, static_cast<int>(scheme.size())),
-      &canon_output, &component);
-  if (!result)
+  bool result = url::CanonicalizeScheme(scheme, &canon_output, &component);
+  if (!result) {
     return std::nullopt;
+  }
 
   return std::string(canon_output.data() + component.begin, component.len);
 }
 
-std::unique_ptr<content::NavigationThrottle> AuthSessionRequest::CreateThrottle(
-    content::NavigationHandle* handle) {
+void AuthSessionRequest::CreateAndAddNavigationThrottle(
+    content::NavigationThrottleRegistry& registry) {
   // Only attach a throttle to outermost main frames. Note non-primary main
   // frames will cancel the navigation in the throttle.
-  switch (handle->GetNavigatingFrameType()) {
+  switch (registry.GetNavigationHandle().GetNavigatingFrameType()) {
     case content::FrameType::kSubframe:
     case content::FrameType::kFencedFrameRoot:
-      return nil;
+    case content::FrameType::kGuestMainFrame:
+      return;
     case content::FrameType::kPrimaryMainFrame:
     case content::FrameType::kPrerenderMainFrame:
       break;
   }
 
-  // base::Unretained is safe because throttles are owned by the
-  // NavigationRequest, which won't outlive the WebContents, whose lifetime this
-  // is tied to.
   auto scheme_found = base::BindOnce(&AuthSessionRequest::SchemeWasNavigatedTo,
-                                     base::Unretained(this));
+                                     weak_factory_.GetWeakPtr());
 
-  return std::make_unique<AuthNavigationThrottle>(handle, scheme_,
-                                                  std::move(scheme_found));
+  registry.AddThrottle(std::make_unique<AuthNavigationThrottle>(
+      registry, scheme_, std::move(scheme_found)));
 }
 
 AuthSessionRequest::AuthSessionRequest(
@@ -221,8 +228,9 @@ AuthSessionRequest::AuthSessionRequest(
 Browser* AuthSessionRequest::CreateBrowser(
     ASWebAuthenticationSessionRequest* request,
     Profile* profile) {
-  if (!profile)
+  if (!profile) {
     return nullptr;
+  }
 
   bool ephemeral_sessions_allowed_by_policy =
       IncognitoModePrefs::GetAvailability(profile->GetPrefs()) !=
@@ -240,8 +248,16 @@ Browser* AuthSessionRequest::CreateBrowser(
       ephemeral_sessions_allowed_by_policy) {
     profile = profile->GetPrimaryOTRProfile(/*create_if_needed=*/true);
   }
-  if (!profile)
+  if (!profile) {
     return nullptr;
+  }
+
+  // Check if browser creation is possible before attempting to create it.
+  // This prevents crashes when the profile is in an unsuitable state.
+  if (Browser::GetCreationStatusForProfile(profile) !=
+      Browser::CreationStatus::kOk) {
+    return nullptr;
+  }
 
   // Note that this creates a popup-style window to do the signin. This is a
   // specific choice motivated by security concerns, and must *not* be changed
@@ -345,12 +361,13 @@ void AuthSessionRequest::WebContentsDestroyed() {
 
 WEB_CONTENTS_USER_DATA_KEY_IMPL(AuthSessionRequest);
 
-std::unique_ptr<content::NavigationThrottle> MaybeCreateAuthSessionThrottleFor(
-    content::NavigationHandle* handle) {
-  AuthSessionRequest* request =
-      AuthSessionRequest::FromWebContents(handle->GetWebContents());
-  if (!request)
-    return nullptr;
+void MaybeCreateAndAddAuthSessionNavigationThrottle(
+    content::NavigationThrottleRegistry& registry) {
+  AuthSessionRequest* request = AuthSessionRequest::FromWebContents(
+      registry.GetNavigationHandle().GetWebContents());
+  if (!request) {
+    return;
+  }
 
-  return request->CreateThrottle(handle);
+  return request->CreateAndAddNavigationThrottle(registry);
 }

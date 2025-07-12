@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <array>
+
+
 #include <memory>
 #include <string>
 #include <vector>
@@ -15,7 +18,6 @@
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
 #include "build/buildflag.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/media/webrtc/webrtc_browsertest_base.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
@@ -35,9 +37,6 @@
 #include "testing/gmock/include/gmock/gmock-matchers.h"
 #include "third_party/blink/public/common/features.h"
 #include "ui/gl/gl_switches.h"
-
-// TODO(crbug.com/40184242): Enable this test suite on Lacros.
-#if !BUILDFLAG(IS_CHROMEOS_LACROS)
 
 namespace {
 
@@ -99,7 +98,7 @@ const char* ToString(Frame frame) {
     case Frame::kEmbeddedFrame:
       return "embedded";
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 const char* ToString(Track track) {
@@ -111,7 +110,7 @@ const char* ToString(Track track) {
     case Track::kSecond:
       return "second";
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 const char* ToString(SubCaptureTargetType type) {
@@ -121,7 +120,7 @@ const char* ToString(SubCaptureTargetType type) {
     case SubCaptureTargetType::kRestrictionTarget:
       return "restriction-target";
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 // Conveniently pack together all relevant information about a tab and
@@ -300,11 +299,12 @@ class SubCaptureBrowserTestBase : public WebRtcTestBase {
   void SetUpCommandLine(base::CommandLine* command_line) override {
     command_line->AppendSwitch(
         switches::kEnableExperimentalWebPlatformFeatures);
+    // MSan and GL do not get along so avoid using the GPU with MSan.
     // TODO(crbug.com/40260482): Remove this after fixing feature
     // detection in 0c tab capture path as it'll no longer be needed.
-    if constexpr (!BUILDFLAG(IS_CHROMEOS)) {
-      command_line->AppendSwitch(switches::kUseGpuInTests);
-    }
+#if !BUILDFLAG(IS_CHROMEOS) && !defined(MEMORY_SANITIZER)
+    command_line->AppendSwitch(switches::kUseGpuInTests);
+#endif
     command_line_ = command_line;
   }
 
@@ -381,7 +381,7 @@ class SubCaptureBrowserTestBase : public WebRtcTestBase {
   raw_ptr<base::CommandLine> command_line_ = nullptr;
 
   // Holds the tabs manipulated by this test.
-  TabInfo tabs_[kTabCount];
+  std::array<TabInfo, kTabCount> tabs_;
 
   // Each page is served from a distinct origin, thereby proving that
   // cropping/restricting works irrespective of whether iframes are
@@ -1159,5 +1159,3 @@ IN_PROC_BROWSER_TEST_P(SubCaptureSelfCaptureOnlyBrowserTest, ApplySubCapture) {
   EXPECT_EQ(expect_permitted, tabs_[kMainTab].ApplySubCaptureTarget(
                                   target, type_, capturing_entity_));
 }
-
-#endif  //  !BUILDFLAG(IS_CHROMEOS_LACROS)

@@ -11,7 +11,6 @@ found in the LICENSE file.
     android:id="@+id/ntp_content"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:background="@drawable/home_surface_background"
     android:layout_gravity="center_horizontal"
     android:orientation="vertical"
     android:gravity="center"
@@ -29,6 +28,16 @@ found in the LICENSE file.
 
     <!-- Search box -->
     <include layout="@layout/fake_search_box_layout"/>
+
+    <ViewStub
+        android:id="@+id/composeplate_view_stub"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/composeplate_view_height"
+        android:layout_marginTop="@dimen/composeplate_view_margin_top"
+        android:layout_marginStart="@dimen/mvt_container_lateral_margin"
+        android:layout_marginEnd="@dimen/mvt_container_lateral_margin"
+        android:layout="@layout/composeplate_view_layout"
+        android:visibility="gone" />
 
     <!-- Query tiles -->
     <FrameLayout
@@ -78,15 +87,6 @@ found in the LICENSE file.
         android:layout_marginTop="@dimen/search_resumption_module_margin_top"
         android:layout="@layout/search_resumption_module_layout" />
 
-    <ViewStub
-        android:id="@+id/tab_resumption_module_container_stub"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="@dimen/mvt_container_top_margin_polish"
-        android:layout_marginLeft="@dimen/mvt_container_lateral_margin_polish"
-        android:layout_marginRight="@dimen/mvt_container_lateral_margin_polish"
-        android:layout="@layout/tab_resumption_module_layout" />
-
     <!-- Spacer for when there is no search provider logo. -->
     <View
         android:id="@+id/no_search_logo_spacer"
@@ -94,20 +94,4 @@ found in the LICENSE file.
         android:layout_height="0dp"
         android:layout_weight="1"
         android:visibility="gone" />
-
-    <LinearLayout
-        android:id="@+id/ntp_web_view_container"
-        android:layout_width="match_parent"
-        android:layout_height="150dp"
-        android:orientation="vertical"
-        android:layout_marginLeft="16dp"
-        android:layout_marginRight="16dp"
-        android:layout_marginTop="16dp"
-        android:visibility="gone">
-
-        <FrameLayout
-            android:id="@+id/ntp_web_view"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"/>
-    </LinearLayout>
 </org.chromium.chrome.browser.ntp.NewTabPageLayout>

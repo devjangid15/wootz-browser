@@ -5,15 +5,14 @@
 package org.chromium.chrome.browser.tasks.tab_management;
 
 import android.content.Context;
-import android.view.LayoutInflater;
+import android.view.View;
 import android.widget.FrameLayout;
 
 import androidx.annotation.IntDef;
-import androidx.annotation.LayoutRes;
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 
 import org.chromium.base.supplier.ObservableSupplier;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
 
@@ -23,6 +22,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /** Coordinator for the color picker interface. */
+@NullMarked
 public class ColorPickerCoordinator implements ColorPicker {
     private final ColorPickerContainer mContainerView;
     private final ColorPickerMediator mMediator;
@@ -44,23 +44,22 @@ public class ColorPickerCoordinator implements ColorPicker {
      *
      * @param context The current context.
      * @param colors The list of color ids corresponding to the color items in this color picker.
-     * @param colorPickerLayout The layout resource to be inflated for this color picker.
+     * @param colorPickerView The view used for the color picker container.
      * @param colorPickerType The {@link ColorPickerType} associated with this color picker.
      * @param isIncognito Whether the current tab model is in incognito mode.
      * @param layoutType The {@ColorPickerLayoutType} that the component will be arranged as.
      * @param onColorItemClicked The runnable for performing an action on each color click event.
      */
     public ColorPickerCoordinator(
-            @NonNull Context context,
-            @NonNull List<Integer> colors,
-            @NonNull @LayoutRes int colorPickerLayout,
-            @NonNull @ColorPickerType int colorPickerType,
-            @NonNull boolean isIncognito,
-            @NonNull @ColorPickerLayoutType int layoutType,
+            Context context,
+            List<Integer> colors,
+            View colorPickerView,
+            @ColorPickerType int colorPickerType,
+            boolean isIncognito,
+            @ColorPickerLayoutType int layoutType,
             @Nullable Runnable onColorItemClicked) {
-        mContainerView =
-                (ColorPickerContainer)
-                        LayoutInflater.from(context).inflate(colorPickerLayout, /* root= */ null);
+        mContainerView = (ColorPickerContainer) colorPickerView;
+
         mContainerView.setColorPickerLayoutType(layoutType);
 
         List<PropertyModel> colorItems = new ArrayList<>();

@@ -5,7 +5,7 @@
 #ifndef COMPONENTS_VARIATIONS_SERVICE_LIMITED_ENTROPY_RANDOMIZATION_H_
 #define COMPONENTS_VARIATIONS_SERVICE_LIMITED_ENTROPY_RANDOMIZATION_H_
 
-// This file provides functions to validate that the variations seed is
+// Provides functions to validate that the variations seed is
 // correctly configured to respect an entropy limit. See below for details.
 //
 // This limit only applies to field trials configured to use the "limited
@@ -31,7 +31,6 @@
 // information about "entropy" as a mathematical concept.
 namespace variations {
 
-class Layer;
 class VariationsLayers;
 class VariationsSeed;
 
@@ -46,8 +45,7 @@ class VariationsSeed;
 // across studies referencing the limited layer. This setting is used during the
 // time when `LimitedEntropySyntheticTrial` is active to control the number of
 // studies using the limited entropy mode.
-// TODO(crbug.com/40948861): Adjust this limit after the synthetic trial
-// concludes.
+// TODO(crbug.com/422222582): Duly update this.
 inline constexpr double kGoogleWebEntropyLimitInBits = 1.0;
 
 // Returns true iff the entropy from the field trials in the seed is
@@ -56,12 +54,13 @@ inline constexpr double kGoogleWebEntropyLimitInBits = 1.0;
 bool SeedHasMisconfiguredEntropy(const VariationsLayers& layers,
                                  const VariationsSeed& seed);
 
-// A test-only accessor for a function that implements the entropy calculations,
-// to facilitate targeted testing. This allows tests to validate the entropy
-// calculation logic, independently of the value of
+// A test-only accessor for a function that checks if there is enough entropy
+// for all studies constrained to the limited layer. This allows tests to
+// validate the entropy calculation logic, independently of the value of
 // `kGoogleWebEntropyLimitInBits`.
-double GetEntropyUsedByLimitedLayerForTesting(const Layer& limited_layer,
-                                              const VariationsSeed& seed);
+bool IsEnoughLimitedEntropyAvailableForTesting(const VariationsLayers& layers,
+                                               const VariationsSeed& seed,
+                                               double entropy_limit);
 
 }  // namespace variations
 

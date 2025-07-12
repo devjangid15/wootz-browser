@@ -140,6 +140,8 @@ class VisitDatabase {
   // Fills some foreign visits (i.e. with a non-empty `originator_cache_guid`)
   // into `visits` - at most `max_visits` of them, and only those with a (local)
   // visit_id <= `max_visit_id`. Returns true on success and false otherwise.
+  // NOTE: This returns only redirect-chain-ends (including individual visits
+  // without redirects).
   bool GetSomeForeignVisits(VisitID max_visit_id,
                             int max_results,
                             VisitVector* visits);
@@ -243,14 +245,6 @@ class VisitDatabase {
                             base::Time end_time,
                             base::Time* last_visit);
 
-  // Gets the last time `url` was visited before `end_time`. If the given `url`
-  // has no past visits, this will return true and `last_visit` will be set to
-  // base::Time(). False will be returned if `url` is not a valid HTTP or HTTPS
-  // url or for other database errors.
-  bool GetLastVisitToURL(const GURL& url,
-                         base::Time end_time,
-                         base::Time* last_visit);
-
   // Gets counts for total visits and days visited for pages matching `host`'s
   // scheme, port, and host. Counts only user-visible visits.
   DailyVisitsResult GetDailyVisitsToHost(const GURL& host,
@@ -276,6 +270,10 @@ class VisitDatabase {
   std::vector<DomainVisit> GetGoogleDomainVisitsFromSearchesInRange(
       base::Time begin_time,
       base::Time end_time);
+
+  // Gets whether the URL is known to sync. A URL is considered known to sync
+  // if there is at least one visit with the URL that is known to sync.
+  bool GetIsUrlKnownToSync(URLID url_id, bool* is_known_to_sync);
 
  protected:
   // Returns the database for the functions in this interface.

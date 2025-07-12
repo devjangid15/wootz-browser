@@ -5,8 +5,9 @@
 #ifndef IOS_CHROME_BROWSER_PASSWORDS_MODEL_PASSWORD_TAB_HELPER_H_
 #define IOS_CHROME_BROWSER_PASSWORDS_MODEL_PASSWORD_TAB_HELPER_H_
 
-#include "ios/web/public/navigation/web_state_policy_decider.h"
-#include "ios/web/public/web_state_observer.h"
+#import "base/scoped_observation.h"
+#import "ios/web/public/navigation/web_state_policy_decider.h"
+#import "ios/web/public/web_state_observer.h"
 #import "ios/web/public/web_state_user_data.h"
 
 @class CommandDispatcher;
@@ -15,6 +16,7 @@
 @protocol PasswordControllerDelegate;
 @protocol PasswordGenerationProvider;
 @protocol PasswordsUiDelegate;
+@class SharedPasswordController;
 
 namespace password_manager {
 class PasswordManager;
@@ -52,6 +54,9 @@ class PasswordTabHelper : public web::WebStateObserver,
   // PasswordController. May return nil.
   id<PasswordGenerationProvider> GetPasswordGenerationProvider();
 
+  // Returns the SharedPasswordController owned by the PasswordController.
+  SharedPasswordController* GetSharedPasswordController();
+
   // web::WebStatePolicyDecider:
   void ShouldAllowRequest(
       NSURLRequest* request,
@@ -65,12 +70,15 @@ class PasswordTabHelper : public web::WebStateObserver,
   explicit PasswordTabHelper(web::WebState* web_state);
 
   // web::WebStateObserver implementation.
+  void WebStateRealized(web::WebState* web_state) override;
   void WebStateDestroyed(web::WebState* web_state) override;
 
   // The Objective-C password controller instance.
   __strong PasswordController* controller_;
 
-  WEB_STATE_USER_DATA_KEY_DECL();
+  // Scoped WebState observation.
+  base::ScopedObservation<web::WebState, web::WebStateObserver>
+      web_state_observation_{this};
 };
 
 #endif  // IOS_CHROME_BROWSER_PASSWORDS_MODEL_PASSWORD_TAB_HELPER_H_

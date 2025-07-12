@@ -12,8 +12,8 @@
 #include "base/debug/leak_annotations.h"
 #include "base/functional/bind.h"
 #include "base/i18n/rtl.h"
+#include "base/metrics/user_metrics.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/app_mode/app_mode_utils.h"
 #include "chrome/browser/headless/headless_mode_util.h"
 #include "chrome/browser/profiles/profile.h"
@@ -35,7 +35,9 @@
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
 #include "ui/base/hit_test.h"
+#include "ui/base/mojom/menu_source_type.mojom-forward.h"
 #include "ui/base/mojom/themes.mojom.h"
+#include "ui/base/mojom/window_show_state.mojom.h"
 #include "ui/color/color_provider_key.h"
 #include "ui/events/event_handler.h"
 #include "ui/gfx/font_list.h"
@@ -43,15 +45,12 @@
 #include "ui/views/widget/native_widget.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
+#include "chrome/browser/ui/ash/system_web_apps/system_web_app_ui_utils.h"
 #include "chromeos/ui/base/window_properties.h"
 #include "chromeos/ui/base/window_state_type.h"
 #include "chromeos/ui/wm/desks/desks_helper.h"
-#include "ui/aura/window.h"
-#endif
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "chrome/browser/ui/ash/system_web_apps/system_web_app_ui_utils.h"
 #include "components/user_manager/user_manager.h"
+#include "ui/aura/window.h"
 #endif
 
 #if BUILDFLAG(IS_LINUX)
@@ -60,10 +59,20 @@
 #endif
 
 #if BUILDFLAG(IS_WIN)
-#include "chrome/browser/win/titlebar_config.h"
+#include "chrome/browser/win/mica_titlebar.h"
 #endif
 
 namespace {
+#if BUILDFLAG(IS_MAC)
+// Keep in sync with web_app_frame_toolbar_browsertest.cc
+constexpr double kTitlePaddingWidthFraction = 0.1;
+#endif
+
+#if BUILDFLAG(IS_LINUX)
+// These values are used for Linux/GTK.
+constexpr int kIconTitleSpacing = 4;
+constexpr int kCaptionSpacing = 5;
+#endif
 
 // Helper to track whether a ThemeChange event has been received by the widget.
 class ThemeChangedObserver : public views::WidgetObserver {
@@ -125,12 +134,13 @@ BrowserFrame::BrowserFrame(BrowserView* browser_view)
   set_focus_on_creation(false);
 }
 
-BrowserFrame::~BrowserFrame() {}
+BrowserFrame::~BrowserFrame() = default;
 
 void BrowserFrame::InitBrowserFrame() {
   native_browser_frame_ =
       NativeBrowserFrameFactory::CreateNativeBrowserFrame(this, browser_view_);
-  views::Widget::InitParams params = native_browser_frame_->GetWidgetParams();
+  views::Widget::InitParams params = native_browser_frame_->GetWidgetParams(
+      views::Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET);
   params.name = "BrowserFrame";
   params.delegate = browser_view_;
   params.headless_mode = headless::IsHeadlessMode();
@@ -153,6 +163,8 @@ void BrowserFrame::InitBrowserFrame() {
 #if BUILDFLAG(IS_OZONE)
   params.inhibit_keyboard_shortcuts =
       browser->is_type_app() || browser->is_type_app_popup();
+
+  params.session_data = browser->platform_session_data();
 #endif
 
   if (native_browser_frame_->ShouldRestorePreviousBrowserWidgetState()) {
@@ -220,11 +232,63 @@ gfx::Rect BrowserFrame::GetBoundsForWebAppFrameToolbar(
 void BrowserFrame::LayoutWebAppWindowTitle(
     const gfx::Rect& available_space,
     views::Label& window_title_label) const {
-  // This can be invoked before |browser_frame_view_| has been set.
-  if (browser_frame_view_) {
-    browser_frame_view_->LayoutWebAppWindowTitle(available_space,
-                                                 window_title_label);
+  if (!browser_frame_view_) {
+    return;
   }
+
+  if (browser_frame_view_->browser_view() &&
+      browser_frame_view_->browser_view()->GetIsPictureInPictureType()) {
+    // Do nothing for picture in picture browsers.
+    return;
+  }
+
+#if BUILDFLAG(IS_CHROMEOS)
+  // No window titles on Chrome OS, so just hide the window title.
+  window_title_label.SetVisible(false);
+#elif BUILDFLAG(IS_MAC)
+  gfx::Rect toolbar_bounds(0, 0, browser_frame_view_->width(),
+                           available_space.height());
+  gfx::Rect title_bounds = available_space;
+
+  const int title_padding = base::ClampRound(browser_frame_view_->width() *
+                                             kTitlePaddingWidthFraction);
+  title_bounds.Inset(gfx::Insets::VH(0, title_padding));
+
+  // Center in the container and make it fit in the available space.
+  int preferred_title_width =
+      window_title_label
+          .GetPreferredSize(views::SizeBounds(window_title_label.width(), {}))
+          .width();
+  toolbar_bounds.ClampToCenteredSize(
+      gfx::Size(preferred_title_width, toolbar_bounds.height()));
+  toolbar_bounds.AdjustToFit(title_bounds);
+
+  window_title_label.SetBoundsRect(toolbar_bounds);
+  // The background of the title area is always opaquely drawn, but when in
+  // immersive fullscreen, it is drawn in a way that isn't detected by the
+  // DCHECK in Label. As such, disable the DCHECK.
+  window_title_label.SetSkipSubpixelRenderingOpacityCheck(
+      browser_view_->IsImmersiveModeEnabled());
+#elif BUILDFLAG(IS_WIN)
+  gfx::Rect bounds = available_space;
+  // If nothing has been added to the left, match native Windows 10 UWP apps
+  // that don't have window icons.
+  // TODO(crbug.com/40890502): Avoid hardcoding sizes like this.
+  constexpr int kMinimumTitleLeftBorderMargin = 11;
+  if (bounds.x() < kMinimumTitleLeftBorderMargin) {
+    bounds.SetHorizontalBounds(kMinimumTitleLeftBorderMargin, bounds.right());
+  }
+  window_title_label.SetSubpixelRenderingEnabled(false);
+  window_title_label.SetHorizontalAlignment(gfx::ALIGN_LEFT);
+  window_title_label.SetAutoColorReadabilityEnabled(false);
+  window_title_label.SetBoundsRect(bounds);
+#else
+  gfx::Rect bounds = available_space;
+  bounds.Inset(gfx::Insets::TLBR(0, kIconTitleSpacing, 0, kCaptionSpacing));
+  window_title_label.SetSubpixelRenderingEnabled(false);
+  window_title_label.SetHorizontalAlignment(gfx::ALIGN_LEFT);
+  window_title_label.SetBoundsRect(bounds);
+#endif
 }
 
 int BrowserFrame::GetTopInset() const {
@@ -251,18 +315,19 @@ bool BrowserFrame::ShouldDrawFrameHeader() const {
   return true;
 }
 
-void BrowserFrame::GetWindowPlacement(gfx::Rect* bounds,
-                                      ui::WindowShowState* show_state) const {
+void BrowserFrame::GetWindowPlacement(
+    gfx::Rect* bounds,
+    ui::mojom::WindowShowState* show_state) const {
   return native_browser_frame_->GetWindowPlacement(bounds, show_state);
 }
 
 content::KeyboardEventProcessingResult BrowserFrame::PreHandleKeyboardEvent(
-    const content::NativeWebKeyboardEvent& event) {
+    const input::NativeWebKeyboardEvent& event) {
   return native_browser_frame_->PreHandleKeyboardEvent(event);
 }
 
 bool BrowserFrame::HandleKeyboardEvent(
-    const content::NativeWebKeyboardEvent& event) {
+    const input::NativeWebKeyboardEvent& event) {
   return native_browser_frame_->HandleKeyboardEvent(event);
 }
 
@@ -297,8 +362,7 @@ void BrowserFrame::UserChangedTheme(BrowserThemeChangeType theme_change_type) {
     // the other Widgets in the frame's hierarchy may inherit this new theme
     // information in their ColorProviderKeys and thus should also be forwarded
     // theme change notifications.
-    Widget::Widgets widgets;
-    GetAllOwnedWidgets(GetNativeView(), &widgets);
+    Widget::Widgets widgets = GetAllOwnedWidgets(GetNativeView());
     for (Widget* widget : widgets) {
       widget->ThemeChanged();
     }
@@ -377,17 +441,20 @@ void BrowserFrame::OnNativeWidgetWorkspaceChanged() {
   // which reorders the browsers such that the ones in the current
   // workspace appear before ones in other workspaces.
   auto workspace = display::Screen::GetScreen()->GetCurrentWorkspace();
-  if (!workspace.empty())
+  if (!workspace.empty()) {
     BrowserList::MoveBrowsersInWorkspaceToFront(workspace);
+  }
 #endif
   Widget::OnNativeWidgetWorkspaceChanged();
 }
 
-void BrowserFrame::ShowContextMenuForViewImpl(views::View* source,
-                                              const gfx::Point& p,
-                                              ui::MenuSourceType source_type) {
-  if (chrome::IsRunningInForcedAppMode())
+void BrowserFrame::ShowContextMenuForViewImpl(
+    views::View* source,
+    const gfx::Point& p,
+    ui::mojom::MenuSourceType source_type) {
+  if (IsRunningInForcedAppMode()) {
     return;
+  }
 
   // Do not show context menu for Document picture-in-picture browser. Context:
   // http://b/274862709.
@@ -416,6 +483,7 @@ void BrowserFrame::ShowContextMenuForViewImpl(views::View* source,
     menu_runner_->RunMenuAt(source->GetWidget(), nullptr,
                             gfx::Rect(p, gfx::Size(0, 0)),
                             views::MenuAnchorPosition::kTopLeft, source_type);
+    base::RecordAction(base::UserMetricsAction("SystemContextMenu_Opened"));
   }
 }
 
@@ -426,7 +494,7 @@ bool BrowserFrame::IsMenuRunnerRunningForTesting() const {
 ui::MenuModel* BrowserFrame::GetSystemMenuModel() {
   // TODO(b/271137301): Refactor this class to remove chromeos specific code to
   // subclasses.
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   if (user_manager::UserManager::IsInitialized() &&
       user_manager::UserManager::Get()->GetLoggedInUsers().size() > 1) {
     // In Multi user mode, the number of users as well as the order of users
@@ -435,8 +503,7 @@ ui::MenuModel* BrowserFrame::GetSystemMenuModel() {
     // changes happened since the last invocation.
     menu_model_builder_.reset();
   }
-#endif
-#if BUILDFLAG(IS_CHROMEOS)
+
   auto* desks_helper = chromeos::DesksHelper::Get(GetNativeWindow());
   int current_num_desks = desks_helper ? desks_helper->GetNumberOfDesks() : -1;
   if (current_num_desks != num_desks_) {
@@ -463,16 +530,19 @@ ui::MenuModel* BrowserFrame::GetSystemMenuModel() {
 }
 
 void BrowserFrame::SetTabDragKind(TabDragKind tab_drag_kind) {
-  if (tab_drag_kind_ == tab_drag_kind)
+  if (tab_drag_kind_ == tab_drag_kind) {
     return;
+  }
 
-  if (native_browser_frame_)
+  if (native_browser_frame_) {
     native_browser_frame_->TabDraggingKindChanged(tab_drag_kind);
+  }
 
   bool was_dragging_any = tab_drag_kind_ != TabDragKind::kNone;
   bool is_dragging_any = tab_drag_kind != TabDragKind::kNone;
-  if (was_dragging_any != is_dragging_any)
+  if (was_dragging_any != is_dragging_any) {
     browser_view_->TabDraggingStatusChanged(is_dragging_any);
+  }
 
   tab_drag_kind_ = tab_drag_kind;
 }
@@ -486,12 +556,12 @@ ui::ColorProviderKey BrowserFrame::GetColorProviderKey() const {
 
   key.app_controller = browser_view_->browser()->app_controller();
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   // ChromeOS SystemWebApps use the OS theme all the time.
   if (ash::IsSystemWebApp(browser_view_->browser())) {
     return key;
   }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   const auto* theme_service =
       ThemeServiceFactory::GetForProfile(browser_view_->browser()->profile());

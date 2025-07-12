@@ -15,6 +15,7 @@ import("//chrome/android/trichrome.gni")
 import("//chrome/common/features.gni")
 import("//chrome/version.gni")
 import("//components/crash/android/silent_java_assert_reporting.gni")
+import("//content/public/common/features.gni")
 import("//device/vr/buildflags/buildflags.gni")
 import("channel.gni")
 
@@ -26,7 +27,7 @@ declare_args() {
   # WebView providers which declare one of a handful of package names. See
   # https://chromium.googlesource.com/chromium/src/+/HEAD/android_webview/docs/build-instructions.md#Changing-package-name
   # for details.
-  chrome_public_manifest_package = "com.wootzapp.web"
+  chrome_public_manifest_package = "org.chromium.chrome"
   if (use_stable_package_name_for_trichrome) {
     chrome_public_manifest_package += ".stable"
   } else if (android_channel != "default") {
@@ -34,7 +35,7 @@ declare_args() {
   }
 }
 
-chrome_public_test_manifest_package = "com.wootzapp.web.tests"
+chrome_public_test_manifest_package = "org.chromium.chrome.tests"
 
 default_chrome_public_jinja_variables = [
   "channel=$android_channel",
@@ -42,6 +43,8 @@ default_chrome_public_jinja_variables = [
   "enable_vr=$enable_vr",
   "enable_openxr=$enable_openxr",
   "enable_arcore=$enable_arcore",
+  "is_desktop_android=$is_desktop_android",
+  "enable_screen_capture=$enable_screen_capture",
   "zygote_preload_class=org.chromium.content_public.app.ZygotePreload",
 ]
 
@@ -150,7 +153,7 @@ template("chrome_common_apk_or_module_tmpl") {
                               invoker.include_32_bit_webview
     _include_primary_abi = !android_64bit_target_cpu || _is_64_bit_browser ||
                            _include_64_bit_webview
-    _include_secondary_abi = android_64bit_target_cpu &&
+    _include_secondary_abi = defined(android_app_secondary_abi) &&
                              (!_is_64_bit_browser || _include_32_bit_webview)
     if (_include_secondary_abi) {
       _secondary_out_dir =
@@ -279,9 +282,6 @@ template("chrome_common_apk_or_module_tmpl") {
 
     if (_is_bundle) {
       is_base_module = true
-
-      # Sets ISOLATED_SPLITS_ENABLED in BuildConfig.java.
-      isolated_splits_enabled = true
     }
 
     product_config_java_packages = [ "org.chromium.chrome.browser" ]
@@ -301,6 +301,9 @@ template("chrome_common_apk_or_module_tmpl") {
       shared_resources_allowlist_locales = platform_pak_locales
 
       product_config_java_packages += [ webview_product_config_java_package ]
+    } else {
+      # Chrome does not enable Strict Mode checks.
+      disable_strict_mode_context = true
     }
 
     if (enable_silent_java_assert_reporting) {
@@ -480,6 +483,13 @@ template("chrome_common_apk_or_module_tmpl") {
       asset_deps += [ "//chrome/android:chrome_apk_pak_assets" ]
     }
 
+    if (_is_trichrome) {
+      # Only the .build_config.json is used from this target, and it's fine if
+      # it contains more assets than we need (always use the 64_32 variant).
+      # https://crbug.com/357131361
+      suffix_apk_assets_used_by = system_webview_apk_target
+    }
+
     if (defined(invoker.add_upstream_only_deps) &&
         invoker.add_upstream_only_deps) {
       if (_is_monochrome) {
@@ -491,19 +501,7 @@ template("chrome_common_apk_or_module_tmpl") {
         ]
         asset_deps += [ "//chrome/android:chrome_public_non_pak_assets" ]
       }
-      if (_is_bundle) {
-        deps += [
-          # deps in delegate_public_impl_java are put into the Chrome module, but the language deps
-          # are needed by the base module.
-          "//components/language/android:ulp_delegate_public_java",
-        ]
-        if (_is_monochrome) {
-          # WebView needs these in the base module.
-          deps += [
-            "//content/public/android:identity_credentials_public_impl_java",
-          ]
-        }
-      } else {
+      if (!_is_bundle) {
         deps += [
           "//chrome/android:chrome_all_java",
           "//chrome/android:delegate_public_impl_java",
@@ -519,8 +517,6 @@ template("chrome_common_apk_or_module_tmpl") {
     # See //third_party/android_sdk/window_extensions/README.md
     assert_no_deps = [
       "//third_party/android_deps:org_jetbrains_kotlin_kotlin_parcelize_runtime",
-      "//third_party/androidx:androidx_window_extensions_core_core_java",
-      "//third_party/androidx:androidx_window_sidecar_sidecar_java",
       "//third_party/androidx:androidx_window_window_java_java",
     ]
     if (defined(invoker.assert_no_deps)) {
@@ -644,17 +640,17 @@ template("chrome_common_apk_or_module_tmpl") {
         _libarcore_dir = get_label_info(_arcore_target, "target_out_dir") +
                          "/com_google_ar_core_java/jni"
 
-        if (android_64bit_target_cpu) {
-          if (_is_64_bit_browser) {
-            loadable_modules +=
-                [ "$_libarcore_dir/arm64-v8a/libarcore_sdk_c.so" ]
-          } else {
-            secondary_abi_loadable_modules +=
-                [ "$_libarcore_dir/armeabi-v7a/libarcore_sdk_c.so" ]
-          }
+        if (android_64bit_target_cpu && !_is_64_bit_browser) {
+          # We're targeting a 64-bit architecture but the browser is 32-bit,
+          # so we need to set the secondary_abi_loadable_modules appropriately:
+          secondary_abi_loadable_modules += [
+            "$_libarcore_dir/$android_app_secondary_abi/libarcore_sdk_c.so",
+          ]
         } else {
+          # We're targeting a 64-bit or 32-bit architecture and the browser
+          # matches the ABI, so we need to set the loadable_modules:
           loadable_modules +=
-              [ "$_libarcore_dir/armeabi-v7a/libarcore_sdk_c.so" ]
+              [ "$_libarcore_dir/$android_app_abi/libarcore_sdk_c.so" ]
         }
       }
     }
@@ -728,7 +724,6 @@ template("chrome_common_apk_or_module_tmpl") {
     }
 
     if (_is_test) {
-      bundles_supported = true
       deps += [ "//third_party/androidx:androidx_test_runner_java" ]
 
       # For EmbeddedTestServer.

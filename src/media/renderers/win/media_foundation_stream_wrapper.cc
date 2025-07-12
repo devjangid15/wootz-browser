@@ -8,7 +8,7 @@
 
 #include "base/functional/bind.h"
 #include "base/task/sequenced_task_runner.h"
-#include "base/trace_event/base_tracing.h"
+#include "base/trace_event/trace_event.h"
 #include "media/base/media_switches.h"
 #include "media/base/video_codecs.h"
 #include "media/base/win/mf_helpers.h"
@@ -502,9 +502,8 @@ void MediaFoundationStreamWrapper::OnDemuxerStreamRead(
       // Continue to ProcessRequestsIfPossible() to satisfy pending sample
       // request by issuing DemuxerStream::Read() if necessary.
     } else {
-      NOTREACHED_NORETURN()
-          << "Unexpected demuxer stream status. status=" << status
-          << ", this=" << this;
+      NOTREACHED() << "Unexpected demuxer stream status. status=" << status
+                   << ", this=" << this;
     }
   }
 

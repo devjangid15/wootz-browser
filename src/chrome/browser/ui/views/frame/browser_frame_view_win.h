@@ -36,8 +36,6 @@ class BrowserFrameViewWin : public BrowserNonClientFrameView,
       const gfx::Size& tabstrip_minimum_size) const override;
   gfx::Rect GetBoundsForWebAppFrameToolbar(
       const gfx::Size& toolbar_preferred_size) const override;
-  void LayoutWebAppWindowTitle(const gfx::Rect& available_space,
-                               views::Label& window_title_label) const override;
   int GetTopInset(bool restored) const override;
   bool HasVisibleBackgroundTabShapes(
       BrowserFrameActiveState active_state) const override;
@@ -170,10 +168,10 @@ class BrowserFrameViewWin : public BrowserNonClientFrameView,
   gfx::Rect client_view_bounds_;
 
   // The small icon created from the bitmap image of the window icon.
-  base::win::ScopedHICON small_window_icon_;
+  base::win::ScopedGDIObject<HICON> small_window_icon_;
 
   // The big icon created from the bitmap image of the window icon.
-  base::win::ScopedHICON big_window_icon_;
+  base::win::ScopedGDIObject<HICON> big_window_icon_;
 
   // Icon and title. Only used when custom-drawing the titlebar for popups.
   raw_ptr<TabIconView> window_icon_ = nullptr;

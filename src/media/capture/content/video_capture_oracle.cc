@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 #include "media/capture/content/video_capture_oracle.h"
 
 #include <algorithm>
@@ -190,8 +191,7 @@ bool VideoCaptureOracle::ObserveEventAndDecideCapture(
       break;
 
     case kNumEvents:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
 
   if (!should_sample)
@@ -422,7 +422,7 @@ const char* VideoCaptureOracle::EventAsString(Event event) {
     case kNumEvents:
       break;
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 base::TimeTicks VideoCaptureOracle::GetFrameTimestamp(int frame_number) const {

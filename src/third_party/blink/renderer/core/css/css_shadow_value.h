@@ -26,10 +26,6 @@
 #include "third_party/blink/renderer/core/css/css_value.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
 
-namespace WTF {
-class String;
-}  // namespace WTF
-
 namespace blink {
 
 class CSSIdentifierValue;
@@ -43,7 +39,7 @@ class CORE_EXPORT CSSShadowValue : public CSSValue {
                  CSSPrimitiveValue* blur,
                  CSSPrimitiveValue* spread,
                  CSSIdentifierValue* style,
-                 CSSValue* color);
+                 const CSSValue* color);
 
   WTF::String CustomCSSText() const;
 
@@ -54,7 +50,7 @@ class CORE_EXPORT CSSShadowValue : public CSSValue {
   Member<CSSPrimitiveValue> blur;
   Member<CSSPrimitiveValue> spread;
   Member<CSSIdentifierValue> style;
-  Member<CSSValue> color;
+  Member<const CSSValue> color;
 
   void TraceAfterDispatch(blink::Visitor*) const;
 };

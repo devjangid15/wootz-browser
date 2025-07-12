@@ -20,6 +20,8 @@ struct WorkerId;
 
 class ProcessManagerObserver : public base::CheckedObserver {
  public:
+  ~ProcessManagerObserver() override;
+
   // Called immediately after an extension background host is started. This
   // corresponds with the loading of background hosts immediately after profile
   // startup.
@@ -44,10 +46,12 @@ class ProcessManagerObserver : public base::CheckedObserver {
       content::RenderFrameHost* render_frame_host) {}
 
   // Called when a service worker is started.
-  virtual void OnServiceWorkerRegistered(const WorkerId& worker_id) {}
+  virtual void OnStartedTrackingServiceWorkerInstance(
+      const WorkerId& worker_id) {}
 
   // Called when a service worker is no longer part of an extension process.
-  virtual void OnServiceWorkerUnregistered(const WorkerId& worker_id) {}
+  virtual void OnStoppedTrackingServiceWorkerInstance(
+      const WorkerId& worker_id) {}
 
   // Called when the observed ProcessManager is shutting down.
   virtual void OnProcessManagerShutdown(ProcessManager* manager) {}

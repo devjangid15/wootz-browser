@@ -4,10 +4,11 @@
 
 package org.chromium.android_webview;
 
+import static org.chromium.components.embedder_support.application.ClassLoaderContextWrapperFactory.getOriginalApplicationContext;
+
 import android.content.Context;
 import android.content.res.Configuration;
 import android.content.res.TypedArray;
-import android.os.Build;
 
 import androidx.core.graphics.ColorUtils;
 
@@ -49,7 +50,8 @@ public class DarkModeHelper {
     @NightMode
     public static int getNightMode(Context context) {
         int nightMode =
-                context.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
+                getOriginalApplicationContext(context).getResources().getConfiguration().uiMode
+                        & Configuration.UI_MODE_NIGHT_MASK;
         switch (nightMode) {
             case Configuration.UI_MODE_NIGHT_NO:
                 return NightMode.NIGHT_MODE_OFF;
@@ -68,21 +70,10 @@ public class DarkModeHelper {
         if (sLightThemeForTesting != null) return sLightThemeForTesting;
         int lightTheme = LightTheme.LIGHT_THEME_UNDEFINED;
         try {
-            int resId = android.R.attr.isLightTheme;
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-                // android.R.attr.isLightTheme is added in Q, for pre-Q platform, WebView
-                // checks if app has isLightTheme attr which could be added by Android X
-                // and wasn't stripped out.
-                resId =
-                        context.getApplicationContext()
-                                .getResources()
-                                .getIdentifier(
-                                        "isLightTheme",
-                                        "attr",
-                                        context.getApplicationContext().getPackageName());
-                if (resId == 0) return lightTheme;
-            }
-            TypedArray a = context.getTheme().obtainStyledAttributes(new int[] {resId});
+            TypedArray a =
+                    getOriginalApplicationContext(context)
+                            .getTheme()
+                            .obtainStyledAttributes(new int[] {android.R.attr.isLightTheme});
             // TODO: use try-with-resources once minSdkVersion>=31 instead of recycle
             try {
                 if (a.hasValue(0)) {
@@ -116,7 +107,8 @@ public class DarkModeHelper {
     public static int getPrimaryTextLuminace(Context context) {
         int textColor = TextLuminance.TEXT_LUMINACE_UNDEFINED;
         TypedArray a =
-                context.getTheme()
+                getOriginalApplicationContext(context)
+                        .getTheme()
                         .obtainStyledAttributes(new int[] {android.R.attr.textColorPrimary});
         if (a.hasValue(0)) {
             try {

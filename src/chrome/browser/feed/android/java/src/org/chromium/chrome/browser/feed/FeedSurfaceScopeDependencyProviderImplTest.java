@@ -12,6 +12,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Criteria;
@@ -21,7 +22,6 @@ import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.xsurface.PersistentKeyValueCache;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 import java.util.ArrayList;
 
@@ -57,9 +57,9 @@ public class FeedSurfaceScopeDependencyProviderImplTest {
         FeedSurfaceScopeDependencyProviderImpl dependencyProvider =
                 new FeedSurfaceScopeDependencyProviderImpl(
                         /* activity= */ null, /* activityContext= */ null, /* darkMode= */ false);
-        ArrayList<String> calls = new ArrayList<String>();
+        ArrayList<String> calls = new ArrayList<>();
 
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     PersistentKeyValueCache cache = dependencyProvider.getPersistentKeyValueCache();
                     cache.put(VALUE_1, VALUE_2, () -> calls.add("put"));
@@ -82,9 +82,9 @@ public class FeedSurfaceScopeDependencyProviderImplTest {
         FeedSurfaceScopeDependencyProviderImpl dependencyProvider =
                 new FeedSurfaceScopeDependencyProviderImpl(
                         /* activity= */ null, /* activityContext= */ null, /* darkMode= */ false);
-        ArrayList<String> calls = new ArrayList<String>();
+        ArrayList<String> calls = new ArrayList<>();
 
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     PersistentKeyValueCache cache = dependencyProvider.getPersistentKeyValueCache();
                     cache.put(VALUE_1, VALUE_2, () -> calls.add("put"));
@@ -107,9 +107,9 @@ public class FeedSurfaceScopeDependencyProviderImplTest {
         FeedSurfaceScopeDependencyProviderImpl dependencyProvider =
                 new FeedSurfaceScopeDependencyProviderImpl(
                         /* activity= */ null, /* activityContext= */ null, /* darkMode= */ false);
-        ArrayList<String> calls = new ArrayList<String>();
+        ArrayList<String> calls = new ArrayList<>();
 
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     PersistentKeyValueCache cache = dependencyProvider.getPersistentKeyValueCache();
                     cache.put(VALUE_1, VALUE_2, null);

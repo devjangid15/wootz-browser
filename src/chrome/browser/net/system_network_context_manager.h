@@ -11,7 +11,8 @@
 
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
+#include "chrome/browser/net/cert_verifier_service_time_updater.h"
 #include "chrome/browser/net/cookie_encryption_provider_impl.h"
 #include "chrome/browser/net/proxy_config_monitor.h"
 #include "chrome/browser/net/stub_resolver_config_reader.h"
@@ -147,6 +148,10 @@ class SystemNetworkContextManager {
   // or destroyed, and so that it's destroyed before Mojo is shut down.
   net_log::NetExportFileWriter* GetNetExportFileWriter();
 
+  // Updates the network service with the given list of |trust_anchor_ids| (a
+  // list of TLS Trust Anchor IDs in binary representation).
+  void UpdateTrustAnchorIDs(std::vector<std::vector<uint8_t>> trust_anchor_ids);
+
   // Returns whether the network sandbox is enabled. This depends on policy but
   // also feature status from sandbox. Called before there is an instance of
   // SystemNetworkContextManager.
@@ -232,14 +237,9 @@ class SystemNetworkContextManager {
   // the network process.
   void UpdateExplicitlyAllowedNetworkPorts();
 
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
-    BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
-  // Applies the current value of the kEnforceLocalAnchorConstraintsEnabled
-  // pref to the enforcement state.
-  void UpdateEnforceLocalAnchorConstraintsEnabled();
-#endif
-
   void UpdateIPv6ReachabilityOverrideEnabled();
+
+  void UpdateTLS13EarlyDataEnabled();
 
   // The PrefService to retrieve all the pref values.
   raw_ptr<PrefService> local_state_;
@@ -290,6 +290,8 @@ class SystemNetworkContextManager {
 #endif  // BUILDFLAG(IS_LINUX)
 
   CookieEncryptionProviderImpl cookie_encryption_provider_;
+
+  std::unique_ptr<CertVerifierServiceTimeUpdater> cert_verifier_time_updater_;
 };
 
 #endif  // CHROME_BROWSER_NET_SYSTEM_NETWORK_CONTEXT_MANAGER_H_

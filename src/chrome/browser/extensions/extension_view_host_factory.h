@@ -7,11 +7,15 @@
 
 #include <memory>
 
-class Browser;
-class GURL;
+#include "build/build_config.h"
 
-namespace content {
-class WebContents;
+class Browser;
+class BrowserWindowInterface;
+class GURL;
+class Profile;
+
+namespace tabs {
+class TabInterface;
 }
 
 namespace extensions {
@@ -25,6 +29,13 @@ class ExtensionViewHostFactory {
   ExtensionViewHostFactory(const ExtensionViewHostFactory&) = delete;
   ExtensionViewHostFactory& operator=(const ExtensionViewHostFactory&) = delete;
 
+#if BUILDFLAG(IS_ANDROID)
+  // Creates a new ExtensionHost with its associated view, grouping it in the
+  // appropriate SiteInstance (and therefore process) based on the URL and
+  // profile.
+  static std::unique_ptr<ExtensionViewHost> CreatePopupHost(const GURL& url,
+                                                            Profile* profile);
+#else   // BUILDFLAG(IS_ANDROID)
   // Creates a new ExtensionHost with its associated view, grouping it in the
   // appropriate SiteInstance (and therefore process) based on the URL and
   // profile.
@@ -36,8 +47,9 @@ class ExtensionViewHostFactory {
   // profile.
   static std::unique_ptr<ExtensionViewHost> CreateSidePanelHost(
       const GURL& url,
-      Browser* browser,
-      content::WebContents* web_contents);
+      BrowserWindowInterface* browser,
+      tabs::TabInterface* tab_interface);
+#endif  // BUILDFLAG(IS_ANDROID)
 };
 
 }  // namespace extensions

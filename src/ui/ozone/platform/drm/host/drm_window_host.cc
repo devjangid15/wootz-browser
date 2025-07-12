@@ -6,6 +6,7 @@
 
 #include "base/functional/bind.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/notimplemented.h"
 #include "ui/base/cursor/platform_cursor.h"
 #include "ui/display/display.h"
 #include "ui/events/devices/device_data_manager.h"
@@ -72,8 +73,7 @@ void DrmWindowHost::Hide() {}
 void DrmWindowHost::Close() {}
 
 bool DrmWindowHost::IsVisible() const {
-  NOTREACHED_IN_MIGRATION();
-  return true;
+  NOTREACHED();
 }
 
 void DrmWindowHost::PrepareForShutdown() {}
@@ -90,14 +90,13 @@ gfx::Rect DrmWindowHost::GetBoundsInPixels() const {
 }
 
 void DrmWindowHost::SetBoundsInDIP(const gfx::Rect& bounds) {
-  NOTREACHED_IN_MIGRATION();
   // No scaling at DRM level and should always use pixel bounds.
+  NOTREACHED();
 }
 
 gfx::Rect DrmWindowHost::GetBoundsInDIP() const {
   // No scaling at DRM level and should always use pixel bounds.
-  NOTREACHED_IN_MIGRATION();
-  return bounds_;
+  NOTREACHED();
 }
 
 void DrmWindowHost::SetTitle(const std::u16string& title) {}
@@ -157,21 +156,20 @@ void DrmWindowHost::ConfineCursorToBounds(const gfx::Rect& bounds) {
 }
 
 void DrmWindowHost::SetRestoredBoundsInDIP(const gfx::Rect& bounds) {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 gfx::Rect DrmWindowHost::GetRestoredBoundsInDIP() const {
-  NOTREACHED_IN_MIGRATION();
-  return gfx::Rect();
+  NOTREACHED();
 }
 
 void DrmWindowHost::SetWindowIcons(const gfx::ImageSkia& window_icon,
                                    const gfx::ImageSkia& app_icon) {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void DrmWindowHost::SizeConstraintsChanged() {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void DrmWindowHost::OnMouseEnter() {

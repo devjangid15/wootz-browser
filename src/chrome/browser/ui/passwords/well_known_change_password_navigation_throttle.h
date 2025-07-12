@@ -5,13 +5,10 @@
 #ifndef CHROME_BROWSER_UI_PASSWORDS_WELL_KNOWN_CHANGE_PASSWORD_NAVIGATION_THROTTLE_H_
 #define CHROME_BROWSER_UI_PASSWORDS_WELL_KNOWN_CHANGE_PASSWORD_NAVIGATION_THROTTLE_H_
 
-#include <memory>
-
 #include "base/memory/raw_ptr.h"
-#include "content/public/browser/navigation_throttle.h"
-
 #include "components/password_manager/core/browser/well_known_change_password/well_known_change_password_state.h"
 #include "components/password_manager/core/browser/well_known_change_password/well_known_change_password_util.h"
+#include "content/public/browser/navigation_throttle.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
 
 class GURL;
@@ -19,13 +16,6 @@ class GURL;
 namespace affiliations {
 class AffiliationService;
 }  // namespace affiliations
-
-namespace content {
-class NavigationHandle;
-}  // namespace content
-
-namespace password_manager {
-}  // namespace password_manager
 
 // This NavigationThrottle checks whether a site supports the
 // .well-known/change-password url. To check whether a site supports the
@@ -38,11 +28,10 @@ class WellKnownChangePasswordNavigationThrottle
     : public content::NavigationThrottle,
       public password_manager::WellKnownChangePasswordStateDelegate {
  public:
-  static std::unique_ptr<WellKnownChangePasswordNavigationThrottle>
-  MaybeCreateThrottleFor(content::NavigationHandle* handle);
+  static void MaybeCreateAndAdd(content::NavigationThrottleRegistry& registry);
 
   explicit WellKnownChangePasswordNavigationThrottle(
-      content::NavigationHandle* handle);
+      content::NavigationThrottleRegistry& registry);
 
   ~WellKnownChangePasswordNavigationThrottle() override;
 

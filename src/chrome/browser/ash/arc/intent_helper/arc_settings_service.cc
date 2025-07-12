@@ -7,17 +7,10 @@
 #include <string>
 #include <string_view>
 
-#include "ash/components/arc/arc_browser_context_keyed_service_factory_base.h"
-#include "ash/components/arc/arc_features.h"
-#include "ash/components/arc/arc_prefs.h"
-#include "ash/components/arc/arc_util.h"
-#include "ash/components/arc/mojom/backup_settings.mojom.h"
-#include "ash/components/arc/mojom/intent_helper.mojom.h"
-#include "ash/components/arc/mojom/pip.mojom.h"
-#include "ash/components/arc/session/arc_bridge_service.h"
 #include "ash/constants/ash_features.h"
 #include "ash/constants/ash_pref_names.h"
 #include "ash/system/privacy_hub/privacy_hub_controller.h"
+#include "base/check_deref.h"
 #include "base/command_line.h"
 #include "base/functional/bind.h"
 #include "base/gtest_prod_util.h"
@@ -28,6 +21,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/ash/app_list/arc/arc_app_utils.h"
@@ -37,9 +31,9 @@
 #include "chrome/browser/ash/settings/stats_reporting_controller.h"
 #include "chrome/browser/ash/system/timezone_resolver_manager.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/global_features.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profiles_state.h"
-#include "chrome/browser/ui/zoom/chrome_zoom_level_prefs.h"
 #include "chrome/common/pref_names.h"
 #include "chromeos/ash/components/network/network_handler.h"
 #include "chromeos/ash/components/network/network_state.h"
@@ -48,8 +42,16 @@
 #include "chromeos/ash/components/network/onc/network_onc_utils.h"
 #include "chromeos/ash/components/network/proxy/proxy_config_service_impl.h"
 #include "chromeos/ash/components/settings/timezone_settings.h"
-#include "components/arc/common/intent_helper/arc_intent_helper_package.h"
-#include "components/arc/intent_helper/arc_intent_helper_bridge.h"
+#include "chromeos/ash/experiences/arc/arc_browser_context_keyed_service_factory_base.h"
+#include "chromeos/ash/experiences/arc/arc_features.h"
+#include "chromeos/ash/experiences/arc/arc_prefs.h"
+#include "chromeos/ash/experiences/arc/arc_util.h"
+#include "chromeos/ash/experiences/arc/intent_helper/arc_intent_helper_bridge.h"
+#include "chromeos/ash/experiences/arc/intent_helper/arc_intent_helper_package.h"
+#include "chromeos/ash/experiences/arc/mojom/backup_settings.mojom.h"
+#include "chromeos/ash/experiences/arc/mojom/intent_helper.mojom.h"
+#include "chromeos/ash/experiences/arc/mojom/pip.mojom.h"
+#include "chromeos/ash/experiences/arc/session/arc_bridge_service.h"
 #include "components/language/core/browser/pref_names.h"
 #include "components/live_caption/pref_names.h"
 #include "components/onc/onc_pref_names.h"
@@ -504,6 +506,12 @@ void ArcSettingsServiceImpl::DefaultNetworkChanged(
     sync_proxy = true;
   }
 
+  // If the default network change is triggered by establishment of ARC VPN, we
+  // should not report back the proxy settings. Details: crbug.com/401900912
+  if (network->GetVpnProviderType() == shill::kProviderArcVpn) {
+    sync_proxy = false;
+  }
+
   if (!sync_proxy)
     return;
 
@@ -690,13 +698,19 @@ void ArcSettingsServiceImpl::SyncLocale() const {
     return;
   }
 
+  // TODO(crbug.com/404130092): Remove g_browser_process usage.
+  const ApplicationLocaleStorage& application_locale_storage = CHECK_DEREF(
+      g_browser_process->GetFeatures()->application_locale_storage());
+
   std::string locale;
   std::string preferred_languages;
-  base::Value::Dict extras;
   // Chrome OS locale may contain only the language part (e.g. fr) but country
   // code (e.g. fr_FR).  Since Android expects locale to contain country code,
   // ARC will derive a likely locale with country code from such
-  GetLocaleAndPreferredLanguages(profile_, &locale, &preferred_languages);
+  GetLocaleAndPreferredLanguages(application_locale_storage, profile_, &locale,
+                                 &preferred_languages);
+
+  base::Value::Dict extras;
   extras.Set("locale", locale);
   extras.Set("preferredLanguages", preferred_languages);
   SendSettingsBroadcast("org.chromium.arc.intent_helper.SET_LOCALE", extras);
@@ -838,15 +852,12 @@ void ArcSettingsServiceImpl::SyncReportingConsent(bool initial_sync) const {
 }
 
 void ArcSettingsServiceImpl::SyncPictureInPictureEnabled() const {
-  bool isPipEnabled =
-      base::FeatureList::IsEnabled(arc::kPictureInPictureFeature);
-
   auto* instance = ARC_GET_INSTANCE_FOR_METHOD(arc_bridge_service_->pip(),
                                                SetPipSuppressionStatus);
   if (!instance)
     return;
 
-  instance->SetPipSuppressionStatus(!isPipEnabled);
+  instance->SetPipSuppressionStatus(false);
 }
 
 void ArcSettingsServiceImpl::SyncTimeZone() const {

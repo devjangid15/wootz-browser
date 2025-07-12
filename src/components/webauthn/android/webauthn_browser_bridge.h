@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_WEBAUTHN_ANDROID_WEBAUTHN_BROWSER_BRIDGE_H_
 #define COMPONENTS_WEBAUTHN_ANDROID_WEBAUTHN_BROWSER_BRIDGE_H_
 
+#include <jni.h>
+
 #include "base/android/scoped_java_ref.h"
 
 namespace webauthn {
@@ -21,7 +23,6 @@ class WebauthnBrowserBridge {
 
   void OnCredentialsDetailsListReceived(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>&,
       const base::android::JavaParamRef<jobjectArray>& credentials,
       const base::android::JavaParamRef<jobject>& jframe_host,
       jboolean is_conditional_request,

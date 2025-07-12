@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/342213636): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "content/renderer/skia_benchmarking_extension.h"
 
 #include <stddef.h>
@@ -19,8 +24,8 @@
 #include "content/renderer/render_thread_impl.h"
 #include "gin/arguments.h"
 #include "gin/data_object_builder.h"
-#include "gin/handle.h"
 #include "gin/object_template_builder.h"
+#include "gin/public/wrappable_pointer_tags.h"
 #include "skia/ext/benchmarking_canvas.h"
 #include "skia/ext/legacy_display_globals.h"
 #include "third_party/blink/public/platform/scheduler/web_agent_group_scheduler.h"
@@ -29,16 +34,18 @@
 #include "third_party/blink/public/web/web_local_frame.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkCanvas.h"
-#include "third_party/skia/include/core/SkColorPriv.h"
 #include "third_party/skia/include/core/SkGraphics.h"
 #include "third_party/skia/include/core/SkPicture.h"
 #include "third_party/skia/include/core/SkStream.h"
+#include "third_party/skia/include/private/chromium/SkPMColor.h"
 #include "ui/gfx/codec/jpeg_codec.h"
 #include "ui/gfx/codec/png_codec.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/geometry/skia_conversions.h"
+#include "v8/include/cppgc/allocation.h"
 #include "v8/include/v8-container.h"
 #include "v8/include/v8-context.h"
+#include "v8/include/v8-cppgc.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-local-handle.h"
 #include "v8/include/v8-object.h"
@@ -112,8 +119,6 @@ class PicturePlaybackController : public SkPicture::AbortCallback {
 
 }  // namespace
 
-gin::WrapperInfo SkiaBenchmarking::kWrapperInfo = {gin::kEmbedderNativeGin};
-
 // static
 void SkiaBenchmarking::Install(blink::WebLocalFrame* frame) {
   v8::Isolate* isolate = frame->GetAgentGroupScheduler()->Isolate();
@@ -124,15 +129,13 @@ void SkiaBenchmarking::Install(blink::WebLocalFrame* frame) {
 
   v8::Context::Scope context_scope(context);
 
-  gin::Handle<SkiaBenchmarking> controller =
-      gin::CreateHandle(isolate, new SkiaBenchmarking());
-  if (controller.IsEmpty())
-    return;
+  auto* controller = cppgc::MakeGarbageCollected<SkiaBenchmarking>(
+      isolate->GetCppHeap()->GetAllocationHandle());
+  v8::Local<v8::Object> wrapper =
+      controller->GetWrapper(isolate).ToLocalChecked();
 
   v8::Local<v8::Object> chrome = GetOrCreateChromeObject(isolate, context);
-  chrome
-      ->Set(context, gin::StringToV8(isolate, "skiaBenchmarking"),
-            controller.ToV8())
+  chrome->Set(context, gin::StringToV8(isolate, "skiaBenchmarking"), wrapper)
       .Check();
 }
 
@@ -153,7 +156,7 @@ SkiaBenchmarking::SkiaBenchmarking() {
   Initialize();
 }
 
-SkiaBenchmarking::~SkiaBenchmarking() {}
+SkiaBenchmarking::~SkiaBenchmarking() = default;
 
 gin::ObjectTemplateBuilder SkiaBenchmarking::GetObjectTemplateBuilder(
     v8::Isolate* isolate) {
@@ -225,10 +228,10 @@ void SkiaBenchmarking::Rasterize(gin::Arguments* args) {
   // Swizzle from native Skia format to RGBA as we copy out.
   for (size_t i = 0; i < bitmap.computeByteSize(); i += 4) {
     uint32_t c = packed_pixels[i >> 2];
-    buffer_pixels[i] = SkGetPackedR32(c);
-    buffer_pixels[i + 1] = SkGetPackedG32(c);
-    buffer_pixels[i + 2] = SkGetPackedB32(c);
-    buffer_pixels[i + 3] = SkGetPackedA32(c);
+    buffer_pixels[i] = SkPMColorGetR(c);
+    buffer_pixels[i + 1] = SkPMColorGetG(c);
+    buffer_pixels[i + 2] = SkPMColorGetB(c);
+    buffer_pixels[i + 3] = SkPMColorGetA(c);
   }
 
   args->Return(gin::DataObjectBuilder(isolate)
@@ -348,4 +351,8 @@ void SkiaBenchmarking::GetInfo(gin::Arguments* args) {
   args->Return(result);
 }
 
-} // namespace content
+const gin::WrapperInfo* SkiaBenchmarking::wrapper_info() const {
+  return &kWrapperInfo;
+}
+
+}  // namespace content

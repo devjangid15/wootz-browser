@@ -2,12 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #import "ios/chrome/browser/metrics/model/mobile_session_shutdown_metrics_provider.h"
+
+#import <Foundation/Foundation.h>
 
 #import <memory>
 #import <string>
-
-#import <Foundation/Foundation.h>
 
 #import "base/files/file_path.h"
 #import "base/functional/bind.h"
@@ -329,18 +334,6 @@ TEST_F(MobileSessionShutdownMetricsProviderTest,
   auto histogram_tester = std::make_unique<base::HistogramTester>();
   [PreviousSessionInfo resetSharedInstanceForTesting];
   [PreviousSessionInfo sharedInstance].OSRestartedAfterPreviousSession = NO;
-  metrics_provider_->ProvidePreviousSessionData(nullptr);
-  histogram_tester->ExpectUniqueSample(
-      "Stability.iOS.UTE.OSRestartedAfterPreviousSession", false, 1);
-  histogram_tester->ExpectUniqueSample(
-      "Stability.iOS.UTE.HasPossibleExplanation", false, 1);
-
-  // Test UTE with low battery when OS did not restart.
-  [PreviousSessionInfo sharedInstance].deviceBatteryLevel =
-      kCriticallyLowBatteryLevel;
-  [PreviousSessionInfo sharedInstance].deviceBatteryState =
-      previous_session_info_constants::DeviceBatteryState::kUnplugged;
-  histogram_tester = std::make_unique<base::HistogramTester>();
   metrics_provider_->ProvidePreviousSessionData(nullptr);
   histogram_tester->ExpectUniqueSample(
       "Stability.iOS.UTE.OSRestartedAfterPreviousSession", false, 1);

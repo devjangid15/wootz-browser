@@ -74,7 +74,7 @@ size_t GetNoteHeaderPriority(std::string_view name) {
   // Trim leading/trailing whitespaces from |name|.
   base::TrimWhitespaceASCII(name, base::TRIM_ALL, &trimmed_name);
   auto it = kNoteLabelsPriority.find(base::ToLowerASCII(trimmed_name));
-  DCHECK(it != kNoteLabelsPriority.end());
+  CHECK(it != kNoteLabelsPriority.end());
   return it->second;
 }
 
@@ -148,8 +148,9 @@ CSVPasswordSequence& CSVPasswordSequence::operator=(CSVPasswordSequence&&) =
 CSVPasswordSequence::~CSVPasswordSequence() = default;
 
 CSVPasswordIterator CSVPasswordSequence::begin() const {
-  if (result_ != CSVPassword::Status::kOK)
+  if (result_ != CSVPassword::Status::kOK) {
     return end();
+  }
   return CSVPasswordIterator(map_, data_rows_);
 }
 

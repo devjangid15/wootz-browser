@@ -15,7 +15,9 @@
 #include "chrome/test/base/testing_profile.h"
 #include "components/enterprise/idle/idle_pref_names.h"
 #include "components/prefs/pref_service.h"
+#include "content/public/browser/browsing_data_filter_builder.h"
 #include "content/public/browser/browsing_data_remover.h"
+#include "content/public/browser/storage_partition_config.h"
 #include "content/public/test/browser_task_environment.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -263,14 +265,13 @@ class FakeBrowsingDataRemover : public BrowsingDataRemover {
  public:
   void SetEmbedderDelegate(
       content::BrowsingDataRemoverDelegate* embedder_delegate) override {
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
   bool DoesOriginMatchMaskForTesting(
       uint64_t origin_type_mask,
       const url::Origin& origin,
       storage::SpecialStoragePolicy* special_storage_policy) override {
-    NOTREACHED_IN_MIGRATION();
-    return true;
+    NOTREACHED();
   }
   void Remove(const base::Time& delete_begin,
               const base::Time& delete_end,
@@ -319,12 +320,9 @@ class FakeBrowsingDataRemover : public BrowsingDataRemover {
   void SetWouldCompleteCallbackForTesting(
       const base::RepeatingCallback<
           void(base::OnceClosure continue_to_completion)>& callback) override {
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
-  const base::Time& GetLastUsedBeginTimeForTesting() override {
-    NOTREACHED_IN_MIGRATION();
-    return begin_time_;
-  }
+  const base::Time& GetLastUsedBeginTimeForTesting() override { NOTREACHED(); }
   uint64_t GetLastUsedRemovalMaskForTesting() override { return remove_mask_; }
   uint64_t GetLastUsedOriginTypeMaskForTesting() override {
     return origin_type_mask_;

@@ -17,7 +17,6 @@
 #include "chrome/browser/ui/web_applications/web_app_dialogs.h"
 #include "chrome/browser/web_applications/os_integration/os_integration_manager.h"
 #include "chrome/browser/web_applications/os_integration/web_app_file_handler_manager.h"
-#include "chrome/browser/web_applications/os_integration/web_app_shortcut_mac.h"
 #include "chrome/browser/web_applications/web_app.h"
 #include "chrome/browser/web_applications/web_app_command_scheduler.h"
 #include "chrome/browser/web_applications/web_app_constants.h"
@@ -27,7 +26,6 @@
 #include "chrome/common/chrome_switches.h"
 #include "components/services/app_service/public/cpp/app_launch_util.h"
 #include "net/base/filename_util.h"
-#include "third_party/blink/public/common/custom_handlers/protocol_handler_utils.h"
 
 namespace web_app {
 
@@ -179,9 +177,16 @@ bool WebAppShimManagerDelegate::AppIsInstalled(Profile* profile,
   if (UseFallback(profile, app_id)) {
     return fallback_delegate_->AppIsInstalled(profile, app_id);
   }
+  if (!profile || !AreWebAppsEnabled(profile)) {
+    return false;
+  }
+  WebAppProvider* provider = WebAppProvider::GetForWebApps(profile);
+  CHECK(provider);
   return profile &&
-         WebAppProvider::GetForWebApps(profile)->registrar_unsafe().IsInstalled(
-             app_id);
+         provider->registrar_unsafe().IsInstallState(
+             app_id, {proto::InstallState::SUGGESTED_FROM_ANOTHER_DEVICE,
+                      proto::InstallState::INSTALLED_WITHOUT_OS_INTEGRATION,
+                      proto::InstallState::INSTALLED_WITH_OS_INTEGRATION});
 }
 
 bool WebAppShimManagerDelegate::AppCanCreateHost(Profile* profile,
@@ -195,14 +200,21 @@ bool WebAppShimManagerDelegate::AppCanCreateHost(Profile* profile,
 bool WebAppShimManagerDelegate::AppUsesRemoteCocoa(
     Profile* profile,
     const webapps::AppId& app_id) {
-  if (UseFallback(profile, app_id))
+  if (UseFallback(profile, app_id)) {
     return fallback_delegate_->AppUsesRemoteCocoa(profile, app_id);
+  }
   // All PWAs, and bookmark apps that open in their own window (not in a browser
   // window) can attach to a host.
-  if (!profile)
+  if (!profile || !AreWebAppsEnabled(profile)) {
     return false;
-  auto& registrar = WebAppProvider::GetForWebApps(profile)->registrar_unsafe();
-  return registrar.IsInstalled(app_id) &&
+  }
+  WebAppProvider* provider = WebAppProvider::GetForWebApps(profile);
+  CHECK(provider);
+  auto& registrar = provider->registrar_unsafe();
+  return registrar.IsInstallState(
+             app_id, {proto::InstallState::SUGGESTED_FROM_ANOTHER_DEVICE,
+                      proto::InstallState::INSTALLED_WITHOUT_OS_INTEGRATION,
+                      proto::InstallState::INSTALLED_WITH_OS_INTEGRATION}) &&
          registrar.GetAppEffectiveDisplayMode(app_id) !=
              web_app::DisplayMode::kBrowser;
 }
@@ -243,6 +255,9 @@ void WebAppShimManagerDelegate::LaunchApp(
                                   std::move(launch_finished_callback));
     return;
   }
+  CHECK(profile);
+  CHECK(AreWebAppsEnabled(profile));
+
   base::ScopedClosureRunner run_launch_finished(
       std::move(launch_finished_callback));
 
@@ -265,6 +280,9 @@ void WebAppShimManagerDelegate::LaunchApp(
   // permitted file launch.
   std::vector<base::FilePath> launch_files = files;
   params.override_url = override_url;
+
+  WebAppProvider* const provider = WebAppProvider::GetForWebApps(profile);
+  CHECK(provider);
 
   for (const GURL& url : urls) {
     if (!url.is_valid() || !url.has_scheme()) {
@@ -292,8 +310,8 @@ void WebAppShimManagerDelegate::LaunchApp(
 
     // Validate that the scheme is something that could be registered by the PWA
     // via the manifest.
-    if (!blink::IsValidCustomHandlerScheme(
-            url.scheme(), blink::ProtocolHandlerSecurityLevel::kStrict)) {
+    if (!provider->registrar_unsafe().IsRegisteredLaunchProtocol(
+            app_id, url.scheme())) {
       DLOG(ERROR) << "Protocol is not a valid custom handler scheme.";
       continue;
     }
@@ -302,7 +320,6 @@ void WebAppShimManagerDelegate::LaunchApp(
     params.launch_source = apps::LaunchSource::kFromProtocolHandler;
   }
 
-  WebAppProvider* const provider = WebAppProvider::GetForWebApps(profile);
   WebAppFileHandlerManager::LaunchInfos file_launches;
   if (!params.protocol_handler_launch_url) {
     file_launches = provider->os_integration_manager()
@@ -321,8 +338,7 @@ void WebAppShimManagerDelegate::LaunchApp(
     // Protocol handlers should prompt the user before launching the app,
     // unless the user has granted or denied permission to this protocol scheme
     // previously.
-    web_app::WebAppRegistrar& registrar =
-        WebAppProvider::GetForWebApps(profile)->registrar_unsafe();
+    web_app::WebAppRegistrar& registrar = provider->registrar_unsafe();
     if (registrar.IsDisallowedLaunchProtocol(app_id, protocol_url.scheme())) {
       CancelAppLaunch(profile, app_id);
       return;
@@ -376,9 +392,11 @@ void WebAppShimManagerDelegate::LaunchShim(
                                    std::move(terminated_callback));
     return;
   }
+  CHECK(profile);
+  CHECK(AreWebAppsEnabled(profile));
   WebAppProvider::GetForWebApps(profile)
       ->os_integration_manager()
-      .GetShortcutInfoForApp(
+      .GetShortcutInfoForAppFromRegistrar(
           app_id, base::BindOnce(&web_app::LaunchShim, update_behavior,
                                  launch_mode, std::move(launched_callback),
                                  std::move(terminated_callback)));
@@ -400,8 +418,13 @@ bool WebAppShimManagerDelegate::UseFallback(
   // If |app_id| is installed via WebAppProvider, then use |this| as the
   // delegate.
   auto* provider = WebAppProvider::GetForWebApps(profile);
-  if (provider->registrar_unsafe().IsInstalled(app_id))
+  if (provider &&
+      provider->registrar_unsafe().IsInstallState(
+          app_id, {proto::InstallState::SUGGESTED_FROM_ANOTHER_DEVICE,
+                   proto::InstallState::INSTALLED_WITHOUT_OS_INTEGRATION,
+                   proto::InstallState::INSTALLED_WITH_OS_INTEGRATION})) {
     return false;
+  }
 
   // Use |fallback_delegate_| only if |app_id| is installed for |profile|
   // as an extension.

@@ -4,7 +4,6 @@
 
 #include "chrome/browser/ash/arc/input_overlay/test/game_controls_test_base.h"
 
-#include "ash/components/arc/mojom/app.mojom.h"
 #include "ash/constants/ash_features.h"
 #include "ash/game_dashboard/game_dashboard_utils.h"
 #include "ash/public/cpp/window_properties.h"
@@ -15,15 +14,14 @@
 #include "chrome/browser/ash/arc/input_overlay/test/test_utils.h"
 #include "chrome/browser/ash/arc/input_overlay/util.h"
 #include "chrome/test/base/testing_profile.h"
+#include "chromeos/ash/experiences/arc/mojom/app.mojom.h"
 #include "content/public/test/browser_task_environment.h"
-#include "ui/lottie/resource.h"
 
 namespace arc::input_overlay {
 
 GameControlsTestBase::GameControlsTestBase()
-    : ash::AshTestBase(std::unique_ptr<base::test::TaskEnvironment>(
-          std::make_unique<content::BrowserTaskEnvironment>(
-              base::test::TaskEnvironment::TimeSource::MOCK_TIME))) {}
+    : ChromeAshTestBase(std::make_unique<content::BrowserTaskEnvironment>(
+          base::test::TaskEnvironment::TimeSource::MOCK_TIME)) {}
 
 GameControlsTestBase::~GameControlsTestBase() = default;
 
@@ -50,12 +48,7 @@ void GameControlsTestBase::EnableDisplayMode(DisplayMode mode) {
 }
 
 void GameControlsTestBase::SetUp() {
-  ui::ResourceBundle::SetLottieParsingFunctions(
-      &lottie::ParseLottieAsStillImage, &lottie::ParseLottieAsThemedStillImage);
-
-  ash::AshTestBase::SetUp();
-
-  scoped_feature_list_.InitAndEnableFeature(ash::features::kGameDashboard);
+  ChromeAshTestBase::SetUp();
 
   profile_ = std::make_unique<TestingProfile>();
   arc_app_test_.set_wait_compatibility_mode(true);
@@ -85,7 +78,7 @@ void GameControlsTestBase::TearDown() {
   arc_test_input_overlay_manager_.reset();
   arc_app_test_.TearDown();
   profile_.reset();
-  ash::AshTestBase::TearDown();
+  ChromeAshTestBase::TearDown();
 }
 
 }  // namespace arc::input_overlay

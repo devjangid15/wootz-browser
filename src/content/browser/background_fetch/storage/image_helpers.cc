@@ -6,6 +6,7 @@
 
 #include "base/functional/bind.h"
 #include "base/memory/ref_counted_memory.h"
+#include "base/strings/string_view_util.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
@@ -27,9 +28,7 @@ std::string ConvertAndSerializeIcon(const SkBitmap& icon) {
 
 SkBitmap DeserializeAndConvertIcon(
     std::unique_ptr<std::string> serialized_icon) {
-  return gfx::Image::CreateFrom1xPNGBytes(
-             reinterpret_cast<const unsigned char*>(serialized_icon->c_str()),
-             serialized_icon->size())
+  return gfx::Image::CreateFrom1xPNGBytes(base::as_byte_span(*serialized_icon))
       .AsBitmap();
 }
 

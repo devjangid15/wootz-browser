@@ -335,8 +335,7 @@ ServiceInstance* ServiceManager::FindOrCreateMatchingTargetInstance(
     }
 #else   // !BUILDFLAG(IS_IOS)
     default:
-      NOTREACHED_IN_MIGRATION();
-      return nullptr;
+      NOTREACHED();
 #endif  // !BUILDFLAG(IS_IOS)
   }
 
@@ -393,7 +392,7 @@ void ServiceManager::DestroyInstance(ServiceInstance* instance) {
 
   MakeInstanceUnreachable(instance);
   auto it = instances_.find(instance);
-  DCHECK(it != instances_.end());
+  CHECK(it != instances_.end());
 
   // Deletes |instance|.
   instances_.erase(it);

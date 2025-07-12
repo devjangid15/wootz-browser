@@ -6,12 +6,14 @@ package org.chromium.chrome.browser.gesturenav;
 
 import androidx.annotation.IntDef;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.tab.Tab;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 
 /** Delegates actions when back navigation gesture is made. */
+@NullMarked
 public interface BackActionDelegate {
     /** Type of actions triggered by back navigation gesture. */
     @Retention(RetentionPolicy.SOURCE)
@@ -30,12 +32,19 @@ public interface BackActionDelegate {
     int getBackActionType(Tab tab);
 
     /** Performs an action upon back gesture. */
-    void onBackGesture();
+    void onBackGesture(Tab tab);
 
     /**
-     * Returns whether back gesture navigation is possible. When {@code true}, this can override
-     * the default navigability criteria based on navigation history. When {@code false}, the
-     * default criteria will be used instead.
+     * Called when user performs a gesture but nothing is expected to occur, like trying to forward
+     * a page which has empty forward history stack.
      */
-    boolean isNavigable();
+    default void onGestureUnhandled() {}
+
+    /**
+     * Called when user is performing a gesture and then an action is waiting to occur later, like
+     * the user is swiping and the page is expected to be navigated back if the gesture is finished.
+     * This function does not guarantee the action will occur since the user might cancel the action
+     * right after this method is called.
+     */
+    default void onGestureHandled() {}
 }

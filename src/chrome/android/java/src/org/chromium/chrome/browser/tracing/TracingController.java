@@ -13,8 +13,8 @@ import android.text.format.DateUtils;
 import androidx.annotation.IntDef;
 import androidx.annotation.VisibleForTesting;
 
-import org.chromium.base.ContentUriUtils;
 import org.chromium.base.ContextUtils;
+import org.chromium.base.FileProviderUtils;
 import org.chromium.base.Log;
 import org.chromium.base.ObserverList;
 import org.chromium.base.task.AsyncTask;
@@ -86,7 +86,7 @@ public class TracingController {
     // Only set while a trace is in progress to avoid leaking native resources.
     private TracingControllerAndroid mNativeController;
 
-    private ObserverList<Observer> mObservers = new ObserverList<>();
+    private final ObserverList<Observer> mObservers = new ObserverList<>();
     private @State int mState = State.INITIALIZING;
     private Set<String> mKnownCategories;
     private File mTracingTempFile;
@@ -198,7 +198,6 @@ public class TracingController {
     public void startRecording() {
         assert mState == State.IDLE;
         assert mNativeController == null;
-        assert TracingNotificationManager.browserNotificationsEnabled();
 
         mNativeController = TracingControllerAndroid.create(ContextUtils.getApplicationContext());
 
@@ -319,7 +318,7 @@ public class TracingController {
 
         Intent shareIntent = new Intent(Intent.ACTION_SEND);
 
-        Uri fileUri = ContentUriUtils.getContentUriFromFile(mTracingTempFile);
+        Uri fileUri = FileProviderUtils.getContentUriFromFile(mTracingTempFile);
 
         shareIntent.setType(TRACE_MIMETYPE);
         shareIntent.putExtra(Intent.EXTRA_STREAM, fileUri);
@@ -333,7 +332,6 @@ public class TracingController {
 
         // Delete the file after an hour. This won't work if the app quits in the meantime, so we
         // also check for old files when TraceController is created.
-        File tracingTempFile = mTracingTempFile;
         PostTask.postDelayedTask(
                 TaskTraits.UI_DEFAULT,
                 () -> {
@@ -369,7 +367,7 @@ public class TracingController {
     }
 
     private static class TracingTempFileDeletion implements Runnable {
-        private File mTempFile;
+        private final File mTempFile;
 
         public TracingTempFileDeletion(File file) {
             mTempFile = file;

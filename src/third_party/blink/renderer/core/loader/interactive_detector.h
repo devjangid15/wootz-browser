@@ -64,7 +64,8 @@ class CORE_EXPORT InteractiveDetector
   // for the supplement name.
   static const char* SupplementName();
 
-  explicit InteractiveDetector(Document&, NetworkActivityChecker*);
+  explicit InteractiveDetector(Document&,
+                               std::unique_ptr<NetworkActivityChecker>);
   InteractiveDetector(const InteractiveDetector&) = delete;
   InteractiveDetector& operator=(const InteractiveDetector&) = delete;
   ~InteractiveDetector() override = default;
@@ -157,11 +158,11 @@ class CORE_EXPORT InteractiveDetector
   };
 
   // Stores sufficiently long quiet windows on the network.
-  Vector<WTF::PODInterval<base::TimeTicks>> network_quiet_windows_;
+  Vector<PodInterval<base::TimeTicks>> network_quiet_windows_;
 
   // Stores long tasks in order to compute Total Blocking Time (TBT) once Time
   // To Interactive (TTI) is known.
-  Vector<WTF::PODInterval<base::TimeTicks>> long_tasks_;
+  Vector<PodInterval<base::TimeTicks>> long_tasks_;
 
   // Start time of currently active network quiet windows.
   // Null base::TimeTicks values indicate network is not quiet at the moment.

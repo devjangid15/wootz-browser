@@ -28,6 +28,7 @@
 #include "base/uuid.h"
 #include "components/services/storage/dom_storage/storage_area_test_util.h"
 #include "components/services/storage/dom_storage/testing_legacy_session_storage_database.h"
+#include "components/services/storage/public/mojom/storage_service.mojom.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "mojo/public/cpp/system/functions.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -47,7 +48,7 @@ std::vector<uint8_t> StringViewToUint8Vector(std::string_view s) {
 }
 
 std::vector<uint8_t> String16ToUint8Vector(const std::u16string& s) {
-  auto bytes = base::as_bytes(base::make_span(s));
+  auto bytes = base::as_byte_span(s);
   return std::vector<uint8_t>(bytes.begin(), bytes.end());
 }
 
@@ -88,7 +89,7 @@ class SessionStorageImplTest : public testing::Test {
       session_storage_ = std::make_unique<SessionStorageImpl>(
           temp_path(), blocking_task_runner_,
           base::SequencedTaskRunner::GetCurrentDefault(), backing_mode_,
-          kSessionStorageDirectory,
+          kSessionStorageDirectory, base::DoNothing(),
           remote_session_storage_.BindNewPipeAndPassReceiver());
     }
     return session_storage_.get();
@@ -483,7 +484,7 @@ TEST_F(SessionStorageImplTest, Scavenging) {
   {
     base::RunLoop loop;
     // Cause the connection to start loading, so we start scavenging mid-load.
-    session_storage()->Flush(base::DoNothing());
+    session_storage()->Flush();
     session_storage()->ScavengeUnusedNamespaces(loop.QuitClosure());
     loop.Run();
   }

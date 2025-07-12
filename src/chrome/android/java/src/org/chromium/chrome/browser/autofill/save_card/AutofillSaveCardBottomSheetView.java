@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.autofill.save_card;
 
+
 import android.content.Context;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -13,9 +14,11 @@ import android.widget.ImageView;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.R;
 import org.chromium.ui.widget.LoadingView;
 
+@NullMarked
 /*package*/ class AutofillSaveCardBottomSheetView {
     /** The view that contains all other views. */
     final ViewGroup mContentView;
@@ -53,6 +56,11 @@ import org.chromium.ui.widget.LoadingView;
     /** The button that declines the card save prompt. */
     final Button mCancelButton;
 
+    /**
+     * Contains the loading view. Needed for proper a11y announcement of the content description.
+     */
+    final View mLoadingViewContainer;
+
     /** The view shown while the card is being uploaded. */
     final LoadingView mLoadingView;
 
@@ -73,6 +81,8 @@ import org.chromium.ui.widget.LoadingView;
         mLegalMessage = mContentView.findViewById(R.id.legal_message);
         mAcceptButton = mContentView.findViewById(R.id.autofill_save_card_confirm_button);
         mCancelButton = mContentView.findViewById(R.id.autofill_save_card_cancel_button);
+        mLoadingViewContainer =
+                mContentView.findViewById(R.id.autofill_save_card_loading_view_container);
         mLoadingView = mContentView.findViewById(R.id.autofill_save_card_loading_view);
     }
 }

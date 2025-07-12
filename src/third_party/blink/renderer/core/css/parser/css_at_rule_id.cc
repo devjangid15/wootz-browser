@@ -15,10 +15,7 @@ namespace blink {
 
 CSSAtRuleID CssAtRuleID(StringView name) {
   if (EqualIgnoringASCIICase(name, "view-transition")) {
-    if (RuntimeEnabledFeatures::ViewTransitionOnNavigationEnabled()) {
-      return CSSAtRuleID::kCSSAtRuleViewTransition;
-    }
-    return CSSAtRuleID::kCSSAtRuleInvalid;
+    return CSSAtRuleID::kCSSAtRuleViewTransition;
   }
   if (EqualIgnoringASCIICase(name, "charset")) {
     return CSSAtRuleID::kCSSAtRuleCharset;
@@ -69,10 +66,7 @@ CSSAtRuleID CssAtRuleID(StringView name) {
     return CSSAtRuleID::kCSSAtRulePage;
   }
   if (EqualIgnoringASCIICase(name, "position-try")) {
-    if (RuntimeEnabledFeatures::CSSAnchorPositioningEnabled()) {
-      return CSSAtRuleID::kCSSAtRulePositionTry;
-    }
-    return CSSAtRuleID::kCSSAtRuleInvalid;
+    return CSSAtRuleID::kCSSAtRulePositionTry;
   }
   if (EqualIgnoringASCIICase(name, "property")) {
     return CSSAtRuleID::kCSSAtRuleProperty;
@@ -145,8 +139,24 @@ CSSAtRuleID CssAtRuleID(StringView name) {
   if (EqualIgnoringASCIICase(name, "right-bottom")) {
     return CSSAtRuleID::kCSSAtRuleRightBottom;
   }
-  if (EqualIgnoringASCIICase(name, "function")) {
+
+  if (RuntimeEnabledFeatures::CSSFunctionsEnabled() &&
+      EqualIgnoringASCIICase(name, "function")) {
     return CSSAtRuleID::kCSSAtRuleFunction;
+  }
+  if (RuntimeEnabledFeatures::CSSMixinsEnabled()) {
+    if (EqualIgnoringASCIICase(name, "mixin")) {
+      return CSSAtRuleID::kCSSAtRuleMixin;
+    }
+    if (EqualIgnoringASCIICase(name, "apply")) {
+      return CSSAtRuleID::kCSSAtRuleApplyMixin;
+    }
+  }
+
+  if (RuntimeEnabledFeatures::CSSCustomMediaEnabled()) {
+    if (EqualIgnoringASCIICase(name, "custom-media")) {
+      return CSSAtRuleID::kCSSAtRuleCustomMedia;
+    }
   }
 
   return CSSAtRuleID::kCSSAtRuleInvalid;
@@ -238,9 +248,15 @@ StringView CssAtRuleIDToString(CSSAtRuleID id) {
       return "@right-bottom";
     case CSSAtRuleID::kCSSAtRuleFunction:
       return "@function";
+    case CSSAtRuleID::kCSSAtRuleMixin:
+      return "@mixin";
+    case CSSAtRuleID::kCSSAtRuleApplyMixin:
+      return "@apply";
+    case CSSAtRuleID::kCSSAtRuleCustomMedia:
+      return "@custom-media";
     case CSSAtRuleID::kCSSAtRuleInvalid:
-      NOTREACHED_IN_MIGRATION();
-      return "";
+    case CSSAtRuleID::kCount:
+      NOTREACHED();
   };
 }
 
@@ -317,9 +333,14 @@ std::optional<WebFeature> AtRuleFeature(CSSAtRuleID rule_id) {
       return WebFeature::kCSSAtRuleWebkitKeyframes;
     case CSSAtRuleID::kCSSAtRuleFunction:
       return WebFeature::kCSSFunctions;
+    case CSSAtRuleID::kCSSAtRuleMixin:
+    case CSSAtRuleID::kCSSAtRuleApplyMixin:
+      return WebFeature::kCSSMixins;
+    case CSSAtRuleID::kCSSAtRuleCustomMedia:
+      return WebFeature::kCSSCustomMedia;
     case CSSAtRuleID::kCSSAtRuleInvalid:
-      NOTREACHED_IN_MIGRATION();
-      return std::nullopt;
+    case CSSAtRuleID::kCount:
+      NOTREACHED();
   }
 }
 

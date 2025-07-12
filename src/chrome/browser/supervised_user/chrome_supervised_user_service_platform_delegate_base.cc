@@ -6,12 +6,18 @@
 
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
+#include "chrome/browser/browser_process.h"
+#include "chrome/browser/content_settings/host_content_settings_map_factory.h"
+#include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/supervised_user/supervised_user_service_factory.h"
+#include "chrome/common/channel_info.h"
 #include "components/policy/core/common/policy_pref_names.h"
 #include "components/supervised_user/core/browser/supervised_user_preferences.h"
 #include "components/supervised_user/core/browser/supervised_user_service.h"
+#include "components/variations/service/variations_service.h"
+#include "content/public/browser/storage_partition.h"
 
 ChromeSupervisedUserServicePlatformDelegateBase::
     ChromeSupervisedUserServicePlatformDelegateBase(Profile& profile)
@@ -21,6 +27,25 @@ ChromeSupervisedUserServicePlatformDelegateBase::
 
 ChromeSupervisedUserServicePlatformDelegateBase::
     ~ChromeSupervisedUserServicePlatformDelegateBase() = default;
+
+std::string ChromeSupervisedUserServicePlatformDelegateBase::GetCountryCode()
+    const {
+  std::string country;
+  variations::VariationsService* variations_service =
+      g_browser_process->variations_service();
+  if (variations_service) {
+    country = variations_service->GetStoredPermanentCountry();
+    if (country.empty()) {
+      country = variations_service->GetLatestCountry();
+    }
+  }
+  return country;
+}
+
+version_info::Channel
+ChromeSupervisedUserServicePlatformDelegateBase::GetChannel() const {
+  return chrome::GetChannel();
+}
 
 void ChromeSupervisedUserServicePlatformDelegateBase::
     OnOffTheRecordProfileCreated(Profile* off_the_record) {
@@ -32,22 +57,35 @@ void ChromeSupervisedUserServicePlatformDelegateBase::
   // where a supervised user can access incognito.
   supervised_user::SupervisedUserService* supervised_user_service =
       SupervisedUserServiceFactory::GetForProfileIfExists(&profile_.get());
-  std::optional<supervised_user::FamilyLinkUserLogRecord::Segment>
+  std::optional<supervised_user::SupervisedUserLogRecord::Segment>
       user_log_segment =
-          supervised_user::FamilyLinkUserLogRecord::Create(
+          supervised_user::SupervisedUserLogRecord::Create(
               IdentityManagerFactory::GetForProfile(&profile_.get()),
-              supervised_user_service ? supervised_user_service->GetURLFilter()
-                                      : nullptr)
+              *profile_->GetPrefs(),
+              *HostContentSettingsMapFactory::GetForProfile(&profile_.get()),
+              supervised_user_service)
               .GetSupervisionStatusForPrimaryAccount();
   if (!user_log_segment.has_value()) {
     return;
   }
 
   switch (user_log_segment.value()) {
-    case supervised_user::FamilyLinkUserLogRecord::Segment::
-        kSupervisionEnabledByPolicy:
-    case supervised_user::FamilyLinkUserLogRecord::Segment::
-        kSupervisionEnabledByUser:
+    case supervised_user::SupervisedUserLogRecord::Segment::
+        kSupervisionEnabledByFamilyLinkPolicy:
+    case supervised_user::SupervisedUserLogRecord::Segment::
+        kSupervisionEnabledByFamilyLinkUser:
+    case supervised_user::SupervisedUserLogRecord::Segment::
+        kSupervisionEnabledLocally:
+      if (!supervised_user_service->IsLocalBrowserFilteringEnabled()) {
+        CHECK(supervised_user_service->IsSupervisedLocally());
+        // This sub-state is exceptionally allowed: user is attributed to local
+        // supervision, but that supervision is enabled due to other reasons
+        // than browser content filtering (which would disable the incognito
+        // mode). In other words, that's a type of supervised user who can use
+        // incognito mode.
+        return;
+      }
+
       // This is a supervised profile. It is not expected for incognito to be
       // available except in some edge cases. Output the edge cases separately
       // from the "unexpected" bucket.
@@ -73,9 +111,15 @@ void ChromeSupervisedUserServicePlatformDelegateBase::
       }
       break;
 
-    case supervised_user::FamilyLinkUserLogRecord::Segment::kUnsupervised:
-    case supervised_user::FamilyLinkUserLogRecord::Segment::kMixedProfile:
+    case supervised_user::SupervisedUserLogRecord::Segment::kParent:
+    case supervised_user::SupervisedUserLogRecord::Segment::kUnsupervised:
+    case supervised_user::SupervisedUserLogRecord::Segment::kMixedProfile:
       // Incognito usage is expected, so don't output any more detailed metrics.
       break;
   }
+}
+
+bool ChromeSupervisedUserServicePlatformDelegateBase::ShouldCloseIncognitoTabs()
+    const {
+  return !IncognitoModePrefs::IsIncognitoAllowed(&profile_.get());
 }

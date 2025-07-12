@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "components/wifi/wifi_service.h"
 
 #include <objbase.h>
@@ -1257,7 +1262,7 @@ DOT11_SSID WiFiServiceImpl::SSIDFromGUID(
             network_guid.c_str(),
             ssid.uSSIDLength);
   } else {
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
   return ssid;
 }
@@ -1380,7 +1385,7 @@ DWORD WiFiServiceImpl::GetVisibleNetworkList(NetworkList* network_list) {
               onc::connection_state::kConnected) {
             NetworkList::iterator previous_network_properties =
                 FindNetwork(*network_list, network_properties.guid);
-            DCHECK(previous_network_properties != network_list->end());
+            CHECK(previous_network_properties != network_list->end());
             previous_network_properties->connection_state =
                 network_properties.connection_state;
           }

@@ -7,7 +7,6 @@ package org.chromium.chrome.browser;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.graphics.Rect;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -24,6 +23,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisabledTest;
@@ -33,12 +33,12 @@ import org.chromium.base.test.util.UrlUtils;
 import org.chromium.chrome.browser.app.ChromeActivity;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.browser.test.util.Coordinates;
 import org.chromium.content_public.browser.test.util.DOMUtils;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
-import org.chromium.ui.test.util.UiRestriction;
+import org.chromium.ui.base.DeviceFormFactor;
 
 import java.lang.reflect.Method;
 import java.util.concurrent.TimeoutException;
@@ -52,7 +52,8 @@ public class SmartClipProviderTest implements Handler.Callback {
     // interface.
 
     @Rule
-    public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
+    public FreshCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.freshChromeTabbedActivityRule();
 
     private static final String MOUNTAIN = "Mountain";
 
@@ -119,9 +120,9 @@ public class SmartClipProviderTest implements Handler.Callback {
 
     @Before
     public void setUp() throws Exception {
-        mActivityTestRule.startMainActivityWithURL(DATA_URL);
+        mActivityTestRule.startOnUrl(DATA_URL);
         mActivity = mActivityTestRule.getActivity();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mWebContents = mActivityTestRule.getWebContents();
                 });
@@ -146,11 +147,7 @@ public class SmartClipProviderTest implements Handler.Callback {
 
     @After
     public void tearDown() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
-            mHandlerThread.quitSafely();
-        } else {
-            mHandlerThread.quit();
-        }
+        mHandlerThread.quitSafely();
     }
 
     // Implements Handler.Callback
@@ -198,7 +195,7 @@ public class SmartClipProviderTest implements Handler.Callback {
     }
 
     // Disable test on tablet since it fails consistently on M tablet. See https://crbug.com/853816
-    @Restriction(UiRestriction.RESTRICTION_TYPE_PHONE)
+    @Restriction(DeviceFormFactor.PHONE)
     @Test
     @MediumTest
     @Feature({"SmartClip"})
@@ -206,7 +203,7 @@ public class SmartClipProviderTest implements Handler.Callback {
     public void testSmartClipDataCallback() throws TimeoutException {
         final float dpi = Coordinates.createFor(mWebContents).getDeviceScaleFactor();
         final Rect bounds = DOMUtils.getNodeBounds(mWebContents, "simple_text");
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     // This emulates what OEM will be doing when they want to call
                     // functions on SmartClipProvider through view hierarchy.
@@ -242,7 +239,7 @@ public class SmartClipProviderTest implements Handler.Callback {
     @MediumTest
     @Feature({"SmartClip"})
     public void testSmartClipNoHandlerDoesntCrash() throws TimeoutException {
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     Object scp =
                             findSmartClipProvider(

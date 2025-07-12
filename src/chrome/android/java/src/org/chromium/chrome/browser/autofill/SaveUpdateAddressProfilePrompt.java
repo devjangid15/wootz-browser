@@ -12,27 +12,22 @@ import android.app.Activity;
 import android.text.TextUtils;
 import android.view.LayoutInflater;
 import android.view.View;
-import android.widget.EditText;
 import android.widget.TextView;
 
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
-
-import com.google.android.material.textfield.TextInputLayout;
 
 import org.jni_zero.CalledByNative;
 import org.jni_zero.JNINamespace;
 
 import org.chromium.base.ResettersForTesting;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.autofill.editors.AddressEditorCoordinator;
 import org.chromium.chrome.browser.autofill.editors.AddressEditorCoordinator.Delegate;
 import org.chromium.chrome.browser.autofill.editors.AddressEditorCoordinator.UserFlow;
-import org.chromium.chrome.browser.feedback.HelpAndFeedbackLauncherImpl;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.components.autofill.AutofillProfile;
-import org.chromium.ui.KeyboardVisibilityDelegate;
 import org.chromium.ui.base.WindowAndroid;
 import org.chromium.ui.modaldialog.DialogDismissalCause;
 import org.chromium.ui.modaldialog.ModalDialogManager;
@@ -45,6 +40,7 @@ import org.chromium.ui.modelutil.PropertyModel;
  * TODO(crbug.com/40263971): cover with render tests.
  */
 @JNINamespace("autofill")
+@NullMarked
 public class SaveUpdateAddressProfilePrompt {
     private final SaveUpdateAddressProfilePromptController mController;
     private final ModalDialogManager mModalDialogManager;
@@ -78,8 +74,6 @@ public class SaveUpdateAddressProfilePrompt {
             userFlow = SAVE_NEW_ADDRESS_PROFILE;
         }
 
-        if (!isUpdate && !isMigrationToAccount) setupAddressNickname();
-
         PropertyModel.Builder builder =
                 new PropertyModel.Builder(ModalDialogProperties.ALL_KEYS)
                         .with(
@@ -102,7 +96,6 @@ public class SaveUpdateAddressProfilePrompt {
         mAddressEditor =
                 new AddressEditorCoordinator(
                         activity,
-                        HelpAndFeedbackLauncherImpl.getForProfile(browserProfile),
                         delegate,
                         browserProfile,
                         new AutofillAddress(
@@ -111,7 +104,6 @@ public class SaveUpdateAddressProfilePrompt {
                                 PersonalDataManagerFactory.getForProfile(browserProfile)),
                         userFlow,
                         /* saveToDisk= */ false);
-        mAddressEditor.setShouldTriggerDoneCallbackBeforeCloseAnimation(true);
         mDialogView
                 .findViewById(R.id.edit_button)
                 .setOnClickListener(
@@ -179,17 +171,17 @@ public class SaveUpdateAddressProfilePrompt {
     }
 
     /**
-     * Displays an optional notification for the user in case the autofill profile is going
-     * to be saved in account storage.
+     * Displays an optional notification for the user in case the autofill profile is going to be
+     * saved in account storage.
      *
-     * @param sourceNotice the footer notification for the user.
+     * @param recordTypeNotice the footer notification for the user.
      */
     @CalledByNative
     @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
-    void setSourceNotice(String sourceNotice) {
+    void setRecordTypeNotice(String recordTypeNotice) {
         showTextIfNotEmpty(
-                mDialogView.findViewById(R.id.autofill_address_profile_prompt_source_notice),
-                sourceNotice);
+                mDialogView.findViewById(R.id.autofill_address_profile_prompt_record_type_notice),
+                recordTypeNotice);
     }
 
     /**
@@ -270,30 +262,6 @@ public class SaveUpdateAddressProfilePrompt {
         mDialogView
                 .findViewById(R.id.no_header_space)
                 .setVisibility(show ? View.GONE : View.VISIBLE);
-    }
-
-    private void setupAddressNickname() {
-        TextInputLayout nicknameInputLayout = mDialogView.findViewById(R.id.nickname_input_layout);
-        if (!ChromeFeatureList.isEnabled(
-                ChromeFeatureList.AUTOFILL_ADDRESS_PROFILE_SAVE_PROMPT_NICKNAME_SUPPORT)) {
-            nicknameInputLayout.setVisibility(View.GONE);
-            return;
-        }
-        EditText nicknameInput = mDialogView.findViewById(R.id.nickname_input);
-        nicknameInput.setOnFocusChangeListener(
-                (v, hasFocus) ->
-                        nicknameInputLayout.setHint(
-                                !hasFocus && TextUtils.isEmpty(nicknameInput.getText())
-                                        // TODO(crbug.com/40267973): Use localized strings.
-                                        ? "Add a label"
-                                        : "Label"));
-
-        // Prevent input from being focused when keyboard is closed.
-        KeyboardVisibilityDelegate.getInstance()
-                .addKeyboardVisibilityListener(
-                        isShowing -> {
-                            if (!isShowing && nicknameInput.hasFocus()) nicknameInput.clearFocus();
-                        });
     }
 
     void setAddressEditorForTesting(AddressEditorCoordinator addressEditor) {

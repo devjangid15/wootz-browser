@@ -4,17 +4,19 @@
 
 package org.chromium.chrome.browser.optimization_guide;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.util.Base64;
 
 import androidx.annotation.IntDef;
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.Log;
 import org.chromium.base.ResettersForTesting;
-import org.chromium.base.cached_flags.IntCachedFieldTrialParameter;
 import org.chromium.base.library_loader.LibraryLoader;
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
 import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
@@ -35,8 +37,9 @@ import java.util.Set;
  * native is down are persisted to prefs, up to an experimentally controlled limit. Such overflows
  * are detected and also forwarded to native.
  */
+@NullMarked
 public class OptimizationGuidePushNotificationManager {
-    private static Boolean sNativeIsInitialized;
+    private static @Nullable Boolean sNativeIsInitialized;
 
     private static final String TAG = "OGPNotificationMngr";
 
@@ -68,13 +71,9 @@ public class OptimizationGuidePushNotificationManager {
     /** A sentinel Set that is set when the pref for a specific OptimizationType overflows. */
     private static final Set<String> OVERFLOW_SENTINEL_SET = Set.of("__overflow");
 
-    /** The default cache size in Java for push notification. */
-    public static final IntCachedFieldTrialParameter MAX_CACHE_SIZE =
-            ChromeFeatureList.newIntCachedFieldTrialParameter(
-                    ChromeFeatureList.OPTIMIZATION_GUIDE_PUSH_NOTIFICATIONS, "max_cache_size", 100);
-
     /**
      * Called when a new push notification is received.
+     *
      * @param payload the incoming payload.
      */
     public static void onPushNotification(HintNotificationPayload payload) {
@@ -85,8 +84,10 @@ public class OptimizationGuidePushNotificationManager {
         }
 
         if (nativeIsInitialized()) {
-            OptimizationGuideBridgeFactory.getForProfile(ProfileManager.getLastUsedRegularProfile())
-                    .onNewPushNotification(payload);
+            var optimizationGuideBridge =
+                    OptimizationGuideBridgeFactory.getForProfile(
+                            ProfileManager.getLastUsedRegularProfile());
+            assumeNonNull(optimizationGuideBridge).onNewPushNotification(payload);
             return;
         }
 
@@ -124,15 +125,14 @@ public class OptimizationGuidePushNotificationManager {
      * @param optimizationType the optimization type to get cached notifications for
      * @return a possibly null array of persisted notifications
      */
-    @Nullable
-    public static HintNotificationPayload[] getNotificationCacheForOptimizationType(
+    public static HintNotificationPayload @Nullable [] getNotificationCacheForOptimizationType(
             OptimizationType optimizationType) {
         Set<String> cache = getStringCacheForOptimizationType(optimizationType);
         if (checkForOverflow(cache)) return null;
 
         Iterator<String> cache_iter = cache.iterator();
 
-        List<HintNotificationPayload> notifications = new ArrayList<HintNotificationPayload>();
+        List<HintNotificationPayload> notifications = new ArrayList<>();
         for (int i = 0; i < cache.size(); i++) {
             try {
                 HintNotificationPayload payload =
@@ -174,7 +174,7 @@ public class OptimizationGuidePushNotificationManager {
      * types with overflowed caches are not included.
      */
     public static List<OptimizationType> getOptTypesWithPushNotifications() {
-        List<OptimizationType> types = new ArrayList<OptimizationType>();
+        List<OptimizationType> types = new ArrayList<>();
         for (OptimizationType type : OptimizationType.values()) {
             Set<String> cache = ChromeSharedPreferences.getInstance().readStringSet(cacheKey(type));
             if (cache != null && cache.size() > 0 && !checkForOverflow(cache)) {
@@ -188,7 +188,7 @@ public class OptimizationGuidePushNotificationManager {
      * Returns a list of all the optimization types that overflowed their push notification caches.
      */
     public static List<OptimizationType> getOptTypesThatOverflowedPushNotifications() {
-        List<OptimizationType> overflows = new ArrayList<OptimizationType>();
+        List<OptimizationType> overflows = new ArrayList<>();
         for (OptimizationType type : OptimizationType.values()) {
             if (checkForOverflow(getStringCacheForOptimizationType(type))) {
                 overflows.add(type);
@@ -200,7 +200,7 @@ public class OptimizationGuidePushNotificationManager {
     @VisibleForTesting
     public static String cacheKey(OptimizationType optimizationType) {
         return ChromePreferenceKeys.OPTIMIZATION_GUIDE_PUSH_NOTIFICATION_CACHE.createKey(
-                optimizationType.toString());
+                optimizationType.name());
     }
 
     public static void setNativeIsInitializedForTesting(Boolean nativeIsInitialized) {
@@ -229,7 +229,9 @@ public class OptimizationGuidePushNotificationManager {
         if (checkForOverflow(cache)) return;
 
         // Check if we would overflow the cache by writing the new element.
-        if (cache.size() >= MAX_CACHE_SIZE.getValue() - 1) {
+        if (cache.size()
+                >= ChromeFeatureList.sOptimizationGuidePushNotificationsMaxCacheSize.getValue()
+                        - 1) {
             ChromeSharedPreferences.getInstance()
                     .writeStringSet(cacheKey(payload.getOptimizationType()), OVERFLOW_SENTINEL_SET);
             return;

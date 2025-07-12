@@ -4,9 +4,11 @@
 
 #include "components/dom_distiller/core/distilled_page_prefs_android.h"
 
-#include "components/dom_distiller/core/android/jni_headers/DistilledPagePrefs_jni.h"
 #include "components/dom_distiller/core/distilled_page_prefs.h"
 #include "components/dom_distiller/core/dom_distiller_service.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "components/dom_distiller/core/android/jni_headers/DistilledPagePrefs_jni.h"
 
 using base::android::JavaParamRef;
 
@@ -20,41 +22,33 @@ DistilledPagePrefsAndroid::DistilledPagePrefsAndroid(
     DistilledPagePrefs* distilled_page_prefs_ptr)
     : distilled_page_prefs_(distilled_page_prefs_ptr) {}
 
-DistilledPagePrefsAndroid::~DistilledPagePrefsAndroid() {}
+DistilledPagePrefsAndroid::~DistilledPagePrefsAndroid() = default;
 
 void DistilledPagePrefsAndroid::SetFontFamily(JNIEnv* env,
-                                              const JavaParamRef<jobject>& obj,
                                               jint font_family) {
   distilled_page_prefs_->SetFontFamily(
       static_cast<mojom::FontFamily>(font_family));
 }
 
-jint DistilledPagePrefsAndroid::GetFontFamily(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& obj) {
+jint DistilledPagePrefsAndroid::GetFontFamily(JNIEnv* env) {
   return (int)distilled_page_prefs_->GetFontFamily();
 }
 
 void DistilledPagePrefsAndroid::SetTheme(JNIEnv* env,
-                                         const JavaParamRef<jobject>& obj,
                                          jint theme) {
   distilled_page_prefs_->SetTheme(static_cast<mojom::Theme>(theme));
 }
 
-jint DistilledPagePrefsAndroid::GetTheme(JNIEnv* env,
-                                         const JavaParamRef<jobject>& obj) {
+jint DistilledPagePrefsAndroid::GetTheme(JNIEnv* env) {
   return (int)distilled_page_prefs_->GetTheme();
 }
 
 void DistilledPagePrefsAndroid::SetFontScaling(JNIEnv* env,
-                                               const JavaParamRef<jobject>& obj,
                                                jfloat scaling) {
   distilled_page_prefs_->SetFontScaling(static_cast<float>(scaling));
 }
 
-jfloat DistilledPagePrefsAndroid::GetFontScaling(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& obj) {
+jfloat DistilledPagePrefsAndroid::GetFontScaling(JNIEnv* env) {
   return distilled_page_prefs_->GetFontScaling();
 }
 
@@ -69,7 +63,6 @@ jlong JNI_DistilledPagePrefs_Init(JNIEnv* env,
 }
 
 void DistilledPagePrefsAndroid::AddObserver(JNIEnv* env,
-                                            const JavaParamRef<jobject>& obj,
                                             jlong observer_ptr) {
   DistilledPagePrefsObserverAndroid* distilled_page_prefs_observer_wrapper =
       reinterpret_cast<DistilledPagePrefsObserverAndroid*>(observer_ptr);
@@ -77,7 +70,6 @@ void DistilledPagePrefsAndroid::AddObserver(JNIEnv* env,
 }
 
 void DistilledPagePrefsAndroid::RemoveObserver(JNIEnv* env,
-                                               const JavaParamRef<jobject>& obj,
                                                jlong observer_ptr) {
   DistilledPagePrefsObserverAndroid* distilled_page_prefs_observer_wrapper =
       reinterpret_cast<DistilledPagePrefsObserverAndroid*>(observer_ptr);
@@ -90,7 +82,8 @@ DistilledPagePrefsObserverAndroid::DistilledPagePrefsObserverAndroid(
   java_ref_.Reset(env, obj);
 }
 
-DistilledPagePrefsObserverAndroid::~DistilledPagePrefsObserverAndroid() {}
+DistilledPagePrefsObserverAndroid::~DistilledPagePrefsObserverAndroid() =
+    default;
 
 void DistilledPagePrefsObserverAndroid::DestroyObserverAndroid(JNIEnv* env) {
   delete this;

@@ -55,7 +55,7 @@ class DownloadStatusChecker : public SingleClientStatusChangeChecker {
     *os << "Waiting for download status kUpToDate for WORKSPACE_DESK.";
 
     return service()->GetDownloadStatusFor(syncer::WORKSPACE_DESK) ==
-           syncer::SyncService::ModelTypeDownloadStatus::kUpToDate;
+           syncer::SyncService::DataTypeDownloadStatus::kUpToDate;
   }
 };
 
@@ -149,7 +149,7 @@ IN_PROC_BROWSER_TEST_F(TwoClientWorkspaceDeskSyncTest,
           /*creation_time=*/syncer::TimeToProtoTime(AdvanceAndGetTime()),
           /*last_modified_time=*/syncer::TimeToProtoTime(AdvanceAndGetTime())));
 
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+  ASSERT_TRUE(SetupSync());
   // Make sure the template is on both client.
   ASSERT_TRUE(
       workspace_desk_helper::DeskUuidChecker(

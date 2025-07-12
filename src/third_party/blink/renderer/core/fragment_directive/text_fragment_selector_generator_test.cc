@@ -15,8 +15,8 @@
 #include "components/ukm/test_ukm_recorder.h"
 #include "mojo/public/cpp/bindings/receiver_set.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
-#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/mojom/link_to_text/link_to_text.mojom-blink.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 #include "third_party/blink/renderer/core/editing/ephemeral_range.h"
 #include "third_party/blink/renderer/core/editing/iterators/text_iterator.h"
 #include "third_party/blink/renderer/core/fragment_directive/text_fragment_handler.h"
@@ -1834,7 +1834,7 @@ TEST_F(TextFragmentSelectorGeneratorTest,
   ShadowRoot& shadow1 = GetDocument()
                             .getElementById(AtomicString("host1"))
                             ->AttachShadowRootForTesting(ShadowRootMode::kOpen);
-  shadow1.setInnerHTML(R"HTML(
+  shadow1.SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <p id='p'>Right click the link below to experience a crash:</p>
     <style>
           :host {display: contents;}

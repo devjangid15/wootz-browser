@@ -14,17 +14,14 @@ import androidx.annotation.Nullable;
 
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
-import org.chromium.chrome.browser.toolbar.ButtonData;
-import org.chromium.chrome.browser.toolbar.ButtonDataImpl;
+import org.chromium.chrome.browser.toolbar.optional_button.ButtonData;
+import org.chromium.chrome.browser.toolbar.optional_button.ButtonDataImpl;
 import org.chromium.chrome.browser.toolbar.top.ToolbarPhone.VisualState;
 
 /** Unit tests for {@link PhoneCaptureStateToken}. */
@@ -50,10 +47,17 @@ public class PhoneCaptureStateTokenTest {
 
     private static ButtonData makeButtonDate() {
         // Uses default equals impl, reference quality, to compare. Values do not matter.
-        return new ButtonDataImpl(false, null, null, "", false, null, false, 0, 0, false);
+        return new ButtonDataImpl(
+                /* canShow= */ false,
+                /* drawable= */ null,
+                /* onClickListener= */ null,
+                /* contentDescription= */ "",
+                /* supportsTinting= */ false,
+                /* iphCommandBuilder= */ null,
+                /* isEnabled= */ false,
+                /* buttonVariant= */ 0,
+                /* tooltipTextResId= */ 0);
     }
-
-    @Rule public TestRule mProcessor = new Features.JUnitProcessor();
 
     @Before
     public void before() {

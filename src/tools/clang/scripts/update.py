@@ -36,11 +36,14 @@ import zlib
 # https://chromium.googlesource.com/chromium/src/+/main/docs/updating_clang.md
 # Reverting problematic clang rolls is safe, though.
 # This is the output of `git describe` and is usable as a commit-ish.
-CLANG_REVISION = 'llvmorg-19-init-10646-g084e2b53'
-CLANG_SUB_REVISION = 1
+# These fields are written by //tools/clang/scripts/upload_revision.py, and
+# should not be changed manually.
+# They are also read by build/config/compiler/BUILD.gn.
+CLANG_REVISION = 'llvmorg-21-init-16348-gbd809ffb'
+CLANG_SUB_REVISION = 12
 
 PACKAGE_VERSION = '%s-%s' % (CLANG_REVISION, CLANG_SUB_REVISION)
-RELEASE_VERSION = '19'
+RELEASE_VERSION = '21'
 
 CDS_URL = os.environ.get('CDS_CLANG_BUCKET_OVERRIDE',
     'https://commondatastorage.googleapis.com/chromium-browser-clang')
@@ -51,12 +54,12 @@ CHROMIUM_DIR = os.path.abspath(os.path.join(THIS_DIR, '..', '..', '..'))
 LLVM_BUILD_DIR = os.path.join(CHROMIUM_DIR, 'third_party', 'llvm-build',
                               'Release+Asserts')
 
-STAMP_FILE = os.path.normpath(
-    os.path.join(LLVM_BUILD_DIR, 'cr_build_revision'))
+STAMP_FILENAME = 'cr_build_revision'
+STAMP_FILE = os.path.normpath(os.path.join(LLVM_BUILD_DIR, STAMP_FILENAME))
 OLD_STAMP_FILE = os.path.normpath(
-    os.path.join(LLVM_BUILD_DIR, '..', 'cr_build_revision'))
-FORCE_HEAD_REVISION_FILE = os.path.normpath(os.path.join(LLVM_BUILD_DIR, '..',
-                                                   'force_head_revision'))
+    os.path.join(LLVM_BUILD_DIR, '..', STAMP_FILENAME))
+FORCE_HEAD_REVISION_FILE = os.path.normpath(
+    os.path.join(LLVM_BUILD_DIR, '..', 'force_head_revision'))
 
 
 def RmTree(dir):
@@ -205,16 +208,13 @@ def DownloadAndUnpackPackage(package_file,
 
 
 def DownloadAndUnpackClangMacRuntime(output_dir):
-  cds_file = "clang-%s.tar.xz" % PACKAGE_VERSION
+  cds_file = "clang-mac-runtime-library-%s.tar.xz" % PACKAGE_VERSION
   # We run this only for the runtime libraries, and 'mac' and 'mac-arm64' both
   # have the same (universal) runtime libraries. It doesn't matter which one
   # we download here.
   cds_full_url = GetPlatformUrlPrefix('mac') + cds_file
-  path_prefixes = [
-      'lib/clang/' + RELEASE_VERSION + '/lib/darwin', 'include/c++/v1'
-  ]
   try:
-    DownloadAndUnpack(cds_full_url, output_dir, path_prefixes)
+    DownloadAndUnpack(cds_full_url, output_dir)
   except urllib.error.URLError:
     print('Failed to download prebuilt clang %s' % cds_file)
     print('Use build.py if you want to build locally.')
@@ -222,15 +222,11 @@ def DownloadAndUnpackClangMacRuntime(output_dir):
     sys.exit(1)
 
 
-# TODO(hans): Create a clang-win-runtime package instead.
 def DownloadAndUnpackClangWinRuntime(output_dir):
-  cds_file = "clang-%s.tar.xz" % PACKAGE_VERSION
+  cds_file = "clang-win-runtime-library-%s.tar.xz" % PACKAGE_VERSION
   cds_full_url = GetPlatformUrlPrefix('win') + cds_file
-  path_prefixes = [
-      'lib/clang/' + RELEASE_VERSION + '/lib/windows', 'bin/llvm-symbolizer.exe'
-  ]
   try:
-    DownloadAndUnpack(cds_full_url, output_dir, path_prefixes)
+    DownloadAndUnpack(cds_full_url, output_dir)
   except urllib.error.URLError:
     print('Failed to download prebuilt clang %s' % cds_file)
     print('Use build.py if you want to build locally.')
@@ -335,15 +331,7 @@ def main():
   parser.add_argument('--print-clang-version', action='store_true',
                       help=('Print current clang release version (e.g. 9.0.0) '
                             'and exit.'))
-  parser.add_argument('--verify-version',
-                      help='Verify that clang has the passed-in version.')
   args = parser.parse_args()
-
-  if args.verify_version and args.verify_version != RELEASE_VERSION:
-    print('RELEASE_VERSION is %s but --verify-version argument was %s.' % (
-        RELEASE_VERSION, args.verify_version))
-    print('clang_version in build/toolchain/toolchain.gni is likely outdated.')
-    return 1
 
   if args.print_clang_version:
     print(RELEASE_VERSION)
@@ -353,7 +341,7 @@ def main():
   if args.output_dir:
     global STAMP_FILE
     output_dir = os.path.abspath(args.output_dir)
-    STAMP_FILE = os.path.join(output_dir, 'cr_build_revision')
+    STAMP_FILE = os.path.join(output_dir, STAMP_FILENAME)
 
   if args.print_revision:
     if args.llvm_force_head_revision:

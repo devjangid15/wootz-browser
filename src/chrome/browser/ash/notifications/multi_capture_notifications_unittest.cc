@@ -10,28 +10,34 @@
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
 #include "ash/test_shell_delegate.h"
+#include "base/check_deref.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/task_environment.h"
-#include "chrome/browser/ash/crosapi/crosapi_ash.h"
-#include "chrome/browser/ash/crosapi/multi_capture_service_ash.h"
 #include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/ash/policy/multi_screen_capture/multi_screen_capture_policy_service.h"
 #include "chrome/browser/ash/policy/multi_screen_capture/multi_screen_capture_policy_service_factory.h"
 #include "chrome/browser/media/webrtc/capture_policy_utils.h"
 #include "chrome/browser/notifications/notification_display_service_tester.h"
 #include "chrome/browser/notifications/system_notification_helper.h"
+#include "chrome/browser/prefs/browser_prefs.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "chrome/test/base/testing_browser_process.h"
+#include "chrome/test/base/testing_profile_manager.h"
 #include "chromeos/ash/components/dbus/userdataauth/userdataauth_client.h"
+#include "chromeos/constants/chromeos_features.h"
 #include "components/account_id/account_id.h"
+#include "components/prefs/scoped_user_pref_update.h"
+#include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "components/user_manager/fake_user_manager.h"
 #include "components/user_manager/scoped_user_manager.h"
+#include "components/webapps/isolated_web_apps/iwa_key_distribution_info_provider.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/test/browser_task_environment.h"
+#include "google_apis/gaia/gaia_id.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "ui/message_center/public/cpp/notification.h"
 #include "url/origin.h"
@@ -39,47 +45,7 @@
 namespace {
 constexpr base::TimeDelta kMinimumNotificationPresenceTime = base::Seconds(6);
 constexpr char kUserMail[] = "testingprofile@chromium.org";
-
-class MockMultiCaptureService : public crosapi::mojom::MultiCaptureService {
- public:
-  MockMultiCaptureService() = default;
-  MockMultiCaptureService(const MockMultiCaptureService&) = delete;
-  MockMultiCaptureService& operator=(const MockMultiCaptureService&) = delete;
-  ~MockMultiCaptureService() override = default;
-
-  void BindReceiver(
-      mojo::PendingReceiver<crosapi::mojom::MultiCaptureService> receiver) {
-    receivers_.Add(this, std::move(receiver));
-  }
-
-  // crosapi::mojom::MultiCaptureService:
-  MOCK_METHOD(void,
-              MultiCaptureStarted,
-              (const std::string& label, const std::string& host),
-              (override));
-  MOCK_METHOD(void,
-              MultiCaptureStopped,
-              (const std::string& label),
-              (override));
-  MOCK_METHOD(void,
-              MultiCaptureStartedFromApp,
-              (const std::string& label,
-               const std::string& app_id,
-               const std::string& app_name),
-              (override));
-  MOCK_METHOD(void,
-              IsMultiCaptureAllowed,
-              (const GURL& url, IsMultiCaptureAllowedCallback),
-              (override));
-  MOCK_METHOD(void,
-              IsMultiCaptureAllowedForAnyOriginOnMainProfile,
-              (IsMultiCaptureAllowedForAnyOriginOnMainProfileCallback),
-              (override));
-
- private:
-  mojo::ReceiverSet<crosapi::mojom::MultiCaptureService> receivers_;
-};
-
+constexpr GaiaId::Literal kFakeGaia("fakegaia");
 }  // namespace
 
 namespace ash {
@@ -95,7 +61,7 @@ class MultiCaptureNotificationsTest : public BrowserWithTestWindowTest {
     BrowserWithTestWindowTest::SetUp();
     UserDataAuthClient::InitializeFake();
 
-    LogIn(kUserMail);
+    LogIn(kUserMail, kFakeGaia);
     auto* user_profile = CreateProfile(kUserMail);
     ASSERT_TRUE(user_profile);
 
@@ -113,14 +79,9 @@ class MultiCaptureNotificationsTest : public BrowserWithTestWindowTest {
         &MultiCaptureNotificationsTest::OnNotificationRemoved,
         base::Unretained(this)));
     notification_count_ = 0u;
-
-    capture_policy::SetMultiCaptureServiceForTesting(
-        &mock_multi_capture_service_);
   }
 
   void TearDown() override {
-    capture_policy::SetMultiCaptureServiceForTesting(
-        /*service=*/nullptr);
     multi_capture_notifications_.reset();
     UserDataAuthClient::Shutdown();
     BrowserWithTestWindowTest::TearDown();
@@ -151,17 +112,31 @@ class MultiCaptureNotificationsTest : public BrowserWithTestWindowTest {
  protected:
   std::unique_ptr<NotificationDisplayServiceTester> tester_;
   std::unique_ptr<MultiCaptureNotifications> multi_capture_notifications_;
-  testing::StrictMock<MockMultiCaptureService> mock_multi_capture_service_;
-
   unsigned int notification_count_;
 };
 
-TEST_F(MultiCaptureNotificationsTest, LoginNotificationTriggeredOnLogin) {
-  EXPECT_CALL(mock_multi_capture_service_,
-              IsMultiCaptureAllowedForAnyOriginOnMainProfile(testing::_))
-      .WillOnce(testing::Invoke([](base::OnceCallback<void(bool)> callback) {
-        std::move(callback).Run(true);
-      }));
+class MultiCaptureNotificationsTestWithPrefs
+    : public MultiCaptureNotificationsTest {
+ public:
+  TestingProfile* CreateProfile(const std::string& profile_name) override {
+    auto prefs =
+        std::make_unique<sync_preferences::TestingPrefServiceSyncable>();
+    RegisterUserProfilePrefs(prefs->registry());
+    {
+      ScopedListPrefUpdate update(
+          prefs.get(),
+          capture_policy::kManagedMultiScreenCaptureAllowedForUrls);
+      update->Append("fake_url");
+    }
+    auto* profile = profile_manager()->CreateTestingProfile(
+        profile_name, std::move(prefs), /*user_name=*/std::u16string(),
+        /*avatar_id=*/0, GetTestingFactories());
+    return profile;
+  }
+};
+
+TEST_F(MultiCaptureNotificationsTestWithPrefs,
+       LoginNotificationTriggeredOnLogin) {
   EXPECT_EQ(0u, notification_count_);
 
   LoginState::Get()->SetLoggedInState(
@@ -180,11 +155,6 @@ TEST_F(MultiCaptureNotificationsTest, LoginNotificationTriggeredOnLogin) {
 
 TEST_F(MultiCaptureNotificationsTest,
        LoginFeatureDisabledNotificationNotTriggeredOnLogin) {
-  EXPECT_CALL(mock_multi_capture_service_,
-              IsMultiCaptureAllowedForAnyOriginOnMainProfile(testing::_))
-      .WillOnce(testing::Invoke([](base::OnceCallback<void(bool)> callback) {
-        std::move(callback).Run(false);
-      }));
   EXPECT_EQ(0u, notification_count_);
 
   LoginState::Get()->SetLoggedInState(
@@ -230,11 +200,13 @@ TEST_F(
     CaptureNotificationsWithDifferentOriginsStartedAndStoppedAfterSixSeconds) {
   multi_capture_notifications_->MultiCaptureStarted(
       /*label=*/"test_label_1",
-      /*origin=*/url::Origin::CreateFromNormalizedTuple(
+      /*origin=*/
+      url::Origin::CreateFromNormalizedTuple(
           /*scheme=*/"https", /*host=*/"example.com", /*port=*/443));
   multi_capture_notifications_->MultiCaptureStarted(
       /*label=*/"test_label_2",
-      /*origin=*/url::Origin::CreateFromNormalizedTuple(
+      /*origin=*/
+      url::Origin::CreateFromNormalizedTuple(
           /*scheme=*/"https", /*host=*/"anotherexample.com", /*port=*/443));
   CheckCaptureNotification(u"example.com");
   CheckCaptureNotification(u"anotherexample.com");
@@ -277,11 +249,13 @@ TEST_F(
     CaptureFastNotificationsWithDifferentOriginsStartedAndStoppedExpectedClosingDelay) {
   multi_capture_notifications_->MultiCaptureStarted(
       /*label=*/"test_label_1",
-      /*origin=*/url::Origin::CreateFromNormalizedTuple(
+      /*origin=*/
+      url::Origin::CreateFromNormalizedTuple(
           /*scheme=*/"https", /*host=*/"example.com", /*port=*/443));
   multi_capture_notifications_->MultiCaptureStarted(
       /*label=*/"test_label_2",
-      /*origin=*/url::Origin::CreateFromNormalizedTuple(
+      /*origin=*/
+      url::Origin::CreateFromNormalizedTuple(
           /*scheme=*/"https", /*host=*/"anotherexample.com", /*port=*/443));
   CheckCaptureNotification(u"example.com");
   CheckCaptureNotification(u"anotherexample.com");
@@ -298,6 +272,33 @@ TEST_F(
   EXPECT_EQ(2u, notification_count_);
 
   task_environment()->FastForwardBy(base::Milliseconds(2));
+  EXPECT_EQ(0u, notification_count_);
+}
+
+TEST_F(MultiCaptureNotificationsTest,
+       AppOnSkipNotificationAllowlistNoNotification) {
+  base::test::ScopedFeatureList scoped_feature_list_{
+      chromeos::features::kMultiCaptureReworkedUsageIndicators};
+  const url::Origin origin_with_allowlisted_exception =
+      url::Origin::CreateFromNormalizedTuple(
+          /*scheme=*/"isolated-app",
+          /*host=*/"aerugqztij5biqquuk3mfwpsaibuegaqcitgfchwuosuofdjabzqaaic",
+          /*port=*/0);
+  web_app::IwaKeyDistributionInfoProvider::GetInstance()
+      .SetComponentDataForTesting(
+          web_app::IwaKeyDistributionInfoProvider::ComponentData(
+              /*version=*/base::Version("1.0.0"),
+              /*key_rotations=*/{},
+              /*special_app_permissions=*/
+              {{origin_with_allowlisted_exception.host(),
+                {.skip_capture_started_notification = true}}},
+              /*managed_allowlist=*/{},
+              /*is_preloaded=*/true));
+
+  multi_capture_notifications_->MultiCaptureStartedFromApp(
+      /*label=*/"test_label",
+      /*app_id*/ "test_app_id",
+      /*app_short_name=*/"app_name", origin_with_allowlisted_exception);
   EXPECT_EQ(0u, notification_count_);
 }
 

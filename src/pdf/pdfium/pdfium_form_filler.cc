@@ -641,7 +641,7 @@ int PDFiumFormFiller::Form_Response(IPDF_JSPLATFORM* param,
   int rv_bytes = rv_16.size() * sizeof(char16_t);
   if (response) {
     int bytes_to_copy = rv_bytes < length ? rv_bytes : length;
-    memcpy(response, rv_16.c_str(), bytes_to_copy);
+    UNSAFE_TODO(memcpy(response, rv_16.c_str(), bytes_to_copy));
   }
   return rv_bytes;
 }
@@ -656,8 +656,9 @@ int PDFiumFormFiller::Form_GetFilePath(IPDF_JSPLATFORM* param,
 
   // Account for the trailing null.
   int necessary_length = rv.size() + 1;
-  if (file_path && necessary_length <= length)
-    memcpy(file_path, rv.c_str(), necessary_length);
+  if (file_path && necessary_length <= length) {
+    UNSAFE_TODO(memcpy(file_path, rv.c_str(), necessary_length));
+  }
   return necessary_length;
 }
 
@@ -731,11 +732,11 @@ PDFiumFormFiller::EngineInIsolateScope::EngineInIsolateScope(
 }
 
 PDFiumFormFiller::EngineInIsolateScope::EngineInIsolateScope(
-    EngineInIsolateScope&&) = default;
+    EngineInIsolateScope&&) noexcept = default;
 
 PDFiumFormFiller::EngineInIsolateScope&
-PDFiumFormFiller::EngineInIsolateScope::operator=(EngineInIsolateScope&&) =
-    default;
+PDFiumFormFiller::EngineInIsolateScope::operator=(
+    EngineInIsolateScope&&) noexcept = default;
 
 PDFiumFormFiller::EngineInIsolateScope::~EngineInIsolateScope() = default;
 

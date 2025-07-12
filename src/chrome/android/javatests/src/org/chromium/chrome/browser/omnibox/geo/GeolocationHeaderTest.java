@@ -13,43 +13,42 @@ import androidx.test.filters.SmallTest;
 
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.CriteriaHelper;
+import org.chromium.base.test.util.DisabledTest;
+import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.RequiresRestart;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.profiles.ProfileManager;
+import org.chromium.chrome.browser.search_engines.TemplateUrlServiceFactory;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
-import org.chromium.chrome.test.batch.BlankCTATabInitialStateRule;
+import org.chromium.chrome.test.transit.AutoResetCtaTransitTestRule;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.page.WebPageStation;
 import org.chromium.chrome.test.util.OmniboxTestUtils;
 import org.chromium.chrome.test.util.browser.LocationSettingsTestUtil;
 import org.chromium.components.browser_ui.site_settings.PermissionInfo;
 import org.chromium.components.content_settings.ContentSettingValues;
 import org.chromium.components.content_settings.ContentSettingsType;
 import org.chromium.components.content_settings.SessionModel;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
-import org.chromium.ui.test.util.DisableAnimationsTestRule;
 
 /** Tests for GeolocationHeader and GeolocationTracker. */
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 @Batch(Batch.PER_CLASS)
 public class GeolocationHeaderTest {
-    public @ClassRule static ChromeTabbedActivityTestRule sActivityTestRule =
-            new ChromeTabbedActivityTestRule();
-    public @ClassRule static DisableAnimationsTestRule disableAnimationsRule =
-            new DisableAnimationsTestRule();
-    public @Rule BlankCTATabInitialStateRule mInitialStateRule =
-            new BlankCTATabInitialStateRule(sActivityTestRule, true);
+    public @Rule AutoResetCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.autoResetCtaActivityRule();
 
+    private WebPageStation mStartingPage;
     private OmniboxTestUtils mOmniboxTestUtils;
 
     private static final String SEARCH_URL_1 = "https://www.google.com/search?q=potatoes";
@@ -61,8 +60,9 @@ public class GeolocationHeaderTest {
 
     @Before
     public void setUp() throws InterruptedException {
+        mStartingPage = mActivityTestRule.startOnBlankPage();
         LocationSettingsTestUtil.setSystemLocationSettingEnabled(true);
-        mOmniboxTestUtils = new OmniboxTestUtils(sActivityTestRule.getActivity());
+        mOmniboxTestUtils = new OmniboxTestUtils(mStartingPage.getActivity());
     }
 
     @Test
@@ -138,6 +138,7 @@ public class GeolocationHeaderTest {
     @Test
     @SmallTest
     @Feature({"Location"})
+    @DisabledTest(message = "https://crbug.com/416787235")
     public void testProtoEncoding() {
         setPermission(ContentSettingValues.ALLOW);
         long now = setMockLocationNow();
@@ -149,6 +150,7 @@ public class GeolocationHeaderTest {
     @Test
     @SmallTest
     @Feature({"Location"})
+    @DisableIf.Build(supported_abis_includes = "x86", message = "https://crbug.com/421965472")
     public void testGpsFallback() {
         setPermission(ContentSettingValues.ALLOW);
         // Only GPS location, should be sent when flag is on.
@@ -162,6 +164,7 @@ public class GeolocationHeaderTest {
     @Test
     @SmallTest
     @Feature({"Location"})
+    @DisabledTest(message = "https://crbug.com/414769376")
     public void testGpsFallbackYounger() {
         setPermission(ContentSettingValues.ALLOW);
         long now = System.currentTimeMillis();
@@ -210,6 +213,7 @@ public class GeolocationHeaderTest {
     @Test
     @SmallTest
     @Feature({"Location"})
+    @DisabledTest(message = "Flaky. See crbug.com/392607758")
     public void testGeolocationHeaderPrimingDisabledPermissionAsk() {
         setPermission(ContentSettingValues.ASK);
         checkHeaderPriming(/* shouldPrimeHeader= */ false);
@@ -219,7 +223,8 @@ public class GeolocationHeaderTest {
     @SmallTest
     @Feature({"Location"})
     @RequiresRestart(value = "Needs to reset cached geolocation from previous tests")
-    public void testGeolocationHeaderPrimingDisabledOSPermissionBlocked() {
+    @DisabledTest(message = "Flaky. See crbug.com/392607758")
+    public void testGeolocationHeaderPrimingDisabledOsPermissionBlocked() {
         setPermission(ContentSettingValues.ALLOW);
         LocationSettingsTestUtil.setSystemLocationSettingEnabled(false);
         checkHeaderPriming(/* shouldPrimeHeader= */ false);
@@ -229,48 +234,30 @@ public class GeolocationHeaderTest {
             final @ContentSettingValues int httpsPermission,
             final long locationTime,
             final boolean shouldBeNull) {
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     PermissionInfo infoHttps =
                             new PermissionInfo(
                                     ContentSettingsType.GEOLOCATION,
                                     SEARCH_URL_1,
                                     null,
-                                    /* isEmbargo= */ false,
+                                    /* isEmbargoed= */ false,
                                     SessionModel.DURABLE);
                     infoHttps.setContentSetting(
                             ProfileManager.getLastUsedRegularProfile(), httpsPermission);
-                    String header =
-                            GeolocationHeader.getGeoHeader(
-                                    SEARCH_URL_1, sActivityTestRule.getActivity().getActivityTab());
-                    assertHeaderState(header, locationTime, shouldBeNull);
-                });
-    }
-
-    private void checkHeaderWithLocation(final long locationTime, final boolean shouldBeNull) {
-        TestThreadUtils.runOnUiThreadBlocking(
-                () -> {
-                    setMockLocation(locationTime);
-                    String header =
-                            GeolocationHeader.getGeoHeader(
-                                    SEARCH_URL_1, sActivityTestRule.getActivity().getActivityTab());
+                    var profile = mActivityTestRule.getActivity().getActivityTab().getProfile();
+                    var service = TemplateUrlServiceFactory.getForProfile(profile);
+                    String header = GeolocationHeader.getGeoHeader(SEARCH_URL_1, profile, service);
                     assertHeaderState(header, locationTime, shouldBeNull);
                 });
     }
 
     private void checkHeaderPriming(boolean shouldPrimeHeader) {
-        sActivityTestRule.loadUrlInNewTab("about:blank", false);
+        mActivityTestRule.loadUrlInNewTab("about:blank", false);
         mOmniboxTestUtils.requestFocus();
         mOmniboxTestUtils.typeText("aaaaaaaaaa", false);
         mOmniboxTestUtils.waitAnimationsComplete();
-        // We use the existance of the GeolocationHeader.sFirstLocation field to indicate whether
-        // there has been a location request yet.
-        if (shouldPrimeHeader) {
-            Assert.assertNotEquals(
-                    Long.MAX_VALUE, GeolocationHeader.getFirstLocationTimeForTesting());
-        } else {
-            Assert.assertEquals(Long.MAX_VALUE, GeolocationHeader.getFirstLocationTimeForTesting());
-        }
+        Assert.assertEquals(shouldPrimeHeader, GeolocationHeader.isGeolocationPrimedForTesting());
     }
 
     private void assertHeaderState(String header, long locationTime, boolean shouldBeNull) {
@@ -304,19 +291,24 @@ public class GeolocationHeaderTest {
     }
 
     private void assertNullHeader(final String url, final boolean isIncognito) {
-        final Tab tab = sActivityTestRule.loadUrlInNewTab("about:blank", isIncognito);
-        TestThreadUtils.runOnUiThreadBlocking(
+        final Tab tab = mActivityTestRule.loadUrlInNewTab("about:blank", isIncognito);
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    Assert.assertNull(GeolocationHeader.getGeoHeader(url, tab));
+                    var profile = mActivityTestRule.getActivity().getActivityTab().getProfile();
+                    var service = TemplateUrlServiceFactory.getForProfile(profile);
+                    Assert.assertNull(GeolocationHeader.getGeoHeader(url, profile, service));
                 });
     }
 
     private void assertNonNullHeader(
             final String url, final boolean isIncognito, final long locationTime) {
-        final Tab tab = sActivityTestRule.loadUrlInNewTab("about:blank", isIncognito);
-        TestThreadUtils.runOnUiThreadBlocking(
+        final Tab tab = mActivityTestRule.loadUrlInNewTab("about:blank", isIncognito);
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    assertHeaderEquals(locationTime, GeolocationHeader.getGeoHeader(url, tab));
+                    var profile = mActivityTestRule.getActivity().getActivityTab().getProfile();
+                    var service = TemplateUrlServiceFactory.getForProfile(profile);
+                    assertHeaderEquals(
+                            locationTime, GeolocationHeader.getGeoHeader(url, profile, service));
                 });
     }
 
@@ -369,10 +361,10 @@ public class GeolocationHeaderTest {
                         ContentSettingsType.GEOLOCATION,
                         SEARCH_URL_1,
                         /* embedder= */ null,
-                        /* isEmbargo= */ false,
+                        /* isEmbargoed= */ false,
                         sessionModel);
 
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     infoHttps.setContentSetting(
                             ProfileManager.getLastUsedRegularProfile(), setting);

@@ -18,7 +18,7 @@
 #include "gpu/command_buffer/service/shared_image/shared_image_backing.h"
 #include "gpu/command_buffer/service/shared_image/shared_image_representation.h"
 #include "third_party/skia/include/core/SkAlphaType.h"
-#include "third_party/skia/include/gpu/GrTypes.h"
+#include "third_party/skia/include/gpu/ganesh/GrTypes.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/gpu_fence.h"
@@ -43,7 +43,7 @@ class GPU_GLES2_EXPORT DXGISwapChainImageBacking
       const gfx::ColorSpace& color_space,
       GrSurfaceOrigin surface_origin,
       SkAlphaType alpha_type,
-      uint32_t usage,
+      gpu::SharedImageUsageSet usage,
       std::string debug_label);
 
   DXGISwapChainImageBacking(const DXGISwapChainImageBacking&) = delete;
@@ -79,7 +79,7 @@ class GPU_GLES2_EXPORT DXGISwapChainImageBacking
       const gfx::ColorSpace& color_space,
       GrSurfaceOrigin surface_origin,
       SkAlphaType alpha_type,
-      uint32_t usage,
+      gpu::SharedImageUsageSet usage,
       std::string debug_label,
       Microsoft::WRL::ComPtr<ID3D11Device> d3d11_device,
       Microsoft::WRL::ComPtr<IDXGISwapChain1> dxgi_swap_chain,
@@ -99,6 +99,7 @@ class GPU_GLES2_EXPORT DXGISwapChainImageBacking
   friend class DawnRepresentationDXGISwapChain;
   wgpu::Texture BeginAccessDawn(const wgpu::Device& device,
                                 wgpu::TextureUsage usage,
+                                wgpu::TextureUsage internal_usage,
                                 const gfx::Rect& update_rect);
   void EndAccessDawn(const wgpu::Device& device, wgpu::Texture texture);
 
@@ -114,6 +115,8 @@ class GPU_GLES2_EXPORT DXGISwapChainImageBacking
   // This |shared_texture_memory_| wraps the ComPtr<ID3D11Texture> instead of
   // creating from a share HANDLE.
   wgpu::SharedTextureMemory shared_texture_memory_;
+  wgpu::Texture cached_wgpu_texture_;
+  wgpu::TextureUsage cached_wgpu_texture_usage_ = wgpu::TextureUsage::None;
 
   // Count of buffers in |dxgi_swap_chain_| that need to have their alpha
   // channels be cleared to opaque before use. If positive at the start of write

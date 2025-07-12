@@ -28,22 +28,24 @@
 #include <optional>
 
 #include "base/check_op.h"
-#include "base/functional/function_ref.h"
+#include "base/compiler_specific.h"
 #include "base/memory/stack_allocated.h"
 #include "base/notreached.h"
+#include "third_party/blink/renderer/platform/geometry/evaluation_input.h"
 #include "third_party/blink/renderer/platform/geometry/layout_unit.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
-
-namespace WTF {
-class String;
-}  // namespace WTF
 
 namespace blink {
 
 struct PixelsAndPercent {
   DISALLOW_NEW();
+
+  // The default constructor places this in an invalid state.
+  PixelsAndPercent() = default;
+
   explicit PixelsAndPercent(float pixels)
       : pixels(pixels),
         percent(0.0f),
@@ -83,10 +85,10 @@ struct PixelsAndPercent {
     return *this;
   }
 
-  float pixels;
-  float percent;
-  bool has_explicit_pixels;
-  bool has_explicit_percent;
+  float pixels = 0.f;
+  float percent = 0.f;
+  bool has_explicit_pixels = false;
+  bool has_explicit_percent = false;
 };
 
 class CalculationValue;
@@ -94,6 +96,7 @@ class Length;
 
 PLATFORM_EXPORT extern const Length& g_auto_length;
 PLATFORM_EXPORT extern const Length& g_fill_available_length;
+PLATFORM_EXPORT extern const Length& g_stretch_length;
 PLATFORM_EXPORT extern const Length& g_fit_content_length;
 PLATFORM_EXPORT extern const Length& g_max_content_length;
 PLATFORM_EXPORT extern const Length& g_min_content_length;
@@ -118,6 +121,7 @@ class PLATFORM_EXPORT Length {
     kMaxContent,
     kMinIntrinsic,
     kFillAvailable,
+    kStretch,
     kFitContent,
     kCalculated,
     kFlex,
@@ -153,26 +157,26 @@ class PLATFORM_EXPORT Length {
     value_ = ClampTo<float>(v);
   }
 
-  explicit Length(scoped_refptr<const CalculationValue>);
+  explicit Length(const CalculationValue*);
 
   Length(const Length& length) {
-    memcpy(this, &length, sizeof(Length));
+    UNSAFE_TODO(memcpy(this, &length, sizeof(Length)));
     if (IsCalculated())
-      IncrementCalculatedRef();
+      IncrementCalculatedCount();
   }
 
   Length& operator=(const Length& length) {
     if (length.IsCalculated())
-      length.IncrementCalculatedRef();
+      length.IncrementCalculatedCount();
     if (IsCalculated())
-      DecrementCalculatedRef();
-    memcpy(this, &length, sizeof(Length));
+      DecrementCalculatedCount();
+    UNSAFE_TODO(memcpy(this, &length, sizeof(Length)));
     return *this;
   }
 
   ~Length() {
     if (IsCalculated())
-      DecrementCalculatedRef();
+      DecrementCalculatedCount();
   }
 
   bool operator==(const Length& o) const {
@@ -191,6 +195,7 @@ class PLATFORM_EXPORT Length {
 
   static const Length& Auto() { return g_auto_length; }
   static const Length& FillAvailable() { return g_fill_available_length; }
+  static const Length& Stretch() { return g_stretch_length; }
   static const Length& FitContent() { return g_fit_content_length; }
   static const Length& MaxContent() { return g_max_content_length; }
   static const Length& MinContent() { return g_min_content_length; }
@@ -214,17 +219,9 @@ class PLATFORM_EXPORT Length {
   }
   static Length Flex(float value) { return Length(value, kFlex); }
 
-  // FIXME: Make this private (if possible) or at least rename it
-  // (http://crbug.com/432707).
-  inline float Value() const {
-    DCHECK(!IsCalculated());
-    return GetFloatValue();
-  }
-
   int IntValue() const {
     if (IsCalculated()) {
-      NOTREACHED_IN_MIGRATION();
-      return 0;
+      NOTREACHED();
     }
     DCHECK(!IsNone());
     return static_cast<int>(value_);
@@ -234,9 +231,12 @@ class PLATFORM_EXPORT Length {
     DCHECK_EQ(GetType(), kFixed);
     return GetFloatValue();
   }
-
   float Percent() const {
     DCHECK_EQ(GetType(), kPercent);
+    return GetFloatValue();
+  }
+  float Flex() const {
+    DCHECK_EQ(GetType(), kFlex);
     return GetFloatValue();
   }
 
@@ -247,7 +247,7 @@ class PLATFORM_EXPORT Length {
   // If |this| is calculated, returns the underlying |CalculationValue|. If not,
   // returns a |CalculationValue| constructed from |GetPixelsAndPercent()|. Hits
   // a DCHECK if |this| is not a specified value (e.g., 'auto').
-  scoped_refptr<const CalculationValue> AsCalculationValue() const;
+  const CalculationValue* AsCalculationValue() const;
 
   Length::Type GetType() const { return static_cast<Length::Type>(type_); }
   bool Quirk() const { return quirk_; }
@@ -288,18 +288,45 @@ class PLATFORM_EXPORT Length {
   bool HasPercentOrStretch() const;
   bool HasStretch() const;
 
-  bool IsSpecified() const {
+  bool HasMinContent() const;
+  bool HasMaxContent() const;
+  bool HasMinIntrinsic() const { return IsMinIntrinsic(); }
+  bool HasFitContent() const;
+
+  // CanConvertToCalculation() is true for any Lengths that are a fixed length,
+  // a percent, or a calc() expression.  Note that this *includes* calc-size()
+  // expressions that contain sizing keywords, which may not be what you want.
+  //
+  // Compare to HasOnlyFixedAndPercent.  (The difference is relevant only when
+  // sizing keywords may be present.)
+  //
+  // Note that in some contexts sizing keywords can be converted to
+  // calculation expressions, but this function does *not* return true for
+  // those cases; the caller is required to convert appropriately.
+  bool CanConvertToCalculation() const {
     return GetType() == kFixed || GetType() == kPercent ||
            GetType() == kCalculated;
   }
 
+  // HasOnlyFixedAndPercent() is true for any Lengths that are a fixed length,
+  // a percent, or calc() expressions that consist only of those.  (This
+  // excludes calc() expressions with calc-size() that depend on sizing
+  // keywords.)
+  // Compare to CanConvertToCalculation.  (The difference is relevant only
+  // when sizing keywords may be present.)
+  bool HasOnlyFixedAndPercent() const;
+
   bool IsCalculated() const { return GetType() == kCalculated; }
   bool IsCalculatedEqual(const Length&) const;
+
+  // These type checking methods should be used with extreme caution;
+  // many uses probably want the Has* methods above to work correctly
+  // with calc-size().
   bool IsMinContent() const { return GetType() == kMinContent; }
   bool IsMaxContent() const { return GetType() == kMaxContent; }
-  bool IsContent() const { return GetType() == kContent; }
   bool IsMinIntrinsic() const { return GetType() == kMinIntrinsic; }
   bool IsFillAvailable() const { return GetType() == kFillAvailable; }
+  bool IsStretch() const { return GetType() == kStretch; }
   bool IsFitContent() const { return GetType() == kFitContent; }
   bool IsPercent() const { return GetType() == kPercent; }
   // MayHavePercentDependence should be used to decide whether to optimize
@@ -329,8 +356,8 @@ class PLATFORM_EXPORT Length {
   bool IsDeviceHeight() const { return GetType() == kDeviceHeight; }
 
   Length Blend(const Length& from, double progress, ValueRange range) const {
-    DCHECK(IsSpecified());
-    DCHECK(from.IsSpecified());
+    DCHECK(CanConvertToCalculation());
+    DCHECK(from.CanConvertToCalculation());
 
     if (progress == 0.0)
       return from;
@@ -350,22 +377,6 @@ class PLATFORM_EXPORT Length {
     return BlendSameTypes(from, progress, range);
   }
 
-  float GetFloatValue() const {
-    DCHECK(!IsNone());
-    DCHECK(!IsCalculated());
-    return value_;
-  }
-
-  using IntrinsicLengthEvaluator = base::FunctionRef<LayoutUnit(const Length&)>;
-
-  struct EvaluationInput {
-    STACK_ALLOCATED();
-
-   public:
-    std::optional<float> size_keyword_basis = std::nullopt;
-    std::optional<IntrinsicLengthEvaluator> intrinsic_evaluator = std::nullopt;
-  };
-
   float NonNanCalculatedValue(float max_value, const EvaluationInput&) const;
 
   Length SubtractFromOneHundredPercent() const;
@@ -374,9 +385,21 @@ class PLATFORM_EXPORT Length {
 
   Length Zoom(double factor) const;
 
+  unsigned GetCalculatedCountForTest() const;
+
+  static wtf_size_t GetCalcHandleMapSizeForTest();
+
   WTF::String ToString() const;
 
+  unsigned GetHash() const;
+
  private:
+  float GetFloatValue() const {
+    DCHECK(!IsNone());
+    DCHECK(!IsCalculated());
+    return value_;
+  }
+
   Length BlendMixedTypes(const Length& from, double progress, ValueRange) const;
 
   Length BlendSameTypes(const Length& from, double progress, ValueRange) const;
@@ -385,8 +408,8 @@ class PLATFORM_EXPORT Length {
     DCHECK(IsCalculated());
     return calculation_handle_;
   }
-  void IncrementCalculatedRef() const;
-  void DecrementCalculatedRef() const;
+  void IncrementCalculatedCount() const;
+  void DecrementCalculatedCount() const;
 
   union {
     // If kType == kCalculated.

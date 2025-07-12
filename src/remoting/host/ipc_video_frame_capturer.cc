@@ -5,7 +5,7 @@
 #include "remoting/host/ipc_video_frame_capturer.h"
 
 #include "base/check.h"
-#include "base/notreached.h"
+#include "base/notimplemented.h"
 #include "remoting/host/desktop_session_proxy.h"
 #include "remoting/host/video_memory_utils.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_frame.h"
@@ -68,6 +68,12 @@ bool IpcVideoFrameCapturer::SelectSource(SourceId id) {
   // will be disconnected and the Desktop process will delete the old capturer.
   desktop_session_proxy_->RebindSingleVideoCapturer(id, GetWeakPtr());
   return true;
+}
+
+void IpcVideoFrameCapturer::SetComposeEnabled(bool enabled) {
+  if (capturer_control_) {
+    capturer_control_->SetComposeEnabled(enabled);
+  }
 }
 
 void IpcVideoFrameCapturer::OnSharedMemoryRegionCreated(

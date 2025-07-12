@@ -8,10 +8,14 @@
 #include <string>
 
 // Enum to represent the existing Contextual Panel item types.
+// LINT.IfChange(ContextualPanelItemType)
 enum class ContextualPanelItemType {
   SamplePanelItem = 0,
   PriceInsightsItem = 1,
+  ReaderModeItem = 2,
+  kMaxValue = ReaderModeItem,
 };
+// LINT.ThenChange(/tools/metrics/histograms/metadata/ios/histograms.xml:ContextualPanelItemType)
 
 // Converts the given item type to a string representation.
 std::string StringForItemType(ContextualPanelItemType item_type);

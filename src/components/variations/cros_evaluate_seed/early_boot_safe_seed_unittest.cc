@@ -16,21 +16,19 @@ namespace {
 
 TEST(EarlyBootSafeSeed, FetchTime) {
   featured::SeedDetails details;
-
   constexpr int kFetchTimeMillisSinceWindowsEpoch = 1234567890;
+  const base::Time fetch_time = base::Time::FromDeltaSinceWindowsEpoch(
+      base::Milliseconds(kFetchTimeMillisSinceWindowsEpoch));
+
   details.set_fetch_time(kFetchTimeMillisSinceWindowsEpoch);
 
   EarlyBootSafeSeed early_boot_safe_seed(details);
 
-  EXPECT_EQ(early_boot_safe_seed.GetFetchTime(),
-            base::Time::FromDeltaSinceWindowsEpoch(
-                base::Milliseconds(kFetchTimeMillisSinceWindowsEpoch)));
+  EXPECT_EQ(early_boot_safe_seed.GetFetchTime(), fetch_time);
 
   // Should not change.
   early_boot_safe_seed.SetFetchTime(base::Time::Now());
-  EXPECT_EQ(early_boot_safe_seed.GetFetchTime(),
-            base::Time::FromDeltaSinceWindowsEpoch(
-                base::Milliseconds(kFetchTimeMillisSinceWindowsEpoch)));
+  EXPECT_EQ(early_boot_safe_seed.GetFetchTime(), fetch_time);
 }
 
 TEST(EarlyBootSafeSeed, Milestone) {
@@ -42,30 +40,31 @@ TEST(EarlyBootSafeSeed, Milestone) {
   EXPECT_EQ(early_boot_safe_seed.GetMilestone(), 100);
 
   // Should not change.
-  early_boot_safe_seed.SetMilestone(101);
-  EXPECT_EQ(early_boot_safe_seed.GetMilestone(), 100);
-
-  // Still should not change.
   early_boot_safe_seed.ClearState();
   EXPECT_EQ(early_boot_safe_seed.GetMilestone(), 100);
 }
 
-TEST(EarlyBootSafeSeed, TimeForStudyDateChecks) {
+TEST(EarlyBootSafeSeed, GetTimeForStudyDateChecks) {
   featured::SeedDetails details;
 
   constexpr int kFetchTimeMillisSinceWindowsEpoch = 1234567890;
   details.set_date(kFetchTimeMillisSinceWindowsEpoch);
 
   EarlyBootSafeSeed early_boot_safe_seed(details);
-
-  EXPECT_EQ(early_boot_safe_seed.GetTimeForStudyDateChecks(),
-            base::Time::FromDeltaSinceWindowsEpoch(
-                base::Milliseconds(kFetchTimeMillisSinceWindowsEpoch)));
-  // Should not change.
-  early_boot_safe_seed.SetTimeForStudyDateChecks(base::Time::Now());
-  EXPECT_EQ(early_boot_safe_seed.GetTimeForStudyDateChecks(),
-            base::Time::FromDeltaSinceWindowsEpoch(
-                base::Milliseconds(kFetchTimeMillisSinceWindowsEpoch)));
+  base::Time expected_time = base::Time::FromDeltaSinceWindowsEpoch(
+      base::Milliseconds(kFetchTimeMillisSinceWindowsEpoch));
+  EXPECT_EQ(early_boot_safe_seed.GetTimeForStudyDateChecks(), expected_time);
+  // Should not change after setting the compressed seed.
+  early_boot_safe_seed.SetCompressedSeed(ValidatedSeedInfo(
+      /*compressed_seed_data=*/"data",
+      /*base64_seed_data=*/"base64_data", /*signature=*/"asdf",
+      /*milestone=*/100, /*seed_date=*/base::Time::Now(),
+      /*client_fetch_time=*/base::Time::Now(), /*session_country_code=*/"ca",
+      /*permanent_country_code=*/"ca", /*permanent_country_version=*/""));
+  EXPECT_EQ(early_boot_safe_seed.GetTimeForStudyDateChecks(), expected_time);
+  // Should not change after clearing the state.
+  early_boot_safe_seed.ClearState();
+  EXPECT_EQ(early_boot_safe_seed.GetTimeForStudyDateChecks(), expected_time);
 }
 
 TEST(EarlyBootSafeSeed, GetCompressedSeed) {
@@ -73,7 +72,9 @@ TEST(EarlyBootSafeSeed, GetCompressedSeed) {
   details.set_b64_compressed_data("compressed_data");
 
   EarlyBootSafeSeed early_boot_safe_seed(details);
-  EXPECT_EQ(early_boot_safe_seed.GetCompressedSeed(), "compressed_data");
+  EXPECT_EQ(early_boot_safe_seed.GetCompressedSeed().storage_format,
+            StoredSeed::StorageFormat::kCompressedAndBase64Encoded);
+  EXPECT_EQ(early_boot_safe_seed.GetCompressedSeed().data, "compressed_data");
 }
 
 TEST(EarlyBootSafeSeed, GetSignature) {
@@ -81,11 +82,16 @@ TEST(EarlyBootSafeSeed, GetSignature) {
   details.set_signature("signature");
 
   EarlyBootSafeSeed early_boot_safe_seed(details);
-  EXPECT_EQ(early_boot_safe_seed.GetSignature(), "signature");
+  EXPECT_EQ(early_boot_safe_seed.GetCompressedSeed().signature, "signature");
 
   // Should not change.
-  early_boot_safe_seed.SetSignature("asdf");
-  EXPECT_EQ(early_boot_safe_seed.GetSignature(), "signature");
+  early_boot_safe_seed.SetCompressedSeed(ValidatedSeedInfo(
+      /*compressed_seed_data=*/"data",
+      /*base64_seed_data=*/"base64_data", /*signature=*/"asdf",
+      /*milestone=*/100, /*seed_date=*/base::Time::Now(),
+      /*client_fetch_time=*/base::Time::Now(), /*session_country_code=*/"ca",
+      /*permanent_country_code=*/"ca", /*permanent_country_version=*/""));
+  EXPECT_EQ(early_boot_safe_seed.GetCompressedSeed().signature, "signature");
 }
 
 TEST(EarlyBootSafeSeed, GetLocale) {
@@ -108,7 +114,12 @@ TEST(EarlyBootSafeSeed, GetPermanentConsistencyCountry) {
   EXPECT_EQ(early_boot_safe_seed.GetPermanentConsistencyCountry(), "us");
 
   // Should not change.
-  early_boot_safe_seed.SetPermanentConsistencyCountry("ca");
+  early_boot_safe_seed.SetCompressedSeed(ValidatedSeedInfo(
+      /*compressed_seed_data=*/"data",
+      /*base64_seed_data=*/"base64_data", /*signature=*/"asdf",
+      /*milestone=*/100, /*seed_date=*/base::Time::Now(),
+      /*client_fetch_time=*/base::Time::Now(), /*session_country_code=*/"ca",
+      /*permanent_country_code=*/"ca", /*permanent_country_version=*/""));
   EXPECT_EQ(early_boot_safe_seed.GetPermanentConsistencyCountry(), "us");
 }
 
@@ -119,7 +130,13 @@ TEST(EarlyBootSafeSeed, GetSessionConsistencyCountry) {
   EarlyBootSafeSeed early_boot_safe_seed(details);
   EXPECT_EQ(early_boot_safe_seed.GetSessionConsistencyCountry(), "us");
 
-  early_boot_safe_seed.SetSessionConsistencyCountry("ca");
+  // Should not change.
+  early_boot_safe_seed.SetCompressedSeed(ValidatedSeedInfo(
+      /*compressed_seed_data=*/"data",
+      /*base64_seed_data=*/"base64_data", /*signature=*/"asdf",
+      /*milestone=*/100, /*seed_date=*/base::Time::Now(),
+      /*client_fetch_time=*/base::Time::Now(), /*session_country_code=*/"ca",
+      /*permanent_country_code=*/"ca", /*permanent_country_version=*/""));
   EXPECT_EQ(early_boot_safe_seed.GetSessionConsistencyCountry(), "us");
 }
 
@@ -128,14 +145,13 @@ TEST(EarlyBootSafeSeed, MutatorsDontCrash) {
   featured::SeedDetails details;
   EarlyBootSafeSeed early_boot_safe_seed(details);
 
-  early_boot_safe_seed.SetFetchTime(base::Time::Now());
-  early_boot_safe_seed.SetMilestone(100);
-  early_boot_safe_seed.SetTimeForStudyDateChecks(base::Time::Now());
-  early_boot_safe_seed.SetCompressedSeed("data");
-  early_boot_safe_seed.SetSignature("signature");
+  early_boot_safe_seed.SetCompressedSeed(ValidatedSeedInfo(
+      /*compressed_seed_data=*/"data",
+      /*base64_seed_data=*/"base64_data", /*signature=*/"signature",
+      /*milestone=*/100, /*seed_date=*/base::Time::Now(),
+      /*client_fetch_time=*/base::Time::Now(), /*session_country_code=*/"ca",
+      /*permanent_country_code=*/"ca", /*permanent_country_version=*/""));
   early_boot_safe_seed.SetLocale("locale");
-  early_boot_safe_seed.SetPermanentConsistencyCountry("us");
-  early_boot_safe_seed.SetSessionConsistencyCountry("us");
   early_boot_safe_seed.ClearState();
 }
 

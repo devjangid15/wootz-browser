@@ -26,7 +26,6 @@ All changes to this list should go through Blink's feature review process: http:
     -webkit-mask-position-y
     -webkit-perspective-origin-x
     -webkit-perspective-origin-y
-    -webkit-print-color-adjust
     -webkit-rtl-ordering
     -webkit-ruby-position
     -webkit-tap-highlight-color
@@ -50,6 +49,7 @@ All changes to this list should go through Blink's feature review process: http:
     alignment-baseline
     all
     anchor-name
+    anchor-scope
     animation-composition
     animation-delay
     animation-direction
@@ -119,6 +119,7 @@ All changes to this list should go through Blink's feature review process: http:
     border-top-style
     border-top-width
     bottom
+    box-decoration-break
     box-shadow
     box-sizing
     break-after
@@ -126,6 +127,7 @@ All changes to this list should go through Blink's feature review process: http:
     break-inside
     buffered-rendering
     caption-side
+    caret-animation
     caret-color
     clear
     clip
@@ -153,6 +155,14 @@ All changes to this list should go through Blink's feature review process: http:
     container-type
     content
     content-visibility
+    corner-bottom-left-shape
+    corner-bottom-right-shape
+    corner-end-end-shape
+    corner-end-start-shape
+    corner-start-end-shape
+    corner-start-start-shape
+    corner-top-left-shape
+    corner-top-right-shape
     counter-increment
     counter-reset
     counter-set
@@ -163,6 +173,7 @@ All changes to this list should go through Blink's feature review process: http:
     direction
     display
     dominant-baseline
+    dynamic-range-limit
     empty-cells
     field-sizing
     fill
@@ -183,6 +194,7 @@ All changes to this list should go through Blink's feature review process: http:
     font-optical-sizing
     font-palette
     font-size
+    font-size-adjust
     font-stretch
     font-style
     font-synthesis-small-caps
@@ -191,6 +203,7 @@ All changes to this list should go through Blink's feature review process: http:
     font-variant-alternates
     font-variant-caps
     font-variant-east-asian
+    font-variant-emoji
     font-variant-ligatures
     font-variant-numeric
     font-variant-position
@@ -215,11 +228,12 @@ All changes to this list should go through Blink's feature review process: http:
     image-rendering
     initial-letter
     inline-size
-    inset-area
     inset-block-end
     inset-block-start
     inset-inline-end
     inset-inline-start
+    interactivity
+    interpolate-size
     isolation
     justify-content
     justify-items
@@ -279,7 +293,9 @@ All changes to this list should go through Blink's feature review process: http:
     outline-style
     outline-width
     overflow-anchor
+    overflow-block
     overflow-clip-margin
+    overflow-inline
     overflow-wrap
     overflow-x
     overflow-y
@@ -304,20 +320,26 @@ All changes to this list should go through Blink's feature review process: http:
     pointer-events
     position
     position-anchor
-    position-try-options
+    position-area
+    position-try-fallbacks
     position-try-order
     position-visibility
+    print-color-adjust
     quotes
     r
+    reading-flow
+    reading-order
     resize
     right
     rotate
     row-gap
+    ruby-align
     ruby-position
     rx
     ry
     scale
     scroll-behavior
+    scroll-initial-target
     scroll-margin-block-end
     scroll-margin-block-start
     scroll-margin-bottom
@@ -326,6 +348,7 @@ All changes to this list should go through Blink's feature review process: http:
     scroll-margin-left
     scroll-margin-right
     scroll-margin-top
+    scroll-marker-group
     scroll-padding-block-end
     scroll-padding-block-start
     scroll-padding-bottom
@@ -337,6 +360,7 @@ All changes to this list should go through Blink's feature review process: http:
     scroll-snap-align
     scroll-snap-stop
     scroll-snap-type
+    scroll-target-group
     scroll-timeline-axis
     scroll-timeline-name
     scrollbar-color
@@ -363,6 +387,9 @@ All changes to this list should go through Blink's feature review process: http:
     text-align
     text-align-last
     text-anchor
+    text-autospace
+    text-box-edge
+    text-box-trim
     text-combine-upright
     text-decoration-color
     text-decoration-line
@@ -382,7 +409,8 @@ All changes to this list should go through Blink's feature review process: http:
     text-transform
     text-underline-offset
     text-underline-position
-    text-wrap
+    text-wrap-mode
+    text-wrap-style
     timeline-scope
     top
     touch-action
@@ -586,6 +614,35 @@ All changes to this list should go through Blink's feature review process: http:
     container
         container-name
         container-type
+    corner-block-end-shape
+        corner-end-end-shape
+        corner-end-start-shape
+    corner-block-start-shape
+        corner-start-end-shape
+        corner-start-start-shape
+    corner-bottom-shape
+        corner-bottom-left-shape
+        corner-bottom-right-shape
+    corner-inline-end-shape
+        corner-end-end-shape
+        corner-start-end-shape
+    corner-inline-start-shape
+        corner-end-start-shape
+        corner-start-start-shape
+    corner-left-shape
+        corner-bottom-left-shape
+        corner-top-left-shape
+    corner-right-shape
+        corner-bottom-right-shape
+        corner-top-right-shape
+    corner-shape
+        corner-bottom-left-shape
+        corner-bottom-right-shape
+        corner-top-left-shape
+        corner-top-right-shape
+    corner-top-shape
+        corner-top-left-shape
+        corner-top-right-shape
     flex
         flex-basis
         flex-grow
@@ -599,11 +656,13 @@ All changes to this list should go through Blink's feature review process: http:
         font-kerning
         font-optical-sizing
         font-size
+        font-size-adjust
         font-stretch
         font-style
         font-variant-alternates
         font-variant-caps
         font-variant-east-asian
+        font-variant-emoji
         font-variant-ligatures
         font-variant-numeric
         font-variant-position
@@ -618,6 +677,7 @@ All changes to this list should go through Blink's feature review process: http:
         font-variant-alternates
         font-variant-caps
         font-variant-east-asian
+        font-variant-emoji
         font-variant-ligatures
         font-variant-numeric
         font-variant-position
@@ -732,7 +792,7 @@ All changes to this list should go through Blink's feature review process: http:
         align-self
         justify-self
     position-try
-        position-try-options
+        position-try-fallbacks
         position-try-order
     scroll-margin
         scroll-margin-bottom
@@ -759,6 +819,9 @@ All changes to this list should go through Blink's feature review process: http:
     scroll-timeline
         scroll-timeline-axis
         scroll-timeline-name
+    text-box
+        text-box-edge
+        text-box-trim
     text-decoration
         text-decoration-color
         text-decoration-line
@@ -767,6 +830,9 @@ All changes to this list should go through Blink's feature review process: http:
     text-emphasis
         text-emphasis-color
         text-emphasis-style
+    text-wrap
+        text-wrap-mode
+        text-wrap-style
     transition
         transition-behavior
         transition-delay
@@ -778,7 +844,7 @@ All changes to this list should go through Blink's feature review process: http:
         view-timeline-inset
         view-timeline-name
     white-space
-        text-wrap
+        text-wrap-mode
         white-space-collapse
 
 [ALIASES]
@@ -976,6 +1042,8 @@ All changes to this list should go through Blink's feature review process: http:
         perspective
     -webkit-perspective-origin
         perspective-origin
+    -webkit-print-color-adjust
+        print-color-adjust
     -webkit-shape-image-threshold
         shape-image-threshold
     -webkit-shape-margin

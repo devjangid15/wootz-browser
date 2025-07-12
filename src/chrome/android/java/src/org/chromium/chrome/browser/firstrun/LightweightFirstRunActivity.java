@@ -4,7 +4,6 @@
 
 package org.chromium.chrome.browser.firstrun;
 
-import android.os.Bundle;
 import android.os.Handler;
 import android.os.SystemClock;
 import android.text.method.LinkMovementMethod;
@@ -14,23 +13,28 @@ import android.view.accessibility.AccessibilityEvent;
 import android.widget.Button;
 import android.widget.TextView;
 
-import androidx.annotation.Nullable;
 import androidx.annotation.StringRes;
 import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.IntentUtils;
 import org.chromium.base.ThreadUtils;
+import org.chromium.base.TimeUtils;
+import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.build.annotations.Initializer;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.back_press.SecondaryActivityBackPressUma.SecondaryActivity;
 import org.chromium.chrome.browser.customtabs.CustomTabActivity;
 import org.chromium.chrome.browser.enterprise.util.EnterpriseInfo;
+import org.chromium.chrome.browser.signin.services.SigninPreferencesManager;
 import org.chromium.ui.base.LocalizationUtils;
-import org.chromium.ui.text.NoUnderlineClickableSpan;
+import org.chromium.ui.text.ChromeClickableSpan;
 import org.chromium.ui.text.SpanApplier;
 import org.chromium.ui.text.SpanApplier.SpanInfo;
 import org.chromium.ui.widget.LoadingView;
 
 /** Lightweight FirstRunActivity. It shows ToS dialog only. */
+@NullMarked
 public class LightweightFirstRunActivity extends FirstRunActivityBase
         implements LoadingView.Observer {
     // TODO(crbug.com/40156897) Clean this boolean when releasing this feature, and remove
@@ -39,7 +43,6 @@ public class LightweightFirstRunActivity extends FirstRunActivityBase
 
     private @Nullable SkipTosDialogPolicyListener mSkipTosDialogPolicyListener;
 
-    private FirstRunFlowSequencer mFirstRunFlowSequencer;
     private TextView mTosAndPrivacyTextView;
     private Button mOkButton;
     private LoadingView mLoadingView;
@@ -50,10 +53,8 @@ public class LightweightFirstRunActivity extends FirstRunActivityBase
     private boolean mNativeInitialized;
     private boolean mTriggerAcceptAfterNativeInit;
 
-    private long mViewCreatedTimeMs;
-
-    private Handler mHandler;
-    private Runnable mExitFreRunnable;
+    private @Nullable Handler mHandler;
+    private @Nullable Runnable mExitFreRunnable;
 
     public static final String EXTRA_ASSOCIATED_APP_NAME =
             "org.chromium.chrome.browser.firstrun.AssociatedAppName";
@@ -77,41 +78,34 @@ public class LightweightFirstRunActivity extends FirstRunActivityBase
 
         setFinishOnTouchOutside(true);
 
-        mFirstRunFlowSequencer =
+        FirstRunFlowSequencer firstRunFlowSequencer =
                 new FirstRunFlowSequencer(
                         getProfileProviderSupplier(), getChildAccountStatusSupplier()) {
                     @Override
-                    public void onFlowIsKnown(Bundle freProperties) {
-                        if (freProperties == null) {
-                            completeFirstRunExperience();
-                            return;
-                        }
-
-                        boolean isChild =
-                                freProperties.getBoolean(
-                                        SyncConsentFirstRunFragment.IS_CHILD_ACCOUNT, false);
+                    public void onFlowIsKnown(boolean isChild) {
                         initializeViews(isChild);
                     }
                 };
-        mFirstRunFlowSequencer.start();
+        firstRunFlowSequencer.start();
         onInitialLayoutInflationComplete();
     }
 
     /** Called once it is known whether the device has a child account. */
+    @Initializer
     private void initializeViews(boolean hasChildAccount) {
         setContentView(
                 LayoutInflater.from(LightweightFirstRunActivity.this)
                         .inflate(R.layout.lightweight_fre_tos, null));
 
-        NoUnderlineClickableSpan clickableGoogleTermsSpan =
-                new NoUnderlineClickableSpan(
+        ChromeClickableSpan clickableGoogleTermsSpan =
+                new ChromeClickableSpan(
                         this, (view) -> showInfoPage(R.string.google_terms_of_service_url));
-        NoUnderlineClickableSpan clickableChromeAdditionalTermsSpan =
-                new NoUnderlineClickableSpan(
+        ChromeClickableSpan clickableChromeAdditionalTermsSpan =
+                new ChromeClickableSpan(
                         this,
                         (view) -> showInfoPage(R.string.chrome_additional_terms_of_service_url));
-        NoUnderlineClickableSpan clickableGooglePrivacySpan =
-                new NoUnderlineClickableSpan(
+        ChromeClickableSpan clickableGooglePrivacySpan =
+                new ChromeClickableSpan(
                         this, (view) -> showInfoPage(R.string.wootzapp_privacy_policy_url));
         String associatedAppName =
                 IntentUtils.safeGetStringExtra(getIntent(), EXTRA_ASSOCIATED_APP_NAME);
@@ -139,12 +133,12 @@ public class LightweightFirstRunActivity extends FirstRunActivityBase
                                     "<LINK2>", "</LINK2>", clickableChromeAdditionalTermsSpan));
         }
 
-        mTosAndPrivacyTextView = (TextView) findViewById(R.id.lightweight_fre_tos_and_privacy);
+        mTosAndPrivacyTextView = findViewById(R.id.lightweight_fre_tos_and_privacy);
         mTosAndPrivacyTextView.setText(tosAndPrivacyText);
         mTosAndPrivacyTextView.setMovementMethod(LinkMovementMethod.getInstance());
 
         mLightweightFreButtons = findViewById(R.id.lightweight_fre_buttons);
-        mOkButton = (Button) findViewById(R.id.button_primary);
+        mOkButton = findViewById(R.id.button_primary);
         mOkButton.setOnClickListener(view -> acceptTermsOfService());
 
         ((Button) findViewById(R.id.button_secondary))
@@ -156,13 +150,12 @@ public class LightweightFirstRunActivity extends FirstRunActivityBase
         mPrivacyDisclaimer = findViewById(R.id.privacy_disclaimer);
 
         mViewCreated = true;
-        mViewCreatedTimeMs = SystemClock.elapsedRealtime();
 
         if (mSkipTosDialogPolicyListener != null) {
             // Check if we need to setup logic for policy loading.
             if (mSkipTosDialogPolicyListener.get() == null) {
                 mLoadingView.addObserver(this);
-                mLoadingView.showLoadingUI();
+                mLoadingView.showLoadingUi();
                 setTosComponentVisibility(false);
             } else if (mSkipTosDialogPolicyListener.get()) {
                 setTosComponentVisibility(false);
@@ -178,16 +171,16 @@ public class LightweightFirstRunActivity extends FirstRunActivityBase
     }
 
     private void onPolicyLoadListenerAvailable() {
-        if (mViewCreated) mLoadingView.hideLoadingUI();
+        if (mViewCreated) mLoadingView.hideLoadingUi();
     }
 
     @Override
-    public void onShowLoadingUIComplete() {
+    public void onShowLoadingUiComplete() {
         mLoadingViewContainer.setVisibility(View.VISIBLE);
     }
 
     @Override
-    public void onHideLoadingUIComplete() {
+    public void onHideLoadingUiComplete() {
         assert mSkipTosDialogPolicyListener != null && mSkipTosDialogPolicyListener.get() != null;
         if (mSkipTosDialogPolicyListener.get()) {
             skipTosByPolicy();
@@ -209,6 +202,8 @@ public class LightweightFirstRunActivity extends FirstRunActivityBase
         assert !mNativeInitialized;
 
         mNativeInitialized = true;
+        RecordHistogram.recordTimesHistogram(
+                "MobileFre.NativeInitialized", SystemClock.elapsedRealtime() - getStartTime());
         if (mTriggerAcceptAfterNativeInit) acceptTermsOfService();
     }
 
@@ -231,11 +226,6 @@ public class LightweightFirstRunActivity extends FirstRunActivityBase
         return BackPressResult.SUCCESS;
     }
 
-    @Override
-    public int getSecondaryActivity() {
-        return SecondaryActivity.LIGHTWEIGHT_FIRST_RUN;
-    }
-
     private void abortFirstRunExperience() {
         finish();
         notifyCustomTabCallbackFirstRunIfNecessary(getIntent(), false);
@@ -243,6 +233,8 @@ public class LightweightFirstRunActivity extends FirstRunActivityBase
 
     public void completeFirstRunExperience() {
         FirstRunStatus.setLightweightFirstRunFlowComplete(true);
+        SigninPreferencesManager.getInstance()
+                .setCctMismatchNoticeSuppressionPeriodStart(TimeUtils.currentTimeMillis());
         exitLightweightFirstRun();
     }
 
@@ -263,7 +255,7 @@ public class LightweightFirstRunActivity extends FirstRunActivityBase
 
     private void exitLightweightFirstRun() {
         finish();
-        sendFirstRunCompletePendingIntent();
+        sendFirstRunCompleteIntent();
     }
 
     private void acceptTermsOfService() {

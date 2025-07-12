@@ -16,15 +16,17 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
+import org.chromium.base.test.util.DoNotBatch;
 import org.chromium.base.test.util.PayloadCallbackHelper;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.ReducedModeNativeTestRule;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
 import org.chromium.components.embedder_support.simple_factory_key.SimpleFactoryKeyHandle;
 import org.chromium.content_public.browser.BrowserContextHandle;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 import java.util.Arrays;
 import java.util.List;
@@ -38,10 +40,11 @@ import java.util.concurrent.ExecutionException;
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
+@DoNotBatch(reason = "Tests initialization")
 public class ProfileResolverTest {
     @Rule
-    public final ChromeTabbedActivityTestRule mActivityTestRule =
-            new ChromeTabbedActivityTestRule();
+    public final FreshCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.freshChromeTabbedActivityRule();
 
     @Rule
     public ReducedModeNativeTestRule mReducedModeNativeTestRule =
@@ -55,8 +58,7 @@ public class ProfileResolverTest {
     }
 
     private void initToFullMode() {
-        mActivityTestRule.startMainActivityOnBlankPage();
-        mActivityTestRule.waitForActivityNativeInitializationComplete();
+        mActivityTestRule.startOnBlankPage();
     }
 
     private void initToReducedMode() {
@@ -64,55 +66,52 @@ public class ProfileResolverTest {
     }
 
     private Profile getLastUsedRegularProfileOnUiThread() throws ExecutionException {
-        return TestThreadUtils.runOnUiThreadBlocking(
-                () -> ProfileManager.getLastUsedRegularProfile());
+        return ThreadUtils.runOnUiThreadBlocking(() -> ProfileManager.getLastUsedRegularProfile());
     }
 
     private Profile getPrimaryOtrProfileOnUiThread() throws ExecutionException {
-        return TestThreadUtils.runOnUiThreadBlocking(
+        return ThreadUtils.runOnUiThreadBlocking(
                 () ->
                         ProfileManager.getLastUsedRegularProfile()
-                                .getPrimaryOTRProfile(/* createIfNeeded= */ true));
+                                .getPrimaryOtrProfile(/* createIfNeeded= */ true));
     }
 
     private Profile newOtrProfileOnUiThread(String profileIdPrefix) throws ExecutionException {
-        return TestThreadUtils.runOnUiThreadBlocking(
+        return ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     Profile regularProfile = ProfileManager.getLastUsedRegularProfile();
-                    OTRProfileID otrProfileId = OTRProfileID.createUnique(profileIdPrefix);
+                    OtrProfileId otrProfileId = OtrProfileId.createUnique(profileIdPrefix);
                     return regularProfile.getOffTheRecordProfile(
                             otrProfileId, /* createIfNeeded= */ true);
                 });
     }
 
     private ProfileKey getPrimaryProfileKeyOnUiThread() throws ExecutionException {
-        return TestThreadUtils.runOnUiThreadBlocking(
+        return ThreadUtils.runOnUiThreadBlocking(
                 () -> ProfileManager.getLastUsedRegularProfile().getProfileKey());
     }
 
     private String tokenizeOnUiThread(Profile profile) throws ExecutionException {
-        return TestThreadUtils.runOnUiThreadBlocking(() -> mProfileResolver.tokenize(profile));
+        return ThreadUtils.runOnUiThreadBlocking(() -> mProfileResolver.tokenize(profile));
     }
 
     private String tokenizeOnUiThread(ProfileKey profileKey) throws ExecutionException {
-        return TestThreadUtils.runOnUiThreadBlocking(() -> mProfileResolver.tokenize(profileKey));
+        return ThreadUtils.runOnUiThreadBlocking(() -> mProfileResolver.tokenize(profileKey));
     }
 
     private String tokenizeOnUiThread(BrowserContextHandle browserContext)
             throws ExecutionException {
-        return TestThreadUtils.runOnUiThreadBlocking(
-                () -> mProfileResolver.tokenize(browserContext));
+        return ThreadUtils.runOnUiThreadBlocking(() -> mProfileResolver.tokenize(browserContext));
     }
 
     private String tokenizeOnUiThread(SimpleFactoryKeyHandle simpleFactoryKey)
             throws ExecutionException {
-        return TestThreadUtils.runOnUiThreadBlocking(
-                () -> mProfileResolver.tokenize(simpleFactoryKey));
+        return ThreadUtils.runOnUiThreadBlocking(() -> mProfileResolver.tokenize(simpleFactoryKey));
     }
 
     private Profile resolveProfileSync(String token) {
         PayloadCallbackHelper<Profile> callbackHelper = new PayloadCallbackHelper<>();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mProfileResolver.resolveProfile(
                             token, (Profile p) -> callbackHelper.notifyCalled(p));
@@ -122,7 +121,7 @@ public class ProfileResolverTest {
 
     private ProfileKey resolveProfileKeySync(String token) {
         PayloadCallbackHelper<ProfileKey> callbackHelper = new PayloadCallbackHelper<>();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mProfileResolver.resolveProfileKey(
                             token, (ProfileKey p) -> callbackHelper.notifyCalled(p));
@@ -132,7 +131,7 @@ public class ProfileResolverTest {
 
     private BrowserContextHandle resolveBrowserContextSync(String token) {
         PayloadCallbackHelper<BrowserContextHandle> callbackHelper = new PayloadCallbackHelper<>();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mProfileResolver.resolveBrowserContext(
                             token, (BrowserContextHandle p) -> callbackHelper.notifyCalled(p));
@@ -143,7 +142,7 @@ public class ProfileResolverTest {
     private SimpleFactoryKeyHandle resolveSimpleFactoryKeySync(String token) {
         PayloadCallbackHelper<SimpleFactoryKeyHandle> callbackHelper =
                 new PayloadCallbackHelper<>();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mProfileResolver.resolveSimpleFactoryKey(
                             token, (SimpleFactoryKeyHandle p) -> callbackHelper.notifyCalled(p));
@@ -221,7 +220,7 @@ public class ProfileResolverTest {
     public void testResolveProfileKeyBeforeProfileInit() throws ExecutionException {
         initToReducedMode();
         ProfileKey key =
-                TestThreadUtils.runOnUiThreadBlockingNoException(
+                ThreadUtils.runOnUiThreadBlocking(
                         () -> ProfileKeyUtil.getLastUsedRegularProfileKey());
 
         String token = tokenizeOnUiThread(key);

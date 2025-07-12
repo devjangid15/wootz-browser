@@ -32,7 +32,7 @@ class BackgroundInfo : public Extension::ManifestData {
   static GURL GetBackgroundURL(const Extension* extension);
   static const std::vector<std::string>& GetBackgroundScripts(
       const Extension* extension);
-  static const std::string& GetBackgroundServiceWorkerScript(
+  static const GURL& GetBackgroundServiceWorkerScriptURL(
       const Extension* extension);
   static BackgroundServiceWorkerType GetBackgroundServiceWorkerType(
       const Extension* extension);
@@ -58,10 +58,10 @@ class BackgroundInfo : public Extension::ManifestData {
     return has_background_page() && !is_persistent_;
   }
 
-  bool Parse(const Extension* extension, std::u16string* error);
+  bool Parse(Extension* extension, std::u16string* error);
 
  private:
-  bool LoadBackgroundScripts(const Extension* extension,
+  bool LoadBackgroundScripts(Extension* extension,
                              const std::string& key,
                              std::u16string* error);
   bool LoadBackgroundPage(const Extension* extension,
@@ -83,7 +83,7 @@ class BackgroundInfo : public Extension::ManifestData {
   std::vector<std::string> background_scripts_;
 
   // Optional service worker based background script.
-  std::optional<std::string> background_service_worker_script_;
+  std::optional<GURL> background_service_worker_script_url_;
 
   // Optional service worker based background type.
   std::optional<BackgroundServiceWorkerType> background_service_worker_type_;
@@ -112,7 +112,7 @@ class BackgroundManifestHandler : public ManifestHandler {
   ~BackgroundManifestHandler() override;
 
   bool Parse(Extension* extension, std::u16string* error) override;
-  bool Validate(const Extension* extension,
+  bool Validate(const Extension& extension,
                 std::string* error,
                 std::vector<InstallWarning>* warnings) const override;
   bool AlwaysParseForType(Manifest::Type type) const override;

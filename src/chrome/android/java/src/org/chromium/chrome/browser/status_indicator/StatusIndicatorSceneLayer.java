@@ -9,6 +9,8 @@ import android.graphics.RectF;
 import org.jni_zero.JNINamespace;
 import org.jni_zero.NativeMethods;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
 import org.chromium.chrome.browser.layouts.EventFilter;
 import org.chromium.chrome.browser.layouts.SceneOverlay;
@@ -24,6 +26,7 @@ import java.util.List;
  * relay status, e.g. indicate user is offline.
  */
 @JNINamespace("android")
+@NullMarked
 class StatusIndicatorSceneLayer extends SceneOverlayLayer implements SceneOverlay {
     /** Handle to the native side of this class. */
     private long mNativePtr;
@@ -32,7 +35,7 @@ class StatusIndicatorSceneLayer extends SceneOverlayLayer implements SceneOverla
     private int mResourceId;
 
     /** The {@link BrowserControlsStateProvider} to access browser controls offsets. */
-    private BrowserControlsStateProvider mBrowserControlsStateProvider;
+    private final BrowserControlsStateProvider mBrowserControlsStateProvider;
 
     private boolean mIsVisible;
 
@@ -78,10 +81,7 @@ class StatusIndicatorSceneLayer extends SceneOverlayLayer implements SceneOverla
     @Override
     public SceneOverlayLayer getUpdatedSceneOverlayTree(
             RectF viewport, RectF visibleViewport, ResourceManager resourceManager, float yOffset) {
-        int offset = mBrowserControlsStateProvider.getTopControlsMinHeightOffset();
-        if (true) {
-            offset = (int)viewport.bottom - offset;
-        }
+        final int offset = mBrowserControlsStateProvider.getTopControlsMinHeightOffset();
         StatusIndicatorSceneLayerJni.get()
                 .updateStatusIndicatorLayer(
                         mNativePtr,
@@ -98,7 +98,7 @@ class StatusIndicatorSceneLayer extends SceneOverlayLayer implements SceneOverla
     }
 
     @Override
-    public EventFilter getEventFilter() {
+    public @Nullable EventFilter getEventFilter() {
         return null;
     }
 

@@ -31,6 +31,27 @@ constexpr auto enabled_by_default_non_ios =
     base::FEATURE_ENABLED_BY_DEFAULT;
 #endif
 
+constexpr auto enabled_by_default_non_arm32 =
+#if defined(ARCH_CPU_ARMEL)
+    base::FEATURE_DISABLED_BY_DEFAULT;
+#else
+    base::FEATURE_ENABLED_BY_DEFAULT;
+#endif
+
+constexpr char enabled_all_mobile_locales_en_us_desktop_only[] =
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
+    "*";
+#else
+    "en-US";
+#endif
+
+constexpr char enabled_all_mobile_countries_us_desktop_only[] =
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
+    "*";
+#else
+    "us";
+#endif
+
 // Returns whether |locale| is a supported locale for |feature|.
 //
 // This matches |locale| with the "supported_locales" feature param value in
@@ -64,11 +85,10 @@ bool IsSupportedLocaleForFeature(
     return true;
   }
 
-  // Otherwise, the locale or the
-  // primary language subtag must match an element of the allowlist.
-  std::string locale_language = l10n_util::GetLanguage(locale);
+  // Otherwise, the locale or the primary language subtag must match an element
+  // of the allowlist.
   return base::Contains(supported_locales, locale) ||
-         base::Contains(supported_locales, locale_language);
+         base::Contains(supported_locales, l10n_util::GetLanguage(locale));
 }
 
 bool IsSupportedCountryForFeature(const std::string& country_code,
@@ -96,32 +116,33 @@ bool IsSupportedCountryForFeature(const std::string& country_code,
     return true;
   }
 
-  return base::ranges::any_of(
+  return std::ranges::any_of(
       supported_countries, [&country_code](const auto& supported_country_code) {
         return base::EqualsCaseInsensitiveASCII(supported_country_code,
                                                 country_code);
       });
 }
 
+const base::FeatureParam<base::TimeDelta> kAnnotatedPageContentCaptureDelay{
+    &kAnnotatedPageContentExtraction, "capture_delay", base::Seconds(5)};
+
+const base::FeatureParam<bool> kAnnotatedPageContentStudyIncludeInnerText{
+    &kAnnotatedPageContentExtraction, "include_inner_text", false};
+
+const base::FeatureParam<bool> kAnnotatedPageContentOnCriticalPath{
+    &kAnnotatedPageContentExtraction, "on_critical_path", false};
+
 }  // namespace
 
 // Enables page content to be annotated.
 BASE_FEATURE(kPageContentAnnotations,
              "PageContentAnnotations",
-             enabled_by_default_desktop_only);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Enables the page visibility model to be annotated on every page load.
 BASE_FEATURE(kPageVisibilityPageContentAnnotations,
              "PageVisibilityPageContentAnnotations",
-             enabled_by_default_non_ios);
-
-BASE_FEATURE(kPageVisibilityBatchAnnotations,
-             "PageVisibilityBatchAnnotations",
-             enabled_by_default_non_ios);
-
-BASE_FEATURE(kTextEmbeddingBatchAnnotations,
-             "TextEmbeddingBatchAnnotations",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             enabled_by_default_non_arm32);
 
 BASE_FEATURE(kPageContentAnnotationsValidation,
              "PageContentAnnotationsValidation",
@@ -130,7 +151,7 @@ BASE_FEATURE(kPageContentAnnotationsValidation,
 // Enables fetching page metadata from the remote Optimization Guide service.
 BASE_FEATURE(kRemotePageMetadata,
              "RemotePageMetadata",
-             enabled_by_default_desktop_only);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kOptimizationGuideUseContinueOnShutdownForPageContentAnnotations,
              "OptimizationGuideUseContinueOnShutdownForPageContentAnnotations",
@@ -138,15 +159,14 @@ BASE_FEATURE(kOptimizationGuideUseContinueOnShutdownForPageContentAnnotations,
 
 BASE_FEATURE(kPageContentAnnotationsPersistSalientImageMetadata,
              "PageContentAnnotationsPersistSalientImageMetadata",
-             enabled_by_default_desktop_only);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kExtractRelatedSearchesFromPrefetchedZPSResponse,
              "ExtractRelatedSearchesFromPrefetchedZPSResponse",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             enabled_by_default_desktop_only);
 
-// Enables text embeddings to annotated on every page visit and later queried.
-BASE_FEATURE(kQueryInMemoryTextEmbeddings,
-             "QueryInMemoryTextEmbeddings",
+BASE_FEATURE(kAnnotatedPageContentExtraction,
+             "AnnotatedPageContentExtraction",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 base::TimeDelta PCAServiceWaitForTitleDelayDuration() {
@@ -163,10 +183,6 @@ bool ShouldEnablePageContentAnnotations() {
                                           kPageContentAnnotationsValidation) ||
          base::FeatureList::IsEnabled(
              page_content_annotations::features::kRemotePageMetadata);
-}
-
-bool ShouldQueryEmbeddings() {
-  return (base::FeatureList::IsEnabled(kQueryInMemoryTextEmbeddings));
 }
 
 bool ShouldWriteContentAnnotationsToHistoryService() {
@@ -188,16 +204,20 @@ bool ShouldExtractRelatedSearches() {
 
 bool ShouldExecutePageVisibilityModelOnPageContent(const std::string& locale) {
   return base::FeatureList::IsEnabled(kPageVisibilityPageContentAnnotations) &&
-         IsSupportedLocaleForFeature(locale,
-                                     kPageVisibilityPageContentAnnotations,
-                                     /*default_value=*/"en");
+         IsSupportedLocaleForFeature(
+             locale, kPageVisibilityPageContentAnnotations,
+             /*default_value=*/"ar,en,es,fa,fr,hi,id,pl,pt,tr,vi");
 }
 
 bool RemotePageMetadataEnabled(const std::string& locale,
                                const std::string& country_code) {
   return base::FeatureList::IsEnabled(kRemotePageMetadata) &&
-         IsSupportedLocaleForFeature(locale, kRemotePageMetadata, "en-US") &&
-         IsSupportedCountryForFeature(country_code, kRemotePageMetadata, "us");
+         IsSupportedLocaleForFeature(
+             locale, kRemotePageMetadata,
+             enabled_all_mobile_locales_en_us_desktop_only) &&
+         IsSupportedCountryForFeature(
+             country_code, kRemotePageMetadata,
+             enabled_all_mobile_countries_us_desktop_only);
 }
 
 int GetMinimumPageCategoryScoreToPersist() {
@@ -219,18 +239,15 @@ double NoiseProbabilityForRAPPORMetrics() {
                                          "noise_prob_for_rappor_metrics", .5)));
 }
 
-bool PageVisibilityBatchAnnotationsEnabled() {
-  return base::FeatureList::IsEnabled(kPageVisibilityBatchAnnotations);
-}
-
-bool TextEmbeddingBatchAnnotationsEnabled() {
-  return base::FeatureList::IsEnabled(kTextEmbeddingBatchAnnotations);
-}
-
 size_t AnnotateVisitBatchSize() {
-  return std::max(
-      1, GetFieldTrialParamByFeatureAsInt(kPageContentAnnotations,
-                                          "annotate_visit_batch_size", 1));
+  // When new visits are synced, the service gets visit notifications in a loop.
+  // The service drops new visits during processing a batch. Often only the
+  // `kDefaultBatchSize` entries are annotated when new visits are synced. Set
+  // the limit to 5 since up to 5 URLs are shown on tab resume module.
+  constexpr int kDefaultBatchSize = 5;
+  return std::max(1, GetFieldTrialParamByFeatureAsInt(
+                         kPageContentAnnotations, "annotate_visit_batch_size",
+                         kDefaultBatchSize));
 }
 
 base::TimeDelta PageContentAnnotationValidationStartupDelay() {
@@ -246,6 +263,11 @@ size_t PageContentAnnotationsValidationBatchSize() {
                       kPageContentAnnotationsValidation, "batch_size", 25)));
 }
 
+base::TimeDelta PageContentAnnotationBatchSizeTimeoutDuration() {
+  return base::Seconds(GetFieldTrialParamByFeatureAsInt(
+      kPageContentAnnotations, "batch_annotations_timeout_seconds", 30));
+}
+
 size_t MaxVisitAnnotationCacheSize() {
   int batch_size = GetFieldTrialParamByFeatureAsInt(
       kPageContentAnnotations, "max_visit_annotation_cache_size", 50);
@@ -258,16 +280,28 @@ bool ShouldPersistSalientImageMetadata(const std::string& locale,
              kPageContentAnnotationsPersistSalientImageMetadata) &&
          IsSupportedLocaleForFeature(
              locale, kPageContentAnnotationsPersistSalientImageMetadata,
-             "en-US") &&
+             enabled_all_mobile_locales_en_us_desktop_only) &&
          IsSupportedCountryForFeature(
              country_code, kPageContentAnnotationsPersistSalientImageMetadata,
-             "us");
+             enabled_all_mobile_countries_us_desktop_only);
 }
 
 size_t MaxRelatedSearchesCacheSize() {
   return GetFieldTrialParamByFeatureAsInt(
       kExtractRelatedSearchesFromPrefetchedZPSResponse,
       "max_related_searches_cache_size", 10);
+}
+
+bool IsAnnotatedPageContentOnCriticalPath() {
+  return kAnnotatedPageContentOnCriticalPath.Get();
+}
+
+base::TimeDelta GetAnnotatedPageContentCaptureDelay() {
+  return kAnnotatedPageContentCaptureDelay.Get();
+}
+
+bool ShouldAnnotatedPageContentStudyIncludeInnerText() {
+  return kAnnotatedPageContentStudyIncludeInnerText.Get();
 }
 
 }  // namespace page_content_annotations::features

@@ -30,10 +30,10 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/tracing/protos/chrome_track_event.pbzero.h"
 #include "build/build_config.h"
+#include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom-blink.h"
 #include "third_party/blink/public/common/permissions_policy/document_policy_features.h"
 #include "third_party/blink/public/mojom/devtools/inspector_issue.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/frame/lifecycle.mojom-blink.h"
-#include "third_party/blink/public/mojom/permissions_policy/permissions_policy_feature.mojom-blink.h"
 #include "third_party/blink/public/mojom/permissions_policy/policy_disposition.mojom-blink.h"
 #include "third_party/blink/public/mojom/permissions_policy/policy_value.mojom-blink.h"
 #include "third_party/blink/public/mojom/v8_cache_options.mojom-blink.h"
@@ -46,6 +46,7 @@
 #include "third_party/blink/renderer/core/fileapi/public_url_manager.h"
 #include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
 #include "third_party/blink/renderer/core/frame/csp/execution_context_csp_delegate.h"
+#include "third_party/blink/renderer/core/frame/integrity_policy.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
@@ -124,6 +125,13 @@ CodeCacheHost* ExecutionContext::GetCodeCacheHostFromContext(
   }
 
   DCHECK(execution_context->IsWorkletGlobalScope());
+
+  if (execution_context->IsSharedStorageWorkletGlobalScope()) {
+    auto* global_scope =
+        DynamicTo<WorkerOrWorkletGlobalScope>(execution_context);
+    return global_scope->GetCodeCacheHost();
+  }
+
   return nullptr;
 }
 
@@ -174,7 +182,7 @@ void ExecutionContext::CountDeprecation(WebFeature feature) {
   Deprecation::CountDeprecation(this, feature);
 }
 
-HeapObserverSet<ContextLifecycleObserver>&
+HeapObserverList<ContextLifecycleObserver>&
 ExecutionContext::ContextLifecycleObserverSet() {
   return ContextLifecycleNotifier::observers();
 }
@@ -226,10 +234,9 @@ bool ExecutionContext::SharedArrayBufferTransferAllowed() const {
 #if BUILDFLAG(IS_ANDROID)
   return false;
 #else
-  // On desktop, enable transfer for the reverse Origin Trial, or if the
-  // Finch "kill switch" is on, or if enabled by Enterprise Policy.
+  // On desktop, enable transfer for the reverse Origin Trial, or if enabled by
+  // Enterprise Policy.
   return RuntimeEnabledFeatures::UnrestrictedSharedArrayBufferEnabled(this) ||
-         RuntimeEnabledFeatures::SharedArrayBufferOnDesktopEnabled() ||
          RuntimeEnabledFeatures::
              SharedArrayBufferUnrestrictedAccessAllowedEnabled();
 #endif
@@ -398,13 +405,13 @@ void ExecutionContext::SetContentSecurityPolicy(
 }
 
 void ExecutionContext::SetRequireTrustedTypes() {
-  DCHECK(require_safe_types_ ||
-         content_security_policy_->IsRequireTrustedTypes());
-  require_safe_types_ = true;
+  DCHECK(require_trusted_types_ ||
+         content_security_policy_->TrustedTypesRequired());
+  require_trusted_types_ = true;
 }
 
 void ExecutionContext::SetRequireTrustedTypesForTesting() {
-  require_safe_types_ = true;
+  require_trusted_types_ = true;
 }
 
 network::mojom::blink::WebSandboxFlags ExecutionContext::GetSandboxFlags()
@@ -465,8 +472,7 @@ void ExecutionContext::ParseAndSetReferrerPolicy(
     policy_is_valid = (SecurityPolicy::ReferrerPolicyFromString(
         policy, kSupportReferrerPolicyLegacyKeywords, &referrer_policy));
   } else {
-    NOTREACHED_IN_MIGRATION();
-    return;
+    NOTREACHED();
   }
 
   if (policy_is_valid) {
@@ -515,8 +521,13 @@ void ExecutionContext::SetReferrerPolicy(
 void ExecutionContext::SetPolicyContainer(
     std::unique_ptr<PolicyContainer> container) {
   policy_container_ = std::move(container);
-  security_context_.SetSandboxFlags(
-      policy_container_->GetPolicies().sandbox_flags);
+  const mojom::blink::PolicyContainerPolicies& policies =
+      policy_container_->GetPolicies();
+  security_context_.SetSandboxFlags(policies.sandbox_flags);
+
+  IntegrityPolicy::LogParsingErrorsIfAny(this, policies.integrity_policy);
+  IntegrityPolicy::LogParsingErrorsIfAny(this,
+                                         policies.integrity_policy_report_only);
 }
 
 std::unique_ptr<PolicyContainer> ExecutionContext::TakePolicyContainer() {
@@ -567,7 +578,7 @@ bool ExecutionContext::FeatureEnabled(
 }
 
 bool ExecutionContext::IsFeatureEnabled(
-    mojom::blink::PermissionsPolicyFeature feature,
+    network::mojom::PermissionsPolicyFeature feature,
     ReportOptions report_option,
     const String& message) {
   SecurityContext::FeatureStatus status =
@@ -586,7 +597,7 @@ bool ExecutionContext::IsFeatureEnabled(
 }
 
 bool ExecutionContext::IsFeatureEnabled(
-    mojom::blink::PermissionsPolicyFeature feature) const {
+    network::mojom::PermissionsPolicyFeature feature) const {
   return security_context_.IsFeatureEnabled(feature).enabled;
 }
 
@@ -637,7 +648,7 @@ bool ExecutionContext::IsFeatureEnabled(
 }
 
 bool ExecutionContext::RequireTrustedTypes() const {
-  return require_safe_types_;
+  return require_trusted_types_;
 }
 
 namespace {
@@ -711,7 +722,7 @@ bool ExecutionContext::IsInjectionMitigatedContext() const {
     return false;
   }
   return GetContentSecurityPolicy()->IsStrictPolicyEnforced() &&
-         GetContentSecurityPolicy()->RequiresTrustedTypes();
+         GetContentSecurityPolicy()->TrustedTypesRequired();
 }
 
 }  // namespace blink

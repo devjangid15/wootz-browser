@@ -4,12 +4,15 @@
 
 package org.chromium.chrome.browser.autofill;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.Context;
 import android.text.Editable;
 import android.view.View;
 import android.widget.EditText;
 import android.widget.TextView;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.autofill.AutofillUiUtils.ErrorType;
 import org.chromium.ui.modaldialog.DialogDismissalCause;
@@ -22,6 +25,7 @@ import org.chromium.ui.text.EmptyTextWatcher;
  * TODO(crbug.com/40579040) - Confirm if the month and year needs to be pre-populated in case
  * partial data is available.
  */
+@NullMarked
 public class AutofillExpirationDateFixFlowPrompt extends AutofillSaveCardPromptBase
         implements EmptyTextWatcher {
     /**
@@ -88,21 +92,21 @@ public class AutofillExpirationDateFixFlowPrompt extends AutofillSaveCardPromptB
                 confirmButtonLabel,
                 filledConfirmButton);
         mDelegate = delegate;
-        mErrorMessage = (TextView) mDialogView.findViewById(R.id.error_message);
+        mErrorMessage = mDialogView.findViewById(R.id.error_message);
         // Infobar: show masked card number only.
-        TextView cardDetailsMasked = (TextView) mDialogView.findViewById(R.id.cc_details_masked);
+        TextView cardDetailsMasked = mDialogView.findViewById(R.id.cc_details_masked);
         cardDetailsMasked.setText(cardLabel);
         mDialogView.findViewById(R.id.message_divider).setVisibility(View.GONE);
         mDialogView.findViewById(R.id.google_pay_logo).setVisibility(View.GONE);
 
-        mMonthInput = (EditText) mDialogView.findViewById(R.id.cc_month_edit);
+        mMonthInput = mDialogView.findViewById(R.id.cc_month_edit);
         mMonthInput.addTextChangedListener(this);
         mMonthInput.setOnFocusChangeListener(
                 (view, hasFocus) -> {
                     mDidFocusOnMonth |= hasFocus;
                 });
 
-        mYearInput = (EditText) mDialogView.findViewById(R.id.cc_year_edit);
+        mYearInput = mDialogView.findViewById(R.id.cc_year_edit);
         mYearInput.addTextChangedListener(this);
         mYearInput.setOnFocusChangeListener(
                 (view, hasFocus) -> {
@@ -117,6 +121,7 @@ public class AutofillExpirationDateFixFlowPrompt extends AutofillSaveCardPromptB
 
     @Override
     public void onClick(PropertyModel model, int buttonType) {
+        assumeNonNull(mModalDialogManager);
         if (buttonType == ModalDialogProperties.ButtonType.POSITIVE) {
             String monthString = mMonthInput.getText().toString().trim();
             String yearString = mYearInput.getText().toString().trim();

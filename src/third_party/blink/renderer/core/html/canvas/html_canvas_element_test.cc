@@ -8,23 +8,31 @@
 #include "base/strings/strcat.h"
 #include "base/test/test_trace_processor.h"
 #include "base/test/trace_test_utils.h"
+#include "base/trace_event/trace_event.h"
 #include "build/buildflag.h"
+#include "cc/paint/paint_op.h"
+#include "cc/test/paint_op_matchers.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "third_party/abseil-cpp/absl/status/status.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_evaluation_result.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_function.h"
 #include "third_party/blink/renderer/core/html/canvas/canvas_rendering_context.h"
+#include "third_party/blink/renderer/core/html/canvas/recording_test_utils.h"
 #include "third_party/blink/renderer/core/page/page_animator.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
 #include "third_party/blink/renderer/core/script/classic_script.h"
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
 #include "third_party/blink/renderer/platform/testing/paint_test_configurations.h"
 
-using testing::Contains;
-using testing::ElementsAre;
-using testing::Eq;
-using testing::IsSupersetOf;
-using testing::StartsWith;
+using ::blink_testing::ClearRectFlags;
+using ::blink_testing::FillFlags;
+using ::blink_testing::RecordedOpsAre;
+using ::cc::DrawRectOp;
+using ::cc::PaintOpEq;
+using ::testing::Contains;
+using ::testing::ElementsAre;
+using ::testing::Eq;
+using ::testing::StartsWith;
 
 namespace blink {
 
@@ -43,6 +51,72 @@ INSTANTIATE_PAINT_TEST_SUITE_P(HTMLCanvasElementTest);
 void HTMLCanvasElementTest::TearDown() {
   RenderingTest::TearDown();
   CanvasRenderingContext::GetCanvasPerformanceMonitor().ResetForTesting();
+}
+
+TEST_P(HTMLCanvasElementTest, CleanCanvasResizeDoesntClearFrameBuffer) {
+  GetDocument().GetSettings()->SetScriptEnabled(true);
+  // Enable printing so that flushes preserve the last recording.
+  GetDocument().SetPrinting(Document::kBeforePrinting);
+  SetBodyInnerHTML("<canvas id='c' width='10' height='20'></canvas>");
+
+  Element* script = GetDocument().CreateRawElement(html_names::kScriptTag);
+  script->setTextContent(R"JS(
+    var canvas = document.getElementById('c');
+    var ctx = canvas.getContext('2d');
+    canvas.width = 10;
+    ctx.fillStyle = 'blue';
+    ctx.fillRect(0, 0, 5, 5);
+  )JS");
+  GetDocument().body()->appendChild(script);
+  RunDocumentLifecycle();
+
+  auto* canvas =
+      To<HTMLCanvasElement>(GetDocument().getElementById(AtomicString("c")));
+  CanvasResourceProvider* provider =
+      canvas->GetOrCreateCanvasResourceProviderForCanvas2D();
+
+  cc::PaintFlags fill_flags = FillFlags();
+  fill_flags.setColor(SkColors::kBlue);
+  EXPECT_THAT(provider->LastRecording(),
+              Optional(RecordedOpsAre(PaintOpEq<DrawRectOp>(
+                  SkRect::MakeXYWH(0, 0, 5, 5), fill_flags))));
+}
+
+TEST_P(HTMLCanvasElementTest, CanvasResizeClearsFrameBuffer) {
+  GetDocument().GetSettings()->SetScriptEnabled(true);
+  // Enable printing so that flushes preserve the last recording.
+  GetDocument().SetPrinting(Document::kBeforePrinting);
+  SetBodyInnerHTML("<canvas id='c' width='10' height='20'></canvas>");
+
+  Element* script = GetDocument().CreateRawElement(html_names::kScriptTag);
+  script->setTextContent(R"JS(
+    var canvas = document.getElementById('c');
+    var ctx = canvas.getContext('2d');
+    ctx.fillStyle = 'red';
+    ctx.fillRect(0, 0, 10, 10);
+    ctx.getImageData(0, 0, 1, 1);  // Force a frame to be rendered.
+
+    canvas.width = 10;
+
+    ctx.fillStyle = 'blue';
+    ctx.fillRect(0, 0, 5, 5);
+  )JS");
+  GetDocument().body()->appendChild(script);
+  RunDocumentLifecycle();
+
+  auto* canvas =
+      To<HTMLCanvasElement>(GetDocument().getElementById(AtomicString("c")));
+  CanvasResourceProvider* provider =
+      canvas->GetOrCreateCanvasResourceProviderForCanvas2D();
+
+  cc::PaintFlags fill_flags = FillFlags();
+  fill_flags.setColor(SkColors::kBlue);
+  EXPECT_THAT(
+      provider->LastRecording(),
+      Optional(RecordedOpsAre(
+          PaintOpEq<DrawRectOp>(SkRect::MakeXYWH(0, 0, 10, 20),
+                                ClearRectFlags()),
+          PaintOpEq<DrawRectOp>(SkRect::MakeXYWH(0, 0, 5, 5), fill_flags))));
 }
 
 TEST_P(HTMLCanvasElementTest, CreateLayerUpdatesCompositing) {
@@ -256,16 +330,12 @@ INSTANTIATE_TEST_SUITE_P(
          )JS",
                            "OffscreenCanvas.convertToBlob")}));
 
-class Resolve final : public ScriptFunction::Callable {
+class Resolve final : public ThenCallable<IDLAny, Resolve> {
  public:
   explicit Resolve(base::RepeatingClosure callback)
       : callback_(std::move(callback)) {}
 
-  ScriptValue Call(ScriptState*, ScriptValue) override {
-    callback_.Run();
-    return ScriptValue();
-  }
-  int Length() const override { return 1; }
+  void React(ScriptState*, ScriptValue) { callback_.Run(); }
 
  private:
   base::RepeatingClosure callback_;
@@ -288,8 +358,7 @@ TEST_P(HTMLCanvasElementWithTracingAsyncTest,
   ScriptState::Scope script_state_scope(script_state);
 
   base::RunLoop run_loop;
-  ScriptFunction* fn = MakeGarbageCollected<ScriptFunction>(
-      script_state, MakeGarbageCollected<Resolve>(run_loop.QuitClosure()));
+  auto* resolve = MakeGarbageCollected<Resolve>(run_loop.QuitClosure());
 
   ClassicScript* script = ClassicScript::CreateUnspecifiedScript(
       GetParam().first, ScriptSourceLocationType::kUnknown,
@@ -300,7 +369,7 @@ TEST_P(HTMLCanvasElementWithTracingAsyncTest,
 
   auto promise =
       ToResolvedPromise<IDLAny>(script_state, script_result.GetSuccessValue());
-  promise.Then(fn, fn);
+  promise.Then(script_state, resolve, resolve);
 
   // Avoid the NOTREACHED in CanvasPerformanceMonitor::WillProcessTask().
   CanvasRenderingContext::GetCanvasPerformanceMonitor().ResetForTesting();
@@ -373,6 +442,5 @@ TEST_P(HTMLCanvasElementWithTracingAsyncTest,
                                                      StartsWith("data:"))));
   }
 }
-
 
 }  // namespace blink

@@ -4,6 +4,8 @@
 
 #include "ash/system/progress_indicator/progress_ring_pulse_animation.h"
 
+#include <array>
+
 #include "base/dcheck_is_on.h"
 #include "base/notreached.h"
 #include "ui/compositor/scoped_animation_duration_scale_mode.h"
@@ -23,7 +25,7 @@ struct AnimationKeyFrame {
 };
 
 // The collection of all key frames in the animation.
-constexpr AnimationKeyFrame kAnimationKeyFrames[] = {
+constexpr std::array<AnimationKeyFrame, 10> kAnimationKeyFrames = {{
     {.fraction = 0.f, .opacity = 1.f},                              // Start.
     {.fraction = 333.f / kAnimationDurationInMs, .opacity = 0.f},   // Fade out.
     {.fraction = 433.f / kAnimationDurationInMs, .opacity = 0.f},   // Hold.
@@ -33,7 +35,8 @@ constexpr AnimationKeyFrame kAnimationKeyFrames[] = {
     {.fraction = 1432.f / kAnimationDurationInMs, .opacity = 0.f},  // Hold.
     {.fraction = 1765.f / kAnimationDurationInMs, .opacity = 1.f},  // Fade in.
     {.fraction = 1998.f / kAnimationDurationInMs, .opacity = 1.f},  // Hold.
-    {.fraction = 1.f, .opacity = 0.f}};                             // Fade out.
+    {.fraction = 1.f, .opacity = 0.f}                               // Fade out.
+}};
 
 }  // namespace
 
@@ -98,7 +101,7 @@ void ProgressRingPulseAnimation::UpdateAnimatableProperties(
 
   // This LOC should never be reached as the correct key frames for the current
   // animation `fraction` should have been found in the loop above.
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 }  // namespace ash

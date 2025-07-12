@@ -10,6 +10,7 @@
 
 #include "base/check.h"
 #include "base/logging.h"
+#include "base/notimplemented.h"
 #include "base/strings/utf_offset_string_conversions.h"
 #include "components/exo/seat.h"
 #include "components/exo/shell_surface_util.h"
@@ -205,6 +206,10 @@ void TextInput::FinalizeVirtualKeyboardChanges() {
   }
 
   pending_vk_finalize_ = false;
+}
+
+base::WeakPtr<ui::TextInputClient> TextInput::AsWeakPtr() {
+  return weak_ptr_factory_.GetWeakPtr();
 }
 
 void TextInput::SetCompositionText(const ui::CompositionText& composition) {

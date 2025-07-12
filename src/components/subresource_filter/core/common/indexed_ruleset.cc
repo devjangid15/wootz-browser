@@ -5,10 +5,9 @@
 #include "components/subresource_filter/core/common/indexed_ruleset.h"
 
 #include "base/check.h"
-#include "base/logging.h"
 #include "base/hash/hash.h"
-#include "base/metrics/histogram_macros.h"
-#include "base/not_fatal_until.h"
+#include "base/metrics/histogram_functions.h"
+#include "base/strings/strcat.h"
 #include "base/trace_event/trace_event.h"
 #include "components/subresource_filter/core/common/first_party_origin.h"
 #include "url/gurl.h"
@@ -38,10 +37,7 @@ VerifyStatus GetVerifyStatus(base::span<const uint8_t> buffer,
   // least once.  The verifier detects a subset of the errors detected by the
   // checksum, and is unneeded once expected_checksum is consistently nonzero.
   flatbuffers::Verifier verifier(buffer.data(), buffer.size());
-  int local_checksum = LocalGetChecksum(buffer);
-  // LOG(INFO) << "AdBlock: GetVerifyStatus: expected checksum = 0x" << std::hex << expected_checksum << ", local checksum = 0x" << std::hex << local_checksum;
-  if (expected_checksum != 0 && expected_checksum != local_checksum) {
-    // LOG(INFO) << "AdBlock: GetVerifyStatus: expected checksum != local checksum";
+  if (expected_checksum != 0 && expected_checksum != LocalGetChecksum(buffer)) {
     return flat::VerifyIndexedRulesetBuffer(verifier)
                ? VerifyStatus::kChecksumFailVerifierPass
                : VerifyStatus::kChecksumFailVerifierFail;
@@ -58,12 +54,12 @@ VerifyStatus GetVerifyStatus(base::span<const uint8_t> buffer,
 
 // RulesetIndexer --------------------------------------------------------------
 
-const int RulesetIndexer::kIndexedFormatVersion = 36;
+const int RulesetIndexer::kIndexedFormatVersion = 37;
 
 // This static assert is meant to catch cases where
 // url_pattern_index::kUrlPatternIndexFormatVersion is incremented without
 // updating RulesetIndexer::kIndexedFormatVersion.
-static_assert(url_pattern_index::kUrlPatternIndexFormatVersion == 15,
+static_assert(url_pattern_index::kUrlPatternIndexFormatVersion == 16,
               "kUrlPatternIndexFormatVersion has changed, make sure you've "
               "also updated RulesetIndexer::kIndexedFormatVersion above.");
 
@@ -77,18 +73,21 @@ bool RulesetIndexer::AddUrlRule(const proto::UrlRule& rule) {
       url_pattern_index::SerializeUrlRule(rule, &builder_, &domain_map_);
   // Note: A zero offset.o means a "nullptr" offset. It is returned when the
   // rule has not been serialized.
-  if (!offset.o)
+  if (!offset.o) {
     return false;
+  }
 
   if (rule.semantics() == proto::RULE_SEMANTICS_BLOCKLIST) {
     blocklist_.IndexUrlRule(offset);
   } else {
     const auto* flat_rule = flatbuffers::GetTemporaryPointer(builder_, offset);
-    CHECK(flat_rule, base::NotFatalUntil::M129);
-    if (flat_rule->element_types())
+    CHECK(flat_rule);
+    if (flat_rule->element_types()) {
       allowlist_.IndexUrlRule(offset);
-    if (flat_rule->activation_types())
+    }
+    if (flat_rule->activation_types()) {
       deactivation_.IndexUrlRule(offset);
+    }
   }
 
   return true;
@@ -112,14 +111,15 @@ int RulesetIndexer::GetChecksum() const {
 
 // static
 bool IndexedRulesetMatcher::Verify(base::span<const uint8_t> buffer,
-                                   int expected_checksum) {
+                                   int expected_checksum,
+                                   std::string_view uma_tag) {
   TRACE_EVENT_BEGIN1(TRACE_DISABLED_BY_DEFAULT("loading"),
                      "IndexedRulesetMatcher::Verify", "size", buffer.size());
-  SCOPED_UMA_HISTOGRAM_TIMER(
-      "SubresourceFilter.IndexRuleset.Verify2.WallDuration");
+  base::ScopedUmaHistogramTimer scoped_timer(
+      base::StrCat({uma_tag, ".IndexRuleset.Verify2.WallDuration"}));
   VerifyStatus status = GetVerifyStatus(buffer, expected_checksum);
-  UMA_HISTOGRAM_ENUMERATION("SubresourceFilter.IndexRuleset.Verify.Status",
-                            status);
+  base::UmaHistogramEnumeration(
+      base::StrCat({uma_tag, ".IndexRuleset.Verify.Status"}), status);
   TRACE_EVENT_END1(TRACE_DISABLED_BY_DEFAULT("loading"),
                    "IndexedRulesetMatcher::Verify", "status",
                    static_cast<int>(status));
@@ -149,19 +149,24 @@ LoadPolicy IndexedRulesetMatcher::GetLoadPolicyForResourceLoad(
     const GURL& url,
     const FirstPartyOrigin& first_party,
     proto::ElementType element_type,
-    bool disable_generic_rules) const {
-  // LOG(INFO) << "AdBlock: Getting load policy for URL " << url.spec();
+    bool disable_generic_rules,
+    const url_pattern_index::flat::UrlRule** out_rule) const {
   const url_pattern_index::flat::UrlRule* rule =
       MatchedUrlRule(url, first_party, element_type, disable_generic_rules);
 
-  // LOG(INFO) << "AdBlock: URL " << url.spec() << " policy: " << (rule ? "BLOCK" : "ALLOW");
-  if (!rule)
-    return LoadPolicy::ALLOW;
+  LoadPolicy policy = LoadPolicy::DISALLOW;
+  if (!rule) {
+    policy = LoadPolicy::ALLOW;
+  } else if (rule->options() &
+             url_pattern_index::flat::OptionFlag_IS_ALLOWLIST) {
+    policy = LoadPolicy::EXPLICITLY_ALLOW;
+  }
 
+  if (policy == LoadPolicy::DISALLOW && out_rule) {
+    *out_rule = rule;
+  }
 
-  return rule->options() & url_pattern_index::flat::OptionFlag_IS_ALLOWLIST
-             ? LoadPolicy::EXPLICITLY_ALLOW
-             : LoadPolicy::DISALLOW;
+  return policy;
 }
 
 const url_pattern_index::flat::UrlRule* IndexedRulesetMatcher::MatchedUrlRule(
@@ -169,7 +174,6 @@ const url_pattern_index::flat::UrlRule* IndexedRulesetMatcher::MatchedUrlRule(
     const FirstPartyOrigin& first_party,
     url_pattern_index::proto::ElementType element_type,
     bool disable_generic_rules) const {
-  // LOG(INFO) << "AdBlock: Finding match for URL " << url.spec();
   const bool is_third_party = first_party.IsThirdParty(url);
   const EmbedderConditionsMatcher embedder_conditions_matcher;
 
@@ -192,18 +196,19 @@ const url_pattern_index::flat::UrlRule* IndexedRulesetMatcher::MatchedUrlRule(
   // allowlist rule was not matched.
   if (element_type == proto::ELEMENT_TYPE_SUBDOCUMENT) {
     auto* allowlist_rule = find_match(allowlist_);
-    if (allowlist_rule)
+    if (allowlist_rule) {
       return allowlist_rule;
+    }
     return find_match(blocklist_);
   }
 
   // For non-subdocument elements, only check the allowlist if there is a
   // matched blocklist rule to prevent unnecessary lookups.
   auto* blocklist_rule = find_match(blocklist_);
-  if (!blocklist_rule)
+  if (!blocklist_rule) {
     return nullptr;
+  }
   auto* allowlist_rule = find_match(allowlist_);
-  // LOG(INFO) << "AdBlock: Match result for " << url.spec() << ": " << (blocklist_rule || allowlist_rule ? "MATCHED" : "NO MATCH");
   return allowlist_rule ? allowlist_rule : blocklist_rule;
 }
 

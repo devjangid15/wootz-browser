@@ -4,16 +4,17 @@
 
 package org.chromium.chrome.browser.autofill.editors;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.VISIBLE;
 
 import android.app.Activity;
 
 import androidx.annotation.IntDef;
-import androidx.annotation.Nullable;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.autofill.AutofillAddress;
 import org.chromium.chrome.browser.autofill.PersonalDataManagerFactory;
-import org.chromium.chrome.browser.feedback.HelpAndFeedbackLauncher;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.signin.services.IdentityServicesProvider;
 import org.chromium.chrome.browser.sync.SyncServiceFactory;
@@ -25,10 +26,11 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 
 /** An address editor. Can be used for either shipping or billing address editing. */
+@NullMarked
 public class AddressEditorCoordinator {
     private final AddressEditorMediator mMediator;
     private EditorDialogView mEditorDialog;
-    @Nullable private PropertyModel mEditorModel;
+    private @Nullable PropertyModel mEditorModel;
 
     /** Delegate used to subscribe to AddressEditor user interactions. */
     public static interface Delegate {
@@ -61,11 +63,12 @@ public class AddressEditorCoordinator {
     public @interface UserFlow {
         // The user creates a new address from Chrome settings.
         int CREATE_NEW_ADDRESS_PROFILE = 1;
-        // The user edits an potentially save an address parsed from a submitted form.
+        // The user edits and potentially saves an address parsed from a submitted form.
         int SAVE_NEW_ADDRESS_PROFILE = 2;
         // The user edits an existing address either from Chrome settings or upon form submission.
         int UPDATE_EXISTING_ADDRESS_PROFILE = 3;
-        // The user edits an existing
+        // The user edits an existing address which is going to be migrated to the Google Address
+        // Store.
         int MIGRATE_EXISTING_ADDRESS_PROFILE = 4;
     }
 
@@ -73,20 +76,14 @@ public class AddressEditorCoordinator {
      * Builds an address editor for a new address profile.
      *
      * @param activity The activity on top of which the UI should be displayed.
-     * @param helpLauncher The launcher of user help activity.
      * @param delegate Delegate to react to users interactions with the editor.
      * @param profile Current user's profile.
      * @param saveToDisk Whether to save changes to disk after editing.
      */
     public AddressEditorCoordinator(
-            Activity activity,
-            HelpAndFeedbackLauncher helpLauncher,
-            Delegate delegate,
-            Profile profile,
-            boolean saveToDisk) {
+            Activity activity, Delegate delegate, Profile profile, boolean saveToDisk) {
         this(
                 activity,
-                helpLauncher,
                 delegate,
                 profile,
                 new AutofillAddress(
@@ -101,7 +98,6 @@ public class AddressEditorCoordinator {
      * Builds an address editor for an existing address profile.
      *
      * @param activity The activity on top of which the UI should be displayed.
-     * @param helpLauncher The launcher of user help activity.
      * @param delegate Delegate to react to users interactions with the editor.
      * @param profile Current user's profile.
      * @param addressToEdit Address the user wants to modify.
@@ -110,7 +106,6 @@ public class AddressEditorCoordinator {
      */
     public AddressEditorCoordinator(
             Activity activity,
-            HelpAndFeedbackLauncher helpLauncher,
             Delegate delegate,
             Profile profile,
             AutofillAddress addressToEdit,
@@ -120,45 +115,31 @@ public class AddressEditorCoordinator {
                 new AddressEditorMediator(
                         activity,
                         delegate,
-                        IdentityServicesProvider.get().getIdentityManager(profile),
+                        assumeNonNull(IdentityServicesProvider.get().getIdentityManager(profile)),
                         SyncServiceFactory.getForProfile(profile),
                         PersonalDataManagerFactory.getForProfile(profile),
                         addressToEdit,
                         userFlow,
                         saveToDisk);
-        mEditorDialog = new EditorDialogView(activity, helpLauncher);
+        mEditorDialog = new EditorDialogView(activity, profile);
     }
 
     /**
      * Sets the custom text to be shown on the done button.
      *
      * @param customDoneButtonText The text to display on the done button. If null, the default
-     *        value will be used.
+     *     value will be used.
      */
     public void setCustomDoneButtonText(@Nullable String customDoneButtonText) {
         mMediator.setCustomDoneButtonText(customDoneButtonText);
     }
 
     /**
-     * Sets the runnable deleting the current autofill profile, e.g. when the user selects
-     * the delete option in the menu and confirms autofill profile deletion.
-     *
-     * @param deleteRunnable A {@link Runnable} deleting the current profile.
+     * Sets the runnable deleting the current autofill profile, e.g. when the user selects the
+     * delete option in the menu and confirms autofill profile deletion.
      */
     public void setAllowDelete(boolean allowDelete) {
         mMediator.setAllowDelete(allowDelete);
-    }
-
-    /**
-     * Sets a boolean flag indicating if done callback needs to be triggered prior to dismissing
-     * this address editor.
-     *
-     * @param shouldTrigger If true, done callback is triggered immediately after the user clicked
-     *         on the done button. Otherwise, by default, it is triggered only after the dialog is
-     *         dismissed with animation.
-     */
-    public void setShouldTriggerDoneCallbackBeforeCloseAnimation(boolean shouldTrigger) {
-        mMediator.setShouldTriggerDoneCallbackBeforeCloseAnimation(shouldTrigger);
     }
 
     /** Notifies underlying view that device configuration has changed. */

@@ -4,12 +4,15 @@
 
 #import "ios/chrome/browser/shared/model/web_state_list/test/web_state_list_builder_from_description.h"
 
+#import "components/tab_groups/tab_group_id.h"
 #import "components/tab_groups/tab_group_visual_data.h"
 #import "ios/chrome/browser/shared/model/web_state_list/removing_indexes.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list_delegate.h"
 #import "ios/web/public/test/fakes/fake_web_state.h"
 #import "testing/platform_test.h"
+
+using tab_groups::TabGroupId;
 
 // Tests for `WebStateListBuilderFromDescription`.
 class WebStateListBuilderFromDescriptionTest : public PlatformTest,
@@ -18,6 +21,7 @@ class WebStateListBuilderFromDescriptionTest : public PlatformTest,
   // WebStateListDelegate implementation
   void WillAddWebState(web::WebState* web_state) final {}
   void WillActivateWebState(web::WebState* web_state) final {}
+  void WillRemoveWebState(web::WebState* web_state) final {}
 
  protected:
   // Shorthand for `builder_.BuildWebStateListFromDescription(...)`.
@@ -101,8 +105,8 @@ TEST_F(WebStateListBuilderFromDescriptionTest, CanGetWebStateListDescription) {
   InsertWebState(InsertionParams::AtIndex(5));
   InsertWebState(InsertionParams::AtIndex(6));
   InsertWebState(InsertionParams::AtIndex(7));
-  web_state_list_.CreateGroup({2, 3}, {});
-  web_state_list_.CreateGroup({6, 7}, {});
+  web_state_list_.CreateGroup({2, 3}, {}, TabGroupId::GenerateNew());
+  web_state_list_.CreateGroup({6, 7}, {}, TabGroupId::GenerateNew());
   EXPECT_EQ("_ _ | [ _ _ _* ] _ _ [ _ _ _ ]", GetDescription());
   builder_.GenerateIdentifiersForWebStateList();
   EXPECT_EQ("a b | [ 0 c d* ] e f [ 1 g h ]", GetDescription());
@@ -192,7 +196,8 @@ TEST_F(WebStateListBuilderFromDescriptionTest, CanSetIdentifiers) {
   builder_.SetWebStateIdentifier(web_state_2_ptr, 'c');
   EXPECT_EQ("| b c", GetDescription());
 
-  const TabGroup* tab_group = web_state_list_.CreateGroup({0, 1}, {});
+  const TabGroup* tab_group =
+      web_state_list_.CreateGroup({0, 1}, {}, TabGroupId::GenerateNew());
   EXPECT_EQ("| [ _ b c ]", GetDescription());
   builder_.SetTabGroupIdentifier(tab_group, '0');
   EXPECT_EQ("| [ 0 b c ]", GetDescription());
@@ -292,11 +297,11 @@ TEST_F(WebStateListBuilderFromDescriptionTest,
   web_state_list_.ActivateWebStateAt(4);
   EXPECT_EQ("a b | c d e*", GetDescription());
 
-  web_state_list_.CreateGroup({2}, {});
+  web_state_list_.CreateGroup({2}, {}, TabGroupId::GenerateNew());
   EXPECT_EQ("a b | [ _ c ] d e*", GetDescription());
-  web_state_list_.CreateGroup({3}, {});
+  web_state_list_.CreateGroup({3}, {}, TabGroupId::GenerateNew());
   EXPECT_EQ("a b | [ _ c ] [ _ d ] e*", GetDescription());
-  web_state_list_.CreateGroup({4}, {});
+  web_state_list_.CreateGroup({4}, {}, TabGroupId::GenerateNew());
   EXPECT_EQ("a b | [ _ c ] [ _ d ] [ _ e* ]", GetDescription());
   builder_.GenerateIdentifiersForWebStateList();
   EXPECT_EQ("a b | [ 0 c ] [ 1 d ] [ 2 e* ]", GetDescription());
@@ -333,7 +338,7 @@ TEST_F(WebStateListBuilderFromDescriptionTest, ResetsGroupIdentifier) {
 
   const auto visual_data = tab_groups::TabGroupVisualData(
       u"New Group", tab_groups::TabGroupColorId::kGrey);
-  web_state_list_.CreateGroup({0}, visual_data);
+  web_state_list_.CreateGroup({0}, visual_data, TabGroupId::GenerateNew());
 
   EXPECT_EQ("| [ _ a ]", GetDescription());
 }

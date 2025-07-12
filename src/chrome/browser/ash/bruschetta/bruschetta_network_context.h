@@ -7,6 +7,7 @@
 
 #include <optional>
 
+#include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/unguessable_token.h"
 #include "chrome/browser/net/proxy_config_monitor.h"
@@ -27,6 +28,8 @@
 #include "services/network/public/mojom/url_loader_network_service_observer.mojom.h"
 #include "url/gurl.h"
 
+class PrefService;
+
 namespace bruschetta {
 
 // Provides an isolated NetworkContext which uses the client certificate store
@@ -36,7 +39,7 @@ class BruschettaNetworkContext
     : public network::mojom::URLLoaderNetworkServiceObserver {
  public:
   // Class should not outlive the passed-in profile.
-  explicit BruschettaNetworkContext(Profile* profile);
+  BruschettaNetworkContext(Profile* profile, PrefService& local_state);
 
   BruschettaNetworkContext(const BruschettaNetworkContext&) = delete;
   BruschettaNetworkContext& operator=(const BruschettaNetworkContext&) = delete;
@@ -59,7 +62,7 @@ class BruschettaNetworkContext
           cert_responder) override;
   void OnAuthRequired(
       const std::optional<base::UnguessableToken>& window_id,
-      uint32_t request_id,
+      int32_t request_id,
       const GURL& url,
       bool first_auth_attempt,
       const net::AuthChallengeInfo& auth_info,
@@ -72,6 +75,8 @@ class BruschettaNetworkContext
       const std::optional<std::string>& private_network_device_id,
       const std::optional<std::string>& private_network_device_name,
       OnPrivateNetworkAccessPermissionRequiredCallback callback) override;
+  void OnLocalNetworkAccessPermissionRequired(
+      OnLocalNetworkAccessPermissionRequiredCallback callback) override;
   void OnClearSiteData(
       const GURL& url,
       const std::string& header_value,
@@ -86,13 +91,23 @@ class BruschettaNetworkContext
                        int64_t sent_bytes) override;
   void OnSharedStorageHeaderReceived(
       const url::Origin& request_origin,
-      std::vector<network::mojom::SharedStorageOperationPtr> operations,
+      std::vector<network::mojom::SharedStorageModifierMethodWithOptionsPtr>
+          methods_with_options,
+      const std::optional<std::string>& with_lock,
       OnSharedStorageHeaderReceivedCallback callback) override;
+  void OnAdAuctionEventRecordHeaderReceived(
+      network::AdAuctionEventRecord event_record,
+      const std::optional<url::Origin>& top_frame_origin) override;
   void Clone(
       mojo::PendingReceiver<network::mojom::URLLoaderNetworkServiceObserver>
           listener) override;
   void OnWebSocketConnectedToPrivateNetwork(
       network::mojom::IPAddressSpace ip_address_space) override;
+  void OnUrlLoaderConnectedToPrivateNetwork(
+      const GURL& request_url,
+      network::mojom::IPAddressSpace response_address_space,
+      network::mojom::IPAddressSpace client_address_space,
+      network::mojom::IPAddressSpace target_address_space) override;
 
  private:
   void ContinueWithCertificate(

@@ -9,8 +9,9 @@
 
 namespace autofill {
 
-class CreditCard;
 class Iban;
+class LoyaltyCard;
+struct Suggestion;
 class TouchToFillPaymentMethodViewController;
 
 // The UI interface which prompts the user to select a credit card to fill
@@ -19,11 +20,17 @@ class TouchToFillPaymentMethodView {
  public:
   virtual ~TouchToFillPaymentMethodView() = default;
 
-  virtual bool Show(TouchToFillPaymentMethodViewController* controller,
-                    base::span<const CreditCard> cards_to_suggest,
-                    bool should_show_scan_credit_card) = 0;
-  virtual bool Show(TouchToFillPaymentMethodViewController* controller,
-                    base::span<const Iban> ibans_to_suggest) = 0;
+  virtual bool ShowCreditCards(
+      TouchToFillPaymentMethodViewController* controller,
+      base::span<const Suggestion> suggestions,
+      bool should_show_scan_credit_card) = 0;
+  virtual bool ShowIbans(TouchToFillPaymentMethodViewController* controller,
+                         base::span<const Iban> ibans_to_suggest) = 0;
+  virtual bool ShowLoyaltyCards(
+      TouchToFillPaymentMethodViewController* controller,
+      base::span<const LoyaltyCard> affiliated_loyalty_cards,
+      base::span<const LoyaltyCard> all_loyalty_cards,
+      bool first_time_usage) = 0;
   virtual void Hide() = 0;
 };
 

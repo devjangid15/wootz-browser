@@ -26,6 +26,7 @@
 #include "third_party/blink/renderer/platform/scheduler/public/frame_scheduler.h"
 #include "third_party/blink/renderer/platform/scheduler/public/web_scheduling_priority.h"
 #include "third_party/blink/renderer/platform/scheduler/public/web_scheduling_queue_type.h"
+#include "third_party/blink/renderer/platform/wtf/thread_safe_ref_counted.h"
 #include "third_party/perfetto/include/perfetto/tracing/traced_value_forward.h"
 
 namespace base::sequence_manager {
@@ -47,7 +48,7 @@ class WakeUpBudgetPool;
 // TODO(crbug.com/1143007): Remove ref-counting of MainThreadTaskQueues as it's
 // no longer needed.
 class PLATFORM_EXPORT MainThreadTaskQueue
-    : public base::RefCountedThreadSafe<MainThreadTaskQueue> {
+    : public ThreadSafeRefCounted<MainThreadTaskQueue> {
  public:
   enum class QueueType {
     // Keep MainThreadTaskQueue::NameForQueueType in sync.
@@ -75,7 +76,8 @@ class PLATFORM_EXPORT MainThreadTaskQueue
     kFramePausable = 14,
     kFrameUnpausable = 15,
     kV8 = 16,
-    kV8LowPriority = 27,
+    kV8UserVisible = 27,
+    kV8BestEffort = 28,
     // 17 : kIPC, obsolete
     kInput = 18,
 
@@ -95,7 +97,7 @@ class PLATFORM_EXPORT MainThreadTaskQueue
 
     // Used to group multiple types when calculating Expected Queueing Time.
     kOther = 23,
-    kCount = 28
+    kCount = 29
   };
 
   // The ThrottleHandle controls throttling and unthrottling the queue. When
@@ -134,11 +136,6 @@ class PLATFORM_EXPORT MainThreadTaskQueue
   static base::sequence_manager::QueueName NameForQueueType(
       QueueType queue_type);
 
-  // Returns true if task queues of the given queue type can be created on a
-  // per-frame basis, and false if they are only created on a shared basis for
-  // the entire main thread.
-  static bool IsPerFrameTaskQueue(QueueType);
-
   using QueueTraitsKeyType = int;
 
   // QueueTraits represent the deferrable, throttleable, pausable, and freezable
@@ -147,15 +144,7 @@ class PLATFORM_EXPORT MainThreadTaskQueue
   // the QueueTraits determine which queues should be used to run which task
   // types.
   struct QueueTraits {
-    QueueTraits()
-        : can_be_deferred(false),
-          can_be_throttled(false),
-          can_be_intensively_throttled(false),
-          can_be_paused(false),
-          can_be_frozen(false),
-          can_run_in_background(true),
-          can_run_when_virtual_time_paused(true),
-          can_be_paused_for_android_webview(false) {}
+    QueueTraits() = default;
 
     // Separate enum class for handling prioritisation decisions in task queues.
     enum class PrioritisationType {
@@ -166,17 +155,15 @@ class PLATFORM_EXPORT MainThreadTaskQueue
       kLoadingControl = 4,
       kFindInPage = 5,
       kExperimentalDatabase = 6,
-      kJavaScriptTimer = 7,
-      kHighPriorityLocalFrame = 8,
-      kCompositor = 9,  // Main-thread only.
-      kInput = 10,
-      kPostMessageForwarding = 11,
-      kInternalNavigationCancellation = 12,
-      kRenderBlocking = 13,
-      kLow = 14,
-      kAsyncScript = 15,
+      kHighPriorityLocalFrame = 7,
+      kCompositor = 8,  // Main-thread only.
+      kInput = 9,
+      kPostMessageForwarding = 10,
+      kInternalNavigationCancellation = 11,
+      kRenderBlocking = 12,
+      kLow = 13,
 
-      kMaxValue = kAsyncScript
+      kMaxValue = kLow
     };
 
     // Bit width required for the PrioritisationType enumeration
@@ -201,6 +188,11 @@ class PLATFORM_EXPORT MainThreadTaskQueue
 
     QueueTraits SetCanBeDeferred(bool value) {
       can_be_deferred = value;
+      return *this;
+    }
+
+    QueueTraits SetCanBeDeferredForRendering(bool value) {
+      can_be_deferred_for_rendering = value;
       return *this;
     }
 
@@ -234,6 +226,11 @@ class PLATFORM_EXPORT MainThreadTaskQueue
       return *this;
     }
 
+    QueueTraits SetCanRunInBFCache(bool value) {
+      can_run_in_bfcache = value;
+      return *this;
+    }
+
     QueueTraits SetPrioritisationType(PrioritisationType type) {
       prioritisation_type = type;
       return *this;
@@ -244,20 +241,7 @@ class PLATFORM_EXPORT MainThreadTaskQueue
       return *this;
     }
 
-    bool operator==(const QueueTraits& other) const {
-      return can_be_deferred == other.can_be_deferred &&
-             can_be_throttled == other.can_be_throttled &&
-             can_be_intensively_throttled ==
-                 other.can_be_intensively_throttled &&
-             can_be_paused == other.can_be_paused &&
-             can_be_frozen == other.can_be_frozen &&
-             can_run_in_background == other.can_run_in_background &&
-             can_run_when_virtual_time_paused ==
-                 other.can_run_when_virtual_time_paused &&
-             prioritisation_type == other.prioritisation_type &&
-             can_be_paused_for_android_webview ==
-                 other.can_be_paused_for_android_webview;
-    }
+    bool operator==(const QueueTraits& other) const = default;
 
     // Return a key suitable for WTF::HashMap.
     QueueTraitsKeyType Key() const {
@@ -266,12 +250,14 @@ class PLATFORM_EXPORT MainThreadTaskQueue
       int offset = 0;
       int key = 1 << (offset++);
       key |= can_be_deferred << (offset++);
+      key |= can_be_deferred_for_rendering << (offset++);
       key |= can_be_throttled << (offset++);
       key |= can_be_intensively_throttled << (offset++);
       key |= can_be_paused << (offset++);
       key |= can_be_frozen << (offset++);
       key |= can_run_in_background << (offset++);
       key |= can_run_when_virtual_time_paused << (offset++);
+      key |= can_run_in_bfcache << (offset++);
       key |= can_be_paused_for_android_webview << (offset++);
       key |= static_cast<int>(prioritisation_type) << offset;
       offset += kPrioritisationTypeWidthBits;
@@ -280,14 +266,22 @@ class PLATFORM_EXPORT MainThreadTaskQueue
 
     void WriteIntoTrace(perfetto::TracedValue context) const;
 
-    bool can_be_deferred : 1;
-    bool can_be_throttled : 1;
-    bool can_be_intensively_throttled : 1;
-    bool can_be_paused : 1;
-    bool can_be_frozen : 1;
-    bool can_run_in_background : 1;
-    bool can_run_when_virtual_time_paused : 1;
-    bool can_be_paused_for_android_webview : 1;
+    bool can_be_deferred : 1 = false;
+    bool can_be_deferred_for_rendering : 1 = false;
+    bool can_be_throttled : 1 = false;
+    bool can_be_intensively_throttled : 1 = false;
+    bool can_be_paused : 1 = false;
+    bool can_be_frozen : 1 = false;
+    bool can_run_in_background : 1 = true;
+    bool can_run_when_virtual_time_paused : 1 = true;
+    // Normally, a freezable task queue is paused when its page is frozen. A
+    // page can be frozen when it enters the Back-Forward Cache, or when the
+    // browser freezes pages to save resources. This flag marks tasks that
+    // should run only when the page is frozen for BFCache. This is useful for
+    // tasks that need to evict the page from BFCache, e.g., a message from a
+    // SharedWorker.
+    bool can_run_in_bfcache : 1 = false;
+    bool can_be_paused_for_android_webview : 1 = false;
     PrioritisationType prioritisation_type = PrioritisationType::kRegular;
   };
 
@@ -326,6 +320,12 @@ class PLATFORM_EXPORT MainThreadTaskQueue
       return *this;
     }
 
+    QueueCreationParams SetCanBeDeferredForRendering(bool value) {
+      queue_traits = queue_traits.SetCanBeDeferredForRendering(value);
+      ApplyQueueTraitsToSpec();
+      return *this;
+    }
+
     QueueCreationParams SetCanBeThrottled(bool value) {
       queue_traits = queue_traits.SetCanBeThrottled(value);
       ApplyQueueTraitsToSpec();
@@ -352,6 +352,12 @@ class PLATFORM_EXPORT MainThreadTaskQueue
 
     QueueCreationParams SetCanRunWhenVirtualTimePaused(bool value) {
       queue_traits = queue_traits.SetCanRunWhenVirtualTimePaused(value);
+      ApplyQueueTraitsToSpec();
+      return *this;
+    }
+
+    QueueCreationParams SetCanRunInBFCache(bool value) {
+      queue_traits = queue_traits.SetCanRunInBFCache(value);
       ApplyQueueTraitsToSpec();
       return *this;
     }
@@ -409,6 +415,10 @@ class PLATFORM_EXPORT MainThreadTaskQueue
 
   bool CanBeDeferred() const { return queue_traits_.can_be_deferred; }
 
+  bool CanBeDeferredForRendering() const {
+    return queue_traits_.can_be_deferred_for_rendering;
+  }
+
   bool CanBeThrottled() const { return queue_traits_.can_be_throttled; }
 
   bool CanBeIntensivelyThrottled() const {
@@ -436,6 +446,8 @@ class PLATFORM_EXPORT MainThreadTaskQueue
   bool CanRunWhenVirtualTimePaused() const {
     return queue_traits_.can_run_when_virtual_time_paused;
   }
+
+  bool CanRunInBFCache() const { return queue_traits_.can_run_in_bfcache; }
 
   QueueTraits GetQueueTraits() const { return queue_traits_; }
 
@@ -559,7 +571,7 @@ class PLATFORM_EXPORT MainThreadTaskQueue
   ~MainThreadTaskQueue();
 
  private:
-  friend class base::RefCountedThreadSafe<MainThreadTaskQueue>;
+  friend class ThreadSafeRefCounted<MainThreadTaskQueue>;
   friend class blink::scheduler::main_thread_scheduler_impl_unittest::
       MainThreadSchedulerImplTest;
 

@@ -6,6 +6,7 @@
 #define COMPONENTS_PAGE_LOAD_METRICS_RENDERER_PAGE_TIMING_METRICS_SENDER_H_
 
 #include <memory>
+#include <vector>
 
 #include "base/containers/flat_set.h"
 #include "base/containers/small_map.h"
@@ -16,7 +17,6 @@
 #include "components/page_load_metrics/renderer/page_timing_metadata_recorder.h"
 #include "services/network/public/mojom/url_response_head.mojom-forward.h"
 #include "third_party/blink/public/common/loader/loading_behavior_flag.h"
-#include "third_party/blink/public/common/responsiveness_metrics/user_interaction_latency.h"
 #include "third_party/blink/public/common/subresource_load_metrics.h"
 #include "third_party/blink/public/common/use_counter/use_counter_feature_tracker.h"
 #include "third_party/blink/public/web/web_local_frame_client.h"
@@ -94,7 +94,6 @@ class PageTimingMetricsSender {
                                  base::TimeTicks max_event_queued_main_thread,
                                  base::TimeTicks max_event_commit_finish,
                                  base::TimeTicks max_event_end,
-                                 blink::UserInteractionType interaction_type,
                                  uint64_t interaction_offset);
   // Updates the timing information. Buffers |timing| to be sent over mojo
   // sometime 'soon'.
@@ -109,7 +108,10 @@ class PageTimingMetricsSender {
   void UpdateCpuTiming(base::TimeDelta task_time);
 
   void UpdateResourceMetadata(int resource_id, bool is_main_frame_resource);
-  void SetUpSmoothnessReporting(base::ReadOnlySharedMemoryRegion shared_memory);
+
+  void SetUpDroppedFramesReporting(
+      base::ReadOnlySharedMemoryRegion shared_memory_dropped_frames);
+
   void InitiateUserInteractionTiming();
   mojom::SoftNavigationMetricsPtr GetSoftNavigationMetrics() {
     return soft_navigation_metrics_->Clone();
@@ -117,6 +119,8 @@ class PageTimingMetricsSender {
 
   void UpdateSoftNavigationMetrics(
       mojom::SoftNavigationMetricsPtr soft_navigation_metrics);
+
+  void SendCustomUserTimingMark(mojom::CustomUserTimingMarkPtr custom_timing);
 
  protected:
   base::OneShotTimer* timer() const { return timer_.get(); }

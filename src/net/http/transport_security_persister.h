@@ -36,11 +36,13 @@
 #include <optional>
 #include <string>
 
+#include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/files/important_file_writer.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/time/time.h"
 #include "net/base/net_export.h"
 #include "net/http/transport_security_state.h"
 
@@ -49,6 +51,10 @@ class SequencedTaskRunner;
 }
 
 namespace net {
+
+// Exists only to hold a "commit-interval" param. If disabled, the default
+// ImportantFileWriter commit interval is used.
+NET_EXPORT BASE_DECLARE_FEATURE(kTransportSecurityFileWriterSchedule);
 
 // Reads and updates on-disk TransportSecurity state. Clients of this class
 // should create, destroy, and call into it from one thread.
@@ -100,14 +106,6 @@ class NET_EXPORT TransportSecurityPersister
   //     "report-uri": string
   //     "sts_observed": double
   //
-  // Legacy data (see https://crbug.com/1232560) may also contain a top-level
-  // "expect_ct" key, which will be deleted when read:
-  //     "expect_ct": dictionary with keys:
-  //         "expect_ct_expiry": double
-  //         "expect_ct_observed": double
-  //         "expect_ct_enforce": true|false
-  //         "expect_ct_report_uri": string
-  //
   // The JSON dictionary keys are strings containing
   // Base64(SHA256(TransportSecurityState::CanonicalizeHost(domain))).
   // The reason for hashing them is so that the stored state does not
@@ -119,11 +117,13 @@ class NET_EXPORT TransportSecurityPersister
   // |transport_security_state_|.
   void LoadEntries(const std::string& serialized);
 
+  // Returns the commit interval used by the ImportantFileWriter.
+  static base::TimeDelta GetCommitInterval();
+
  private:
   // Populates |state| from the JSON string |serialized|.
   static void Deserialize(const std::string& serialized,
-                          TransportSecurityState* state,
-                          bool& contains_legacy_expect_ct_data);
+                          TransportSecurityState* state);
 
   void CompleteLoad(const std::string& state);
   void OnWriteFinished(base::OnceClosure callback);

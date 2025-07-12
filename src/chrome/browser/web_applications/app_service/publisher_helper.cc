@@ -4,14 +4,14 @@
 
 #include "chrome/browser/web_applications/app_service/publisher_helper.h"
 
-#include "chrome/browser/web_applications/web_app_constants.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/browser/web_applications/web_app_registrar.h"
 #include "components/services/app_service/public/cpp/app_types.h"
-#include "components/services/app_service/public/cpp/shortcut/shortcut.h"
 #include "components/webapps/browser/installable/installable_metrics.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
+#include "chrome/browser/apps/app_service/app_service_proxy.h"
+#include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
 #include "chromeos/constants/chromeos_features.h"
 #endif
 
@@ -33,39 +33,20 @@ webapps::WebappUninstallSource ConvertUninstallSourceToWebAppUninstallSource(
   }
 }
 
-bool IsAppServiceShortcut(const webapps::AppId& web_app_id,
-                          const WebAppProvider& provider) {
-// On non-ChromeOS platforms, shortcuts will still be published as web apps.
 #if BUILDFLAG(IS_CHROMEOS)
-  if (chromeos::features::IsCrosWebAppShortcutUiUpdateEnabled()) {
-    return provider.registrar_unsafe().IsInstalled(web_app_id) &&
-           provider.registrar_unsafe().IsShortcutApp(web_app_id);
+std::vector<std::string> GetWebAppIdsForProtocolUrl(Profile* profile,
+                                                    const GURL& protocol_url) {
+  if (!chromeos::features::IsWebAppManifestProtocolHandlerSupportEnabled() ||
+      !apps::AppServiceProxyFactory::IsAppServiceAvailableForProfile(profile)) {
+    return {};
   }
+  auto* proxy = apps::AppServiceProxyFactory::GetForProfile(profile);
+  std::vector<std::string> app_ids = proxy->GetAppIdsForUrl(protocol_url);
+  std::erase_if(app_ids, [&](const auto& app_id) {
+    return proxy->AppRegistryCache().GetAppType(app_id) != apps::AppType::kWeb;
+  });
+  return app_ids;
+}
 #endif
-  return false;
-}
-
-apps::ShortcutSource ConvertWebAppManagementTypeToShortcutSource(
-    WebAppManagement::Type management_type) {
-  switch (management_type) {
-    case WebAppManagement::Type::kSync:
-    case WebAppManagement::Type::kWebAppStore:
-    case WebAppManagement::Type::kOneDriveIntegration:
-    case WebAppManagement::Type::kIwaUserInstalled:
-      return apps::ShortcutSource::kUser;
-    case WebAppManagement::Type::kPolicy:
-    case WebAppManagement::Type::kIwaPolicy:
-      return apps::ShortcutSource::kPolicy;
-    case WebAppManagement::Type::kOem:
-    case WebAppManagement::Type::kApsDefault:
-    case WebAppManagement::Type::kDefault:
-      return apps::ShortcutSource::kDefault;
-    case WebAppManagement::Type::kKiosk:
-    case WebAppManagement::Type::kSystem:
-    case WebAppManagement::Type::kIwaShimlessRma:
-    case WebAppManagement::Type::kSubApp:
-      return apps::ShortcutSource::kUnknown;
-  }
-}
 
 }  // namespace web_app

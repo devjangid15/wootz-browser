@@ -51,8 +51,9 @@ bool ChromeWebContentsViewFocusHelper::TakeFocus(bool reverse) {
 
 void ChromeWebContentsViewFocusHelper::StoreFocus() {
   last_focused_view_tracker_.SetView(nullptr);
-  if (GetFocusManager())
+  if (GetFocusManager()) {
     last_focused_view_tracker_.SetView(GetFocusManager()->GetFocusedView());
+  }
 }
 
 bool ChromeWebContentsViewFocusHelper::RestoreFocus() {
@@ -77,6 +78,10 @@ views::View* ChromeWebContentsViewFocusHelper::GetStoredFocus() {
     return last_focused_view;
   }
   return nullptr;
+}
+
+void ChromeWebContentsViewFocusHelper::SetStoredFocusView(views::View* view) {
+  last_focused_view_tracker_.SetView(view);
 }
 
 gfx::NativeView ChromeWebContentsViewFocusHelper::GetActiveNativeView() {

@@ -20,7 +20,7 @@ import org.chromium.components.embedder_support.util.UrlConstants;
 /** Native page for managing browsing history. */
 public class HistoryPage extends BasicNativePage {
     private HistoryManager mHistoryManager;
-    private String mTitle;
+    private final String mTitle;
 
     /**
      * Create a new instance of the history page.
@@ -61,8 +61,10 @@ public class HistoryPage extends BasicNativePage {
                         null,
                         /* shouldShowClearData= */ true,
                         /* launchedForApp= */ false,
-                        /* showAppFilter= */ true);
-        mTitle = host.getContext().getResources().getString(R.string.menu_history);
+                        /* showAppFilter= */ true,
+                        /* openHistoryItemCallback= */ null,
+                        host::createEdgeToEdgePadAdjuster);
+        mTitle = host.getContext().getString(R.string.menu_history);
 
         initWithView(mHistoryManager.getView());
     }

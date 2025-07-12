@@ -12,6 +12,7 @@
 #include "third_party/blink/renderer/core/animation/length_list_property_functions.h"
 #include "third_party/blink/renderer/core/animation/list_interpolation_functions.h"
 #include "third_party/blink/renderer/core/animation/underlying_length_checker.h"
+#include "third_party/blink/renderer/core/animation/underlying_value_owner.h"
 #include "third_party/blink/renderer/core/css/css_primitive_value.h"
 #include "third_party/blink/renderer/core/css/css_value_list.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
@@ -45,14 +46,16 @@ InterpolationValue CSSLengthListInterpolationType::MaybeConvertNeutral(
 
 static InterpolationValue MaybeConvertLengthList(
     const Vector<Length>& length_list,
+    const CSSProperty& property,
     float zoom) {
   if (length_list.empty())
     return nullptr;
 
   return ListInterpolationFunctions::CreateList(
-      length_list.size(), [&length_list, zoom](wtf_size_t index) {
-        return InterpolationValue(
-            InterpolableLength::MaybeConvertLength(length_list[index], zoom));
+      length_list.size(), [&length_list, &property, zoom](wtf_size_t index) {
+        return InterpolationValue(InterpolableLength::MaybeConvertLength(
+            length_list[index], property, zoom,
+            /*interpolate_size=*/std::nullopt));
       });
 }
 
@@ -64,7 +67,7 @@ InterpolationValue CSSLengthListInterpolationType::MaybeConvertInitial(
           CssProperty(), state.GetDocument().GetStyleResolver().InitialStyle(),
           initial_length_list))
     return nullptr;
-  return MaybeConvertLengthList(initial_length_list, 1);
+  return MaybeConvertLengthList(initial_length_list, CssProperty(), 1);
 }
 
 class InheritedLengthListChecker final
@@ -99,13 +102,13 @@ InterpolationValue CSSLengthListInterpolationType::MaybeConvertInherit(
                                                        inherited_length_list));
   if (!success)
     return nullptr;
-  return MaybeConvertLengthList(inherited_length_list,
+  return MaybeConvertLengthList(inherited_length_list, CssProperty(),
                                 state.ParentStyle()->EffectiveZoom());
 }
 
 InterpolationValue CSSLengthListInterpolationType::MaybeConvertValue(
     const CSSValue& value,
-    const StyleResolverState*,
+    const StyleResolverState&,
     ConversionCheckers&) const {
   if (!value.IsBaseValueList())
     return nullptr;
@@ -138,7 +141,8 @@ CSSLengthListInterpolationType::MaybeConvertStandardPropertyUnderlyingValue(
   if (!LengthListPropertyFunctions::GetLengthList(CssProperty(), style,
                                                   underlying_length_list))
     return nullptr;
-  return MaybeConvertLengthList(underlying_length_list, style.EffectiveZoom());
+  return MaybeConvertLengthList(underlying_length_list, CssProperty(),
+                                style.EffectiveZoom());
 }
 
 void CSSLengthListInterpolationType::Composite(
@@ -147,7 +151,7 @@ void CSSLengthListInterpolationType::Composite(
     const InterpolationValue& value,
     double interpolation_fraction) const {
   ListInterpolationFunctions::Composite(
-      underlying_value_owner, underlying_fraction, *this, value,
+      underlying_value_owner, underlying_fraction, this, value,
       ListInterpolationFunctions::LengthMatchingStrategy::kLowestCommonMultiple,
       ListInterpolationFunctions::InterpolableValuesKnownCompatible,
       ListInterpolationFunctions::VerifyNoNonInterpolableValues,

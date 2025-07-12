@@ -20,6 +20,7 @@
 using content::WebContents;
 
 class TabStripModelStatsRecorderTest : public ChromeRenderViewHostTestHarness {
+  const tabs::TabModel::PreventFeatureInitializationForTesting prevent_;
 };
 
 TEST_F(TabStripModelStatsRecorderTest,

@@ -32,10 +32,9 @@ bool ChromeAppViewGuestDelegate::HandleContextMenu(
 
 AppDelegate* ChromeAppViewGuestDelegate::CreateAppDelegate(
     content::BrowserContext* browser_context) {
-  // Profile* profile = Profile::FromBrowserContext(browser_context);
-  // DCHECK(profile);
-  // return new ChromeAppDelegate(profile, true);
-  return nullptr;
+  Profile* profile = Profile::FromBrowserContext(browser_context);
+  DCHECK(profile);
+  return new ChromeAppDelegate(profile, true);
 }
 
 }  // namespace extensions

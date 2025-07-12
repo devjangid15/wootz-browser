@@ -108,6 +108,13 @@ bool SiteIsolationPolicy::AreIsolatedSandboxedIframesEnabled() {
 }
 
 // static
+bool SiteIsolationPolicy::IsSitePerProcessOrStricter() {
+  return UseDedicatedProcessesForAllSites() ||
+         IsStrictOriginIsolationEnabled() ||
+         AreOriginKeyedProcessesEnabledByDefault();
+}
+
+// static
 bool SiteIsolationPolicy::AreIsolatedOriginsEnabled() {
   // NOTE: Because it is possible for --isolate-origins to be isolating origins
   // at a finer-than-site granularity, we do not suppress --isolate-origins when
@@ -198,6 +205,16 @@ bool SiteIsolationPolicy::IsOriginAgentClusterEnabled() {
 }
 
 // static
+bool SiteIsolationPolicy::AreOriginKeyedProcessesEnabledByDefault() {
+  // Note: this is expected to be the only place
+  // features::kOriginKeyedProcessesByDefault is checked outside of tests.
+  return base::FeatureList::IsEnabled(
+             features::kOriginKeyedProcessesByDefault) &&
+         UseDedicatedProcessesForAllSites() &&
+         !GetContentClient()->browser()->ShouldDisableOriginIsolation();
+}
+
+// static
 bool SiteIsolationPolicy::AreOriginAgentClustersEnabledByDefault(
     BrowserContext* browser_context) {
   // OriginAgentClusters are enabled by default if OriginAgentCluster and
@@ -210,8 +227,7 @@ bool SiteIsolationPolicy::AreOriginAgentClustersEnabledByDefault(
   return IsOriginAgentClusterEnabled() &&
          (base::FeatureList::IsEnabled(
               blink::features::kOriginAgentClusterDefaultEnabled) ||
-          base::FeatureList::IsEnabled(
-              features::kOriginKeyedProcessesByDefault)) &&
+          AreOriginKeyedProcessesEnabledByDefault()) &&
          !GetContentClient()->browser()->ShouldDisableOriginAgentClusterDefault(
              browser_context);
 }

@@ -9,6 +9,7 @@
 
 #include "base/files/file.h"
 #include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "chrome/common/safe_browsing/archive_analyzer_results.h"
 #include "components/safe_browsing/content/common/proto/download_file_types.pb.h"
 
@@ -85,6 +86,9 @@ class ArchiveAnalyzer {
   void NestedAnalysisFinished(base::File entry,
                               base::FilePath path,
                               int entry_size);
+
+  // Returns whether we're currently unpacking the top-level archive.
+  bool IsTopLevelArchive() const;
 
  private:
   // Tracks the relative path of the current archive within the overall archive

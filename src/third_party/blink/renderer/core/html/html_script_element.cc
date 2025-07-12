@@ -26,6 +26,8 @@
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/mojom/script/script_type.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_union_htmlscriptelement_svgscriptelement.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_union_string_trustedscript.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_union_trustedscripturl_usvstring.h"
 #include "third_party/blink/renderer/core/dom/attribute.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_node_ids.h"
@@ -38,6 +40,7 @@
 #include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/loader/render_blocking_resource_manager.h"
+#include "third_party/blink/renderer/core/probe/core_probes.h"
 #include "third_party/blink/renderer/core/script/script_loader.h"
 #include "third_party/blink/renderer/core/script/script_runner.h"
 #include "third_party/blink/renderer/core/script_type_names.h"
@@ -45,7 +48,6 @@
 #include "third_party/blink/renderer/core/trustedtypes/trusted_types_util.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/weborigin/security_policy.h"
 
 namespace blink {
@@ -55,7 +57,11 @@ HTMLScriptElement::HTMLScriptElement(Document& document,
     : HTMLElement(html_names::kScriptTag, document),
       children_changed_by_api_(false),
       blocking_attribute_(MakeGarbageCollected<BlockingAttribute>(this)),
-      loader_(InitializeScriptLoader(flags)) {}
+      loader_(InitializeScriptLoader(flags)) {
+  if (!flags.IsCreatedByParser()) {
+    async_task_context_.Schedule(document.GetExecutionContext(), localName());
+  }
+}
 
 const AttrNameToTrustedType& HTMLScriptElement::GetCheckedAttributeTypes()
     const {
@@ -76,8 +82,7 @@ bool HTMLScriptElement::HasLegalLinkAttribute(const QualifiedName& name) const {
 
 void HTMLScriptElement::ChildrenChanged(const ChildrenChange& change) {
   HTMLElement::ChildrenChanged(change);
-  if (change.IsChildInsertion())
-    loader_->ChildrenChanged();
+  loader_->ChildrenChanged(change);
 
   // We'll record whether the script element children were ever changed by
   // the API (as opposed to the parser).
@@ -146,7 +151,8 @@ Node::InsertionNotificationRequest HTMLScriptElement::InsertedInto(
 void HTMLScriptElement::RemovedFrom(ContainerNode& insertion_point) {
   HTMLElement::RemovedFrom(insertion_point);
   loader_->Removed();
-  if (GetDocument().GetRenderBlockingResourceManager()) {
+  if (GetDocument().GetRenderBlockingResourceManager() &&
+      !GetDocument().StatePreservingAtomicMoveInProgress()) {
     GetDocument().GetRenderBlockingResourceManager()->RemovePendingScript(
         *this);
   }
@@ -156,16 +162,13 @@ void HTMLScriptElement::DidNotifySubtreeInsertionsToDocument() {
   loader_->DidNotifySubtreeInsertionsToDocument();
 }
 
-void HTMLScriptElement::setText(const String& string) {
-  setTextContent(string);
-}
-
 void HTMLScriptElement::setInnerTextForBinding(
     const V8UnionStringLegacyNullToEmptyStringOrTrustedScript*
         string_or_trusted_script,
     ExceptionState& exception_state) {
   const String& value = TrustedTypesCheckForScript(
-      string_or_trusted_script, GetExecutionContext(), exception_state);
+      string_or_trusted_script, GetExecutionContext(), "HTMLScriptElement",
+      "innerText", exception_state);
   if (exception_state.HadException())
     return;
   // https://w3c.github.io/trusted-types/dist/spec/#setting-slot-values
@@ -178,8 +181,9 @@ void HTMLScriptElement::setInnerTextForBinding(
 void HTMLScriptElement::setTextContentForBinding(
     const V8UnionStringOrTrustedScript* value,
     ExceptionState& exception_state) {
-  const String& string =
-      TrustedTypesCheckForScript(value, GetExecutionContext(), exception_state);
+  const String& string = TrustedTypesCheckForScript(
+      value, GetExecutionContext(), "HTMLScriptElement", "textContent",
+      exception_state);
   if (exception_state.HadException())
     return;
   setTextContent(string);
@@ -191,6 +195,42 @@ void HTMLScriptElement::setTextContent(const String& string) {
   // the stringified attribute value. Perform the usual attribute setter steps."
   script_text_internal_slot_ = ParkableString(string.Impl());
   Node::setTextContent(string);
+}
+
+V8UnionStringOrTrustedScript* HTMLScriptElement::text() {
+  return MakeGarbageCollected<V8UnionStringOrTrustedScript>(TextFromChildren());
+}
+
+void HTMLScriptElement::setText(V8UnionStringOrTrustedScript* value,
+                                ExceptionState& exception_state) {
+  String compliant_value =
+      TrustedTypesCheckForScript(value, GetExecutionContext(),
+                                 "HTMLScriptElement", "text", exception_state);
+  if (exception_state.HadException()) {
+    return;
+  }
+  setTextContent(compliant_value);
+}
+
+void HTMLScriptElement::setTextWithoutTrustedTypes(const String& value) {
+  setTextContent(value);
+}
+
+V8UnionTrustedScriptURLOrUSVString* HTMLScriptElement::src() {
+  return MakeGarbageCollected<V8UnionTrustedScriptURLOrUSVString>(
+      GetURLAttribute(html_names::kSrcAttr));
+}
+
+void HTMLScriptElement::setSrc(const V8UnionTrustedScriptURLOrUSVString* value,
+                               ExceptionState& exception_state) {
+  String compliant_value = TrustedTypesCheckForScriptURL(
+      value, GetExecutionContext(), "HTMLScriptElement", "src",
+      exception_state);
+  if (exception_state.HadException()) {
+    return;
+  }
+  SetAttributeWithoutValidation(html_names::kSrcAttr,
+                                AtomicString(compliant_value));
 }
 
 void HTMLScriptElement::setAsync(bool async) {
@@ -250,6 +290,10 @@ String HTMLScriptElement::CrossOriginAttributeValue() const {
 
 String HTMLScriptElement::IntegrityAttributeValue() const {
   return FastGetAttribute(html_names::kIntegrityAttr);
+}
+
+String HTMLScriptElement::SignatureAttributeValue() const {
+  return FastGetAttribute(html_names::kSignatureAttr);
 }
 
 String HTMLScriptElement::ReferrerPolicyAttributeValue() const {
@@ -334,10 +378,12 @@ DOMNodeId HTMLScriptElement::GetDOMNodeId() {
 }
 
 void HTMLScriptElement::DispatchLoadEvent() {
+  probe::AsyncTask async_task(GetExecutionContext(), &async_task_context_);
   DispatchEvent(*Event::Create(event_type_names::kLoad));
 }
 
 void HTMLScriptElement::DispatchErrorEvent() {
+  probe::AsyncTask async_task(GetExecutionContext(), &async_task_context_);
   DispatchEvent(*Event::Create(event_type_names::kError));
 }
 

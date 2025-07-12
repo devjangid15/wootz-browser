@@ -11,8 +11,6 @@ namespace web {
 class WebState;
 }
 
-// TODO(crbug.com/327330805): Avoid using
-// mainController.browserProviderInterface in this class.
 namespace chrome_test_util {
 
 // Opens a new tab, and does not wait for animations to complete.
@@ -20,9 +18,6 @@ void OpenNewTab();
 
 // Simulates opening `URL` from another application.
 void SimulateExternalAppURLOpeningWithURL(NSURL* URL);
-
-// Simulates opening the add account sign-in flow from the web.
-void SimulateAddAccountFromWeb();
 
 // Opens a new incognito tab, and does not wait for animations to complete.
 void OpenNewIncognitoTab();

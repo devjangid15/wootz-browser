@@ -46,10 +46,11 @@
 #include "gpu/command_buffer/service/memory_tracking.h"
 #include "gpu/command_buffer/service/scheduler.h"
 #include "gpu/command_buffer/service/service_utils.h"
+#include "gpu/command_buffer/service/sync_point_manager.h"
+#include "gpu/command_buffer/service/task_graph.h"
 #include "gpu/config/gpu_finch_features.h"
 #include "gpu/ipc/common/command_buffer_id.h"
 #include "gpu/ipc/common/gpu_channel.mojom.h"
-#include "gpu/ipc/common/gpu_client_ids.h"
 #include "gpu/ipc/common/gpu_memory_buffer_impl_shared_memory.h"
 #include "gpu/ipc/common/gpu_memory_buffer_support.h"
 #include "gpu/ipc/service/gles2_command_buffer_stub.h"
@@ -67,10 +68,6 @@
 #include "ui/gl/gl_surface.h"
 #include "ui/gl/gl_utils.h"
 
-#if BUILDFLAG(IS_ANDROID)
-#include "gpu/ipc/service/stream_texture_android.h"
-#endif  // BUILDFLAG(IS_ANDROID)
-
 #if BUILDFLAG(IS_WIN)
 #include "components/viz/common/overlay_state/win/overlay_state_service.h"
 #include "gpu/ipc/service/dcomp_texture_win.h"
@@ -83,17 +80,6 @@
 namespace gpu {
 
 namespace {
-
-#if BUILDFLAG(IS_ANDROID)
-bool TryCreateStreamTexture(
-    base::WeakPtr<GpuChannel> channel,
-    int32_t stream_id,
-    mojo::PendingAssociatedReceiver<mojom::StreamTexture> receiver) {
-  if (!channel)
-    return false;
-  return channel->CreateStreamTexture(stream_id, std::move(receiver));
-}
-#endif  // BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(IS_WIN)
 bool TryCreateDCOMPTexture(
@@ -203,12 +189,6 @@ class GPU_IPC_SERVICE_EXPORT GpuChannelMessageFilter
   void GetGpuMemoryBufferHandleInfo(
       const gpu::Mailbox& mailbox,
       GetGpuMemoryBufferHandleInfoCallback callback) override;
-#if BUILDFLAG(IS_ANDROID)
-  void CreateStreamTexture(
-      int32_t stream_id,
-      mojo::PendingAssociatedReceiver<mojom::StreamTexture> receiver,
-      CreateStreamTextureCallback callback) override;
-#endif  // BUILDFLAG(IS_ANDROID)
 #if BUILDFLAG(IS_WIN)
   void CreateDCOMPTexture(
       int32_t route_id,
@@ -224,6 +204,10 @@ class GPU_IPC_SERVICE_EXPORT GpuChannelMessageFilter
       const std::vector<gpu::SyncToken>& sync_token_dependencies,
       uint64_t release_count,
       CopyToGpuMemoryBufferAsyncCallback callback) override;
+  void CopyNativeGmbToSharedMemoryAsync(
+      gfx::GpuMemoryBufferHandle buffer_handle,
+      base::UnsafeSharedMemoryRegion shared_memory,
+      CopyNativeGmbToSharedMemoryAsyncCallback callback) override;
 #endif  // BUILDFLAG(IS_WIN)
   void WaitForTokenInRange(int32_t routing_id,
                            int32_t start,
@@ -238,7 +222,7 @@ class GPU_IPC_SERVICE_EXPORT GpuChannelMessageFilter
 #if BUILDFLAG(IS_FUCHSIA)
   void RegisterSysmemBufferCollection(mojo::PlatformHandle service_handle,
                                       mojo::PlatformHandle sysmem_token,
-                                      gfx::BufferFormat format,
+                                      const viz::SharedImageFormat& format,
                                       gfx::BufferUsage usage,
                                       bool register_with_image_pipe) override {
     base::AutoLock lock(gpu_channel_lock_);
@@ -330,6 +314,7 @@ void GpuChannelMessageFilter::Destroy() {
     return;
 
   image_decode_accelerator_stub_->Shutdown();
+
   gpu_channel_ = nullptr;
 }
 
@@ -371,12 +356,6 @@ void GpuChannelMessageFilter::FlushDeferredRequests(
   for (auto& request : requests) {
     int32_t routing_id;
     switch (request->params->which()) {
-#if BUILDFLAG(IS_ANDROID)
-      case mojom::DeferredRequestParams::Tag::kDestroyStreamTexture:
-        routing_id = request->params->get_destroy_stream_texture();
-        break;
-#endif  // BUILDFLAG(IS_ANDROID)
-
 #if BUILDFLAG(IS_WIN)
       case mojom::DeferredRequestParams::Tag::kDestroyDcompTexture:
         routing_id = request->params->get_destroy_dcomp_texture();
@@ -398,19 +377,26 @@ void GpuChannelMessageFilter::FlushDeferredRequests(
       DLOG(ERROR) << "Invalid route id in flush list";
       continue;
     }
+
+    SyncToken release;
+    if (request->release_count != 0) {
+      release = SyncToken(CommandBufferNamespace::GPU_IO,
+                          CommandBufferIdFromChannelAndRoute(
+                              gpu_channel_->client_id(), routing_id),
+                          request->release_count);
+    }
+
     tasks.emplace_back(
-        it->second /* sequence_id */,
+        /*sequence_id=*/it->second,
         base::BindOnce(&gpu::GpuChannel::ExecuteDeferredRequest,
-                       gpu_channel_->AsWeakPtr(), std::move(request->params),
-                       request->release_count),
-        std::move(request->sync_token_fences));
+                       gpu_channel_->AsWeakPtr(), std::move(request->params)),
+        std::move(request->sync_token_fences), release);
   }
 
   // Threading: GpuChannelManager outlives gpu_channel_, so even though it is a
   // main thread object, we don't have a lifetime issue. However we may be
   // reading something stale here, but we don't synchronize anything here.
-  if (base::FeatureList::IsEnabled(features::kGpuCleanupInBackground) &&
-      gpu_channel_->gpu_channel_manager()->application_backgrounded()) {
+  if (gpu_channel_->gpu_channel_manager()->application_backgrounded()) {
     // We expect to clean shared images, so put it on this sequence, to make
     // sure that ordering is conserved, and we execute after.
     auto it = route_sequences_.find(
@@ -468,32 +454,15 @@ void GpuChannelMessageFilter::CreateGpuMemoryBuffer(
   auto buffer_format = ToBufferFormat(format);
   gfx::GpuMemoryBufferHandle handle;
 
-  // Hardcoding the GpuMemoryBufferId to 1 here instead of having a different
-  // value for each handle. GpuMemoryBufferId is used as a cache key in
-  // GpuMemoryBufferFactory but since we immediately call
-  // DestroyGpuMemoryBuffer here, this value does not matter.
-  // kMappableSIClientId and GpuMemoryBufferId(1) will ensure that the cache key
-  // is always unique and does not clash with non-mappable GMB cases.
-  auto id = gfx::GpuMemoryBufferId(1);
   if (IsNativeBufferSupported(buffer_format, buffer_usage)) {
-    handle = gpu_memory_buffer_factory_->CreateGpuMemoryBuffer(
-        id, size, /*framebuffer_size=*/size, buffer_format, buffer_usage,
-        kMappableSIClientId, /*surface_handle=*/0);
-
-    // Note that this removes the handle from the cache in
-    // GpuMemoryBufferFactory. Shared image backings caches the handle and still
-    // has the ref. So the handle is still alive until the mailbox is destroyed.
-    // This is only needed since we are currently using GpuMemoryBufferFactory.
-    // TODO(crbug.com/40283108) : Once we remove the GMB abstraction and starts
-    // using a separate factory to create the native buffers, we can stop
-    // caching the handles in them and hence remove this destroy api.
-    gpu_memory_buffer_factory_->DestroyGpuMemoryBuffer(id, kMappableSIClientId);
+    handle = gpu_memory_buffer_factory_->CreateNativeGmbHandle(
+        MappableSIClientGmbId::kGpuChannel, size, buffer_format, buffer_usage);
   } else {
     if (gpu::GpuMemoryBufferImplSharedMemory::IsUsageSupported(buffer_usage) &&
         gpu::GpuMemoryBufferImplSharedMemory::IsSizeValidForFormat(
             size, buffer_format)) {
       handle = gpu::GpuMemoryBufferImplSharedMemory::CreateGpuMemoryBuffer(
-          id, size, buffer_format, buffer_usage);
+          size, buffer_format, buffer_usage);
     }
   }
   if (handle.is_null()) {
@@ -607,24 +576,6 @@ void GpuChannelMessageFilter::ScheduleImageDecode(
                                                       decode_release_count);
 }
 
-#if BUILDFLAG(IS_ANDROID)
-void GpuChannelMessageFilter::CreateStreamTexture(
-    int32_t stream_id,
-    mojo::PendingAssociatedReceiver<mojom::StreamTexture> receiver,
-    CreateStreamTextureCallback callback) {
-  base::AutoLock auto_lock(gpu_channel_lock_);
-  if (!gpu_channel_) {
-    receiver_.reset();
-    return;
-  }
-  main_task_runner_->PostTaskAndReplyWithResult(
-      FROM_HERE,
-      base::BindOnce(&TryCreateStreamTexture, gpu_channel_->AsWeakPtr(),
-                     stream_id, std::move(receiver)),
-      std::move(callback));
-}
-#endif  // BUILDFLAG(IS_ANDROID)
-
 #if BUILDFLAG(IS_WIN)
 void GpuChannelMessageFilter::CreateDCOMPTexture(
     int32_t route_id,
@@ -680,20 +631,37 @@ void GpuChannelMessageFilter::CopyToGpuMemoryBufferAsync(
     std::move(callback).Run(false);
     return;
   }
+  SyncToken release;
+  if (release_count != 0) {
+    release = SyncToken(CommandBufferNamespace::GPU_IO,
+                        CommandBufferIdFromChannelAndRoute(
+                            gpu_channel_->client_id(), routing_id),
+                        release_count);
+  }
+
   auto run_on_main = base::BindOnce(
       [](base::WeakPtr<gpu::GpuChannel> channel, const gpu::Mailbox& mailbox,
-         uint64_t release_count, CopyToGpuMemoryBufferAsyncCallback callback) {
+         CopyToGpuMemoryBufferAsyncCallback callback) {
         if (!channel) {
           std::move(callback).Run(false);
         }
         channel->shared_image_stub()->CopyToGpuMemoryBufferAsync(
-            mailbox, release_count, std::move(callback));
+            mailbox, std::move(callback));
       },
-      gpu_channel_->AsWeakPtr(), mailbox, release_count,
+      gpu_channel_->AsWeakPtr(), mailbox,
       base::BindPostTask(base::SequencedTaskRunner::GetCurrentDefault(),
                          std::move(callback)));
   scheduler_->ScheduleTask(Scheduler::Task(it->second, std::move(run_on_main),
-                                           sync_token_dependencies));
+                                           sync_token_dependencies, release));
+}
+
+void GpuChannelMessageFilter::CopyNativeGmbToSharedMemoryAsync(
+    gfx::GpuMemoryBufferHandle buffer_handle,
+    base::UnsafeSharedMemoryRegion shared_memory,
+    CopyNativeGmbToSharedMemoryAsyncCallback callback) {
+  std::move(callback).Run(
+      gpu_memory_buffer_factory_->FillSharedMemoryRegionWithBufferContents(
+          std::move(buffer_handle), std::move(shared_memory)));
 }
 #endif  // BUILDFLAG(IS_WIN)
 
@@ -775,14 +743,6 @@ GpuChannel::~GpuChannel() {
   // Clear stubs first because of dependencies.
   stubs_.clear();
 
-#if BUILDFLAG(IS_ANDROID)
-  // Release any references to this channel held by StreamTexture.
-  for (auto& stream_texture : stream_textures_) {
-    stream_texture.second->ReleaseChannel();
-  }
-  stream_textures_.clear();
-#endif  // BUILDFLAG(IS_ANDROID)
-
 #if BUILDFLAG(IS_WIN)
   // Release any references to this channel held by DCOMPTexture.
   for (auto& dcomp_texture : dcomp_textures_) {
@@ -843,8 +803,7 @@ base::WeakPtr<GpuChannel> GpuChannel::AsWeakPtr() {
 
 bool GpuChannel::OnMessageReceived(const IPC::Message& msg) {
   // All messages should be pushed to channel_messages_ and handled separately.
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 }
 
 void GpuChannel::OnChannelError() {
@@ -902,16 +861,11 @@ void GpuChannel::RemoveRoute(int32_t route_id) {
     filter_->RemoveRoute(route_id);
 }
 
-void GpuChannel::ExecuteDeferredRequest(mojom::DeferredRequestParamsPtr params,
-                                        uint64_t release_count) {
+void GpuChannel::ExecuteDeferredRequest(
+    mojom::DeferredRequestParamsPtr params,
+    FenceSyncReleaseDelegate* release_delegate) {
   TRACE_EVENT0("gpu", "GpuChannel::ExecuteDeferredRequest");
   switch (params->which()) {
-#if BUILDFLAG(IS_ANDROID)
-    case mojom::DeferredRequestParams::Tag::kDestroyStreamTexture:
-      DestroyStreamTexture(params->get_destroy_stream_texture());
-      break;
-#endif  // BUILDFLAG(IS_ANDROID)
-
 #if BUILDFLAG(IS_WIN)
     case mojom::DeferredRequestParams::Tag::kDestroyDcompTexture:
       DestroyDCOMPTexture(params->get_destroy_dcomp_texture());
@@ -927,7 +881,7 @@ void GpuChannel::ExecuteDeferredRequest(mojom::DeferredRequestParamsPtr params,
         return;
       }
 
-      stub->ExecuteDeferredRequest(*request.params);
+      stub->ExecuteDeferredRequest(*request.params, release_delegate);
 
       // If we get descheduled or yield while processing a message.
       if (stub->HasUnprocessedCommands() || !stub->IsScheduled()) {
@@ -936,14 +890,14 @@ void GpuChannel::ExecuteDeferredRequest(mojom::DeferredRequestParamsPtr params,
         scheduler_->ContinueTask(
             stub->sequence_id(),
             base::BindOnce(&GpuChannel::ExecuteDeferredRequest, AsWeakPtr(),
-                           std::move(params), release_count));
+                           std::move(params)));
       }
       break;
     }
 
     case mojom::DeferredRequestParams::Tag::kSharedImageRequest:
       shared_image_stub_->ExecuteDeferredRequest(
-          std::move(params->get_shared_image_request()), release_count);
+          std::move(params->get_shared_image_request()));
       break;
   }
 }
@@ -1028,15 +982,6 @@ const CommandBufferStub* GpuChannel::GetOneStub() const {
   return nullptr;
 }
 
-void GpuChannel::DestroyStreamTexture(int32_t stream_id) {
-  auto found = stream_textures_.find(stream_id);
-  if (found == stream_textures_.end()) {
-    LOG(ERROR) << "Trying to destroy a non-existent stream texture.";
-    return;
-  }
-  found->second->ReleaseChannel();
-  stream_textures_.erase(stream_id);
-}
 #endif
 
 #if BUILDFLAG(IS_WIN)
@@ -1086,15 +1031,6 @@ void GpuChannel::CreateCommandBuffer(
     mojom::GpuChannel::CreateCommandBufferCallback callback) {
   ScopedCreateCommandBufferResponder responder(std::move(callback));
   TRACE_EVENT1("gpu", "GpuChannel::CreateCommandBuffer", "route_id", route_id);
-
-#if BUILDFLAG(IS_ANDROID)
-  if (init_params->surface_handle != kNullSurfaceHandle && !is_gpu_host_) {
-    LOG(ERROR)
-        << "ContextResult::kFatalFailure: "
-           "attempt to create a view context on a non-privileged channel";
-    return;
-  }
-#endif
 
   if (gpu_channel_manager_->delegate()->IsExiting()) {
     LOG(ERROR) << "ContextResult::kTransientFailure: trying to create command "
@@ -1208,26 +1144,6 @@ void GpuChannel::DestroyCommandBuffer(int32_t route_id) {
   RemoveRoute(route_id);
 }
 
-#if BUILDFLAG(IS_ANDROID)
-bool GpuChannel::CreateStreamTexture(
-    int32_t stream_id,
-    mojo::PendingAssociatedReceiver<mojom::StreamTexture> receiver) {
-  auto found = stream_textures_.find(stream_id);
-  if (found != stream_textures_.end()) {
-    LOG(ERROR)
-        << "Trying to create a StreamTexture with an existing stream_id.";
-    return false;
-  }
-  scoped_refptr<StreamTexture> stream_texture =
-      StreamTexture::Create(this, stream_id, std::move(receiver));
-  if (!stream_texture) {
-    return false;
-  }
-  stream_textures_.emplace(stream_id, std::move(stream_texture));
-  return true;
-}
-#endif
-
 #if BUILDFLAG(IS_WIN)
 bool GpuChannel::CreateDCOMPTexture(
     int32_t route_id,
@@ -1264,7 +1180,7 @@ bool GpuChannel::RegisterOverlayStateObserver(
 void GpuChannel::RegisterSysmemBufferCollection(
     mojo::PlatformHandle service_handle,
     mojo::PlatformHandle sysmem_token,
-    gfx::BufferFormat format,
+    const viz::SharedImageFormat& format,
     gfx::BufferUsage usage,
     bool register_with_image_pipe) {
   shared_image_stub_->RegisterSysmemBufferCollection(

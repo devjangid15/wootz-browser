@@ -7,6 +7,7 @@ package org.chromium.chrome.test.util.browser.tabmodel;
 import android.util.SparseArray;
 
 import org.chromium.base.test.util.CallbackHelper;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.tab.MockTab;
 import org.chromium.chrome.browser.tab.MockTabAttributes;
 import org.chromium.chrome.browser.tab.Tab;
@@ -56,12 +57,15 @@ public class MockTabCreator extends TabCreator {
             @TabLaunchType int type,
             Tab parent,
             int position) {
-        Tab tab =
+        MockTab tab =
                 new MockTab(
-                        0, mSelector.getModel(mIsIncognito).getProfile(), TabLaunchType.FROM_LINK);
+                        Tab.INVALID_TAB_ID,
+                        mSelector.getModel(mIsIncognito).getProfile(),
+                        TabLaunchType.FROM_LINK);
         tab.getUserDataHost().setUserData(MockTabAttributes.class, new MockTabAttributes(false));
         TabTestUtils.initialize(
                 tab, null, null, loadUrlParams, title, null, null, false, null, false);
+        tab.setIsInitialized(true);
         mSelector
                 .getModel(mIsIncognito)
                 .addTab(tab, position, type, TabCreationState.LIVE_IN_FOREGROUND);
@@ -71,7 +75,7 @@ public class MockTabCreator extends TabCreator {
 
     @Override
     public Tab createFrozenTab(TabState state, int id, int index) {
-        Tab tab =
+        MockTab tab =
                 new MockTab(
                         id,
                         mSelector.getModel(mIsIncognito).getProfile(),
@@ -79,6 +83,7 @@ public class MockTabCreator extends TabCreator {
         tab.getUserDataHost().setUserData(MockTabAttributes.class, new MockTabAttributes(true));
         if (state != null) TabTestUtils.restoreFieldsFromState(tab, state);
         TabTestUtils.initialize(tab, null, null, null, null, null, null, false, null, false);
+        tab.setIsInitialized(true);
         mSelector
                 .getModel(mIsIncognito)
                 .addTab(tab, index, TabLaunchType.FROM_RESTORE, TabCreationState.FROZEN_ON_RESTORE);
@@ -87,9 +92,18 @@ public class MockTabCreator extends TabCreator {
     }
 
     @Override
-    public boolean createTabWithWebContents(
-            Tab parent, WebContents webContents, @TabLaunchType int type, GURL url) {
-        return false;
+    public Tab createTabWithWebContents(
+            Tab parent,
+            WebContents webContents,
+            @TabLaunchType int type,
+            GURL url,
+            boolean addTabToModel) {
+        return null;
+    }
+
+    @Override
+    public Tab createTabWithHistory(@Nullable Tab parent, int type) {
+        return null;
     }
 
     @Override

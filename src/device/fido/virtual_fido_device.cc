@@ -2,25 +2,31 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "device/fido/virtual_fido_device.h"
+#include "base/notreached.h"
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
 
+#include <algorithm>
 #include <tuple>
 #include <utility>
 #include <vector>
 
 #include "base/logging.h"
 #include "base/rand_util.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
 #include "components/cbor/values.h"
 #include "components/cbor/writer.h"
-#include "crypto/ec_private_key.h"
-#include "crypto/ec_signature_creator.h"
+#include "crypto/evp.h"
+#include "crypto/hash.h"
+#include "crypto/keypair.h"
 #include "crypto/openssl_util.h"
 #include "device/fido/fido_parsing_utils.h"
 #include "device/fido/large_blob.h"
 #include "device/fido/p256_public_key.h"
 #include "device/fido/public_key.h"
+#include "device/fido/virtual_fido_device.h"
 #include "net/cert/x509_util.h"
 #include "third_party/boringssl/src/include/openssl/bn.h"
 #include "third_party/boringssl/src/include/openssl/bytestring.h"
@@ -115,8 +121,7 @@ class EVPBackedPrivateKey : public VirtualFidoDevice::PrivateKey {
   }
 
   std::vector<uint8_t> GetPKCS8PrivateKey() const override {
-    return CBBFunctionToVector<decltype(&EVP_marshal_private_key),
-                               EVP_marshal_private_key>(pkey_.get());
+    return crypto::evp::PrivateKeyToBytes(pkey_.get());
   }
 
  protected:
@@ -184,13 +189,10 @@ class RSAPrivateKey : public EVPBackedPrivateKey {
     std::optional<std::vector<uint8_t>> cbor_bytes(
         cbor::Writer::Write(cbor::Value(std::move(map))));
 
-    std::vector<uint8_t> der_bytes(
-        CBBFunctionToVector<decltype(&EVP_marshal_public_key),
-                            EVP_marshal_public_key>(pkey_.get()));
-
+    std::vector<uint8_t> der = crypto::evp::PublicKeyToBytes(pkey_.get());
     return std::make_unique<PublicKey>(
         static_cast<int32_t>(CoseAlgorithmIdentifier::kRs256), *cbor_bytes,
-        std::move(der_bytes));
+        std::move(der));
   }
 
  private:
@@ -227,13 +229,10 @@ class Ed25519PrivateKey : public EVPBackedPrivateKey {
     std::optional<std::vector<uint8_t>> cbor_bytes(
         cbor::Writer::Write(cbor::Value(std::move(map))));
 
-    std::vector<uint8_t> der_bytes(
-        CBBFunctionToVector<decltype(&EVP_marshal_public_key),
-                            EVP_marshal_public_key>(pkey_.get()));
-
+    std::vector<uint8_t> der = crypto::evp::PublicKeyToBytes(pkey_.get());
     return std::make_unique<PublicKey>(
-        static_cast<int32_t>(CoseAlgorithmIdentifier::kRs256), *cbor_bytes,
-        std::move(der_bytes));
+        static_cast<int32_t>(CoseAlgorithmIdentifier::kEdDSA), *cbor_bytes,
+        std::move(der));
   }
 
  private:
@@ -248,10 +247,7 @@ class InvalidForTestingPrivateKey : public VirtualFidoDevice::PrivateKey {
     return {'s', 'i', 'g'};
   }
 
-  std::vector<uint8_t> GetPKCS8PrivateKey() const override {
-    CHECK(false);
-    return {};
-  }
+  std::vector<uint8_t> GetPKCS8PrivateKey() const override { NOTREACHED(); }
 
   std::unique_ptr<PublicKey> GetPublicKey() const override {
     cbor::Value::MapValue map;
@@ -279,8 +275,7 @@ VirtualFidoDevice::PrivateKey::~PrivateKey() = default;
 std::vector<uint8_t> VirtualFidoDevice::PrivateKey::GetX962PublicKey() const {
   // Not generally possible to encode in X9.62 format. Elliptic-specific
   // subclasses can override.
-  CHECK(false);
-  return std::vector<uint8_t>();
+  NOTREACHED();
 }
 
 // static
@@ -289,10 +284,9 @@ VirtualFidoDevice::PrivateKey::FromPKCS8(
     base::span<const uint8_t> pkcs8_private_key) {
   crypto::OpenSSLErrStackTracer err_tracer(FROM_HERE);
 
-  CBS cbs;
-  CBS_init(&cbs, pkcs8_private_key.data(), pkcs8_private_key.size());
-  bssl::UniquePtr<EVP_PKEY> pkey(EVP_parse_private_key(&cbs));
-  if (!pkey || CBS_len(&cbs) != 0) {
+  bssl::UniquePtr<EVP_PKEY> pkey =
+      crypto::evp::PrivateKeyFromBytes(pkcs8_private_key);
+  if (!pkey) {
     return std::nullopt;
   }
 
@@ -344,7 +338,7 @@ VirtualFidoDevice::PrivateKey::FreshInvalidForTestingKey() {
 
 VirtualFidoDevice::RegistrationData::RegistrationData() = default;
 VirtualFidoDevice::RegistrationData::RegistrationData(const std::string& rp_id)
-    : application_parameter(fido_parsing_utils::CreateSHA256Hash(rp_id)) {}
+    : application_parameter(crypto::hash::Sha256(rp_id)) {}
 VirtualFidoDevice::RegistrationData::RegistrationData(
     std::unique_ptr<PrivateKey> private_key,
     base::span<const uint8_t, kRpIdHashLength> application_parameter,
@@ -386,6 +380,20 @@ void VirtualFidoDevice::State::NotifyCredentialCreated(
   }
 }
 
+void VirtualFidoDevice::State::NotifyCredentialDeleted(
+    base::span<const uint8_t> credential_id) {
+  for (Observer& observer : observers_) {
+    observer.OnCredentialDeleted(credential_id);
+  }
+}
+
+void VirtualFidoDevice::State::NotifyCredentialUpdated(
+    const std::pair<base::span<const uint8_t>, RegistrationData*>& credential) {
+  for (Observer& observer : observers_) {
+    observer.OnCredentialUpdated(credential);
+  }
+}
+
 void VirtualFidoDevice::State::NotifyAssertion(const Credential& credential) {
   for (Observer& observer : observers_) {
     observer.OnAssertion(credential);
@@ -416,7 +424,7 @@ bool VirtualFidoDevice::State::InjectResidentKey(
     device::PublicKeyCredentialUserEntity user,
     int32_t signature_counter,
     std::unique_ptr<PrivateKey> private_key) {
-  auto application_parameter = fido_parsing_utils::CreateSHA256Hash(rp.id);
+  auto application_parameter = crypto::hash::Sha256(rp.id);
 
   // Cannot create a duplicate credential for the same (RP ID, user ID) pair.
   for (const auto& registration : registrations) {
@@ -446,9 +454,8 @@ bool VirtualFidoDevice::State::InjectResidentKey(
     base::span<const uint8_t> credential_id,
     device::PublicKeyCredentialRpEntity rp,
     device::PublicKeyCredentialUserEntity user) {
-  return InjectResidentKey(std::move(credential_id), std::move(rp),
-                           std::move(user), /*signature_counter=*/0,
-                           PrivateKey::FreshP256Key());
+  return InjectResidentKey(credential_id, std::move(rp), std::move(user),
+                           /*signature_counter=*/0, PrivateKey::FreshP256Key());
 }
 
 bool VirtualFidoDevice::State::InjectResidentKey(
@@ -550,19 +557,12 @@ std::vector<uint8_t> VirtualFidoDevice::GetAttestationKey() {
   return fido_parsing_utils::Materialize(kAttestationKey);
 }
 
-bool VirtualFidoDevice::Sign(crypto::ECPrivateKey* private_key,
-                             base::span<const uint8_t> sign_buffer,
-                             std::vector<uint8_t>* signature) {
-  auto signer = crypto::ECSignatureCreator::Create(private_key);
-  return signer->Sign(sign_buffer, signature);
-}
-
 std::optional<std::vector<uint8_t>>
 VirtualFidoDevice::GenerateAttestationCertificate(
     bool individual_attestation_requested,
     bool include_transports) const {
-  std::unique_ptr<crypto::ECPrivateKey> attestation_private_key =
-      crypto::ECPrivateKey::CreateFromPrivateKeyInfo(GetAttestationKey());
+  auto attestation_private_key =
+      crypto::keypair::PrivateKey::FromPrivateKeyInfo(GetAttestationKey());
   constexpr uint32_t kAttestationCertSerialNumber = 1;
 
   // https://fidoalliance.org/specs/fido-u2f-v1.2-ps-20170411/fido-u2f-authenticator-transports-extension-v1.2-ps-20170411.html#fido-u2f-certificate-transports-extension
@@ -583,9 +583,8 @@ VirtualFidoDevice::GenerateAttestationCertificate(
     case FidoTransportProtocol::kInternal:
       transport_bit = 4;
       break;
-    case FidoTransportProtocol::kAndroidAccessory:
-      transport_bit = 1;
-      break;
+    case FidoTransportProtocol::kDeprecatedAoa:
+      NOTREACHED();
   }
   const uint8_t kTransportTypesContents[] = {
       3,                                            // BIT STRING
@@ -640,7 +639,7 @@ void VirtualFidoDevice::StoreNewKey(
   // virtual authenticator API.
   if (registration_data.application_parameter == device::kBogusAppParam ||
       registration_data.application_parameter ==
-          fido_parsing_utils::CreateSHA256Hash(kDummyRpID)) {
+          crypto::hash::Sha256(kDummyRpID)) {
     return;
   }
 
@@ -662,8 +661,8 @@ VirtualFidoDevice::RegistrationData* VirtualFidoDevice::FindRegistrationData(
   if (it == mutable_state()->registrations.end())
     return nullptr;
 
-  if (!base::ranges::equal(application_parameter,
-                           it->second.application_parameter)) {
+  if (!std::ranges::equal(application_parameter,
+                          it->second.application_parameter)) {
     return nullptr;
   }
 

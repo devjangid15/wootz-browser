@@ -23,8 +23,6 @@
 #include "components/component_updater/component_updater_paths.h"
 #include "components/component_updater/component_updater_switches.h"
 
-using component_updater::ComponentUpdateService;
-
 namespace {
 
 // The SHA256 of the SubjectPublicKeyInfo used to sign the extension.
@@ -150,9 +148,8 @@ TrustTokenKeyCommitmentsComponentInstallerPolicy::GetInstallerAttributes()
 void TrustTokenKeyCommitmentsComponentInstallerPolicy::GetPublicKeyHash(
     std::vector<uint8_t>* hash) {
   DCHECK(hash);
-  hash->assign(kTrustTokenKeyCommitmentsPublicKeySHA256,
-               kTrustTokenKeyCommitmentsPublicKeySHA256 +
-                   std::size(kTrustTokenKeyCommitmentsPublicKeySHA256));
+  hash->assign(std::begin(kTrustTokenKeyCommitmentsPublicKeySHA256),
+               std::end(kTrustTokenKeyCommitmentsPublicKeySHA256));
 }
 
 // static

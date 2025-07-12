@@ -2,9 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/pdf/renderer/pdf_accessibility_tree.h"
+
+#include <algorithm>
+#include <iterator>
 #include <map>
 #include <memory>
 
+#include "base/compiler_specific.h"
 #include "base/functional/callback.h"
 #include "base/location.h"
 #include "base/memory/raw_ptr.h"
@@ -15,7 +20,6 @@
 #include "base/test/scoped_feature_list.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "components/pdf/renderer/pdf_accessibility_tree.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/renderer/render_accessibility.h"
@@ -23,9 +27,7 @@
 #include "content/public/test/render_view_test.h"
 #include "pdf/accessibility_structs.h"
 #include "pdf/pdf_accessibility_action_handler.h"
-#include "pdf/pdf_accessibility_image_fetcher.h"
 #include "pdf/pdf_features.h"
-#include "third_party/blink/public/strings/grit/blink_accessibility_strings.h"
 #include "third_party/blink/public/web/web_ax_object.h"
 #include "third_party/blink/public/web/web_element.h"
 #include "third_party/blink/public/web/web_local_frame.h"
@@ -44,17 +46,10 @@
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/geometry/rect_f.h"
+#include "ui/strings/grit/auto_image_annotation_strings.h"
 
 #if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
-#include <tuple>
-
-#include "base/containers/queue.h"
-#include "mojo/public/cpp/bindings/receiver.h"
-#include "mojo/public/cpp/bindings/remote.h"
-#include "services/screen_ai/public/mojom/screen_ai_service.mojom.h"  // nogncheck crbug.com/1125897
-#include "services/screen_ai/public/test/fake_screen_ai_annotator.h"  // nogncheck crbug.com/40147906
 #include "third_party/skia/include/core/SkBitmap.h"
-#include "ui/accessibility/accessibility_features.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/accessibility/ax_tree_id.h"
 #include "ui/accessibility/ax_tree_update.h"
@@ -66,11 +61,11 @@ namespace pdf {
 namespace {
 
 const chrome_pdf::AccessibilityTextRunInfo kFirstTextRun = {
-    15, gfx::RectF(26.0f, 189.0f, 84.0f, 13.0f),
+    15, "P", gfx::RectF(26.0f, 189.0f, 84.0f, 13.0f),
     chrome_pdf::AccessibilityTextDirection::kNone,
     chrome_pdf::AccessibilityTextStyleInfo()};
 const chrome_pdf::AccessibilityTextRunInfo kSecondTextRun = {
-    15, gfx::RectF(28.0f, 117.0f, 152.0f, 19.0f),
+    15, "P", gfx::RectF(28.0f, 117.0f, 152.0f, 19.0f),
     chrome_pdf::AccessibilityTextDirection::kNone,
     chrome_pdf::AccessibilityTextStyleInfo()};
 const chrome_pdf::AccessibilityCharInfo kDummyCharsData[] = {
@@ -81,19 +76,19 @@ const chrome_pdf::AccessibilityCharInfo kDummyCharsData[] = {
     {'w', 16}, {'o', 12}, {'r', 8},  {'l', 4},  {'d', 12}, {'!', 2},
 };
 const chrome_pdf::AccessibilityTextRunInfo kFirstRunMultiLine = {
-    7, gfx::RectF(26.0f, 189.0f, 84.0f, 13.0f),
+    7, "P", gfx::RectF(26.0f, 189.0f, 84.0f, 13.0f),
     chrome_pdf::AccessibilityTextDirection::kNone,
     chrome_pdf::AccessibilityTextStyleInfo()};
 const chrome_pdf::AccessibilityTextRunInfo kSecondRunMultiLine = {
-    8, gfx::RectF(26.0f, 189.0f, 84.0f, 13.0f),
+    8, "P", gfx::RectF(26.0f, 189.0f, 84.0f, 13.0f),
     chrome_pdf::AccessibilityTextDirection::kNone,
     chrome_pdf::AccessibilityTextStyleInfo()};
 const chrome_pdf::AccessibilityTextRunInfo kThirdRunMultiLine = {
-    9, gfx::RectF(26.0f, 189.0f, 84.0f, 13.0f),
+    9, "P", gfx::RectF(26.0f, 189.0f, 84.0f, 13.0f),
     chrome_pdf::AccessibilityTextDirection::kNone,
     chrome_pdf::AccessibilityTextStyleInfo()};
 const chrome_pdf::AccessibilityTextRunInfo kFourthRunMultiLine = {
-    6, gfx::RectF(26.0f, 189.0f, 84.0f, 13.0f),
+    6, "P", gfx::RectF(26.0f, 189.0f, 84.0f, 13.0f),
     chrome_pdf::AccessibilityTextDirection::kNone,
     chrome_pdf::AccessibilityTextStyleInfo()};
 
@@ -167,54 +162,13 @@ void CheckRootAndStatusNodes(const ui::AXNode* root_node,
   } else {
     // Note that the string below must be synced with
     // `IDS_PDF_OCR_FEATURE_ALERT`.
-#if BUILDFLAG(IS_CHROMEOS)
     constexpr char kPdfOcrFeatureAlert[] =
-        "This PDF is inaccessible. Press search plus m to open context menu "
-        "and turn on \"extract text from PDF\"";
-#else
-    constexpr char kPdfOcrFeatureAlert[] =
-        "This PDF is inaccessible. Open context menu and turn on \"extract "
-        "text from PDF\"";
-#endif  // BUILDFLAG(IS_CHROMEOS)
+        "This PDF is inaccessible. Couldn't download text extraction files. "
+        "Please try again later.";
     ASSERT_EQ(kPdfOcrFeatureAlert, status_node->GetStringAttribute(
                                        ax::mojom::StringAttribute::kName));
   }
 }
-
-#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
-ui::AXTreeUpdate CreateMockOCRResult(const gfx::RectF& image_bounds,
-                                     const gfx::RectF& text_bounds1,
-                                     const gfx::RectF& text_bounds2) {
-  ui::AXNodeData page_node;
-  page_node.role = ax::mojom::Role::kRegion;
-  page_node.id = 1001;
-  page_node.relative_bounds.bounds = image_bounds;
-
-  ui::AXNodeData text_node1;
-  text_node1.role = ax::mojom::Role::kStaticText;
-  text_node1.id = 1002;
-  text_node1.relative_bounds.bounds = text_bounds1;
-  page_node.child_ids.push_back(text_node1.id);
-
-  ui::AXNodeData text_node2;
-  text_node2.role = ax::mojom::Role::kStaticText;
-  text_node2.id = 1003;
-  text_node2.relative_bounds.bounds = text_bounds2;
-  page_node.child_ids.push_back(text_node2.id);
-
-  ui::AXTreeUpdate child_tree_update;
-  child_tree_update.root_id = page_node.id;
-  child_tree_update.nodes = {page_node, text_node1, text_node2};
-  child_tree_update.has_tree_data = true;
-  child_tree_update.tree_data.title = "OCR results";
-
-  return child_tree_update;
-}
-
-uint32_t CalculateBatchCount(uint32_t page_count, uint32_t batch_size) {
-  return (page_count + batch_size - 1) / batch_size;
-}
-#endif  // BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
 
 // This class overrides PdfAccessibilityActionHandler to record received
 // action data when tests make an accessibility action call.
@@ -245,46 +199,6 @@ struct ImagePosition {
   int32_t page_object_index;
 };
 
-bool operator<(const ImagePosition& p1, const ImagePosition& p2) {
-  return (p1.page_index < p2.page_index ||
-          (p1.page_index == p2.page_index &&
-           p1.page_object_index < p2.page_object_index));
-}
-
-// This class overrides PdfAccessibilityImageFetcher to return an image from
-// previously stored images, instead of looking for it in the PDF.
-class TestPdfAccessibilityImageFetcher
-    : public chrome_pdf::PdfAccessibilityImageFetcher {
- public:
-  TestPdfAccessibilityImageFetcher() {
-    default_bitmap_.allocN32Pixels(/*width=*/1, /*height=*/1,
-                                   /*isOpaque=*/false);
-  }
-
-  ~TestPdfAccessibilityImageFetcher() override = default;
-
-  SkBitmap GetImageForOcr(int32_t page_index,
-                          int32_t page_object_index) override {
-    auto image = images_.find(ImagePosition(page_index, page_object_index));
-    return image != images_.end() ? image->second : default_bitmap_;
-  }
-
-  void AddImage(int32_t page_index,
-                int32_t page_object_index,
-                SkBitmap bitmap) {
-    images_[ImagePosition(page_index, page_object_index)] = std::move(bitmap);
-  }
-
- private:
-  // Keeps images for (page_index, page_object_index) positions.
-  std::map<ImagePosition, SkBitmap> images_;
-
-  // Returned for all requests that have no assigned bitmap in `images_`.
-  SkBitmap default_bitmap_;
-
-  chrome_pdf::AccessibilityActionData received_action_data_;
-};
-
 // Waits for tasks posted to the thread's task runner to complete.
 void WaitForThreadTasks() {
   base::RunLoop run_loop;
@@ -297,11 +211,9 @@ class TestPdfAccessibilityTree : public PdfAccessibilityTree {
  public:
   TestPdfAccessibilityTree(
       content::RenderFrame* render_frame,
-      chrome_pdf::PdfAccessibilityActionHandler* action_handler,
-      chrome_pdf::PdfAccessibilityImageFetcher* image_fetcher)
+      chrome_pdf::PdfAccessibilityActionHandler* action_handler)
       : PdfAccessibilityTree(render_frame,
                              action_handler,
-                             image_fetcher,
                              /*plugin_container=*/nullptr) {
     ForcePluginAXObjectForTesting(blink::WebAXObject::FromWebNode(
         render_frame->GetWebFrame()->GetDocument().Body()));
@@ -310,30 +222,6 @@ class TestPdfAccessibilityTree : public PdfAccessibilityTree {
   ~TestPdfAccessibilityTree() override = default;
   TestPdfAccessibilityTree(const TestPdfAccessibilityTree&) = delete;
   TestPdfAccessibilityTree& operator=(const TestPdfAccessibilityTree&) = delete;
-
-#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
-  std::vector<std::vector<ui::AXTreeUpdate>>& GetTreeUpdates() {
-    return tree_updates_;
-  }
-
-  void OnOcrDataReceived(std::vector<PdfOcrRequest> ocr_requests,
-                         std::vector<ui::AXTreeUpdate> tree_updates) override {
-    tree_updates_.push_back(tree_updates);
-    PdfAccessibilityTree::OnOcrDataReceived(ocr_requests, tree_updates);
-  }
-
-  void CreateFakeOCRHelper(bool create_empty_result) {
-    CreateOcrHelper();
-    fake_annotator_ = std::make_unique<screen_ai::test::FakeScreenAIAnnotator>(
-        create_empty_result);
-    ocr_helper_for_testing()->SetScreenAIAnnotatorForTesting(
-        fake_annotator_->BindNewPipeAndPassRemote());
-  }
-
- private:
-  std::vector<std::vector<ui::AXTreeUpdate>> tree_updates_;
-  std::unique_ptr<screen_ai::test::FakeScreenAIAnnotator> fake_annotator_;
-#endif  // BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
 };
 
 }  // namespace
@@ -359,13 +247,6 @@ class PdfAccessibilityTreeTest : public content::RenderViewTest {
     viewport_info_.scale = 1.0;
     viewport_info_.scroll = gfx::Point(0, 0);
     viewport_info_.offset = gfx::Point(0, 0);
-    viewport_info_.selection_start_page_index = 0u;
-    viewport_info_.selection_start_char_index = 0u;
-    viewport_info_.selection_end_page_index = 0u;
-    viewport_info_.selection_end_char_index = 0u;
-    doc_info_.text_accessible = true;
-    doc_info_.text_copyable = true;
-    doc_info_.page_count = 1u;
     page_info_.page_index = 0u;
     page_info_.text_run_count = 0u;
     page_info_.char_count = 0u;
@@ -375,8 +256,10 @@ class PdfAccessibilityTreeTest : public content::RenderViewTest {
   void TearDown() override {
     // Ensure we clean up the PDF accessibility tree before the page closes
     // since we directly set a plugin container.
-    pdf_accessibility_tree_->ForcePluginAXObjectForTesting(
-        blink::WebAXObject());
+    if (!IsSkipped()) {
+      pdf_accessibility_tree_->ForcePluginAXObjectForTesting(
+          blink::WebAXObject());
+    }
     content::RenderViewTest::TearDown();
   }
 
@@ -386,7 +269,7 @@ class PdfAccessibilityTreeTest : public content::RenderViewTest {
     ASSERT_TRUE(render_frame->GetRenderAccessibility());
 
     pdf_accessibility_tree_ = std::make_unique<TestPdfAccessibilityTree>(
-        render_frame, &action_handler_, &image_fetcher_);
+        render_frame, &action_handler_);
     WaitForThreadTasks();
   }
 
@@ -401,6 +284,16 @@ class PdfAccessibilityTreeTest : public content::RenderViewTest {
   }
 
  protected:
+  std::unique_ptr<chrome_pdf::AccessibilityDocInfo> CreateAccessibilityDocInfo()
+      const {
+    auto doc_info = std::make_unique<chrome_pdf::AccessibilityDocInfo>();
+    doc_info->page_count = page_count_;
+    doc_info->is_tagged = false;
+    doc_info->text_accessible = true;
+    doc_info->text_copyable = true;
+    return doc_info;
+  }
+
   chrome_pdf::AccessibilityImageInfo CreateMockInaccessibleImage() {
     chrome_pdf::AccessibilityImageInfo image;
     image.alt_text = "";
@@ -410,21 +303,21 @@ class PdfAccessibilityTreeTest : public content::RenderViewTest {
   }
 
   chrome_pdf::AccessibilityViewportInfo viewport_info_;
-  chrome_pdf::AccessibilityDocInfo doc_info_;
+  uint32_t page_count_ = 1u;
   chrome_pdf::AccessibilityPageInfo page_info_;
   std::vector<chrome_pdf::AccessibilityTextRunInfo> text_runs_;
   std::vector<chrome_pdf::AccessibilityCharInfo> chars_;
   chrome_pdf::AccessibilityPageObjects page_objects_;
   std::unique_ptr<TestPdfAccessibilityTree> pdf_accessibility_tree_;
   TestPdfAccessibilityActionHandler action_handler_;
-  TestPdfAccessibilityImageFetcher image_fetcher_;
 };
 
 TEST_F(PdfAccessibilityTreeTest, TestEmptyPDFPage) {
   CreatePdfAccessibilityTree();
 
   pdf_accessibility_tree_->SetAccessibilityViewportInfo(viewport_info_);
-  pdf_accessibility_tree_->SetAccessibilityDocInfo(doc_info_);
+  pdf_accessibility_tree_->SetAccessibilityDocInfo(
+      CreateAccessibilityDocInfo());
   pdf_accessibility_tree_->SetAccessibilityPageInfo(page_info_, text_runs_,
                                                     chars_, page_objects_);
   WaitForThreadTasks();
@@ -439,7 +332,8 @@ TEST_F(PdfAccessibilityTreeTest, TestAccessibilityDisabledDuringPDFLoad) {
   CreatePdfAccessibilityTree();
 
   pdf_accessibility_tree_->SetAccessibilityViewportInfo(viewport_info_);
-  pdf_accessibility_tree_->SetAccessibilityDocInfo(doc_info_);
+  pdf_accessibility_tree_->SetAccessibilityDocInfo(
+      CreateAccessibilityDocInfo());
   WaitForThreadTasks();
 
   // Disable accessibility while the PDF is loading, make sure this
@@ -466,7 +360,8 @@ TEST_F(PdfAccessibilityTreeTest, TestPdfAccessibilityTreeReload) {
 
     page_info_.bounds = gfx::ToEnclosingRect(page_bounds);
     pdf_accessibility_tree_->SetAccessibilityViewportInfo(viewport_info_);
-    pdf_accessibility_tree_->SetAccessibilityDocInfo(doc_info_);
+    pdf_accessibility_tree_->SetAccessibilityDocInfo(
+        CreateAccessibilityDocInfo());
     pdf_accessibility_tree_->SetAccessibilityPageInfo(page_info_, text_runs_,
                                                       chars_, page_objects_);
     WaitForThreadTasks();
@@ -526,7 +421,8 @@ TEST_F(PdfAccessibilityTreeTest, TestPdfAccessibilityTreeCreation) {
   CreatePdfAccessibilityTree();
 
   pdf_accessibility_tree_->SetAccessibilityViewportInfo(viewport_info_);
-  pdf_accessibility_tree_->SetAccessibilityDocInfo(doc_info_);
+  pdf_accessibility_tree_->SetAccessibilityDocInfo(
+      CreateAccessibilityDocInfo());
   pdf_accessibility_tree_->SetAccessibilityPageInfo(page_info_, text_runs_,
                                                     chars_, page_objects_);
   WaitForThreadTasks();
@@ -546,7 +442,7 @@ TEST_F(PdfAccessibilityTreeTest, TestPdfAccessibilityTreeCreation) {
    */
 
   ui::AXNode* root_node = pdf_accessibility_tree_->GetRoot();
-  CheckRootAndStatusNodes(root_node, doc_info_.page_count,
+  CheckRootAndStatusNodes(root_node, page_count_,
                           /*is_pdf_ocr_test=*/false, /*is_ocr_completed=*/false,
                           /*create_empty_ocr_results=*/false);
 
@@ -601,6 +497,110 @@ TEST_F(PdfAccessibilityTreeTest, TestPdfAccessibilityTreeCreation) {
             image_node->GetStringAttribute(ax::mojom::StringAttribute::kName));
 }
 
+TEST_F(PdfAccessibilityTreeTest, HeadingsDetectedByHeuristic) {
+  base::test::ScopedFeatureList pdf_tags;
+  pdf_tags.InitAndDisableFeature(chrome_pdf::features::kPdfTags);
+
+  CreatePdfAccessibilityTree();
+  text_runs_ = {kFirstTextRun, kSecondTextRun, kFirstTextRun, kSecondTextRun};
+  text_runs_[0].style.font_size = 16.0f;
+  text_runs_[1].style.font_size = 8.0f;
+  text_runs_[2].style.font_size = 8.0f;
+  text_runs_[3].style.font_size = 8.0f;
+
+  chars_ = {std::begin(kDummyCharsData), std::end(kDummyCharsData)};
+  std::copy(std::begin(kDummyCharsData), std::end(kDummyCharsData),
+            std::back_inserter(chars_));
+
+  page_info_.text_run_count = text_runs_.size();
+  page_info_.char_count = chars_.size();
+  pdf_accessibility_tree_->SetAccessibilityDocInfo(
+      CreateAccessibilityDocInfo());
+  pdf_accessibility_tree_->SetAccessibilityViewportInfo(viewport_info_);
+
+  pdf_accessibility_tree_->SetAccessibilityPageInfo(page_info_, text_runs_,
+                                                    chars_, page_objects_);
+  WaitForThreadTasks();
+  // Wait for `PdfAccessibilityTree::UnserializeNodes()`, a delayed task.
+  WaitForThreadDelayedTasks();
+
+  const ui::AXNode* pdf_root = pdf_accessibility_tree_->GetRoot();
+  CheckRootAndStatusNodes(pdf_root, page_count_,
+                          /*is_pdf_ocr_test=*/false, /*is_ocr_completed=*/false,
+                          /*create_empty_ocr_results=*/false);
+
+  ASSERT_GT(pdf_root->GetChildCount(), 1u);
+  const ui::AXNode* page = pdf_root->GetChildAtIndex(1u);
+  ASSERT_NE(nullptr, page);
+  ASSERT_EQ(4u, page->GetChildCount());
+
+  const ui::AXNode* heuristic_heading = page->GetChildAtIndex(0u);
+  ASSERT_NE(nullptr, heuristic_heading);
+  EXPECT_EQ(ax::mojom::Role::kHeading, heuristic_heading->GetRole());
+  EXPECT_EQ(2, heuristic_heading->GetIntAttribute(
+                   ax::mojom::IntAttribute::kHierarchicalLevel));
+  EXPECT_EQ("h2", heuristic_heading->GetStringAttribute(
+                      ax::mojom::StringAttribute::kHtmlTag));
+
+  const ui::AXNode* paragraph1 = page->GetChildAtIndex(1u);
+  ASSERT_NE(nullptr, paragraph1);
+  EXPECT_EQ(ax::mojom::Role::kParagraph, paragraph1->GetRole());
+
+  const ui::AXNode* paragraph2 = page->GetChildAtIndex(2u);
+  ASSERT_NE(nullptr, paragraph2);
+  EXPECT_EQ(ax::mojom::Role::kParagraph, paragraph2->GetRole());
+
+  const ui::AXNode* paragraph3 = page->GetChildAtIndex(3u);
+  ASSERT_NE(nullptr, paragraph3);
+  EXPECT_EQ(ax::mojom::Role::kParagraph, paragraph3->GetRole());
+}
+
+TEST_F(PdfAccessibilityTreeTest, HeadingsDetectedFromTags) {
+  base::test::ScopedFeatureList pdf_tags;
+  pdf_tags.InitAndEnableFeature(chrome_pdf::features::kPdfTags);
+  CreatePdfAccessibilityTree();
+  text_runs_ = {kFirstTextRun, kSecondTextRun};
+  text_runs_[0].tag_type = "H1";
+  text_runs_[1].tag_type = "H2";
+
+  chars_ = {std::begin(kDummyCharsData), std::end(kDummyCharsData)};
+  page_info_.text_run_count = text_runs_.size();
+  page_info_.char_count = chars_.size();
+  std::unique_ptr<chrome_pdf::AccessibilityDocInfo> doc_info =
+      CreateAccessibilityDocInfo();
+  doc_info->is_tagged = true;
+  pdf_accessibility_tree_->SetAccessibilityDocInfo(std::move(doc_info));
+  pdf_accessibility_tree_->SetAccessibilityViewportInfo(viewport_info_);
+
+  pdf_accessibility_tree_->SetAccessibilityPageInfo(page_info_, text_runs_,
+                                                    chars_, page_objects_);
+  WaitForThreadTasks();
+  // Wait for `PdfAccessibilityTree::UnserializeNodes()`, a delayed task.
+  WaitForThreadDelayedTasks();
+
+  const ui::AXNode* pdf_root = pdf_accessibility_tree_->GetRoot();
+  CheckRootAndStatusNodes(pdf_root, page_count_,
+                          /*is_pdf_ocr_test=*/false, /*is_ocr_completed=*/false,
+                          /*create_empty_ocr_results=*/false);
+
+  ASSERT_GT(pdf_root->GetChildCount(), 1u);
+  const ui::AXNode* page = pdf_root->GetChildAtIndex(1u);
+  ASSERT_NE(nullptr, page);
+  ASSERT_EQ(2u, page->GetChildCount());
+
+  const ui::AXNode* heading1 = page->GetChildAtIndex(0u);
+  ASSERT_NE(nullptr, heading1);
+  EXPECT_EQ(ax::mojom::Role::kHeading, heading1->GetRole());
+  EXPECT_EQ(1, heading1->GetIntAttribute(
+                   ax::mojom::IntAttribute::kHierarchicalLevel));
+
+  const ui::AXNode* heading2 = page->GetChildAtIndex(1u);
+  ASSERT_NE(nullptr, heading2);
+  EXPECT_EQ(ax::mojom::Role::kHeading, heading2->GetRole());
+  EXPECT_EQ(2, heading2->GetIntAttribute(
+                   ax::mojom::IntAttribute::kHierarchicalLevel));
+}
+
 TEST_F(PdfAccessibilityTreeTest, TestOverlappingAnnots) {
   text_runs_.emplace_back(kFirstRunMultiLine);
   text_runs_.emplace_back(kSecondRunMultiLine);
@@ -635,7 +635,8 @@ TEST_F(PdfAccessibilityTreeTest, TestOverlappingAnnots) {
   CreatePdfAccessibilityTree();
 
   pdf_accessibility_tree_->SetAccessibilityViewportInfo(viewport_info_);
-  pdf_accessibility_tree_->SetAccessibilityDocInfo(doc_info_);
+  pdf_accessibility_tree_->SetAccessibilityDocInfo(
+      CreateAccessibilityDocInfo());
   pdf_accessibility_tree_->SetAccessibilityPageInfo(page_info_, text_runs_,
                                                     chars_, page_objects_);
   WaitForThreadTasks();
@@ -653,7 +654,7 @@ TEST_F(PdfAccessibilityTreeTest, TestOverlappingAnnots) {
    */
 
   ui::AXNode* root_node = pdf_accessibility_tree_->GetRoot();
-  CheckRootAndStatusNodes(root_node, doc_info_.page_count,
+  CheckRootAndStatusNodes(root_node, page_count_,
                           /*is_pdf_ocr_test=*/false, /*is_ocr_completed=*/false,
                           /*create_empty_ocr_results=*/false);
 
@@ -720,7 +721,8 @@ TEST_F(PdfAccessibilityTreeTest, TestHighlightCreation) {
   CreatePdfAccessibilityTree();
 
   pdf_accessibility_tree_->SetAccessibilityViewportInfo(viewport_info_);
-  pdf_accessibility_tree_->SetAccessibilityDocInfo(doc_info_);
+  pdf_accessibility_tree_->SetAccessibilityDocInfo(
+      CreateAccessibilityDocInfo());
   pdf_accessibility_tree_->SetAccessibilityPageInfo(page_info_, text_runs_,
                                                     chars_, page_objects_);
   WaitForThreadTasks();
@@ -739,7 +741,7 @@ TEST_F(PdfAccessibilityTreeTest, TestHighlightCreation) {
    */
 
   ui::AXNode* root_node = pdf_accessibility_tree_->GetRoot();
-  CheckRootAndStatusNodes(root_node, doc_info_.page_count,
+  CheckRootAndStatusNodes(root_node, page_count_,
                           /*is_pdf_ocr_test=*/false, /*is_ocr_completed=*/false,
                           /*create_empty_ocr_results=*/false);
 
@@ -839,7 +841,8 @@ TEST_F(PdfAccessibilityTreeTest, TestTextFieldNodeCreation) {
   CreatePdfAccessibilityTree();
 
   pdf_accessibility_tree_->SetAccessibilityViewportInfo(viewport_info_);
-  pdf_accessibility_tree_->SetAccessibilityDocInfo(doc_info_);
+  pdf_accessibility_tree_->SetAccessibilityDocInfo(
+      CreateAccessibilityDocInfo());
   pdf_accessibility_tree_->SetAccessibilityPageInfo(page_info_, text_runs_,
                                                     chars_, page_objects_);
   WaitForThreadTasks();
@@ -859,7 +862,7 @@ TEST_F(PdfAccessibilityTreeTest, TestTextFieldNodeCreation) {
    */
 
   ui::AXNode* root_node = pdf_accessibility_tree_->GetRoot();
-  CheckRootAndStatusNodes(root_node, doc_info_.page_count,
+  CheckRootAndStatusNodes(root_node, page_count_,
                           /*is_pdf_ocr_test=*/false, /*is_ocr_completed=*/false,
                           /*create_empty_ocr_results=*/false);
 
@@ -994,7 +997,8 @@ TEST_F(PdfAccessibilityTreeTest, TestButtonNodeCreation) {
   CreatePdfAccessibilityTree();
 
   pdf_accessibility_tree_->SetAccessibilityViewportInfo(viewport_info_);
-  pdf_accessibility_tree_->SetAccessibilityDocInfo(doc_info_);
+  pdf_accessibility_tree_->SetAccessibilityDocInfo(
+      CreateAccessibilityDocInfo());
   pdf_accessibility_tree_->SetAccessibilityPageInfo(page_info_, text_runs_,
                                                     chars_, page_objects_);
   WaitForThreadTasks();
@@ -1016,7 +1020,7 @@ TEST_F(PdfAccessibilityTreeTest, TestButtonNodeCreation) {
    */
 
   ui::AXNode* root_node = pdf_accessibility_tree_->GetRoot();
-  CheckRootAndStatusNodes(root_node, doc_info_.page_count,
+  CheckRootAndStatusNodes(root_node, page_count_,
                           /*is_pdf_ocr_test=*/false, /*is_ocr_completed=*/false,
                           /*create_empty_ocr_results=*/false);
 
@@ -1181,7 +1185,8 @@ TEST_F(PdfAccessibilityTreeTest, TestListboxNodeCreation) {
   CreatePdfAccessibilityTree();
 
   pdf_accessibility_tree_->SetAccessibilityViewportInfo(viewport_info_);
-  pdf_accessibility_tree_->SetAccessibilityDocInfo(doc_info_);
+  pdf_accessibility_tree_->SetAccessibilityDocInfo(
+      CreateAccessibilityDocInfo());
   pdf_accessibility_tree_->SetAccessibilityPageInfo(page_info_, text_runs_,
                                                     chars_, page_objects_);
   WaitForThreadTasks();
@@ -1207,7 +1212,7 @@ TEST_F(PdfAccessibilityTreeTest, TestListboxNodeCreation) {
    */
 
   ui::AXNode* root_node = pdf_accessibility_tree_->GetRoot();
-  CheckRootAndStatusNodes(root_node, doc_info_.page_count,
+  CheckRootAndStatusNodes(root_node, page_count_,
                           /*is_pdf_ocr_test=*/false, /*is_ocr_completed=*/false,
                           /*create_empty_ocr_results=*/false);
 
@@ -1253,22 +1258,24 @@ TEST_F(PdfAccessibilityTreeTest, TestListboxNodeCreation) {
     ASSERT_EQ(std::size(kExpectedOptions[0]), listbox_node->GetChildCount());
     const std::vector<raw_ptr<ui::AXNode, VectorExperimental>>&
         listbox_child_nodes = listbox_node->GetAllChildren();
-    for (size_t i = 0; i < listbox_child_nodes.size(); i++) {
-      EXPECT_EQ(ax::mojom::Role::kListBoxOption,
-                listbox_child_nodes[i]->GetRole());
-      EXPECT_NE(ax::mojom::Restriction::kReadOnly,
-                listbox_child_nodes[i]->data().GetRestriction());
-      EXPECT_EQ(kExpectedOptions[0][i].name,
-                listbox_child_nodes[i]->GetStringAttribute(
-                    ax::mojom::StringAttribute::kName));
-      EXPECT_EQ(kExpectedOptions[0][i].is_selected,
-                listbox_child_nodes[i]->GetBoolAttribute(
-                    ax::mojom::BoolAttribute::kSelected));
-      EXPECT_TRUE(
-          listbox_child_nodes[i]->HasState(ax::mojom::State::kFocusable));
-      EXPECT_EQ(kExpectedBounds[0],
-                listbox_child_nodes[i]->data().relative_bounds.bounds);
-    }
+    UNSAFE_TODO({
+      for (size_t i = 0; i < listbox_child_nodes.size(); i++) {
+        EXPECT_EQ(ax::mojom::Role::kListBoxOption,
+                  listbox_child_nodes[i]->GetRole());
+        EXPECT_NE(ax::mojom::Restriction::kReadOnly,
+                  listbox_child_nodes[i]->data().GetRestriction());
+        EXPECT_EQ(kExpectedOptions[0][i].name,
+                  listbox_child_nodes[i]->GetStringAttribute(
+                      ax::mojom::StringAttribute::kName));
+        EXPECT_EQ(kExpectedOptions[0][i].is_selected,
+                  listbox_child_nodes[i]->GetBoolAttribute(
+                      ax::mojom::BoolAttribute::kSelected));
+        EXPECT_TRUE(
+            listbox_child_nodes[i]->HasState(ax::mojom::State::kFocusable));
+        EXPECT_EQ(kExpectedBounds[0],
+                  listbox_child_nodes[i]->data().relative_bounds.bounds);
+      }
+    });
   }
 
   {
@@ -1285,22 +1292,24 @@ TEST_F(PdfAccessibilityTreeTest, TestListboxNodeCreation) {
     ASSERT_EQ(std::size(kExpectedOptions[1]), listbox_node->GetChildCount());
     const std::vector<raw_ptr<ui::AXNode, VectorExperimental>>&
         listbox_child_nodes = listbox_node->GetAllChildren();
-    for (size_t i = 0; i < listbox_child_nodes.size(); i++) {
-      EXPECT_EQ(ax::mojom::Role::kListBoxOption,
-                listbox_child_nodes[i]->GetRole());
-      EXPECT_EQ(ax::mojom::Restriction::kReadOnly,
-                listbox_child_nodes[i]->data().GetRestriction());
-      EXPECT_EQ(kExpectedOptions[1][i].name,
-                listbox_child_nodes[i]->GetStringAttribute(
-                    ax::mojom::StringAttribute::kName));
-      EXPECT_EQ(kExpectedOptions[1][i].is_selected,
-                listbox_child_nodes[i]->GetBoolAttribute(
-                    ax::mojom::BoolAttribute::kSelected));
-      EXPECT_TRUE(
-          listbox_child_nodes[i]->HasState(ax::mojom::State::kFocusable));
-      EXPECT_EQ(kExpectedBounds[1],
-                listbox_child_nodes[i]->data().relative_bounds.bounds);
-    }
+    UNSAFE_TODO({
+      for (size_t i = 0; i < listbox_child_nodes.size(); i++) {
+        EXPECT_EQ(ax::mojom::Role::kListBoxOption,
+                  listbox_child_nodes[i]->GetRole());
+        EXPECT_EQ(ax::mojom::Restriction::kReadOnly,
+                  listbox_child_nodes[i]->data().GetRestriction());
+        EXPECT_EQ(kExpectedOptions[1][i].name,
+                  listbox_child_nodes[i]->GetStringAttribute(
+                      ax::mojom::StringAttribute::kName));
+        EXPECT_EQ(kExpectedOptions[1][i].is_selected,
+                  listbox_child_nodes[i]->GetBoolAttribute(
+                      ax::mojom::BoolAttribute::kSelected));
+        EXPECT_TRUE(
+            listbox_child_nodes[i]->HasState(ax::mojom::State::kFocusable));
+        EXPECT_EQ(kExpectedBounds[1],
+                  listbox_child_nodes[i]->data().relative_bounds.bounds);
+      }
+    });
   }
 }
 
@@ -1370,7 +1379,8 @@ TEST_F(PdfAccessibilityTreeTest, TestComboboxNodeCreation) {
   CreatePdfAccessibilityTree();
 
   pdf_accessibility_tree_->SetAccessibilityViewportInfo(viewport_info_);
-  pdf_accessibility_tree_->SetAccessibilityDocInfo(doc_info_);
+  pdf_accessibility_tree_->SetAccessibilityDocInfo(
+      CreateAccessibilityDocInfo());
   pdf_accessibility_tree_->SetAccessibilityPageInfo(page_info_, text_runs_,
                                                     chars_, page_objects_);
   WaitForThreadTasks();
@@ -1400,7 +1410,7 @@ TEST_F(PdfAccessibilityTreeTest, TestComboboxNodeCreation) {
    */
 
   ui::AXNode* root_node = pdf_accessibility_tree_->GetRoot();
-  CheckRootAndStatusNodes(root_node, doc_info_.page_count,
+  CheckRootAndStatusNodes(root_node, page_count_,
                           /*is_pdf_ocr_test=*/false, /*is_ocr_completed=*/false,
                           /*create_empty_ocr_results=*/false);
 
@@ -1469,21 +1479,24 @@ TEST_F(PdfAccessibilityTreeTest, TestComboboxNodeCreation) {
               combobox_popup_node->GetChildCount());
     const std::vector<raw_ptr<ui::AXNode, VectorExperimental>>&
         popup_child_nodes = combobox_popup_node->GetAllChildren();
-    for (size_t i = 0; i < popup_child_nodes.size(); i++) {
-      EXPECT_EQ(ax::mojom::Role::kListBoxOption,
-                popup_child_nodes[i]->GetRole());
-      EXPECT_NE(ax::mojom::Restriction::kReadOnly,
-                popup_child_nodes[i]->data().GetRestriction());
-      EXPECT_EQ(kExpectedOptions[0][i].name,
-                popup_child_nodes[i]->GetStringAttribute(
-                    ax::mojom::StringAttribute::kName));
-      EXPECT_EQ(kExpectedOptions[0][i].is_selected,
-                popup_child_nodes[i]->GetBoolAttribute(
-                    ax::mojom::BoolAttribute::kSelected));
-      EXPECT_TRUE(popup_child_nodes[i]->HasState(ax::mojom::State::kFocusable));
-      EXPECT_EQ(kExpectedBounds[0],
-                popup_child_nodes[i]->data().relative_bounds.bounds);
-    }
+    UNSAFE_TODO({
+      for (size_t i = 0; i < popup_child_nodes.size(); i++) {
+        EXPECT_EQ(ax::mojom::Role::kListBoxOption,
+                  popup_child_nodes[i]->GetRole());
+        EXPECT_NE(ax::mojom::Restriction::kReadOnly,
+                  popup_child_nodes[i]->data().GetRestriction());
+        EXPECT_EQ(kExpectedOptions[0][i].name,
+                  popup_child_nodes[i]->GetStringAttribute(
+                      ax::mojom::StringAttribute::kName));
+        EXPECT_EQ(kExpectedOptions[0][i].is_selected,
+                  popup_child_nodes[i]->GetBoolAttribute(
+                      ax::mojom::BoolAttribute::kSelected));
+        EXPECT_TRUE(
+            popup_child_nodes[i]->HasState(ax::mojom::State::kFocusable));
+        EXPECT_EQ(kExpectedBounds[0],
+                  popup_child_nodes[i]->data().relative_bounds.bounds);
+      }
+    });
     EXPECT_EQ(popup_child_nodes[1]->data().id,
               combobox_input_node->GetIntAttribute(
                   ax::mojom::IntAttribute::kActivedescendantId));
@@ -1528,21 +1541,24 @@ TEST_F(PdfAccessibilityTreeTest, TestComboboxNodeCreation) {
               combobox_popup_node->GetChildCount());
     const std::vector<raw_ptr<ui::AXNode, VectorExperimental>>&
         popup_child_nodes = combobox_popup_node->GetAllChildren();
-    for (size_t i = 0; i < popup_child_nodes.size(); i++) {
-      EXPECT_EQ(ax::mojom::Role::kListBoxOption,
-                popup_child_nodes[i]->GetRole());
-      EXPECT_EQ(ax::mojom::Restriction::kReadOnly,
-                popup_child_nodes[i]->data().GetRestriction());
-      EXPECT_EQ(kExpectedOptions[1][i].name,
-                popup_child_nodes[i]->GetStringAttribute(
-                    ax::mojom::StringAttribute::kName));
-      EXPECT_EQ(kExpectedOptions[1][i].is_selected,
-                popup_child_nodes[i]->GetBoolAttribute(
-                    ax::mojom::BoolAttribute::kSelected));
-      EXPECT_TRUE(popup_child_nodes[i]->HasState(ax::mojom::State::kFocusable));
-      EXPECT_EQ(kExpectedBounds[1],
-                popup_child_nodes[i]->data().relative_bounds.bounds);
-    }
+    UNSAFE_TODO({
+      for (size_t i = 0; i < popup_child_nodes.size(); i++) {
+        EXPECT_EQ(ax::mojom::Role::kListBoxOption,
+                  popup_child_nodes[i]->GetRole());
+        EXPECT_EQ(ax::mojom::Restriction::kReadOnly,
+                  popup_child_nodes[i]->data().GetRestriction());
+        EXPECT_EQ(kExpectedOptions[1][i].name,
+                  popup_child_nodes[i]->GetStringAttribute(
+                      ax::mojom::StringAttribute::kName));
+        EXPECT_EQ(kExpectedOptions[1][i].is_selected,
+                  popup_child_nodes[i]->GetBoolAttribute(
+                      ax::mojom::BoolAttribute::kSelected));
+        EXPECT_TRUE(
+            popup_child_nodes[i]->HasState(ax::mojom::State::kFocusable));
+        EXPECT_EQ(kExpectedBounds[1],
+                  popup_child_nodes[i]->data().relative_bounds.bounds);
+      }
+    });
     EXPECT_EQ(popup_child_nodes[1]->data().id,
               combobox_input_node->GetIntAttribute(
                   ax::mojom::IntAttribute::kActivedescendantId));
@@ -1577,7 +1593,8 @@ TEST_F(PdfAccessibilityTreeTest, TestPreviousNextOnLine) {
   CreatePdfAccessibilityTree();
 
   pdf_accessibility_tree_->SetAccessibilityViewportInfo(viewport_info_);
-  pdf_accessibility_tree_->SetAccessibilityDocInfo(doc_info_);
+  pdf_accessibility_tree_->SetAccessibilityDocInfo(
+      CreateAccessibilityDocInfo());
   pdf_accessibility_tree_->SetAccessibilityPageInfo(page_info_, text_runs_,
                                                     chars_, page_objects_);
   WaitForThreadTasks();
@@ -1599,7 +1616,7 @@ TEST_F(PdfAccessibilityTreeTest, TestPreviousNextOnLine) {
    */
 
   ui::AXNode* root_node = pdf_accessibility_tree_->GetRoot();
-  CheckRootAndStatusNodes(root_node, doc_info_.page_count,
+  CheckRootAndStatusNodes(root_node, page_count_,
                           /*is_pdf_ocr_test=*/false, /*is_ocr_completed=*/false,
                           /*create_empty_ocr_results=*/false);
 
@@ -1698,7 +1715,8 @@ TEST_F(PdfAccessibilityTreeTest, TextRunsAndCharsMismatch) {
   CreatePdfAccessibilityTree();
 
   pdf_accessibility_tree_->SetAccessibilityViewportInfo(viewport_info_);
-  pdf_accessibility_tree_->SetAccessibilityDocInfo(doc_info_);
+  pdf_accessibility_tree_->SetAccessibilityDocInfo(
+      CreateAccessibilityDocInfo());
   pdf_accessibility_tree_->SetAccessibilityPageInfo(page_info_, text_runs_,
                                                     chars_, page_objects_);
   WaitForThreadTasks();
@@ -1739,7 +1757,8 @@ TEST_F(PdfAccessibilityTreeTest, UnsortedLinkVector) {
   CreatePdfAccessibilityTree();
 
   pdf_accessibility_tree_->SetAccessibilityViewportInfo(viewport_info_);
-  pdf_accessibility_tree_->SetAccessibilityDocInfo(doc_info_);
+  pdf_accessibility_tree_->SetAccessibilityDocInfo(
+      CreateAccessibilityDocInfo());
   pdf_accessibility_tree_->SetAccessibilityPageInfo(page_info_, text_runs_,
                                                     chars_, page_objects_);
   WaitForThreadTasks();
@@ -1771,7 +1790,8 @@ TEST_F(PdfAccessibilityTreeTest, OutOfBoundLink) {
   CreatePdfAccessibilityTree();
 
   pdf_accessibility_tree_->SetAccessibilityViewportInfo(viewport_info_);
-  pdf_accessibility_tree_->SetAccessibilityDocInfo(doc_info_);
+  pdf_accessibility_tree_->SetAccessibilityDocInfo(
+      CreateAccessibilityDocInfo());
   pdf_accessibility_tree_->SetAccessibilityPageInfo(page_info_, text_runs_,
                                                     chars_, page_objects_);
   WaitForThreadTasks();
@@ -1810,7 +1830,8 @@ TEST_F(PdfAccessibilityTreeTest, UnsortedImageVector) {
   CreatePdfAccessibilityTree();
 
   pdf_accessibility_tree_->SetAccessibilityViewportInfo(viewport_info_);
-  pdf_accessibility_tree_->SetAccessibilityDocInfo(doc_info_);
+  pdf_accessibility_tree_->SetAccessibilityDocInfo(
+      CreateAccessibilityDocInfo());
   pdf_accessibility_tree_->SetAccessibilityPageInfo(page_info_, text_runs_,
                                                     chars_, page_objects_);
   WaitForThreadTasks();
@@ -1840,7 +1861,8 @@ TEST_F(PdfAccessibilityTreeTest, OutOfBoundImage) {
   CreatePdfAccessibilityTree();
 
   pdf_accessibility_tree_->SetAccessibilityViewportInfo(viewport_info_);
-  pdf_accessibility_tree_->SetAccessibilityDocInfo(doc_info_);
+  pdf_accessibility_tree_->SetAccessibilityDocInfo(
+      CreateAccessibilityDocInfo());
   pdf_accessibility_tree_->SetAccessibilityPageInfo(page_info_, text_runs_,
                                                     chars_, page_objects_);
   WaitForThreadTasks();
@@ -1883,7 +1905,8 @@ TEST_F(PdfAccessibilityTreeTest, UnsortedHighlightVector) {
   CreatePdfAccessibilityTree();
 
   pdf_accessibility_tree_->SetAccessibilityViewportInfo(viewport_info_);
-  pdf_accessibility_tree_->SetAccessibilityDocInfo(doc_info_);
+  pdf_accessibility_tree_->SetAccessibilityDocInfo(
+      CreateAccessibilityDocInfo());
   pdf_accessibility_tree_->SetAccessibilityPageInfo(page_info_, text_runs_,
                                                     chars_, page_objects_);
   WaitForThreadTasks();
@@ -1915,7 +1938,8 @@ TEST_F(PdfAccessibilityTreeTest, OutOfBoundHighlight) {
   CreatePdfAccessibilityTree();
 
   pdf_accessibility_tree_->SetAccessibilityViewportInfo(viewport_info_);
-  pdf_accessibility_tree_->SetAccessibilityDocInfo(doc_info_);
+  pdf_accessibility_tree_->SetAccessibilityDocInfo(
+      CreateAccessibilityDocInfo());
   pdf_accessibility_tree_->SetAccessibilityPageInfo(page_info_, text_runs_,
                                                     chars_, page_objects_);
   WaitForThreadTasks();
@@ -1932,7 +1956,8 @@ TEST_F(PdfAccessibilityTreeTest, TestActionDataConversion) {
   CreatePdfAccessibilityTree();
 
   pdf_accessibility_tree_->SetAccessibilityViewportInfo(viewport_info_);
-  pdf_accessibility_tree_->SetAccessibilityDocInfo(doc_info_);
+  pdf_accessibility_tree_->SetAccessibilityDocInfo(
+      CreateAccessibilityDocInfo());
   pdf_accessibility_tree_->SetAccessibilityPageInfo(page_info_, text_runs_,
                                                     chars_, page_objects_);
   WaitForThreadTasks();
@@ -1992,7 +2017,8 @@ TEST_F(PdfAccessibilityTreeTest, TestScrollToGlobalPointDataConversion) {
   CreatePdfAccessibilityTree();
 
   pdf_accessibility_tree_->SetAccessibilityViewportInfo(viewport_info_);
-  pdf_accessibility_tree_->SetAccessibilityDocInfo(doc_info_);
+  pdf_accessibility_tree_->SetAccessibilityDocInfo(
+      CreateAccessibilityDocInfo());
   pdf_accessibility_tree_->SetAccessibilityPageInfo(page_info_, text_runs_,
                                                     chars_, page_objects_);
   WaitForThreadTasks();
@@ -2051,7 +2077,8 @@ TEST_F(PdfAccessibilityTreeTest, TestClickActionDataConversion) {
   CreatePdfAccessibilityTree();
 
   pdf_accessibility_tree_->SetAccessibilityViewportInfo(viewport_info_);
-  pdf_accessibility_tree_->SetAccessibilityDocInfo(doc_info_);
+  pdf_accessibility_tree_->SetAccessibilityDocInfo(
+      CreateAccessibilityDocInfo());
   pdf_accessibility_tree_->SetAccessibilityPageInfo(page_info_, text_runs_,
                                                     chars_, page_objects_);
   WaitForThreadTasks();
@@ -2059,7 +2086,7 @@ TEST_F(PdfAccessibilityTreeTest, TestClickActionDataConversion) {
   WaitForThreadDelayedTasks();
 
   ui::AXNode* root_node = pdf_accessibility_tree_->GetRoot();
-  CheckRootAndStatusNodes(root_node, doc_info_.page_count,
+  CheckRootAndStatusNodes(root_node, page_count_,
                           /*is_pdf_ocr_test=*/false, /*is_ocr_completed=*/false,
                           /*create_empty_ocr_results=*/false);
 
@@ -2104,7 +2131,8 @@ TEST_F(PdfAccessibilityTreeTest, TestEmptyPdfAxActions) {
   CreatePdfAccessibilityTree();
 
   pdf_accessibility_tree_->SetAccessibilityViewportInfo(viewport_info_);
-  pdf_accessibility_tree_->SetAccessibilityDocInfo(doc_info_);
+  pdf_accessibility_tree_->SetAccessibilityDocInfo(
+      CreateAccessibilityDocInfo());
   pdf_accessibility_tree_->SetAccessibilityPageInfo(page_info_, text_runs_,
                                                     chars_, page_objects_);
   WaitForThreadTasks();
@@ -2142,7 +2170,8 @@ TEST_F(PdfAccessibilityTreeTest, TestZoomAndScaleChanges) {
 
   CreatePdfAccessibilityTree();
 
-  pdf_accessibility_tree_->SetAccessibilityDocInfo(doc_info_);
+  pdf_accessibility_tree_->SetAccessibilityDocInfo(
+      CreateAccessibilityDocInfo());
   pdf_accessibility_tree_->SetAccessibilityPageInfo(page_info_, text_runs_,
                                                     chars_, page_objects_);
   WaitForThreadTasks();
@@ -2158,7 +2187,7 @@ TEST_F(PdfAccessibilityTreeTest, TestZoomAndScaleChanges) {
   WaitForThreadTasks();
 
   ui::AXNode* root_node = pdf_accessibility_tree_->GetRoot();
-  CheckRootAndStatusNodes(root_node, doc_info_.page_count,
+  CheckRootAndStatusNodes(root_node, page_count_,
                           /*is_pdf_ocr_test=*/false, /*is_ocr_completed=*/false,
                           /*create_empty_ocr_results=*/false);
   ASSERT_GT(root_node->GetChildCount(), 1u);
@@ -2198,7 +2227,8 @@ TEST_F(PdfAccessibilityTreeTest, TestSelectionActionDataConversion) {
   CreatePdfAccessibilityTree();
 
   pdf_accessibility_tree_->SetAccessibilityViewportInfo(viewport_info_);
-  pdf_accessibility_tree_->SetAccessibilityDocInfo(doc_info_);
+  pdf_accessibility_tree_->SetAccessibilityDocInfo(
+      CreateAccessibilityDocInfo());
   pdf_accessibility_tree_->SetAccessibilityPageInfo(page_info_, text_runs_,
                                                     chars_, page_objects_);
   WaitForThreadTasks();
@@ -2206,7 +2236,7 @@ TEST_F(PdfAccessibilityTreeTest, TestSelectionActionDataConversion) {
   WaitForThreadDelayedTasks();
 
   ui::AXNode* root_node = pdf_accessibility_tree_->GetRoot();
-  CheckRootAndStatusNodes(root_node, doc_info_.page_count,
+  CheckRootAndStatusNodes(root_node, page_count_,
                           /*is_pdf_ocr_test=*/false, /*is_ocr_completed=*/false,
                           /*create_empty_ocr_results=*/false);
   ASSERT_GT(root_node->GetChildCount(), 1u);
@@ -2305,7 +2335,8 @@ TEST_F(PdfAccessibilityTreeTest, TestShowContextMenuAction) {
   CreatePdfAccessibilityTree();
 
   pdf_accessibility_tree_->SetAccessibilityViewportInfo(viewport_info_);
-  pdf_accessibility_tree_->SetAccessibilityDocInfo(doc_info_);
+  pdf_accessibility_tree_->SetAccessibilityDocInfo(
+      CreateAccessibilityDocInfo());
   pdf_accessibility_tree_->SetAccessibilityPageInfo(page_info_, text_runs_,
                                                     chars_, page_objects_);
   WaitForThreadTasks();
@@ -2337,7 +2368,8 @@ TEST_F(PdfAccessibilityTreeTest, StitchChildTreeAction) {
   fake_image.text_run_index = 1u;
   fake_image.page_object_index = 0u;
   page_objects_.images.push_back(fake_image);
-  pdf_accessibility_tree_->SetAccessibilityDocInfo(doc_info_);
+  pdf_accessibility_tree_->SetAccessibilityDocInfo(
+      CreateAccessibilityDocInfo());
   pdf_accessibility_tree_->SetAccessibilityViewportInfo(viewport_info_);
 
   ui::AXNode fake_root(&pdf_accessibility_tree_->tree_for_testing(),
@@ -2369,7 +2401,7 @@ TEST_F(PdfAccessibilityTreeTest, StitchChildTreeAction) {
   WaitForThreadDelayedTasks();
 
   ui::AXNode* pdf_root = pdf_accessibility_tree_->GetRoot();
-  CheckRootAndStatusNodes(pdf_root, doc_info_.page_count,
+  CheckRootAndStatusNodes(pdf_root, page_count_,
                           /*is_pdf_ocr_test=*/false, /*is_ocr_completed=*/false,
                           /*create_empty_ocr_results=*/false);
 
@@ -2472,463 +2504,10 @@ TEST_F(PdfAccessibilityTreeTest, StitchChildTreeAction) {
 }
 
 #if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
-struct PdfOcrHelperTestBatchData {
-  uint32_t page_count;
-  uint32_t expected_batch_size;
-};
-
-class PdfOcrHelperTest : public PdfAccessibilityTreeTest,
-                         public testing::WithParamInterface<std::tuple<
-                             /* is_ocr_helper_started_before_pdf_loads */ bool,
-                             PdfOcrHelperTestBatchData>> {
- public:
-  PdfOcrHelperTest() : feature_list_(::features::kPdfOcr) {}
-  PdfOcrHelperTest(const PdfOcrHelperTest&) = delete;
-  PdfOcrHelperTest& operator=(const PdfOcrHelperTest&) = delete;
-  ~PdfOcrHelperTest() override = default;
-
- protected:
-  void CreateInaccessiblePdfAndOcrHelper(
-      uint32_t page_count,
-      bool is_ocr_helper_started_before_pdf_loads,
-      bool create_empty_results) {
-    ASSERT_TRUE(pdf_accessibility_tree_);
-    doc_info_.page_count = page_count;
-
-    chrome_pdf::AccessibilityImageInfo image = CreateMockInaccessibleImage();
-    ASSERT_EQ(0u, image.text_run_index)
-        << "Images should not be anchored to any `TextRunInfo` for the "
-           "`PdfOcrHelper` to work with them.";
-    // Each page has two images in it.
-    page_objects_.images.push_back(image);
-    page_objects_.images.push_back(image);
-
-    if (is_ocr_helper_started_before_pdf_loads) {
-      pdf_accessibility_tree_->CreateFakeOCRHelper(create_empty_results);
-      ASSERT_NE(nullptr, pdf_accessibility_tree_->ocr_helper_for_testing());
-    }
-
-    pdf_accessibility_tree_->SetAccessibilityDocInfo(doc_info_);
-    pdf_accessibility_tree_->SetAccessibilityViewportInfo(viewport_info_);
-    ASSERT_EQ(0u, text_runs_.size())
-        << "OcrHelper won't run unless the PDF has no accessible text in it.";
-    ASSERT_EQ(0u, chars_.size())
-        << "OcrHelper won't run unless the PDF has no accessible text in it.";
-    for (uint32_t i = 0; i < doc_info_.page_count; ++i) {
-      page_info_.page_index = i;
-      // All pages are identical.
-      pdf_accessibility_tree_->SetAccessibilityPageInfo(page_info_, text_runs_,
-                                                        chars_, page_objects_);
-    }
-    WaitForThreadTasks();
-    // Wait for `PdfAccessibilityTree::UnserializeNodes()`, a delayed task.
-    WaitForThreadDelayedTasks();
-
-    ui::AXNode* root_node = pdf_accessibility_tree_->GetRoot();
-    CheckRootAndStatusNodes(root_node, doc_info_.page_count,
-                            /*is_pdf_ocr_test=*/true,
-                            is_ocr_helper_started_before_pdf_loads,
-                            create_empty_results);
-
-    ASSERT_GT(root_node->GetChildCount(), 1u);
-    ui::AXNode* page_node = root_node->GetChildAtIndex(1);
-    ASSERT_NE(nullptr, page_node);
-    ASSERT_EQ(ax::mojom::Role::kRegion, page_node->GetRole());
-    ASSERT_EQ(1u, page_node->GetChildCount());
-
-    ui::AXNode* paragraph_node = page_node->GetChildAtIndex(0);
-    ASSERT_NE(nullptr, paragraph_node);
-    ASSERT_EQ((is_ocr_helper_started_before_pdf_loads && !create_empty_results)
-                  ? ax::mojom::Role::kGenericContainer
-                  : ax::mojom::Role::kParagraph,
-              paragraph_node->GetRole());
-    ASSERT_EQ(2u, paragraph_node->GetChildCount());
-
-    ui::AXNode* first_node = paragraph_node->GetChildAtIndex(0);
-    ASSERT_NE(nullptr, first_node);
-    ASSERT_EQ(is_ocr_helper_started_before_pdf_loads && !create_empty_results
-                  ? ax::mojom::Role::kStaticText
-                  : ax::mojom::Role::kImage,
-              first_node->GetRole());
-    ASSERT_EQ(0u, first_node->GetChildCount());
-
-    ui::AXNode* second_node = paragraph_node->GetChildAtIndex(1);
-    ASSERT_NE(nullptr, second_node);
-    ASSERT_EQ(is_ocr_helper_started_before_pdf_loads && !create_empty_results
-                  ? ax::mojom::Role::kStaticText
-                  : ax::mojom::Role::kImage,
-              second_node->GetRole());
-    ASSERT_EQ(0u, second_node->GetChildCount());
-
-    if (!is_ocr_helper_started_before_pdf_loads) {
-      pdf_accessibility_tree_->CreateFakeOCRHelper(create_empty_results);
-      ASSERT_NE(nullptr, pdf_accessibility_tree_->ocr_helper_for_testing());
-    }
-  }
-
-  bool GetIsOcrHelperStartedBeforePdfLoads() const {
-    return std::get<0>(GetParam());
-  }
-
-  uint32_t GetPageCount() const { return std::get<1>(GetParam()).page_count; }
-
-  uint32_t GetExpectedBatchSize() const {
-    return std::get<1>(GetParam()).expected_batch_size;
-  }
-
- private:
-  base::test::ScopedFeatureList feature_list_;
-};
-
-TEST_P(PdfOcrHelperTest, PageBatching) {
-  CreatePdfAccessibilityTree();
-
-  const bool is_ocr_helper_started_before_pdf_loads =
-      GetIsOcrHelperStartedBeforePdfLoads();
-  const uint32_t page_count = GetPageCount();
-  ASSERT_NO_FATAL_FAILURE(CreateInaccessiblePdfAndOcrHelper(
-      page_count, is_ocr_helper_started_before_pdf_loads,
-      /*create_empty_results=*/false));
-
-  const uint32_t pages_per_batch =
-      pdf_accessibility_tree_->ocr_helper_for_testing()
-          ->pages_per_batch_for_testing();
-  EXPECT_EQ(GetExpectedBatchSize(), pages_per_batch);
-
-  const uint32_t batch_count = CalculateBatchCount(page_count, pages_per_batch);
-
-  ui::AXNode* root_node = pdf_accessibility_tree_->GetRoot();
-  // The first node of the root node's children is a status node. There
-  // should be no postamble page informing the user of OCR progress
-  // when OCR has either not yet started, or has been completed.
-  ASSERT_EQ(page_count + 1u, root_node->GetChildCount());
-  for (uint32_t i = 0; i < page_count; ++i) {
-    if (!is_ocr_helper_started_before_pdf_loads) {
-      ui::AXNode* page_node = root_node->GetChildAtIndex(i + 1);
-      ASSERT_NE(nullptr, page_node);
-      ui::AXNode* paragraph_node = page_node->GetChildAtIndex(0);
-      ASSERT_NE(nullptr, paragraph_node);
-      ui::AXNode* image1_node = paragraph_node->GetChildAtIndex(0);
-      ASSERT_NE(nullptr, image1_node);
-      ui::AXNode* image2_node = paragraph_node->GetChildAtIndex(1);
-      ASSERT_NE(nullptr, image2_node);
-      base::queue<PdfOcrRequest> requests;
-      requests.emplace(image1_node->id(), CreateMockInaccessibleImage(),
-                       root_node->id(), paragraph_node->id(), page_node->id(),
-                       /*page_index=*/i);
-      requests.emplace(image2_node->id(), CreateMockInaccessibleImage(),
-                       root_node->id(), paragraph_node->id(), page_node->id(),
-                       /*page_index=*/i);
-      pdf_accessibility_tree_->ocr_helper_for_testing()->OcrPage(requests);
-
-      // Each page has two images.
-      WaitForThreadTasks();
-      WaitForThreadTasks();
-
-      if (page_count >= pages_per_batch && i >= pages_per_batch &&
-          i != page_count - 1u) {
-        // A postamble page informing the user that the OCR process is in
-        // progress should be present after processing the first batch of
-        // OCR requests (i.e. when `i >= pages_per_batch`).
-        const ui::AXTreeUpdate* postamble_update =
-            pdf_accessibility_tree_->postamble_page_tree_update_for_testing();
-        ASSERT_NE(nullptr, postamble_update);
-        ASSERT_GT(postamble_update->nodes.size(), 1u);
-        const ui::AXNodeData& root = postamble_update->nodes[0];
-        EXPECT_EQ(ax::mojom::Role::kPdfRoot, root.role);
-        const ui::AXNodeData& postamble_page = postamble_update->nodes[1];
-        EXPECT_EQ(ax::mojom::Role::kRegion, postamble_page.role);
-        ASSERT_NE(ui::kInvalidAXNodeID, postamble_page.id);
-
-        const auto iter =
-            base::ranges::find(root_node->data().child_ids, postamble_page.id);
-        ASSERT_NE(std::end(root_node->data().child_ids), iter);
-        ui::AXNode* postamble_page_node = root_node->GetChildAtIndex(
-            std::distance(std::begin(root_node->data().child_ids), iter));
-        ASSERT_NE(nullptr, postamble_page_node);
-        EXPECT_EQ(postamble_page.id, postamble_page_node->id());
-        EXPECT_EQ(ax::mojom::Role::kRegion, postamble_page_node->GetRole());
-      }
-    } else {
-      // Each page has two images.
-      WaitForThreadTasks();
-      WaitForThreadTasks();
-    }
-  }
-
-  const auto& tree_updates = pdf_accessibility_tree_->GetTreeUpdates();
-  ASSERT_EQ(batch_count, tree_updates.size());
-  for (uint32_t i = 0; i < tree_updates.size(); ++i) {
-    const std::vector<ui::AXTreeUpdate>& page_tree_updates = tree_updates[i];
-    if (page_count % pages_per_batch != 0u && i == 0) {
-      // The first batch should have the remaining pages that cannot be
-      // processed by the rest of the batches because they are full. By design,
-      // this is always set to 5u in the instantiation of these parameterized
-      // tests.
-      ASSERT_EQ(10u, page_tree_updates.size())
-          << "There should be five pages in the first batch with two images "
-             "per page, because we first process the remaining pages after "
-             "dividing with the batch size.";
-
-      for (uint32_t j = 0; j < 10u; ++j) {
-        EXPECT_EQ(page_tree_updates[j].nodes.size(), 1u);
-        EXPECT_EQ(page_tree_updates[j].root_id,
-                  page_tree_updates[j].nodes[0].id);
-        EXPECT_EQ(page_tree_updates[j].nodes[0].role,
-                  ax::mojom::Role::kStaticText);
-      }
-    } else {
-      // All other batches should be full, i.e., their page count should equal
-      // the number of pages allowed in each batch.
-      ASSERT_EQ(pages_per_batch * 2u, page_tree_updates.size())
-          << "There should be 20 pages in the remaining batches, with two "
-             "images per page.";
-
-      for (uint32_t j = 0; j < pages_per_batch * 2u; ++j) {
-        EXPECT_EQ(page_tree_updates[j].nodes.size(), 1u);
-        EXPECT_EQ(page_tree_updates[j].root_id,
-                  page_tree_updates[j].nodes[0].id);
-        EXPECT_EQ(page_tree_updates[j].nodes[0].role,
-                  ax::mojom::Role::kStaticText);
-      }
-    }
-  }
-}
-
-TEST_P(PdfOcrHelperTest, UMAMetrics) {
-  CreatePdfAccessibilityTree();
-
-  base::HistogramTester histograms;
-  const bool is_ocr_helper_started_before_pdf_loads =
-      GetIsOcrHelperStartedBeforePdfLoads();
-  const uint32_t page_count = GetPageCount();
-  ASSERT_NO_FATAL_FAILURE(CreateInaccessiblePdfAndOcrHelper(
-      page_count, is_ocr_helper_started_before_pdf_loads,
-      /*create_empty_results=*/false));
-  const uint32_t pages_per_batch =
-      pdf_accessibility_tree_->ocr_helper_for_testing()
-          ->pages_per_batch_for_testing();
-
-  for (uint32_t i = 0; i < page_count; ++i) {
-    if (!is_ocr_helper_started_before_pdf_loads) {
-      ui::AXNode* root_node = pdf_accessibility_tree_->GetRoot();
-      ui::AXNode* page_node = root_node->GetChildAtIndex(i + 1);
-      ASSERT_NE(nullptr, page_node);
-      ui::AXNode* paragraph_node = page_node->GetChildAtIndex(0);
-      ASSERT_NE(nullptr, paragraph_node);
-      ui::AXNode* image1_node = paragraph_node->GetChildAtIndex(0);
-      ASSERT_NE(nullptr, image1_node);
-      ui::AXNode* image2_node = paragraph_node->GetChildAtIndex(1);
-      ASSERT_NE(nullptr, image2_node);
-      base::queue<PdfOcrRequest> requests;
-      requests.emplace(image1_node->id(), CreateMockInaccessibleImage(),
-                       root_node->id(), paragraph_node->id(), page_node->id(),
-                       /*page_index=*/i);
-      requests.emplace(image2_node->id(), CreateMockInaccessibleImage(),
-                       root_node->id(), paragraph_node->id(), page_node->id(),
-                       /*page_index=*/i);
-      pdf_accessibility_tree_->ocr_helper_for_testing()->OcrPage(requests);
-      // The UMA metric recorded in `PdfAccessibilityTree::OnOcrDataReceived()`
-      // is triggered by `OcrPage()`. `WaitForThreadTasks()` below is similar
-      // to the purpose of `content::FetchHistogramsFromChildProcesses()`.
-      WaitForThreadTasks();
-    }
-
-    // Each page has two images.
-    WaitForThreadTasks();
-    WaitForThreadTasks();
-  }
-
-  const auto& tree_updates = pdf_accessibility_tree_->GetTreeUpdates();
-  const uint32_t batch_count = CalculateBatchCount(page_count, pages_per_batch);
-  ASSERT_EQ(batch_count, tree_updates.size());
-
-  histograms.ExpectBucketCount(
-      "Accessibility.PdfOcr.ActiveWhenInaccessiblePdfOpened",
-      is_ocr_helper_started_before_pdf_loads,
-      /*expected_count=*/1);
-  histograms.ExpectTotalCount(
-      "Accessibility.PdfOcr.ActiveWhenInaccessiblePdfOpened",
-      /*expected_count=*/1);
-
-  // There are two mock images per page.
-  histograms.ExpectBucketCount("Accessibility.PdfOcr.PDFImages",
-                               PdfOcrRequestStatus::kRequested,
-                               /*expected_count=*/page_count * 2);
-  histograms.ExpectBucketCount("Accessibility.PdfOcr.PDFImages",
-                               PdfOcrRequestStatus::kPerformed,
-                               /*expected_count=*/page_count * 2);
-  histograms.ExpectTotalCount("Accessibility.PdfOcr.PDFImages",
-                              /*expected_count=*/page_count * 4);
-
-  // TODO(crbug.com/40267312): The current test fixture does not trigger
-  // `PdfAccessibilityTree::MaybeHandleAccessibilityChange` when OCR is enabled
-  // after tree load, and hence does result in calling
-  // `PdfAccessibilityTree::SetAccessibilityPageInfo` for the second time.
-  // Either update text fixture to be more realistic, or add metrics test to
-  // browser test without fake OCR helper.
-  histograms.ExpectBucketCount("Accessibility.PDF.HasAccessibleText",
-                               /*sample=*/false,
-                               /*expected_count=*/1);
-  histograms.ExpectTotalCount("Accessibility.PDF.HasAccessibleText",
-                              /*expected_count=*/1);
-
-  histograms.ExpectBucketCount("Accessibility.PdfOcr.InaccessiblePdfPageCount",
-                               doc_info_.page_count,
-                               /*expected_count=*/1);
-  histograms.ExpectTotalCount("Accessibility.PdfOcr.InaccessiblePdfPageCount",
-                              /*expected_count=*/1);
-}
-
-TEST_P(PdfOcrHelperTest, EmptyOCRResults) {
-  CreatePdfAccessibilityTree();
-
-  const bool is_ocr_helper_started_before_pdf_loads =
-      GetIsOcrHelperStartedBeforePdfLoads();
-  const uint32_t page_count = GetPageCount();
-  ASSERT_NO_FATAL_FAILURE(CreateInaccessiblePdfAndOcrHelper(
-      page_count, is_ocr_helper_started_before_pdf_loads,
-      /*create_empty_results=*/true));
-
-  for (uint32_t i = 0; i < page_count; ++i) {
-    if (!is_ocr_helper_started_before_pdf_loads) {
-      ui::AXNode* root_node = pdf_accessibility_tree_->GetRoot();
-      ui::AXNode* page_node = root_node->GetChildAtIndex(i + 1);
-      ASSERT_NE(nullptr, page_node);
-      ui::AXNode* paragraph_node = page_node->GetChildAtIndex(0);
-      ASSERT_NE(nullptr, paragraph_node);
-      ui::AXNode* image1_node = paragraph_node->GetChildAtIndex(0);
-      ASSERT_NE(nullptr, image1_node);
-      ui::AXNode* image2_node = paragraph_node->GetChildAtIndex(1);
-      ASSERT_NE(nullptr, image2_node);
-      base::queue<PdfOcrRequest> requests;
-      requests.emplace(image1_node->id(), CreateMockInaccessibleImage(),
-                       root_node->id(), paragraph_node->id(), page_node->id(),
-                       /*page_index=*/i);
-      requests.emplace(image2_node->id(), CreateMockInaccessibleImage(),
-                       root_node->id(), paragraph_node->id(), page_node->id(),
-                       /*page_index=*/i);
-      pdf_accessibility_tree_->ocr_helper_for_testing()->OcrPage(requests);
-    }
-
-    // Each page has two images.
-    WaitForThreadTasks();
-    WaitForThreadTasks();
-  }
-
-  // Make sure that the OCR helper counts a response with empty results to
-  // determine whether it finished processing all OCR requests.
-  EXPECT_TRUE(
-      pdf_accessibility_tree_->ocr_helper_for_testing()->AreAllPagesOcred());
-
-  ui::AXNode* root_node = pdf_accessibility_tree_->GetRoot();
-  ASSERT_NE(nullptr, root_node);
-  ASSERT_EQ(ax::mojom::Role::kPdfRoot, root_node->GetRole());
-  uint32_t pages_plus_status_node_count = doc_info_.page_count + 1u;
-  ASSERT_EQ(pages_plus_status_node_count, root_node->GetChildCount());
-
-  ui::AXNode* status_wrapper_node = root_node->GetChildAtIndex(0);
-  ASSERT_NE(nullptr, status_wrapper_node);
-  ASSERT_EQ(ax::mojom::Role::kBanner, status_wrapper_node->GetRole());
-  ASSERT_EQ(1u, status_wrapper_node->GetChildCount());
-
-  ui::AXNode* status_node = status_wrapper_node->GetChildAtIndex(0);
-  ASSERT_NE(nullptr, status_node);
-  ASSERT_EQ(ax::mojom::Role::kStatus, status_node->GetRole());
-  // Note that the string below must be synced with `IDS_PDF_OCR_NO_RESULT`.
-  constexpr char kPdfOcrNoResult[] =
-      "This PDF is inaccessible. No text extracted";
-  ASSERT_EQ(kPdfOcrNoResult,
-            status_node->GetStringAttribute(ax::mojom::StringAttribute::kName));
-}
-
-TEST_P(PdfOcrHelperTest, OCRCompleteNotification) {
-  CreatePdfAccessibilityTree();
-
-  const bool is_ocr_helper_started_before_pdf_loads =
-      GetIsOcrHelperStartedBeforePdfLoads();
-  const uint32_t page_count = GetPageCount();
-  ASSERT_NO_FATAL_FAILURE(CreateInaccessiblePdfAndOcrHelper(
-      page_count, is_ocr_helper_started_before_pdf_loads,
-      /*create_empty_results=*/false));
-
-  const ui::AXNode* root_node = pdf_accessibility_tree_->GetRoot();
-  ASSERT_NE(nullptr, root_node);
-  ASSERT_EQ(ax::mojom::Role::kPdfRoot, root_node->GetRole());
-  const uint32_t pages_plus_status_node_count = doc_info_.page_count + 1u;
-  ASSERT_EQ(pages_plus_status_node_count, root_node->GetChildCount());
-
-  const ui::AXNode* status_wrapper_node = root_node->GetChildAtIndex(0);
-  ASSERT_NE(nullptr, status_wrapper_node);
-  ASSERT_EQ(ax::mojom::Role::kBanner, status_wrapper_node->GetRole());
-  ASSERT_EQ(1u, status_wrapper_node->GetChildCount());
-
-  const ui::AXNode* status_node = status_wrapper_node->GetChildAtIndex(0);
-  ASSERT_NE(nullptr, status_node);
-  ASSERT_EQ(ax::mojom::Role::kStatus, status_node->GetRole());
-
-  for (uint32_t i = 0; i < page_count; ++i) {
-    if (!is_ocr_helper_started_before_pdf_loads) {
-      const ui::AXNode* page_node = root_node->GetChildAtIndex(i + 1);
-      ASSERT_NE(nullptr, page_node);
-      const ui::AXNode* paragraph_node = page_node->GetChildAtIndex(0);
-      ASSERT_NE(nullptr, paragraph_node);
-      const ui::AXNode* image1_node = paragraph_node->GetChildAtIndex(0);
-      ASSERT_NE(nullptr, image1_node);
-      const ui::AXNode* image2_node = paragraph_node->GetChildAtIndex(1);
-      ASSERT_NE(nullptr, image2_node);
-      base::queue<PdfOcrRequest> requests;
-      requests.emplace(image1_node->id(), CreateMockInaccessibleImage(),
-                       root_node->id(), paragraph_node->id(), page_node->id(),
-                       /*page_index=*/i);
-      requests.emplace(image2_node->id(), CreateMockInaccessibleImage(),
-                       root_node->id(), paragraph_node->id(), page_node->id(),
-                       /*page_index=*/i);
-      pdf_accessibility_tree_->ocr_helper_for_testing()->OcrPage(requests);
-    }
-
-    // Each page has two images.
-    WaitForThreadTasks();
-    WaitForThreadTasks();
-  }
-
-  // Make sure that the OCR helper counts a response with empty results to
-  // determine whether it finished processing all OCR requests.
-  EXPECT_TRUE(
-      pdf_accessibility_tree_->ocr_helper_for_testing()->AreAllPagesOcred());
-  // Note that the string below must be synced with `IDS_PDF_OCR_COMPLETED`.
-  constexpr char kPdfOcrCompleted[] =
-      "This PDF is inaccessible. Text extracted, powered by Google AI";
-  ASSERT_EQ(kPdfOcrCompleted,
-            status_node->GetStringAttribute(ax::mojom::StringAttribute::kName));
-}
-
-// 5 = smaller than the batch size, 105 = larger than the batch size
-// with fewer remaining pages in the first batch, 280 = greater than the
-// batch size by a lot and no remaining pages in the first batch.
-INSTANTIATE_TEST_SUITE_P(
-    PdfOcrHelperTests,
-    PdfOcrHelperTest,
-    testing::Combine(
-        /* is_ocr_helper_started_before_pdf_loads */ testing::Bool(),
-        /* (page_count, expected_batch_size) */ testing::Values(
-            PdfOcrHelperTestBatchData(5u, 1u),
-            PdfOcrHelperTestBatchData(105u, 10u),
-            PdfOcrHelperTestBatchData(280u, 20u))));
-
 // TODO(crbug.com/40267312): Add test for end result on a non-synthetic
 // multi-page PDF.
 
-class PdfOcrTest : public PdfAccessibilityTreeTest {
- public:
-  PdfOcrTest() : feature_list_(::features::kPdfOcr) {}
-  PdfOcrTest(const PdfOcrTest&) = delete;
-  PdfOcrTest& operator=(const PdfOcrTest&) = delete;
-  ~PdfOcrTest() override = default;
-
- private:
-  base::test::ScopedFeatureList feature_list_;
-};
+using PdfOcrTest = PdfAccessibilityTreeTest;
 
 TEST_F(PdfOcrTest, CheckLiveRegionPoliteStatus) {
   CreatePdfAccessibilityTree();
@@ -2940,7 +2519,8 @@ TEST_F(PdfOcrTest, CheckLiveRegionPoliteStatus) {
   ui::AXTree& tree = pdf_accessibility_tree_->tree_for_testing();
   ui::AXEventGenerator event_generator(&tree);
   pdf_accessibility_tree_->SetAccessibilityViewportInfo(viewport_info_);
-  pdf_accessibility_tree_->SetAccessibilityDocInfo(doc_info_);
+  pdf_accessibility_tree_->SetAccessibilityDocInfo(
+      CreateAccessibilityDocInfo());
   WaitForThreadTasks();
 
   ui::AXNode* root_node = pdf_accessibility_tree_->GetRoot();
@@ -2990,7 +2570,7 @@ TEST_F(PdfOcrTest, CheckLiveRegionPoliteStatus) {
   // Wait for `PdfAccessibilityTree::UnserializeNodes()`, a delayed task.
   WaitForThreadDelayedTasks();
 
-  uint32_t pages_plus_status_node_count = doc_info_.page_count + 1u;
+  uint32_t pages_plus_status_node_count = page_count_ + 1u;
   ASSERT_EQ(pages_plus_status_node_count, root_node->GetChildCount());
 
   ui::AXNode* page_node = root_node->GetChildAtIndex(1);
@@ -3028,7 +2608,8 @@ TEST_F(PdfOcrTest, CheckLiveRegionNotSetWhenInBackground) {
 
   page_objects_.images.push_back(CreateMockInaccessibleImage());
   pdf_accessibility_tree_->SetAccessibilityViewportInfo(viewport_info_);
-  pdf_accessibility_tree_->SetAccessibilityDocInfo(doc_info_);
+  pdf_accessibility_tree_->SetAccessibilityDocInfo(
+      CreateAccessibilityDocInfo());
   WaitForThreadTasks();
 
   const ui::AXNode* root_node = pdf_accessibility_tree_->GetRoot();
@@ -3059,159 +2640,6 @@ TEST_F(PdfOcrTest, CheckLiveRegionNotSetWhenInBackground) {
       ax::mojom::StringAttribute::kContainerLiveStatus));
 }
 
-TEST_F(PdfOcrTest, TestTransformFromOnOcrDataReceived) {
-  // Assume `image` contains some text that will be extracted by OCR. `image`
-  // will be passed to the function that creates a transform, which will be
-  // then applied to the text paragraphs extracted by OCR.
-  chrome_pdf::AccessibilityImageInfo image;
-  // Simulate that the width and height of `image` got shrunk by 80% in
-  // `image_data`.
-  constexpr float kScaleFactor = 0.8f;
-  constexpr float kImageWidth = 200.0f;
-  constexpr float kImageHeight = 200.0f;
-  constexpr int kBitmapWidth = static_cast<int>(kImageWidth * kScaleFactor);
-  constexpr int kBitmapHeight = static_cast<int>(kImageHeight * kScaleFactor);
-  image.page_object_index = 0;
-  image.bounds = gfx::RectF(0.0f, 0.0f, kImageWidth, kImageHeight);
-  SkBitmap bitmap;
-  bitmap.allocN32Pixels(kBitmapWidth, kBitmapHeight, /*isOpaque=*/false);
-  image_fetcher_.AddImage(/*page_index=*/0, image.page_object_index,
-                          std::move(bitmap));
-  page_objects_.images.push_back(image);
-
-  page_info_.text_run_count = text_runs_.size();
-  page_info_.char_count = chars_.size();
-
-  CreatePdfAccessibilityTree();
-
-  pdf_accessibility_tree_->SetAccessibilityViewportInfo(viewport_info_);
-  pdf_accessibility_tree_->SetAccessibilityDocInfo(doc_info_);
-  pdf_accessibility_tree_->SetAccessibilityPageInfo(page_info_, text_runs_,
-                                                    chars_, page_objects_);
-  WaitForThreadTasks();
-  // Wait for `PdfAccessibilityTree::UnserializeNodes()`, a delayed task.
-  WaitForThreadDelayedTasks();
-
-  /*
-   * Expected PDF accessibility tree structure (with PDF OCR feature flag)
-   * Document
-   * ++ Banner
-   * ++++ Status
-   * ++ Region
-   * ++++ Paragraph
-   * ++++++ image
-   */
-
-  ui::AXNode* root_node = pdf_accessibility_tree_->GetRoot();
-  CheckRootAndStatusNodes(root_node, doc_info_.page_count,
-                          /*is_pdf_ocr_test=*/true,
-                          /*is_ocr_completed=*/false,
-                          /*create_empty_ocr_results=*/false);
-
-  ASSERT_GT(root_node->GetChildCount(), 1u);
-  ui::AXNode* page_node = root_node->GetChildAtIndex(1);
-  ASSERT_TRUE(page_node);
-  EXPECT_EQ(ax::mojom::Role::kRegion, page_node->GetRole());
-  ASSERT_EQ(1u, page_node->GetChildCount());
-
-  ui::AXNode* paragraph_node = page_node->GetChildAtIndex(0);
-  ASSERT_TRUE(paragraph_node);
-  EXPECT_EQ(ax::mojom::Role::kParagraph, paragraph_node->GetRole());
-  ASSERT_EQ(1u, paragraph_node->GetChildCount());
-
-  ui::AXNode* image_node = paragraph_node->GetChildAtIndex(0);
-  ASSERT_TRUE(image_node);
-  EXPECT_EQ(ax::mojom::Role::kImage, image_node->GetRole());
-  ASSERT_EQ(0u, image_node->GetChildCount());
-  EXPECT_EQ(image.bounds, image_node->data().relative_bounds.bounds);
-
-  // Simulate creating a child tree using OCR results.
-  pdf_accessibility_tree_->CreateOcrHelper();
-
-  // Text bounds before applying the transform.
-  constexpr gfx::RectF kTextBoundsBeforeTransform1 = {{8.0f, 8.0f},
-                                                      {80.0f, 24.0f}};
-  constexpr gfx::RectF kTextBoundsBeforeTransform2 = {{16.0f, 88.0f},
-                                                      {40.0f, 56.0f}};
-  ui::AXTreeUpdate child_tree_update = CreateMockOCRResult(
-      image.bounds, kTextBoundsBeforeTransform1, kTextBoundsBeforeTransform2);
-  WaitForThreadTasks();
-
-  EXPECT_EQ(child_tree_update.tree_data.tree_id, ui::AXTreeIDUnknown());
-
-  PdfOcrRequest request(image_node->id(), image, root_node->id(),
-                        paragraph_node->id(), page_node->id(),
-                        /*page_index=*/0);
-  // Image pixel size is automatically set when OCR request is running, but
-  // this test skips that step.
-  request.image_pixel_size = gfx::SizeF(kBitmapWidth, kBitmapHeight);
-
-  // Reset `remaining_page_count_` to be zero. `remaining_page_count_` is later
-  // used in `OnOcrDataReceived()` to check whether OCR is done or not. Note
-  // that the OCR is considered to be done when `remaining_page_count_` == 0.
-  pdf_accessibility_tree_->ocr_helper_for_testing()
-      ->ResetRemainingPageCountForTesting();
-  pdf_accessibility_tree_->OnOcrDataReceived(
-      std::vector<PdfOcrRequest>{{request}},
-      std::vector<ui::AXTreeUpdate>{child_tree_update});
-  WaitForThreadTasks();
-
-  /*
-   * Expected PDF accessibility tree structure (after running OCR)
-   * Document
-   * ++ Status
-   * ++ Region
-   * ++++ Paragraph
-   * ++++++ Region (child tree)
-   * ++++++++ Static Text
-   * ++++++++ Static Text
-   */
-
-  root_node = pdf_accessibility_tree_->GetRoot();
-  CheckRootAndStatusNodes(root_node, doc_info_.page_count,
-                          /*is_pdf_ocr_test=*/true,
-                          /*is_ocr_completed=*/true,
-                          /*create_empty_ocr_results=*/false);
-
-  ASSERT_GT(root_node->GetChildCount(), 1u);
-  page_node = root_node->GetChildAtIndex(1);
-  ASSERT_TRUE(page_node);
-  EXPECT_EQ(ax::mojom::Role::kRegion, page_node->GetRole());
-  ASSERT_EQ(1u, page_node->GetChildCount());
-
-  paragraph_node = page_node->GetChildAtIndex(0);
-  ASSERT_TRUE(paragraph_node);
-  EXPECT_EQ(ax::mojom::Role::kGenericContainer, paragraph_node->GetRole());
-  ASSERT_EQ(1u, paragraph_node->GetChildCount());
-
-  ui::AXNode* region_node = paragraph_node->GetChildAtIndex(0);
-  ASSERT_TRUE(region_node);
-  EXPECT_EQ(ax::mojom::Role::kRegion, region_node->GetRole());
-  ASSERT_EQ(2u, region_node->GetChildCount());
-
-  // Expected text bounds after applying the transform. These numbers are
-  // expected to be kTextBoundsBeforeTransform * 1 / kScaleFactor.
-  constexpr gfx::RectF kExpectedTextBoundRelativeToTreeBounds1 = {
-      {10.0f, 10.0f}, {100.0f, 30.0f}};
-  constexpr gfx::RectF kExpectedTextBoundRelativeToTreeBounds2 = {
-      {20.0f, 110.0f}, {50.0f, 70.0f}};
-
-  // Check the nodes from OCR results.
-  ui::AXNode* ocred_node = region_node->GetChildAtIndex(0);
-  ASSERT_TRUE(ocred_node);
-  EXPECT_EQ(ax::mojom::Role::kStaticText, ocred_node->GetRole());
-  gfx::RectF bounds = ocred_node->data().relative_bounds.bounds;
-  // The bounds already got updated inside of OnOcrDataReceived().
-  CompareRect(kExpectedTextBoundRelativeToTreeBounds1, bounds);
-
-  ocred_node = region_node->GetChildAtIndex(1);
-  ASSERT_TRUE(ocred_node);
-  EXPECT_EQ(ax::mojom::Role::kStaticText, ocred_node->GetRole());
-  bounds = ocred_node->data().relative_bounds.bounds;
-  // The bounds already got updated inside of OnOcrDataReceived().
-  CompareRect(kExpectedTextBoundRelativeToTreeBounds2, bounds);
-}
-
 TEST_F(PdfOcrTest, FeatureNotificationOnInaccessiblePdf) {
   CreatePdfAccessibilityTree();
 
@@ -3220,7 +2648,8 @@ TEST_F(PdfOcrTest, FeatureNotificationOnInaccessiblePdf) {
   // Get and use the underlying AXTree to create an AXEventGenerator. This
   // event generator is usually instrumented in the test.
   pdf_accessibility_tree_->SetAccessibilityViewportInfo(viewport_info_);
-  pdf_accessibility_tree_->SetAccessibilityDocInfo(doc_info_);
+  pdf_accessibility_tree_->SetAccessibilityDocInfo(
+      CreateAccessibilityDocInfo());
   WaitForThreadTasks();
 
   page_info_.page_index = 0;
@@ -3231,7 +2660,7 @@ TEST_F(PdfOcrTest, FeatureNotificationOnInaccessiblePdf) {
   WaitForThreadDelayedTasks();
 
   const ui::AXNode* root_node = pdf_accessibility_tree_->GetRoot();
-  CheckRootAndStatusNodes(root_node, doc_info_.page_count,
+  CheckRootAndStatusNodes(root_node, page_count_,
                           /*is_pdf_ocr_test=*/true,
                           /*is_ocr_completed=*/false,
                           /*create_empty_ocr_results=*/false);
@@ -3248,7 +2677,8 @@ TEST_F(PdfOcrTest, NoFeatureNotificationOnAccessiblePdf) {
   CreatePdfAccessibilityTree();
 
   pdf_accessibility_tree_->SetAccessibilityViewportInfo(viewport_info_);
-  pdf_accessibility_tree_->SetAccessibilityDocInfo(doc_info_);
+  pdf_accessibility_tree_->SetAccessibilityDocInfo(
+      CreateAccessibilityDocInfo());
   pdf_accessibility_tree_->SetAccessibilityPageInfo(page_info_, text_runs_,
                                                     chars_, page_objects_);
   WaitForThreadTasks();
@@ -3258,7 +2688,7 @@ TEST_F(PdfOcrTest, NoFeatureNotificationOnAccessiblePdf) {
   const ui::AXNode* root_node = pdf_accessibility_tree_->GetRoot();
   // `is_pdf_ocr_test` needs to be set to false below, as it shouldn't announce
   // the PDF OCR feature notification in this case.
-  CheckRootAndStatusNodes(root_node, doc_info_.page_count,
+  CheckRootAndStatusNodes(root_node, page_count_,
                           /*is_pdf_ocr_test=*/false,
                           /*is_ocr_completed=*/false,
                           /*create_empty_ocr_results=*/false);
@@ -3293,6 +2723,7 @@ TEST_F(PdfOcrTest, NoFeatureNotificationOnAccessiblePdf) {
   EXPECT_EQ(ax::mojom::Role::kStaticText, static_text_node->GetRole());
   ASSERT_EQ(1u, static_text_node->GetChildCount());
 }
+
 #endif  // BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
 
 }  // namespace pdf

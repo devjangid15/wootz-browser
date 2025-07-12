@@ -16,8 +16,8 @@ async function loadAndPlayVideo() {
 }
 
 var pipWindow;
-async function createDocumentPipWindow({ width = 300, height = 300, disallowReturnToOpener } = {}) {
-    pipWindow = await documentPictureInPicture.requestWindow({ width, height, disallowReturnToOpener });
+async function createDocumentPipWindow({ width = undefined, height = undefined, disallowReturnToOpener, preferInitialWindowPlacement } = {}) {
+    pipWindow = await documentPictureInPicture.requestWindow({ width, height, disallowReturnToOpener, preferInitialWindowPlacement });
     pipWindow.document.open();
     pipWindow.document.write("Hello, world.<a name='top'>top</a>");
     pipWindow.document.close();
@@ -37,6 +37,19 @@ function addScriptToPictureInPictureWindow() {
 function refreshInDocumentPipWindow() {
     pipWindow.location.reload();
     return true;
+}
+
+function getPipWindowPageTitle() {
+  return pipWindow.document.title;
+}
+
+function setPipWindowPageTitle(title) {
+  pipWindow.document.title = title;
+  return true;
+}
+
+function getWindowPageTitle() {
+  return document.title;
 }
 
 </script>

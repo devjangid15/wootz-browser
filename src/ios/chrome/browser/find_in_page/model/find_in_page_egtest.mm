@@ -2,16 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#import "ios/chrome/browser/find_in_page/model/find_in_page_egtest_util.h"
-
 #import "base/test/ios/wait_util.h"
+#import "ios/chrome/browser/find_bar/ui_bundled/find_bar_constants.h"
 #import "ios/chrome/browser/find_in_page/model/find_in_page_app_interface.h"
-#import "ios/chrome/browser/ui/find_bar/find_bar_constants.h"
-#import "ios/chrome/browser/ui/popup_menu/popup_menu_constants.h"
+#import "ios/chrome/browser/find_in_page/model/find_in_page_egtest_util.h"
+#import "ios/chrome/browser/popup_menu/ui_bundled/popup_menu_constants.h"
+#import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
+#import "ios/testing/earl_grey/app_launch_manager.h"
 #import "ios/testing/earl_grey/earl_grey_test.h"
 
 namespace {
@@ -22,6 +23,7 @@ constexpr char kFindInPageSearchFieldID[] = "find.searchField";
 constexpr char kFindInPageResultLabelID[] = "find.resultLabel";
 constexpr char kFindInPageNextButtonID[] = "find.nextButton";
 constexpr char kFindInPagePreviousButtonID[] = "find.previousButton";
+
 }  // namespace
 
 // Tests for Native Find in Page. This tests the variant of Native Find in Page
@@ -52,6 +54,7 @@ constexpr char kFindInPagePreviousButtonID[] = "find.previousButton";
 #pragma mark - FindInPageTestCaseHelperDelegate
 
 - (void)openFindInPageWithOverflowMenu {
+  [ChromeEarlGrey waitForKeyboardToDisappear];
   [ChromeEarlGreyUI openToolsMenu];
 
   id<GREYMatcher> tableViewMatcher =
@@ -112,7 +115,8 @@ constexpr char kFindInPagePreviousButtonID[] = "find.previousButton";
     return (error == nil);
   };
   GREYAssert(
-      base::test::ios::WaitUntilConditionOrTimeout(base::Seconds(1), condition),
+      base::test::ios::WaitUntilConditionOrTimeout(
+          base::test::ios::kWaitForActionTimeout, condition),
       @"Timeout waiting for correct Find in Page results string to appear");
 }
 
@@ -128,7 +132,8 @@ constexpr char kFindInPagePreviousButtonID[] = "find.previousButton";
     return (error == nil);
   };
   GREYAssert(
-      base::test::ios::WaitUntilConditionOrTimeout(base::Seconds(1), condition),
+      base::test::ios::WaitUntilConditionOrTimeout(
+          base::test::ios::kWaitForActionTimeout, condition),
       @"Timeout waiting for correct Find in Page results string to appear");
 }
 
@@ -145,7 +150,8 @@ constexpr char kFindInPagePreviousButtonID[] = "find.previousButton";
     return (error == nil);
   };
   GREYAssert(
-      base::test::ios::WaitUntilConditionOrTimeout(base::Seconds(1), condition),
+      base::test::ios::WaitUntilConditionOrTimeout(
+          base::test::ios::kWaitForActionTimeout, condition),
       @"Timeout waiting for correct Find in Page results string to appear");
 }
 
@@ -190,6 +196,12 @@ constexpr char kFindInPagePreviousButtonID[] = "find.previousButton";
 // Tests that text can be copied from the web page and pasted into the FIP input
 // field and that the results UI updates accordingly.
 - (void)testFindInPageCopyPaste {
+  // TODO(crbug.com/360362288): Flaky on iOS 18 simulators.
+#if TARGET_OS_SIMULATOR
+  if (@available(iOS 18, *)) {
+    EARL_GREY_TEST_DISABLED(@"Flaky on iOS 18 simulators.");
+  }
+#endif
   [_helper helperTestFindInPageCopyPaste];
 }
 
@@ -208,24 +220,12 @@ constexpr char kFindInPagePreviousButtonID[] = "find.previousButton";
 // the web page contains the same text without spanish accents e.g. 'a'. This
 // test assumes removing accents from `kFindInPageTestWithSpanishAccentText`
 // yields `kFindInPageTestWithoutSpanishAccentText`.
-// TODO(crbug.com/40926974): Test is flaky on device. Re-enable the test.
-#if !TARGET_OS_SIMULATOR
-#define MAYBE_testFindInPageDifferentAccent FLAKY_testFindInPageDifferentAccent
-#else
-#define MAYBE_testFindInPageDifferentAccent testFindInPageDifferentAccent
-#endif
-- (void)MAYBE_testFindInPageDifferentAccent {
+- (void)testFindInPageDifferentAccent {
   [_helper helperTestFindInPageDifferentAccent];
 }
 
 // Test that there is no query persistence with this variant of Native Find in
 // Page i.e. with Find interaction.
-// TODO(crbug.com/40926974): Test is flaky on device. Re-enable the test.
-#if !TARGET_OS_SIMULATOR
-#define MAYBE_testFindInPageHistory FLAKY_testFindInPageHistory
-#else
-#define MAYBE_testFindInPageHistory testFindInPageHistory
-#endif
 - (void)testFindInPageHistory {
   [_helper helperTestFindInPageHistoryWithQueryPersistence:NO];
 }
@@ -278,7 +278,8 @@ constexpr char kFindInPagePreviousButtonID[] = "find.previousButton";
 }
 
 // Tests that FIP can find RTL text in a web page.
-- (void)testFindInPageRTL {
+// TODO(crbug.com/366752786): Re-enable once de-flaked.
+- (void)FLAKY_testFindInPageRTL {
   [_helper helperTestFindInPageRTL];
 }
 
@@ -294,12 +295,21 @@ constexpr char kFindInPagePreviousButtonID[] = "find.previousButton";
 
 // Tests that Native Find in Page works as expected for PDF documents.
 - (void)testFindInPagePDF {
-// TODO(crbug.com/40926974): Failing on devices.
-#if !TARGET_IPHONE_SIMULATOR
-  XCTSkip(@"Failing on device");
-#endif
-
   [_helper helperTestFindInPagePDF];
+}
+
+// Tests that FIP exit fullscreen when done.
+- (void)testWhenFullscreenIsDisable {
+  AppLaunchConfiguration config = self.appConfigurationForTestCase;
+  // Relaunch the app to take the configuration into account.
+  [[AppLaunchManager sharedManager] ensureAppLaunchedWithConfiguration:config];
+
+  [_helper helperTestFindInPageExitFullscreen];
+}
+
+// Tests that FIP works properly with bottom omnibox.
+- (void)testWithBottomOmnibox {
+  [_helper helperTestFindInPageWithBottomOmnibox];
 }
 
 @end

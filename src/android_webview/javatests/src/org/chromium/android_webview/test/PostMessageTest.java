@@ -37,7 +37,6 @@ import org.chromium.base.test.util.Feature;
 import org.chromium.content_public.browser.MessagePayload;
 import org.chromium.content_public.browser.MessagePort;
 import org.chromium.content_public.browser.test.util.TestCallbackHelperContainer.OnPageFinishedHelper;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.net.test.util.TestWebServer;
 
 import java.io.UnsupportedEncodingException;
@@ -61,12 +60,12 @@ public class PostMessageTest extends AwParameterizedTest {
 
     // Inject to the page to verify received messages.
     private static class MessageObject {
-        private LinkedBlockingQueue<Data> mQueue = new LinkedBlockingQueue<>();
+        private final LinkedBlockingQueue<Data> mQueue = new LinkedBlockingQueue<>();
 
         public static class Data {
-            public String mMessage;
-            public String mOrigin;
-            public int[] mPorts;
+            public final String mMessage;
+            public final String mOrigin;
+            public final int[] mPorts;
 
             public Data(String message, String origin, int[] ports) {
                 mMessage = message;
@@ -87,11 +86,11 @@ public class PostMessageTest extends AwParameterizedTest {
 
     private static class ChannelContainer {
         private MessagePort[] mChannel;
-        private LinkedBlockingQueue<Data> mQueue = new LinkedBlockingQueue<>();
+        private final LinkedBlockingQueue<Data> mQueue = new LinkedBlockingQueue<>();
 
         public static class Data {
-            public MessagePayload mMessagePayload;
-            public Looper mLastLooper;
+            public final MessagePayload mMessagePayload;
+            public final Looper mLastLooper;
 
             public Data(MessagePayload messagePayload, Looper looper) {
                 mMessagePayload = messagePayload;
@@ -302,7 +301,7 @@ public class PostMessageTest extends AwParameterizedTest {
                                         mWebServer.getBaseUrl(),
                                         null);
                             } catch (UnsupportedEncodingException e) {
-                                Assert.fail();
+                                throw new RuntimeException(e);
                             }
                         });
         expectTitle(testString);
@@ -717,7 +716,7 @@ public class PostMessageTest extends AwParameterizedTest {
         final ChannelContainer channelContainer = new ChannelContainer();
         loadPage(ECHO_PAGE);
         final MessagePort[] channel =
-                TestThreadUtils.runOnUiThreadBlocking(() -> mAwContents.createMessageChannel());
+                ThreadUtils.runOnUiThreadBlocking(() -> mAwContents.createMessageChannel());
 
         InstrumentationRegistry.getInstrumentation()
                 .runOnMainSync(
@@ -827,7 +826,7 @@ public class PostMessageTest extends AwParameterizedTest {
         final ChannelContainer channelContainer = new ChannelContainer();
         loadPage(page);
         final MessagePort[] channel =
-                TestThreadUtils.runOnUiThreadBlocking(() -> mAwContents.createMessageChannel());
+                ThreadUtils.runOnUiThreadBlocking(() -> mAwContents.createMessageChannel());
 
         InstrumentationRegistry.getInstrumentation()
                 .runOnMainSync(
@@ -902,7 +901,7 @@ public class PostMessageTest extends AwParameterizedTest {
         final ChannelContainer channelContainer = new ChannelContainer();
         loadPage(GENERATE_ARRAY_BUFFER_FROM_JS_PAGE);
         final MessagePort[] channel =
-                TestThreadUtils.runOnUiThreadBlocking(() -> mAwContents.createMessageChannel());
+                ThreadUtils.runOnUiThreadBlocking(() -> mAwContents.createMessageChannel());
 
         InstrumentationRegistry.getInstrumentation()
                 .runOnMainSync(
@@ -1329,14 +1328,14 @@ public class PostMessageTest extends AwParameterizedTest {
         final String baseUrl = mWebServer.getBaseUrl();
 
         // postMessage before page load.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> mAwContents.postMessageToMainFrame(new MessagePayload("1"), baseUrl, null));
 
         // loadPage shouldn't timeout.
         loadPage(TEST_PAGE);
 
         // Verify that after the page gets load, postMessage still works.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () ->
                         mAwContents.postMessageToMainFrame(
                                 new MessagePayload(WEBVIEW_MESSAGE), baseUrl, null));
@@ -1402,15 +1401,15 @@ public class PostMessageTest extends AwParameterizedTest {
         loadPage(COUNT_PORT_FROM_MESSAGE);
         final ChannelContainer container = new ChannelContainer();
         final MessagePort[] ports =
-                TestThreadUtils.runOnUiThreadBlocking(() -> mAwContents.createMessageChannel());
+                ThreadUtils.runOnUiThreadBlocking(() -> mAwContents.createMessageChannel());
 
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mAwContents.postMessageToMainFrame(
                             new MessagePayload(""), "*", new MessagePort[] {ports[1]});
                 });
         final MessagePort[] ports2 =
-                TestThreadUtils.runOnUiThreadBlocking(() -> mAwContents.createMessageChannel());
+                ThreadUtils.runOnUiThreadBlocking(() -> mAwContents.createMessageChannel());
         ports2[0].setMessageCallback(
                 (messagePayload, sentPorts) -> {
                     ThreadUtils.checkUiThread();
@@ -1430,9 +1429,9 @@ public class PostMessageTest extends AwParameterizedTest {
     public void testTransferPortImmediateAfterPostMessageOnAnotherThread() throws Throwable {
         loadPage(COUNT_PORT_FROM_MESSAGE);
         final MessagePort[] ports =
-                TestThreadUtils.runOnUiThreadBlocking(() -> mAwContents.createMessageChannel());
+                ThreadUtils.runOnUiThreadBlocking(() -> mAwContents.createMessageChannel());
 
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mAwContents.postMessageToMainFrame(
                             new MessagePayload(""), "*", new MessagePort[] {ports[1]});
@@ -1484,14 +1483,14 @@ public class PostMessageTest extends AwParameterizedTest {
     public void testTransferPortInAnotherThreadRaceCondition() throws Throwable {
         loadPage(COUNT_PORT_FROM_MESSAGE);
         final MessagePort[] ports =
-                TestThreadUtils.runOnUiThreadBlocking(() -> mAwContents.createMessageChannel());
-        TestThreadUtils.runOnUiThreadBlocking(
+                ThreadUtils.runOnUiThreadBlocking(() -> mAwContents.createMessageChannel());
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mAwContents.postMessageToMainFrame(
                             new MessagePayload(""), "*", new MessagePort[] {ports[1]});
                 });
         final MessagePort[] portsToTransfer =
-                TestThreadUtils.runOnUiThreadBlocking(() -> mAwContents.createMessageChannel());
+                ThreadUtils.runOnUiThreadBlocking(() -> mAwContents.createMessageChannel());
         // Transfer the port in another thread.
         ports[0].postMessage(new MessagePayload("test"), new MessagePort[] {portsToTransfer[0]});
         // Check port2[0] is transferred right now.
@@ -1515,7 +1514,7 @@ public class PostMessageTest extends AwParameterizedTest {
         thread.start();
         final Handler handler = new Handler(thread.getLooper());
         final MessagePort[] ports =
-                TestThreadUtils.runOnUiThreadBlocking(() -> mAwContents.createMessageChannel());
+                ThreadUtils.runOnUiThreadBlocking(() -> mAwContents.createMessageChannel());
 
         InstrumentationRegistry.getInstrumentation()
                 .runOnMainSync(

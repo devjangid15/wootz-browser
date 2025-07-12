@@ -6,6 +6,7 @@
 
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/shell.h"
+#include "base/check.h"
 #include "base/functional/bind.h"
 #include "third_party/skia/include/core/SkPaint.h"
 #include "third_party/skia/include/core/SkPath.h"
@@ -156,8 +157,7 @@ void AccessibilityFocusRingLayer::OnPaintLayer(
 void AccessibilityFocusRingLayer::DrawSolidFocusRing(
     ui::PaintRecorder& recorder,
     cc::PaintFlags& flags) {
-  if (!has_custom_color())
-    NOTREACHED_IN_MIGRATION();
+  CHECK(has_custom_color());
 
   SkPath path;
   gfx::Vector2d offset = layer()->bounds().OffsetFromOrigin();
@@ -175,8 +175,7 @@ void AccessibilityFocusRingLayer::DrawSolidFocusRing(
 void AccessibilityFocusRingLayer::DrawDashedFocusRing(
     ui::PaintRecorder& recorder,
     cc::PaintFlags& flags) {
-  if (!has_custom_color())
-    NOTREACHED_IN_MIGRATION();
+  CHECK(has_custom_color());
 
   SkPath path;
   gfx::Vector2d offset = layer()->bounds().OffsetFromOrigin();
@@ -198,8 +197,7 @@ void AccessibilityFocusRingLayer::DrawDashedFocusRing(
 
 void AccessibilityFocusRingLayer::DrawGlowFocusRing(ui::PaintRecorder& recorder,
                                                     cc::PaintFlags& flags) {
-  if (!has_custom_color())
-    NOTREACHED_IN_MIGRATION();
+  CHECK(has_custom_color());
   SkColor base_color = custom_color();
 
   SkPath path;

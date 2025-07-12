@@ -244,7 +244,7 @@ void BackgroundFetchScheduler::DidMarkForDeletion(
     return;
 
   auto it = completed_fetches_.find(registration_id.unique_id());
-  DCHECK(it != completed_fetches_.end());
+  CHECK(it != completed_fetches_.end());
 
   blink::mojom::BackgroundFetchRegistrationDataPtr& registration_data =
       it->second->registration;

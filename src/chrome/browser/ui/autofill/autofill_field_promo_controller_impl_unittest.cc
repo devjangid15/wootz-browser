@@ -5,12 +5,17 @@
 #include "chrome/browser/ui/autofill/autofill_field_promo_controller_impl.h"
 
 #include "base/memory/weak_ptr.h"
+#include "base/run_loop.h"
 #include "chrome/browser/ui/autofill/autofill_field_promo_view.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
+#include "chrome/browser/ui/user_education/browser_user_education_interface.h"
+#include "chrome/browser/ui/views/autofill/popup/popup_view_views.h"
+#include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "chrome/test/base/test_browser_window.h"
-#include "components/user_education/common/feature_promo_controller.h"
-#include "components/user_education/common/feature_promo_result.h"
+#include "components/feature_engagement/public/feature_constants.h"
+#include "components/user_education/common/feature_promo/feature_promo_controller.h"
+#include "components/user_education/common/feature_promo/feature_promo_result.h"
 #include "components/user_education/test/mock_feature_promo_controller.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_user_data.h"
@@ -59,8 +64,8 @@ class AutofillFieldPromoControllerWrapper
       : content::WebContentsUserData<AutofillFieldPromoControllerWrapper>(
             *web_contents) {
     promo_controller_ = std::make_unique<AutofillFieldPromoControllerImpl>(
-        web_contents, feature_engagement::kIPHAutofillManualFallbackFeature,
-        kAutofillStandaloneCvcSuggestionElementId);
+        web_contents, feature_engagement::kIPHAutofillAiOptInFeature,
+        autofill::PopupViewViews::kAutofillStandaloneCvcSuggestionElementId);
   }
   WEB_CONTENTS_USER_DATA_KEY_DECL();
 
@@ -79,8 +84,9 @@ class AutofillFieldPromoControllerImplTest : public BrowserWithTestWindowTest {
     FocusMainFrameOfActiveWebContents();
     ASSERT_TRUE(web_contents()->GetFocusedFrame());
 
-    static_cast<TestBrowserWindow*>(window())->SetFeaturePromoController(
-        std::make_unique<MockFeaturePromoController>());
+    BrowserUserEducationInterface::From(browser())
+        ->SetFeaturePromoControllerForTesting(
+            std::make_unique<MockFeaturePromoController>());
 
     AutofillFieldPromoControllerWrapper::CreateForWebContents(web_contents());
   }
@@ -91,7 +97,8 @@ class AutofillFieldPromoControllerImplTest : public BrowserWithTestWindowTest {
 
   MockFeaturePromoController* feature_promo_controller() {
     return static_cast<MockFeaturePromoController*>(
-        static_cast<TestBrowserWindow*>(window())->GetFeaturePromoController());
+        BrowserUserEducationInterface::From(browser())
+            ->GetFeaturePromoControllerForTesting());
   }
 
   AutofillFieldPromoControllerImpl* autofill_field_promo_controller() {
@@ -109,10 +116,11 @@ TEST_F(AutofillFieldPromoControllerImplTest, CloseViewOnFailingMaybeShowPromo) {
   auto promo_view = std::make_unique<MockAutofillFieldPromoView>();
   EXPECT_CALL(*feature_promo_controller(), MaybeShowPromo)
       .WillOnce([this, promo_view_ptr = promo_view->GetWeakPtr()](
-                    user_education::FeaturePromoParams) {
+                    user_education::FeaturePromoParams params) {
         autofill_field_promo_controller()->SetPromoViewForTesting(
             promo_view_ptr);
-        return user_education::FeaturePromoResult::kError;
+        std::move(params.show_promo_result_callback)
+            .Run(user_education::FeaturePromoResult::kError);
       });
 
   EXPECT_CALL(*promo_view, Close());
@@ -132,8 +140,7 @@ class AutofillFieldPromoControllerImplTestWithView
     // Makes sure the promo is not hidden immediately after being shown.
     // This also makes sure that `AutofillFieldPromoControllerImpl::Show()`
     // reaches `MaybeShowFeaturePromo()` and, therefore, doesn't return early.
-    EXPECT_CALL(*feature_promo_controller(), MaybeShowPromo)
-        .WillOnce(Return(user_education::FeaturePromoResult::Success()));
+    EXPECT_CALL(*feature_promo_controller(), MaybeShowPromo).Times(1);
     autofill_field_promo_controller()->Show(gfx::RectF(0, 0, 1, 1));
     autofill_field_promo_controller()->SetPromoViewForTesting(
         promo_view_->GetWeakPtr());

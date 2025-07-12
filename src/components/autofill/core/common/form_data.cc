@@ -5,6 +5,7 @@
 #include "components/autofill/core/common/form_data.h"
 
 #include <stddef.h>
+
 #include <string_view>
 #include <tuple>
 
@@ -12,10 +13,12 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/pickle.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/common/form_field_data.h"
 #include "components/autofill/core/common/logging/log_buffer.h"
+#include "components/autofill/core/common/logging/stream_operator_util.h"
 
 namespace autofill {
 
@@ -95,42 +98,28 @@ FormData& FormData::operator=(FormData&&) = default;
 
 FormData::~FormData() = default;
 
-bool FormData::SameFormAs(const FormData& form) const {
-  if (name != form.name || id_attribute != form.id_attribute ||
-      name_attribute != form.name_attribute || url != form.url ||
-      action != form.action ||
-      renderer_id.is_null() != form.renderer_id.is_null() ||
-      fields.size() != form.fields.size()) {
-    return false;
-  }
-  for (size_t i = 0; i < fields.size(); ++i) {
-    if (!fields[i].SameFieldAs(form.fields[i]))
-      return false;
-  }
-  return true;
-}
-
 // static
 bool FormData::DeepEqual(const FormData& a, const FormData& b) {
   // We compare all unique identifiers first, including the field renderer IDs,
   // because we expect most inequalities to be due to them.
-  if (a.renderer_id != b.renderer_id || a.child_frames != b.child_frames ||
-      !base::ranges::equal(a.fields, b.fields, {}, &FormFieldData::renderer_id,
-                           &FormFieldData::renderer_id)) {
+  if (a.global_id() != b.global_id() || a.child_frames() != b.child_frames() ||
+      !std::ranges::equal(a.fields(), b.fields(), {}, &FormFieldData::global_id,
+                          &FormFieldData::global_id)) {
     return false;
   }
 
-  if (a.name != b.name || a.id_attribute != b.id_attribute ||
-      a.name_attribute != b.name_attribute || a.url != b.url ||
-      a.action != b.action ||
-      !base::ranges::equal(a.fields, b.fields, &FormFieldData::DeepEqual)) {
+  if (a.name() != b.name() || a.id_attribute() != b.id_attribute() ||
+      a.name_attribute() != b.name_attribute() || a.url() != b.url() ||
+      a.action() != b.action() ||
+      a.likely_contains_captcha() != b.likely_contains_captcha() ||
+      !std::ranges::equal(a.fields(), b.fields(), &FormFieldData::DeepEqual)) {
     return false;
   }
   return true;
 }
 
 bool FormHasNonEmptyPasswordField(const FormData& form) {
-  for (const auto& field : form.fields) {
+  for (const auto& field : form.fields()) {
     if (field.IsPasswordInputElement()) {
       if (!field.value().empty() || !field.user_input().empty()) {
         return true;
@@ -141,39 +130,63 @@ bool FormHasNonEmptyPasswordField(const FormData& form) {
 }
 
 std::ostream& operator<<(std::ostream& os, const FormData& form) {
-  os << base::UTF16ToUTF8(form.name) << " " << form.url << " " << form.action
-     << " " << form.main_frame_origin << " " << "Fields:";
-  for (const FormFieldData& field : form.fields) {
-    os << field << ",";
+  return internal::PrintWithIndentation(os, form, /*indentation=*/0);
+}
+
+namespace internal {
+
+std::ostream& PrintWithIndentation(std::ostream& os,
+                                   const FormData& form,
+                                   int indentation,
+                                   std::string_view title) {
+  std::string space = std::string(indentation, ' ');
+  os << space << "{";
+  if (!title.empty()) {
+    os << " /*" << title << "*/";
   }
+  os << '\n';
+#define PRINT_PROPERTY(property)                                            \
+  os << space << "  " << #property << ": " << PrintWrapper(form.property()) \
+     << ",\n"
+  PRINT_PROPERTY(global_id);
+  PRINT_PROPERTY(name);
+  PRINT_PROPERTY(url);
+  PRINT_PROPERTY(main_frame_origin);
+#undef PRINT_PROPERTY
+  os << space << "  fields: [ /*length " << form.fields().size() << "*/\n";
+  for (size_t i = 0; i < form.fields().size(); ++i) {
+    internal::PrintWithIndentation(
+        os, form.fields()[i], /*indentation=*/indentation + 4,
+        base::StrCat({"FormFieldData index ", base::NumberToString(i)}));
+    if (i < form.fields().size()) {
+      os << ",";
+    }
+    os << '\n';
+  }
+  os << space << "  ]\n";
+  os << space << "}";
   return os;
 }
+
+}  // namespace internal
 
 const FormFieldData* FormData::FindFieldByGlobalId(
     const FieldGlobalId& global_id) const {
   auto fields_it =
-      base::ranges::find(fields, global_id, &FormFieldData::global_id);
+      std::ranges::find(fields(), global_id, &FormFieldData::global_id);
 
   // If the field is found, return a pointer to the field, otherwise return
   // nullptr.
-  return fields_it != fields.end() ? &*fields_it : nullptr;
-}
-
-FormFieldData* FormData::FindFieldByName(std::u16string_view name_or_id) {
-  auto fields_it = base::ranges::find(fields, name_or_id, &FormFieldData::name);
-
-  // If the field is found, return a pointer to the field, otherwise return
-  // nullptr.
-  return fields_it != fields.end() ? &*fields_it : nullptr;
+  return fields_it != fields().end() ? &*fields_it : nullptr;
 }
 
 void SerializeFormData(const FormData& form_data, base::Pickle* pickle) {
   pickle->WriteInt(kFormDataPickleVersion);
-  pickle->WriteString16(form_data.name);
-  pickle->WriteString(form_data.url.spec());
-  pickle->WriteString(form_data.action.spec());
-  SerializeFormFieldDataVector(form_data.fields, pickle);
-  pickle->WriteString(form_data.main_frame_origin.Serialize());
+  pickle->WriteString16(form_data.name());
+  pickle->WriteString(form_data.url().spec());
+  pickle->WriteString(form_data.action().spec());
+  SerializeFormFieldDataVector(form_data.fields(), pickle);
+  pickle->WriteString(form_data.main_frame_origin().Serialize());
 }
 
 bool DeserializeFormData(base::PickleIterator* iter, FormData* form_data) {
@@ -189,9 +202,13 @@ bool DeserializeFormData(base::PickleIterator* iter, FormData* form_data) {
     return false;
   }
 
-  if (!iter->ReadString16(&temp_form_data.name)) {
-    LogDeserializationError(version);
-    return false;
+  {
+    std::u16string name;
+    if (!iter->ReadString16(&name)) {
+      LogDeserializationError(version);
+      return false;
+    }
+    temp_form_data.set_name(std::move(name));
   }
 
   if (version == 1) {
@@ -203,13 +220,20 @@ bool DeserializeFormData(base::PickleIterator* iter, FormData* form_data) {
   }
 
   bool unused_user_submitted;
-  if (!ReadGURL(iter, &temp_form_data.url) ||
-      !ReadGURL(iter, &temp_form_data.action) ||
-      // user_submitted was removed/no longer serialized in version 4.
-      (version < 4 && !iter->ReadBool(&unused_user_submitted)) ||
-      !DeserializeFormFieldDataVector(iter, &temp_form_data.fields)) {
-    LogDeserializationError(version);
-    return false;
+  {
+    GURL url;
+    GURL action;
+    std::vector<FormFieldData> fields;
+    if (!ReadGURL(iter, &url) || !ReadGURL(iter, &action) ||
+        // user_submitted was removed/no longer serialized in version 4.
+        (version < 4 && !iter->ReadBool(&unused_user_submitted)) ||
+        !DeserializeFormFieldDataVector(iter, &fields)) {
+      LogDeserializationError(version);
+      return false;
+    }
+    temp_form_data.set_url(std::move(url));
+    temp_form_data.set_action(std::move(action));
+    temp_form_data.set_fields(std::move(fields));
   }
 
   if (version >= 3 && version <= 7) {
@@ -229,10 +253,12 @@ bool DeserializeFormData(base::PickleIterator* iter, FormData* form_data) {
   }
 
   if (version >= 6) {
-    if (!ReadOrigin(iter, &temp_form_data.main_frame_origin)) {
+    url::Origin main_frame_origin;
+    if (!ReadOrigin(iter, &main_frame_origin)) {
       LogDeserializationError(version);
       return false;
     }
+    temp_form_data.set_main_frame_origin(std::move(main_frame_origin));
   }
 
   *form_data = temp_form_data;
@@ -242,21 +268,20 @@ bool DeserializeFormData(base::PickleIterator* iter, FormData* form_data) {
 LogBuffer& operator<<(LogBuffer& buffer, const FormData& form) {
   buffer << Tag{"div"} << Attrib{"class", "form"};
   buffer << Tag{"table"};
-  buffer << Tr{} << "Form name:" << form.name;
-  buffer << Tr{} << "Identifiers: "
-         << base::StrCat(
-                {"renderer id: ",
-                 base::NumberToString(form.global_id().renderer_id.value()),
-                 ", host frame: ", form.global_id().frame_token.ToString(),
-                 " (", url::Origin::Create(form.url).Serialize(), ")"});
-  buffer << Tr{} << "URL:" << form.url;
-  buffer << Tr{} << "Action:" << form.action;
-  buffer << Tr{} << "Is action empty:" << form.is_action_empty;
-  for (size_t i = 0; i < form.fields.size(); ++i) {
+  buffer << Tr{} << "Form name:" << form.name();
+  buffer << Tr{} << "Renderer id:"
+         << base::NumberToString(form.global_id().renderer_id.value());
+  buffer << Tr{} << "Host frame: "
+         << base::StrCat({form.global_id().frame_token.ToString(), " (",
+                          url::Origin::Create(form.url()).Serialize(), ")"});
+  buffer << Tr{} << "URL:" << form.url();
+  buffer << Tr{} << "Action:" << form.action();
+  buffer << Tr{} << "Is action empty:" << form.is_action_empty();
+  for (size_t i = 0; i < form.fields().size(); ++i) {
     buffer << Tag{"tr"};
     buffer << Tag{"td"} << "Field " << i << ": " << CTag{};
     buffer << Tag{"td"};
-    buffer << Tag{"table"} << form.fields.at(i) << CTag{"table"};
+    buffer << Tag{"table"} << form.fields().at(i) << CTag{"table"};
     buffer << CTag{"td"};
     buffer << CTag{"tr"};
   }

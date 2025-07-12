@@ -20,7 +20,9 @@ constexpr char kArcPlatformName[] = "android";
 constexpr char kBorealisPlatformName[] = "steam";
 constexpr char kChromeAppPlatformName[] = "chromeapp";
 constexpr char kGeForceNowPlatformName[] = "gfn";
+constexpr char kSystemPlatformName[] = "system";
 constexpr char kWebPlatformName[] = "web";
+constexpr char kWebShortcutPlatformName[] = "website";
 
 PackageType PlatformNameToPackageType(std::string_view platform_name) {
   if (platform_name == kArcPlatformName) {
@@ -35,8 +37,14 @@ PackageType PlatformNameToPackageType(std::string_view platform_name) {
   if (platform_name == kGeForceNowPlatformName) {
     return PackageType::kGeForceNow;
   }
+  if (platform_name == kSystemPlatformName) {
+    return PackageType::kSystem;
+  }
   if (platform_name == kWebPlatformName) {
     return PackageType::kWeb;
+  }
+  if (platform_name == kWebShortcutPlatformName) {
+    return PackageType::kWebsite;
   }
 
   return PackageType::kUnknown;
@@ -54,11 +62,12 @@ std::string_view PackageTypeToPlatformName(PackageType package_type) {
       return kChromeAppPlatformName;
     case PackageType::kGeForceNow:
       return kGeForceNowPlatformName;
+    case PackageType::kSystem:
+      return kSystemPlatformName;
     case PackageType::kWeb:
       return kWebPlatformName;
-    default:
-      NOTREACHED_IN_MIGRATION();
-      return "";
+    case PackageType::kWebsite:
+      return kWebShortcutPlatformName;
   }
 }
 
@@ -73,30 +82,6 @@ PackageId::PackageId() : PackageId(PackageType::kUnknown, kUnknownName) {}
 
 PackageId::PackageId(const PackageId&) = default;
 PackageId& PackageId::operator=(const PackageId&) = default;
-
-bool PackageId::operator<(const PackageId& rhs) const {
-  if (this->package_type_ < rhs.package_type_) {
-    return true;
-  } else if (this->package_type_ > rhs.package_type_) {
-    return false;
-  }
-  // If we're here, it's because package_type_ == rhs.package_type_.
-  if (this->identifier_ < rhs.identifier_) {
-    return true;
-  } else {
-    return false;
-  }
-}
-
-bool PackageId::operator==(const PackageId& rhs) const {
-  return this->package_type_ == rhs.package_type_ &&
-         this->identifier_ == rhs.identifier_;
-}
-
-bool PackageId::operator!=(const PackageId& rhs) const {
-  return this->package_type_ != rhs.package_type_ ||
-         this->identifier_ != rhs.identifier_;
-}
 
 // static
 std::optional<PackageId> PackageId::FromString(

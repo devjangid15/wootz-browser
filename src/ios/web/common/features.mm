@@ -42,17 +42,6 @@ BASE_FEATURE(kEnableMeasurements,
              "EnableMeasurementsExperience",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-const char kOneTapForMapsConsentModeParamTitle[] =
-    "OneTapForMapsConsentModeParam";
-const char kOneTapForMapsConsentModeDefaultParam[] = "default";
-const char kOneTapForMapsConsentModeForcedParam[] = "forced";
-const char kOneTapForMapsConsentModeDisabledParam[] = "disabled";
-const char kOneTapForMapsConsentModeIPHParam[] = "iph";
-const char kOneTapForMapsConsentModeIPHForcedParam[] = "iphforced";
-BASE_FEATURE(kOneTapForMaps,
-             "EnableOneTapForMaps",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
 BASE_FEATURE(kScrollViewProxyScrollEnabledWorkaround,
              "ScrollViewProxyScrollEnabledWorkaround",
              base::FEATURE_ENABLED_BY_DEFAULT);
@@ -78,18 +67,26 @@ BASE_FEATURE(kSmoothScrollingDefault,
 #endif
 );
 
+BASE_FEATURE(kFullscreenScrollThreshold,
+             "FullscreenScrollThreshold",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+const char kFullscreenScrollThresholdAmount[] =
+    "fullscreen_scroll_threshold_amount";
+
+bool IsFullscreenScrollThresholdEnabled() {
+  return !base::FeatureList::IsEnabled(kSmoothScrollingDefault) &&
+         base::FeatureList::IsEnabled(kFullscreenScrollThreshold);
+}
+
 // This feature will always be disabled and will only be enabled by tests.
 BASE_FEATURE(kForceSynthesizedRestoreSession,
              "ForceSynthesizedRestoreSession",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-BASE_FEATURE(kRemoveOldWebStateRestoration,
-             "RemoveOldWebStateRestoration",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
-BASE_FEATURE(kEnableViewportIntents,
-             "EnableViewportIntents",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kDetectDestroyedNavigationContexts,
+             "DetectDestroyedNavigationContexts",
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 bool IsWebInspectorSupportEnabled() {
   if (@available(iOS 16.4, *)) {
@@ -100,6 +97,30 @@ bool IsWebInspectorSupportEnabled() {
 
 BASE_FEATURE(kDisableRaccoon,
              "DisableRaccoon",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kUserAgentBugFixVersion,
+             "UserAgentBugFixVersion",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+BASE_FEATURE(kLogJavaScriptErrors,
+             "LogJavaScriptErrors",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kWebKitHandlesMarketplaceKitLinks,
+             "WebKitHandlesMarketplaceKitLinks",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+BASE_FEATURE(kRestoreWKWebViewEditMenuHandler,
+             "RestoreWKWebViewEditMenuHandler",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kLogCrWebJavaScriptErrors,
+             "LogCrWebJavaScriptErrors",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kAssertOnJavaScriptErrors,
+             "AssertOnJavaScriptErrors",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 }  // namespace features

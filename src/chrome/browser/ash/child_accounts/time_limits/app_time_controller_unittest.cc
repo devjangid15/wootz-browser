@@ -6,8 +6,6 @@
 
 #include <optional>
 
-#include "ash/components/arc/mojom/app.mojom.h"
-#include "ash/components/arc/test/fake_app_instance.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/strings/strcat.h"
@@ -32,6 +30,8 @@
 #include "chrome/test/base/testing_profile.h"
 #include "chromeos/ash/components/dbus/system_clock/system_clock_client.h"
 #include "chromeos/ash/components/settings/timezone_settings.h"
+#include "chromeos/ash/experiences/arc/mojom/app.mojom.h"
+#include "chromeos/ash/experiences/arc/test/fake_app_instance.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/services/app_service/public/cpp/app_types.h"
@@ -42,8 +42,7 @@
 #include "ui/gfx/image/image_skia_rep.h"
 #include "ui/message_center/public/cpp/notification.h"
 
-namespace ash {
-namespace app_time {
+namespace ash::app_time {
 
 namespace {
 
@@ -61,17 +60,19 @@ const AppId kApp2(apps::AppType::kArc, "2");
 base::Time GetLastResetTime(base::Time timestamp) {
   base::Time nearest_midnight = timestamp.LocalMidnight();
   base::Time prev_midnight;
-  if (timestamp > nearest_midnight)
+  if (timestamp > nearest_midnight) {
     prev_midnight = nearest_midnight;
-  else
+  } else {
     prev_midnight = nearest_midnight - base::Hours(24);
+  }
 
   // Reset time is at 6 am for the tests.
   base::Time reset_time = prev_midnight + base::Hours(6);
-  if (reset_time <= timestamp)
+  if (reset_time <= timestamp) {
     return reset_time;
-  else
+  } else {
     return reset_time - base::Hours(24);
+  }
 }
 
 }  // namespace
@@ -234,8 +235,7 @@ bool AppTimeControllerTest::HasNotificationFor(
       notification_id = "time-limit-updated-id-";
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
 
   notification_id = base::StrCat({notification_id, app_name});
@@ -572,10 +572,11 @@ TEST_F(AppTimeControllerTest, SetLastResetTimeTest) {
   base::Time now = base::Time::Now();
   base::Time nearest_midnight = now.LocalMidnight();
   base::Time prev_midnight;
-  if (now > nearest_midnight)
+  if (now > nearest_midnight) {
     prev_midnight = nearest_midnight;
-  else
+  } else {
     prev_midnight = nearest_midnight - kDay;
+  }
 
   base::Time reset_time = prev_midnight + kSixHours;
 
@@ -595,5 +596,4 @@ TEST_F(AppTimeControllerTest, SetLastResetTimeTest) {
   EXPECT_EQ(test_api()->GetLastResetTime(), reset_time);
 }
 
-}  // namespace app_time
-}  // namespace ash
+}  // namespace ash::app_time

@@ -11,6 +11,7 @@
 #include "base/logging.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
+#include "base/strings/stringprintf.h"
 #include "base/task/thread_pool.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
@@ -72,6 +73,14 @@ class ResultsWaiter {
   base::WeakPtrFactory<ResultsWaiter> weak_ptr_factory_{this};
 };
 
+base::FilePath GetComponentBinaryPath() {
+#if BUILDFLAG(ENABLE_SCREEN_AI_BROWSERTESTS)
+  return screen_ai::GetComponentBinaryPathForTests();
+#else
+  NOTREACHED() << "Test library is used on a not-suppported platform.";
+#endif
+}
+
 }  // namespace
 
 namespace screen_ai {
@@ -130,7 +139,7 @@ class ScreenAIServiceRouterTest
   // InProcessBrowserTest:
   void SetUpOnMainThread() override {
     if (IsLibraryAvailableAtStartUp()) {
-      base::FilePath library_path = screen_ai::GetComponentBinaryPathForTests();
+      base::FilePath library_path = GetComponentBinaryPath();
       CHECK(!library_path.empty());
       CHECK(base::PathExists(library_path));
       ScreenAIInstallState::GetInstance()->SetComponentFolder(
@@ -162,7 +171,7 @@ class ScreenAIServiceRouterTest
         base::ThreadPool::PostTaskAndReplyWithResult(
             FROM_HERE,
             {base::MayBlock(), base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
-            base::BindOnce(&screen_ai::GetComponentBinaryPathForTests),
+            base::BindOnce(&GetComponentBinaryPath),
             base::BindOnce([](const base::FilePath component_path) {
               ScreenAIInstallState::GetInstance()->SetComponentFolder(
                   component_path.DirName());

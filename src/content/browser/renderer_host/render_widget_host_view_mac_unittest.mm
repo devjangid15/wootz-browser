@@ -8,6 +8,7 @@
 #include <Foundation/Foundation.h>
 #include <stddef.h>
 #include <stdint.h>
+
 #include <tuple>
 
 #include "base/apple/scoped_cftyperef.h"
@@ -18,8 +19,8 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/stack_allocated.h"
 #include "base/run_loop.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#import "base/task/single_thread_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
@@ -110,12 +111,6 @@ using testing::_;
 
 @synthesize unhandledWheelEventReceived = _unhandledWheelEventReceived;
 
-- (void)rendererHandledWheelEvent:(const blink::WebMouseWheelEvent&)event
-                         consumed:(BOOL)consumed {
-  if (!consumed)
-    _unhandledWheelEventReceived = true;
-}
-
 - (void)rendererHandledGestureScrollEvent:(const blink::WebGestureEvent&)event
                                  consumed:(BOOL)consumed {
   if (!consumed &&
@@ -127,8 +122,6 @@ using testing::_;
 - (void)touchesMovedWithEvent:(NSEvent*)event {}
 - (void)touchesCancelledWithEvent:(NSEvent*)event {}
 - (void)touchesEndedWithEvent:(NSEvent*)event {}
-- (void)beginGestureWithEvent:(NSEvent*)event {}
-- (void)endGestureWithEvent:(NSEvent*)event {}
 - (void)rendererHandledOverscrollEvent:(const ui::DidOverscrollParams&)params {
 }
 
@@ -414,6 +407,8 @@ class MockRenderWidgetHostOwnerDelegate
 
 class MockRenderWidgetHostImpl : public RenderWidgetHostImpl {
  public:
+  using RenderWidgetHostImpl::render_input_router_;
+
   MockRenderWidgetHostImpl(RenderWidgetHostDelegate* delegate,
                            base::SafeRef<SiteInstanceGroup> site_instance_group,
                            int32_t routing_id,
@@ -466,16 +461,20 @@ class MockRenderWidgetHostImpl : public RenderWidgetHostImpl {
   MOCK_METHOD0(Focus, void());
   MOCK_METHOD0(Blur, void());
 
+  MockRenderInputRouter* mock_render_input_router() {
+    return static_cast<MockRenderInputRouter*>(render_input_router_.get());
+  }
+
   MockWidgetInputHandler* input_handler() {
-    return mock_render_input_router_->mock_widget_input_handler_.get();
+    return mock_render_input_router()->mock_widget_input_handler_.get();
   }
 
   MockWidgetInputHandler::MessageVector GetAndResetDispatchedMessages() {
     return input_handler()->GetAndResetDispatchedMessages();
   }
 
-  RenderInputRouter* GetRenderInputRouter() override {
-    return mock_render_input_router_.get();
+  input::RenderInputRouter* GetRenderInputRouter() override {
+    return render_input_router_.get();
   }
 
   const ui::LatencyInfo& LastWheelEventLatencyInfo() const {
@@ -487,13 +486,12 @@ class MockRenderWidgetHostImpl : public RenderWidgetHostImpl {
   void BlurImpl() { RenderWidgetHostImpl::Blur(); }
 
   void SetupMockRenderInputRouter() {
-    mock_render_input_router_ = std::make_unique<MockRenderInputRouter>(
-        this, this, MakeFlingScheduler(), this,
+    render_input_router_ = std::make_unique<MockRenderInputRouter>(
+        this, MakeFlingScheduler(), this,
         base::SingleThreadTaskRunner::GetCurrentDefault());
     SetupInputRouter();
   }
 
-  std::unique_ptr<MockRenderInputRouter> mock_render_input_router_;
   ui::LatencyInfo last_wheel_event_latency_info_;
 };
 
@@ -532,6 +530,12 @@ class RenderWidgetHostViewMacTest : public RenderViewHostImplTestHarness {
     [window_.contentView addSubview:rwhv_cocoa_];
     [rwhv_cocoa_ setFrame:window_.contentView.bounds];
     rwhv_mac_->Show();
+
+    // The `MockRenderWidgetHostImpl` constructed above does not go through the
+    // initilization steps seen by an actual RWH in the browser.  This test
+    // needs input event processing, and the paint-holding initialiation signal
+    // below enables that.
+    host_->InitializePaintHolding(false);
 
     base::RunLoop().RunUntilIdle();
     process_host_->sink().ClearMessages();
@@ -761,7 +765,7 @@ TEST_F(RenderWidgetHostViewMacTest, UpdateCompositionSinglelineCase) {
   // If the firstRectForCharacterRange is failed in renderer, empty rect vector
   // is sent. Make sure this does not crash.
   rwhv_mac_->ImeCompositionRangeChanged(gfx::Range(10, 12),
-                                        std::vector<gfx::Rect>(), std::nullopt);
+                                        std::vector<gfx::Rect>());
   EXPECT_FALSE(rwhv_mac_->GetCachedFirstRectForCharacterRange(
       gfx::Range(10, 11), &rect, nullptr));
 
@@ -775,8 +779,7 @@ TEST_F(RenderWidgetHostViewMacTest, UpdateCompositionSinglelineCase) {
                                kCompositionLength,
                                std::vector<size_t>(),
                                &composition_bounds);
-  rwhv_mac_->ImeCompositionRangeChanged(kCompositionRange, composition_bounds,
-                                        std::nullopt);
+  rwhv_mac_->ImeCompositionRangeChanged(kCompositionRange, composition_bounds);
 
   // Out of range requests will return caret position.
   EXPECT_FALSE(rwhv_mac_->GetCachedFirstRectForCharacterRange(
@@ -834,8 +837,7 @@ TEST_F(RenderWidgetHostViewMacTest, UpdateCompositionMultilineCase) {
                                kCompositionLength,
                                break_points,
                                &composition_bounds);
-  rwhv_mac_->ImeCompositionRangeChanged(kCompositionRange, composition_bounds,
-                                        std::nullopt);
+  rwhv_mac_->ImeCompositionRangeChanged(kCompositionRange, composition_bounds);
 
   // Range doesn't contain line breaking point.
   gfx::Range range;
@@ -920,7 +922,7 @@ TEST_F(RenderWidgetHostViewMacTest, CompositionEventAfterDestroy) {
   const gfx::Rect composition_bounds(0, 0, 30, 40);
   const gfx::Range range(0, 1);
   rwhv_mac_->ImeCompositionRangeChanged(
-      range, std::vector<gfx::Rect>(1, composition_bounds), std::nullopt);
+      range, std::vector<gfx::Rect>(1, composition_bounds));
 
   NSRange actual_range = NSMakeRange(0, 0);
 
@@ -997,24 +999,6 @@ TEST_F(RenderWidgetHostViewMacTest, LastWheelEventLatencyInfoExists) {
 
   events = host_->GetAndResetDispatchedMessages();
   EXPECT_EQ("GestureScrollBegin GestureScrollUpdate", GetMessageNames(events));
-}
-
-TEST_F(RenderWidgetHostViewMacTest, SourceEventTypeExistsInLatencyInfo) {
-  process_host_->sink().ClearMessages();
-
-  // Send a wheel event for scrolling by 3 lines.
-  // Verifies that SourceEventType exists in forwarded LatencyInfo object.
-  NSEvent* wheelEvent = MockScrollWheelEventWithPhase(@selector(phaseBegan), 3);
-  [rwhv_mac_->GetInProcessNSView() scrollWheel:wheelEvent];
-
-  MockWidgetInputHandler::MessageVector events =
-      host_->GetAndResetDispatchedMessages();
-  EXPECT_EQ("MouseWheel", GetMessageNames(events));
-  events[0]->ToEvent()->CallCallback(
-      blink::mojom::InputEventResultState::kConsumed);
-
-  ASSERT_TRUE(host_->LastWheelEventLatencyInfo().source_event_type() ==
-              ui::SourceEventType::WHEEL);
 }
 
 TEST_F(RenderWidgetHostViewMacTest, ScrollWheelEndEventDelivery) {
@@ -1286,6 +1270,9 @@ TEST_F(RenderWidgetHostViewMacTest,
   RenderWidgetHostViewMac* view = new RenderWidgetHostViewMac(host.get());
   base::RunLoop().RunUntilIdle();
 
+  // See the comment on `RenderWidgetHostViewMacTest::SetUp()` above.
+  host->InitializePaintHolding(false);
+
   // Send an initial wheel event for scrolling by 3 lines.
   NSEvent* wheelEvent1 =
       MockScrollWheelEventWithPhase(@selector(phaseBegan), 3);
@@ -1350,6 +1337,9 @@ TEST_F(RenderWidgetHostViewMacTest,
   RenderWidgetHostViewMac* view = new RenderWidgetHostViewMac(host.get());
   base::RunLoop().RunUntilIdle();
 
+  // See the comment on `RenderWidgetHostViewMacTest::SetUp()` above.
+  host->InitializePaintHolding(false);
+
   // Send an initial wheel event for scrolling by 3 lines.
   NSEvent* wheelEvent1 =
       MockScrollWheelEventWithPhase(@selector(phaseBegan), 3);
@@ -1409,6 +1399,9 @@ TEST_F(RenderWidgetHostViewMacTest,
       /*for_frame_widget=*/false);
   RenderWidgetHostViewMac* view = new RenderWidgetHostViewMac(host.get());
   base::RunLoop().RunUntilIdle();
+
+  // See the comment on `RenderWidgetHostViewMacTest::SetUp()` above.
+  host->InitializePaintHolding(false);
 
   // Send an initial wheel event for scrolling by 3 lines.
   NSEvent* wheelEvent1 =
@@ -1474,119 +1467,51 @@ class RenderWidgetHostViewMacPinchTest : public RenderWidgetHostViewMacTest {
 };
 
 TEST_F(RenderWidgetHostViewMacPinchTest, PinchThresholding) {
-  // Do a gesture that crosses the threshold.
-  {
-    NSEvent* pinchUpdateEvents[3] = {
-        MockPinchEvent(NSEventPhaseChanged, 0.25),
-        MockPinchEvent(NSEventPhaseChanged, 0.25),
-        MockPinchEvent(NSEventPhaseChanged, 0.25),
-    };
+  NSEvent* pinchUpdateEvents[3] = {
+      MockPinchEvent(NSEventPhaseChanged, 0.25),
+      MockPinchEvent(NSEventPhaseChanged, 0.25),
+      MockPinchEvent(NSEventPhaseChanged, 0.25),
+  };
 
-    SendBeginPinchEvent();
-    base::RunLoop().RunUntilIdle();
-    MockWidgetInputHandler::MessageVector events =
-        host_->GetAndResetDispatchedMessages();
+  SendBeginPinchEvent();
+  base::RunLoop().RunUntilIdle();
+  MockWidgetInputHandler::MessageVector events =
+      host_->GetAndResetDispatchedMessages();
 
-    EXPECT_EQ(0U, events.size());
+  EXPECT_EQ(0U, events.size());
 
-    // No zoom is sent for the first update event.
-    [rwhv_cocoa_ magnifyWithEvent:pinchUpdateEvents[0]];
-    base::RunLoop().RunUntilIdle();
-    events = host_->GetAndResetDispatchedMessages();
-    EXPECT_EQ("MouseWheel", GetMessageNames(events));
+  // No zoom is sent for the first update event.
+  [rwhv_cocoa_ magnifyWithEvent:pinchUpdateEvents[0]];
+  base::RunLoop().RunUntilIdle();
+  events = host_->GetAndResetDispatchedMessages();
+  EXPECT_EQ("MouseWheel", GetMessageNames(events));
 
-    // After acking the synthetic mouse wheel, no GesturePinch events are
-    // produced.
-    events[0]->ToEvent()->CallCallback(
-        blink::mojom::InputEventResultState::kNoConsumerExists);
-    events = host_->GetAndResetDispatchedMessages();
-    EXPECT_EQ(0U, events.size());
+  // After acking the synthetic mouse wheel, no GesturePinch events are
+  // produced.
+  events[0]->ToEvent()->CallCallback(
+      blink::mojom::InputEventResultState::kNoConsumerExists);
+  events = host_->GetAndResetDispatchedMessages();
+  EXPECT_EQ(0U, events.size());
 
-    // The second update event crosses the threshold of 0.4, and so zoom is no
-    // longer disabled.
-    [rwhv_cocoa_ magnifyWithEvent:pinchUpdateEvents[1]];
-    base::RunLoop().RunUntilIdle();
-    events = host_->GetAndResetDispatchedMessages();
+  // The second update event crosses the threshold of 0.4, and so zoom is no
+  // longer disabled.
+  [rwhv_cocoa_ magnifyWithEvent:pinchUpdateEvents[1]];
+  base::RunLoop().RunUntilIdle();
+  events = host_->GetAndResetDispatchedMessages();
 
-    EXPECT_EQ("MouseWheel GesturePinchBegin GesturePinchUpdate",
-              GetMessageNames(events));
+  EXPECT_EQ("MouseWheel GesturePinchBegin GesturePinchUpdate",
+            GetMessageNames(events));
 
-    // The third update still has zoom enabled.
-    [rwhv_cocoa_ magnifyWithEvent:pinchUpdateEvents[2]];
-    base::RunLoop().RunUntilIdle();
-    events = host_->GetAndResetDispatchedMessages();
-    EXPECT_EQ("MouseWheel GesturePinchUpdate", GetMessageNames(events));
+  // The third update still has zoom enabled.
+  [rwhv_cocoa_ magnifyWithEvent:pinchUpdateEvents[2]];
+  base::RunLoop().RunUntilIdle();
+  events = host_->GetAndResetDispatchedMessages();
+  EXPECT_EQ("MouseWheel GesturePinchUpdate", GetMessageNames(events));
 
-    SendEndPinchEvent();
-    base::RunLoop().RunUntilIdle();
-    events = host_->GetAndResetDispatchedMessages();
-    EXPECT_EQ("MouseWheel GesturePinchEnd", GetMessageNames(events));
-  }
-
-  // Do a gesture that doesn't cross the threshold, but happens when we're not
-  // at page scale factor one, so it should be sent to the renderer.
-  {
-    NSEvent* pinchUpdateEvent = MockPinchEvent(NSEventPhaseChanged, 0.25);
-
-    rwhv_mac_->page_at_minimum_scale_ = false;
-
-    SendBeginPinchEvent();
-    base::RunLoop().RunUntilIdle();
-    MockWidgetInputHandler::MessageVector events =
-        host_->GetAndResetDispatchedMessages();
-    EXPECT_EQ(0U, events.size());
-
-    // Expect that a zoom happen because the time threshold has not passed.
-    [rwhv_cocoa_ magnifyWithEvent:pinchUpdateEvent];
-    base::RunLoop().RunUntilIdle();
-    events = host_->GetAndResetDispatchedMessages();
-    EXPECT_EQ("MouseWheel", GetMessageNames(events));
-    events[0]->ToEvent()->CallCallback(
-        blink::mojom::InputEventResultState::kNoConsumerExists);
-    events = host_->GetAndResetDispatchedMessages();
-    EXPECT_EQ("GesturePinchBegin GesturePinchUpdate", GetMessageNames(events));
-
-    SendEndPinchEvent();
-    base::RunLoop().RunUntilIdle();
-    events = host_->GetAndResetDispatchedMessages();
-    EXPECT_EQ("MouseWheel GesturePinchEnd", GetMessageNames(events));
-  }
-
-  // Do a gesture again, after the page scale is no longer at one, and ensure
-  // that it is thresholded again.
-  {
-    NSEvent* pinchUpdateEvent = MockPinchEvent(NSEventTypeMagnify, 0.25);
-
-    rwhv_mac_->page_at_minimum_scale_ = true;
-
-    SendBeginPinchEvent();
-    base::RunLoop().RunUntilIdle();
-    MockWidgetInputHandler::MessageVector events =
-        host_->GetAndResetDispatchedMessages();
-    EXPECT_EQ(0U, events.size());
-
-    // Get back to zoom one right after the begin event. This should still keep
-    // the thresholding in place (it is latched at the begin event).
-    rwhv_mac_->page_at_minimum_scale_ = false;
-
-    // Expect that zoom be disabled because the time threshold has passed.
-    [rwhv_cocoa_ magnifyWithEvent:pinchUpdateEvent];
-    base::RunLoop().RunUntilIdle();
-    events = host_->GetAndResetDispatchedMessages();
-    EXPECT_EQ("MouseWheel", GetMessageNames(events));
-
-    events[0]->ToEvent()->CallCallback(
-        blink::mojom::InputEventResultState::kNoConsumerExists);
-    events = host_->GetAndResetDispatchedMessages();
-    EXPECT_EQ(0U, events.size());
-
-    // Since no GesturePinchBegin was sent by the time we reach the pinch end,
-    // the GesturePinchBegin and GesturePinchEnd are elided.
-    SendEndPinchEvent();
-    base::RunLoop().RunUntilIdle();
-    events = host_->GetAndResetDispatchedMessages();
-    EXPECT_EQ("MouseWheel", GetMessageNames(events));
-  }
+  SendEndPinchEvent();
+  base::RunLoop().RunUntilIdle();
+  events = host_->GetAndResetDispatchedMessages();
+  EXPECT_EQ("MouseWheel GesturePinchEnd", GetMessageNames(events));
 }
 
 // Tests that the NSEventTypeSmartMagnify event is first offered as a mouse

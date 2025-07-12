@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "services/proxy_resolver_win/windows_system_proxy_resolver_impl.h"
 
 #include <cwchar>
@@ -285,7 +290,7 @@ void WindowsSystemProxyResolverImpl::Request::DoWinHttpStatusCallback(
 
   // Now, it's finally safe to delete this object.
   auto it = parent_->requests_.find(this);
-  DCHECK(it != parent_->requests_.end());
+  CHECK(it != parent_->requests_.end());
   parent_->requests_.erase(it);
 
   // DO NOT ADD ANYTHING BELOW THIS LINE, THE OBJECT HAS NOW BEEN DESTROYED.

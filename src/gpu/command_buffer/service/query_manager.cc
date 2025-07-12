@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "gpu/command_buffer/service/query_manager.h"
 
 #include <stddef.h>
@@ -103,11 +108,11 @@ void CommandsIssuedQuery::Reset() {
 }
 
 void CommandsIssuedQuery::QueryCounter(base::subtle::Atomic32 submit_count) {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void CommandsIssuedQuery::Process(bool did_finish) {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void CommandsIssuedQuery::Destroy(bool /* have_context */) {
@@ -170,7 +175,7 @@ CommandsIssuedTimestampQuery::CommandsIssuedTimestampQuery(
     : Query(manager, target, std::move(buffer), sync) {}
 
 void CommandsIssuedTimestampQuery::Begin() {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void CommandsIssuedTimestampQuery::Pause() {
@@ -182,7 +187,7 @@ void CommandsIssuedTimestampQuery::Resume() {
 }
 
 void CommandsIssuedTimestampQuery::End(base::subtle::Atomic32 submit_count) {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void CommandsIssuedTimestampQuery::QueryCounter(
@@ -195,7 +200,7 @@ void CommandsIssuedTimestampQuery::QueryCounter(
 }
 
 void CommandsIssuedTimestampQuery::Process(bool did_finish) {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void CommandsIssuedTimestampQuery::Destroy(bool /* have_context */) {
@@ -260,7 +265,7 @@ void CommandsCompletedQuery::End(base::subtle::Atomic32 submit_count) {
 }
 
 void CommandsCompletedQuery::QueryCounter(base::subtle::Atomic32 submit_count) {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void CommandsCompletedQuery::Process(bool did_finish) {
@@ -326,7 +331,7 @@ QueryManager::Query* QueryManager::CreateQuery(
       query = new CommandsCompletedQuery(this, target, std::move(buffer), sync);
       break;
     default: {
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
     }
   }
   std::pair<QueryMap::iterator, bool> result =
@@ -509,7 +514,7 @@ void QueryManager::EndQuery(Query* query, base::subtle::Atomic32 submit_count) {
 
   // Remove from active query map if it is active.
   ActiveQueryMap::iterator active_it = active_queries_.find(query->target());
-  DCHECK(active_it != active_queries_.end());
+  CHECK(active_it != active_queries_.end());
   DCHECK(query == active_it->second.get());
   active_queries_.erase(active_it);
 

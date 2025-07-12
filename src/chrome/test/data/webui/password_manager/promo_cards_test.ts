@@ -6,6 +6,7 @@ import 'chrome://password-manager/password_manager.js';
 
 import type {PasswordsSectionElement} from 'chrome://password-manager/password_manager.js';
 import {Page, PasswordManagerImpl, PromoCardsProxyImpl, Router, SyncBrowserProxyImpl, UrlParam} from 'chrome://password-manager/password_manager.js';
+import {BatchUploadPasswordsEntryPoint} from 'chrome://password-manager/password_manager.js';
 import {assertEquals, assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import {flushTasks} from 'chrome://webui-test/polymer_test_util.js';
 import {isVisible} from 'chrome://webui-test/test_util.js';
@@ -55,10 +56,10 @@ suite('PasswordsSectionTest', function() {
     // Verify promo card is shown.
     assertTrue(!!promoCardElement);
     assertEquals(
-        promoCardsProxy.promo!.title,
+        promoCardsProxy.promo.title,
         promoCardElement.$.title.textContent!.trim());
     assertEquals(
-        promoCardsProxy.promo!.description,
+        promoCardsProxy.promo.description,
         promoCardElement.$.description.textContent!.trim());
     assertFalse(isVisible(promoCardElement.$.actionButton));
     const shownImage = promoCardElement.shadowRoot!.querySelector('img');
@@ -141,7 +142,7 @@ suite('PasswordsSectionTest', function() {
       description: 'Move passwords description.',
       actionButtonText: 'Move passwords',
     };
-    passwordManager.data.isOptedInAccountStorage = true;
+    passwordManager.data.isAccountStorageEnabled = true;
     passwordManager.data.groups = [createCredentialGroup({
       name: 'test.com',
       credentials: [createPasswordEntry({
@@ -152,7 +153,6 @@ suite('PasswordsSectionTest', function() {
       })],
     })];
     syncProxy.syncInfo = {
-      isEligibleForAccountStorage: true,
       isSyncingPasswords: false,
     };
 
@@ -168,14 +168,13 @@ suite('PasswordsSectionTest', function() {
       description: 'Move passwords description.',
       actionButtonText: 'Move passwords',
     };
-    passwordManager.data.isOptedInAccountStorage = false;
+    passwordManager.data.isAccountStorageEnabled = false;
     passwordManager.data.groups = [createCredentialGroup({
       name: 'test.com',
       credentials: [createPasswordEntry(
           {username: 'user', id: 0, inProfileStore: true})],
     })];
     syncProxy.syncInfo = {
-      isEligibleForAccountStorage: true,
       isSyncingPasswords: false,
     };
 
@@ -184,37 +183,14 @@ suite('PasswordsSectionTest', function() {
     assertFalse(!!promoCardElement);
   });
 
-  test('move passwords promo hidden if sync issues', async function() {
+  test('move passwords promo visible opens batch upload', async function() {
     promoCardsProxy.promo = {
       id: 'move_passwords_promo',
       title: 'Move passwords promo',
       description: 'Move passwords description.',
       actionButtonText: 'Move passwords',
     };
-    passwordManager.data.isOptedInAccountStorage = true;
-    passwordManager.data.groups = [createCredentialGroup({
-      name: 'test.com',
-      credentials: [createPasswordEntry(
-          {username: 'user', id: 0, inProfileStore: true})],
-    })];
-    syncProxy.syncInfo = {
-      isEligibleForAccountStorage: false,
-      isSyncingPasswords: false,
-    };
-
-    const section = await createPasswordsSection();
-    const promoCardElement = section.shadowRoot!.querySelector('promo-card');
-    assertFalse(!!promoCardElement);
-  });
-
-  test('move passwords promo visible is requirements met', async function() {
-    promoCardsProxy.promo = {
-      id: 'move_passwords_promo',
-      title: 'Move passwords promo',
-      description: 'Move passwords description.',
-      actionButtonText: 'Move passwords',
-    };
-    passwordManager.data.isOptedInAccountStorage = true;
+    passwordManager.data.isAccountStorageEnabled = true;
 
     const password = createPasswordEntry({
       id: 1234,
@@ -229,7 +205,6 @@ suite('PasswordsSectionTest', function() {
       credentials: [password],
     })];
     syncProxy.syncInfo = {
-      isEligibleForAccountStorage: true,
       isSyncingPasswords: false,
     };
 
@@ -243,9 +218,7 @@ suite('PasswordsSectionTest', function() {
     promoCardElement.$.actionButton.click();
     await flushTasks();
 
-    const moveDialog =
-        section.shadowRoot!.querySelector('move-passwords-dialog');
-    assertTrue(!!moveDialog);
-    assertTrue(isVisible(moveDialog.$.move));
+    const entryPoint = await syncProxy.whenCalled('openBatchUpload');
+    assertEquals(BatchUploadPasswordsEntryPoint.PROMO_CARD, entryPoint);
   });
 });

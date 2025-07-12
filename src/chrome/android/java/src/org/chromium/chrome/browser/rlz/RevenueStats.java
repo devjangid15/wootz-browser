@@ -4,29 +4,35 @@
 
 package org.chromium.chrome.browser.rlz;
 
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import org.jni_zero.JNINamespace;
 import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
 
+import org.chromium.base.ServiceLoaderUtil;
 import org.chromium.base.ThreadUtils;
-import org.chromium.chrome.browser.AppHooks;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
 import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
 import org.chromium.chrome.browser.tab.Tab;
 
 /** Utility class for managing revenue sharing information. */
 @JNINamespace("chrome::android")
+@NullMarked
 public class RevenueStats {
-    private static RevenueStats sInstance;
+    private static @Nullable RevenueStats sInstance;
 
     /** Returns the singleton instance of ExternalAuthUtils, creating it if needed. */
     public static RevenueStats getInstance() {
         assert ThreadUtils.runningOnUiThread();
         if (sInstance == null) {
-            sInstance = AppHooks.get().createRevenueStatsInstance();
+            RevenueStats instance = ServiceLoaderUtil.maybeCreate(RevenueStats.class);
+            if (instance == null) {
+                instance = new RevenueStats();
+            }
+            sInstance = instance;
         }
 
         return sInstance;
@@ -76,7 +82,7 @@ public class RevenueStats {
     public interface Natives {
         void setSearchClient(@JniType("std::string") String client);
 
-        void setCustomTabSearchClient(String client);
+        void setCustomTabSearchClient(@Nullable String client);
 
         void setRlzParameterValue(@JniType("std::u16string") String rlz);
     }

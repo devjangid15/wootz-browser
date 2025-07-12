@@ -217,6 +217,7 @@ class ExtensionsToolbarContainer : public ToolbarIconContainerView,
   content::WebContents* GetCurrentWebContents() override;
   views::LabelButton* GetOverflowReferenceView() const override;
   gfx::Size GetToolbarActionSize() override;
+  void MovePinnedActionBy(const std::string& action_id, int move_by) override;
   void WriteDragDataForView(View* sender,
                             const gfx::Point& press_pt,
                             ui::OSExchangeData* data) override;
@@ -276,7 +277,7 @@ class ExtensionsToolbarContainer : public ToolbarIconContainerView,
   void SetExtensionIconVisibility(ToolbarActionsModel::ActionId id,
                                   bool visible);
 
-  // Returns whether the contianer should be showing, e.g. not if there are no
+  // Returns whether the container should be showing, e.g. not if there are no
   // extensions installed, nor if the container is inactive in kAutoHide mode.
   bool ShouldContainerBeVisible() const;
 
@@ -326,13 +327,14 @@ class ExtensionsToolbarContainer : public ToolbarIconContainerView,
   std::unique_ptr<ToolbarActionHoverCardController>
       action_hover_card_controller_;
 
-  // TODO(pbos): Create actions and icons only for pinned pinned / popped out
-  // actions (lazily). Currently code expects GetActionForId() to return
-  // actions for extensions that aren't visible.
+  // TODO(pbos): Create actions and icons only for pinned / popped out actions
+  // (lazily). Currently code expects GetActionForId() to return actions for
+  // extensions that aren't visible.
   // Actions for all extensions.
   std::vector<std::unique_ptr<ToolbarActionViewController>> actions_;
   // View for every action, does not imply pinned or currently shown.
   ToolbarIcons icons_;
+
   // Popped-out extension, if any.
   std::optional<extensions::ExtensionId> popped_out_action_;
   // The action that triggered the current popup, if any.
@@ -343,7 +345,7 @@ class ExtensionsToolbarContainer : public ToolbarIconContainerView,
   raw_ptr<ToolbarButton> close_side_panel_button_ = nullptr;
   // Used to ensure the button remains highlighted while active.
   std::optional<views::Button::ScopedAnchorHighlight>
-      close_side_panel_button_anchor_higlight_;
+      close_side_panel_button_anchor_highlight_;
 
   // The widgets currently popped out and, for each, the extension it is
   // associated with. See AnchoredWidget.

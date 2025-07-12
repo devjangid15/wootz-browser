@@ -57,6 +57,7 @@ class MediaMetricsProviderTest : public testing::Test {
         MediaMetricsProvider::GetLearningSessionCallback(),
         base::BindRepeating(&MediaMetricsProviderTest::IsShuttingDown,
                             base::Unretained(this)),
+        PictureInPictureEventsInfo::AutoPipReasonCallback(),
         provider_.BindNewPipeAndPassReceiver());
     provider_->Initialize(is_mse, scheme, media_stream_type);
   }
@@ -275,6 +276,7 @@ TEST_F(MediaMetricsProviderTest, TestPipelineUMADecoderFallback) {
   base::HistogramTester histogram_tester;
   Initialize(false, false, false, kTestOrigin, mojom::MediaURLScheme::kHttps);
   provider_->SetIsEME();
+  provider_->SetIsHardwareSecure();
   provider_->SetAudioPipelineInfo(
       {false, false, AudioDecoderType::kMojo, EncryptionType::kClear});
   provider_->SetVideoPipelineInfo(
@@ -286,8 +288,13 @@ TEST_F(MediaMetricsProviderTest, TestPipelineUMADecoderFallback) {
   provider_->SetVideoPipelineInfo({true, false, VideoDecoderType::kFFmpeg});
   provider_.reset();
   base::RunLoop().RunUntilIdle();
+#if BUILDFLAG(IS_ANDROID)
   histogram_tester.ExpectBucketCount("Media.PipelineStatus.AudioVideo.VP9.HW",
                                      PIPELINE_OK, 1);
+#else   // BUILDFLAG(IS_ANDROID)
+  histogram_tester.ExpectBucketCount(
+      "Media.PipelineStatus.AudioVideo.VP9.HardwareSecure.HW", PIPELINE_OK, 1);
+#endif  // BUILDFLAG(IS_ANDROID)
   histogram_tester.ExpectBucketCount("Media.VideoDecoderFallback.VP9", true, 1);
   histogram_tester.ExpectBucketCount("Media.HasEverPlayed", true, 1);
 }
@@ -346,6 +353,26 @@ TEST_F(MediaMetricsProviderTest, TestPipelineUMAMediaDrmHardwareSecure) {
   histogram_tester.ExpectBucketCount(
       "Media.PipelineStatus.AudioVideo.VP9.MediaDrm.HardwareSecure",
       PIPELINE_OK, 1);
+}
+#else   // BUILDFLAG(IS_ANDROID)
+TEST_F(MediaMetricsProviderTest, TestPipelineUMAHardwareDecoderHardwareSecure) {
+  base::HistogramTester histogram_tester;
+  Initialize(false, false, false, kTestOrigin, mojom::MediaURLScheme::kHttps);
+  provider_->SetIsEME();
+  provider_->SetIsHardwareSecure();
+  provider_->SetAudioPipelineInfo(
+      {false, false, AudioDecoderType::kMojo, EncryptionType::kClear});
+  provider_->SetVideoPipelineInfo(
+      {true, false, VideoDecoderType::kD3D11, EncryptionType::kEncrypted});
+  provider_->SetHasVideo(VideoCodec::kVP9);
+  provider_->SetHasAudio(AudioCodec::kVorbis);
+  provider_->SetHasPlayed();
+  provider_->SetHaveEnough();
+  provider_.reset();
+  base::RunLoop().RunUntilIdle();
+  histogram_tester.ExpectBucketCount(
+      "Media.PipelineStatus.AudioVideo.VP9.HardwareSecure.HW", PIPELINE_OK, 1);
+  histogram_tester.ExpectBucketCount("Media.HasEverPlayed", true, 1);
 }
 #endif  // BUILDFLAG(IS_ANDROID)
 

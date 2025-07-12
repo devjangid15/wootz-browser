@@ -18,21 +18,22 @@
 #include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_renderer_host.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/events/android/motion_event_android.h"
+#include "ui/events/android/motion_event_android_java.h"
+#include "ui/events/motionevent_jni_headers/MotionEvent_jni.h"
 
 namespace content {
 namespace {
 
-ui::MotionEventAndroid CreateTouchEventAt(
+std::unique_ptr<ui::MotionEventAndroid> CreateTouchEventAt(
     float x,
     float y,
-    jobject event,
+    const base::android::JavaRef<jobject>& event,
     base::TimeTicks event_time = base::TimeTicks()) {
-  ui::MotionEventAndroid::Pointer pointer0(0, x, y, 0, 0, 0, 0, 0);
-  ui::MotionEventAndroid::Pointer pointer1(0, 0, 0, 0, 0, 0, 0, 0);
-  return ui::MotionEventAndroid(nullptr, event, 1.f, 0, 0, 0, event_time, 0, 1,
-                                0, 0, 0, 0, 0, 0, 0, 0, false, &pointer0,
-                                &pointer1);
+  JNIEnv* env = jni_zero::AttachCurrentThread();
+  ui::MotionEventAndroid::Pointer pointer0(0, x, y, 0, 0, 0, 0, 0, 0);
+  return std::unique_ptr<ui::MotionEventAndroid>(new ui::MotionEventAndroidJava(
+      env, event, 1.f, 0, 0, 0, event_time, 0, 1, 0, 0, 0, 0, 0, 0, 0, false,
+      &pointer0, nullptr));
 }
 
 }  // namespace
@@ -81,11 +82,18 @@ TEST_F(AttributionInputEventTrackerAndroidTest, EventExpiryApplied) {
   EXPECT_TRUE(input1.event.is_null());
   EXPECT_FALSE(input1.id.has_value());
 
-  base::android::ScopedJavaLocalRef<jstring> str = GetJavaString("str");
-  OnTouchEvent(CreateTouchEventAt(100.f, 100.f, str.obj()));
+  JNIEnv* env = base::android::AttachCurrentThread();
+  base::android::ScopedJavaLocalRef<jobject> obj =
+      JNI_MotionEvent::Java_MotionEvent_obtain(
+          env, /*downTime=*/0, /*eventTime=*/0, /*action=*/0, /*x=*/0, /*y=*/0,
+          /*metaState=*/0);
+
+  std::unique_ptr<ui::MotionEventAndroid> event =
+      CreateTouchEventAt(100.f, 100.f, obj);
+  OnTouchEvent(*event);
   AttributionInputEventTrackerAndroid::InputEvent input2 =
       input_event_tracker_->GetMostRecentEvent();
-  EXPECT_TRUE(IsSameObject(input2.event, str));
+  EXPECT_TRUE(IsSameObject(input2.event, obj));
   EXPECT_TRUE(input2.id.has_value());
   EXPECT_GE(input2.id, 1u);
 
@@ -94,7 +102,7 @@ TEST_F(AttributionInputEventTrackerAndroidTest, EventExpiryApplied) {
 
   AttributionInputEventTrackerAndroid::InputEvent input3 =
       input_event_tracker_->GetMostRecentEvent();
-  EXPECT_TRUE(IsSameObject(input3.event, str));
+  EXPECT_TRUE(IsSameObject(input3.event, obj));
   EXPECT_EQ(input2.id, input3.id);
 
   task_environment()->FastForwardBy(base::Milliseconds(1));

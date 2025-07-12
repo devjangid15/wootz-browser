@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/views/commerce/price_tracking_view.h"
 
 #include "base/metrics/user_metrics.h"
+#include "base/strings/string_number_conversions.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/commerce/shopping_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -21,6 +22,7 @@
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/geometry/insets_outsets_base.h"
 #include "ui/gfx/paint_vector_icon.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/background.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/button/toggle_button.h"
@@ -120,7 +122,7 @@ PriceTrackingView::PriceTrackingView(Profile* profile,
   scoped_observation_.Observe(
       commerce::ShoppingServiceFactory::GetForBrowserContext(profile_));
 
-  toggle_button_->SetAccessibleName(GetToggleAccessibleName());
+  toggle_button_->GetViewAccessibility().SetName(GetToggleAccessibleName());
   toggle_button_->SetProperty(views::kMarginsKey,
                               gfx::Insets::TLBR(0, horizontal_spacing, 0, 0));
 
@@ -170,7 +172,7 @@ void PriceTrackingView::HandleSubscriptionUpdate(
           commerce::kInvalidSubscriptionId)) == sub.id) {
     is_price_track_enabled_ = is_tracking;
     toggle_button_->SetIsOn(is_tracking);
-    toggle_button_->SetAccessibleName(GetToggleAccessibleName());
+    toggle_button_->GetViewAccessibility().SetName(GetToggleAccessibleName());
   }
 }
 
@@ -189,7 +191,7 @@ void PriceTrackingView::OnToggleButtonPressed(const GURL& url) {
         "Commerce.PriceTracking.BookmarkDialogPriceTrackViewUntrackedPrice"));
   }
 
-  toggle_button_->SetAccessibleName(GetToggleAccessibleName());
+  toggle_button_->GetViewAccessibility().SetName(GetToggleAccessibleName());
   UpdatePriceTrackingState(url);
 }
 
@@ -229,7 +231,7 @@ void PriceTrackingView::OnPriceTrackingStateUpdated(bool success) {
   if (!success) {
     is_price_track_enabled_ = !is_price_track_enabled_;
     toggle_button_->SetIsOn(is_price_track_enabled_);
-    toggle_button_->SetAccessibleName(GetToggleAccessibleName());
+    toggle_button_->GetViewAccessibility().SetName(GetToggleAccessibleName());
     body_label_->SetText(l10n_util::GetStringUTF16(
         IDS_OMNIBOX_TRACK_PRICE_DIALOG_ERROR_DESCRIPTION));
   }

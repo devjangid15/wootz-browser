@@ -13,6 +13,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "extensions/common/api/messaging/port_id.h"
+#include "extensions/common/mojom/message_port.mojom.h"
 #include "extensions/renderer/bindings/api_binding_util.h"
 #include "gin/wrappable.h"
 #include "v8/include/v8-forward.h"
@@ -30,7 +31,7 @@ struct Message;
 // other. This message-passing usually involves IPCs to the browser; we delegate
 // out this responsibility. This class only handles the JS interface (both calls
 // from JS and forward events to JS).
-class GinPort final : public gin::Wrappable<GinPort> {
+class GinPort final : public gin::DeprecatedWrappable<GinPort> {
  public:
   class Delegate {
    public:
@@ -49,6 +50,7 @@ class GinPort final : public gin::Wrappable<GinPort> {
   GinPort(v8::Local<v8::Context> context,
           const PortId& port_id,
           const std::string& name,
+          const mojom::ChannelType channel_type,
           APIEventHandler* event_handler,
           Delegate* delegate);
 
@@ -57,7 +59,7 @@ class GinPort final : public gin::Wrappable<GinPort> {
 
   ~GinPort() override;
 
-  static gin::WrapperInfo kWrapperInfo;
+  static gin::DeprecatedWrapperInfo kWrapperInfo;
 
   // gin::Wrappable:
   gin::ObjectTemplateBuilder GetObjectTemplateBuilder(
@@ -72,7 +74,7 @@ class GinPort final : public gin::Wrappable<GinPort> {
   // the port.
   void DispatchOnDisconnect(v8::Local<v8::Context> context);
 
-  // Sets the |sender| property on the port. Note: this can only be called
+  // Sets the `sender` property on the port. Note: this can only be called
   // before the `sender` property is accessed on the JS object, since it is
   // lazily set as a data property in first access.
   void SetSender(v8::Local<v8::Context> context, v8::Local<v8::Value> sender);
@@ -80,10 +82,10 @@ class GinPort final : public gin::Wrappable<GinPort> {
   const PortId& port_id() const { return port_id_; }
   const std::string& name() const { return name_; }
 
-  bool is_closed_for_testing() const { return state_ == kDisconnected; }
+  bool is_closed_for_testing() const { return state_ == State::kDisconnected; }
 
  private:
-  enum State {
+  enum class State {
     kActive,        // The port is currently active.
     kDisconnected,  // The port was disconnected by calling port.disconnect().
     kInvalidated,   // The associated v8::Context has been invalidated.
@@ -105,7 +107,7 @@ class GinPort final : public gin::Wrappable<GinPort> {
   // Port.sender
   v8::Local<v8::Value> GetSender(gin::Arguments* arguments);
 
-  // Helper method to return the event with the given |name| (either
+  // Helper method to return the event with the given `name` (either
   // onDisconnect or onMessage).
   v8::Local<v8::Object> GetEvent(v8::Local<v8::Context> context,
                                  std::string_view event_name);
@@ -122,17 +124,20 @@ class GinPort final : public gin::Wrappable<GinPort> {
   // Invalidates the port's events after the port has been disconnected.
   void InvalidateEvents(v8::Local<v8::Context> context);
 
-  // Throws the given |error|.
+  // Throws the given `error`.
   void ThrowError(v8::Isolate* isolate, std::string_view error);
 
   // The current state of the port.
-  State state_ = kActive;
+  State state_ = State::kActive;
 
   // The associated port id.
   const PortId port_id_;
 
   // The port's name.
   const std::string name_;
+
+  // The type of the associated channel.
+  const mojom::ChannelType channel_type_;
 
   // The associated APIEventHandler. Guaranteed to outlive this object.
   const raw_ptr<APIEventHandler> event_handler_;
@@ -146,7 +151,7 @@ class GinPort final : public gin::Wrappable<GinPort> {
   bool accessed_sender_;
 
   // A listener for context invalidation. Note: this isn't actually optional;
-  // it just needs to be created after |weak_factory_|, which needs to be the
+  // it just needs to be created after `weak_factory_`, which needs to be the
   // final member.
   std::optional<binding::ContextInvalidationListener>
       context_invalidation_listener_;

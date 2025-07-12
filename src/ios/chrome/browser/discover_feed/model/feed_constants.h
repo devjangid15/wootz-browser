@@ -37,6 +37,14 @@ typedef NS_ENUM(NSInteger, FeedUpdateType) {
   FeedUpdateTypeResumeFromBackground,
 };
 
+// Enum representing the different types of updates to the feed layout.
+typedef NS_ENUM(NSInteger, FeedLayoutUpdateType) {
+  FeedLayoutUpdateTypeUnknown = 0,
+  FeedLayoutUpdateTypeAdd,
+  FeedLayoutUpdateTypeDelete,
+  FeedLayoutUpdateTypeReload,
+};
+
 // The types of sorting for the Following feed.
 typedef NS_ENUM(NSInteger, FollowingFeedSortType) {
   // Does not provide a sort type. Used for non-Following feeds.
@@ -47,8 +55,17 @@ typedef NS_ENUM(NSInteger, FollowingFeedSortType) {
   FollowingFeedSortTypeByLatest
 };
 
-// The identifier used to register and schedule background feed refresh tasks.
-extern NSString* const kFeedBackgroundRefreshTaskIdentifier;
+/// Enums representing whether the user is eligible to view the feed, and if
+/// not, why.
+enum class DiscoverFeedEligibility {
+  /// User is eligible for the Discover feed.
+  kEligible,
+  /// Feed is ineligible for an unknown reason.
+  kIneligibleReasonUnknown,
+  /// Feed is ineligible because a managed account is being used, and feed is
+  /// not allowed by enterprise settings.
+  kDisabledByEnterprisePolicy,
+};
 
 // The user defaults key indicating if the user has ever engaged with a feed.
 extern NSString* const kEngagedWithFeedKey;

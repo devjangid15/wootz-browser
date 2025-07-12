@@ -12,6 +12,7 @@
 
 #include "base/check_op.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "base/win/scoped_gdi_object.h"
 #include "base/win/windows_types.h"
@@ -121,11 +122,9 @@ const wchar_t* GetCursorId(mojom::CursorType type) {
       return IDC_ARROW;
     case mojom::CursorType::kNone:
     case mojom::CursorType::kCustom:
-      NOTREACHED_IN_MIGRATION();
-      return IDC_ARROW;
+      NOTREACHED();
   }
-  NOTREACHED_IN_MIGRATION();
-  return IDC_ARROW;
+  NOTREACHED();
 }
 
 }  // namespace

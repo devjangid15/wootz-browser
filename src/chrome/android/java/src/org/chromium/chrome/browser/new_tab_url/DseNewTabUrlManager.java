@@ -4,52 +4,38 @@
 
 package org.chromium.chrome.browser.new_tab_url;
 
-import androidx.annotation.Nullable;
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.Callback;
-import org.chromium.base.cached_flags.BooleanCachedFieldTrialParameter;
 import org.chromium.base.supplier.ObservableSupplier;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
+import org.chromium.build.annotations.MonotonicNonNull;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
 import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
 import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.chrome.browser.regional_capabilities.RegionalCapabilitiesServiceFactory;
 import org.chromium.chrome.browser.search_engines.TemplateUrlServiceFactory;
-import org.chromium.components.embedder_support.util.UrlUtilities;
+import org.chromium.components.omnibox.OmniboxFeatures;
+import org.chromium.components.regional_capabilities.RegionalCapabilitiesService;
 import org.chromium.components.search_engines.TemplateUrl;
 import org.chromium.components.search_engines.TemplateUrlService;
-import org.chromium.url.GURL;
+import org.chromium.components.search_engines.TemplateUrlService.TemplateUrlServiceObserver;
 
 /**
  * A central class for feature NewTabSearchEngineUrlAndroid which swaps out NTP if the default
  * search engine isn't Google. It holds a reference of {@link TemplateUrlService} and observes the
  * DSE changes to update the cached values in the SharedPreference.
  */
+@NullMarked
 public class DseNewTabUrlManager {
     private ObservableSupplier<Profile> mProfileSupplier;
-    private Callback<Profile> mProfileCallback;
-    private TemplateUrlService mTemplateUrlService;
-
-    private static final String SWAP_OUT_NTP_PARAM = "swap_out_ntp";
-    public static final BooleanCachedFieldTrialParameter SWAP_OUT_NTP =
-            ChromeFeatureList.newBooleanCachedFieldTrialParameter(
-                    ChromeFeatureList.NEW_TAB_SEARCH_ENGINE_URL_ANDROID, SWAP_OUT_NTP_PARAM, false);
-
-    // A parameter of whether to enable the feature for users in EEA countries only.
-    private static final String EEA_COUNTRY_ONLY_PARAM = "eea_country_only";
-    public static final BooleanCachedFieldTrialParameter EEA_COUNTRY_ONLY =
-            ChromeFeatureList.newBooleanCachedFieldTrialParameter(
-                    ChromeFeatureList.NEW_TAB_SEARCH_ENGINE_URL_ANDROID,
-                    EEA_COUNTRY_ONLY_PARAM,
-                    true);
-
-    // A parameter of whether to skip the check for users in EEA countries only.
-    private static final String SKIP_EEA_COUNTRY_CHECK_PARAM = "skip_eea_country_check";
-    public static final BooleanCachedFieldTrialParameter SKIP_EEA_COUNTRY_CHECK =
-            ChromeFeatureList.newBooleanCachedFieldTrialParameter(
-                    ChromeFeatureList.NEW_TAB_SEARCH_ENGINE_URL_ANDROID,
-                    SKIP_EEA_COUNTRY_CHECK_PARAM,
-                    false);
+    private @Nullable Callback<Profile> mProfileCallback;
+    private @MonotonicNonNull RegionalCapabilitiesService mRegionalCapabilities;
+    private @MonotonicNonNull TemplateUrlService mTemplateUrlService;
+    private @MonotonicNonNull TemplateUrlServiceObserver mTemplateUrlServiceObserver;
 
     public DseNewTabUrlManager(ObservableSupplier<Profile> profileSupplier) {
         mProfileSupplier = profileSupplier;
@@ -57,79 +43,27 @@ public class DseNewTabUrlManager {
         mProfileSupplier.addObserver(mProfileCallback);
     }
 
-    /**
-     * Returns the new Tab URL of the default search engine if should override any NTP's URL.
-     * Returns the given URL if don't need to override.
-     * @param gurl The GURL to check.
-     */
-    public GURL maybeGetOverrideUrl(GURL gurl) {
-        if (isIncognito()
-                || !shouldSwapOutNtp()
-                || isDefaultSearchEngineGoogle()
-                || !UrlUtilities.isNtpUrl(gurl)) {
-            return gurl;
-        }
-
-        String newTabUrl = getDSENewTabUrl(mTemplateUrlService);
-        return newTabUrl != null ? new GURL(newTabUrl) : gurl;
-    }
-
-    /** Returns the new Tab URL of the default search engine. */
-    @Nullable
-    public String getDSENewTabUrl() {
-        return getDSENewTabUrl(mTemplateUrlService);
-    }
-
+    @SuppressWarnings("NullAway")
     public void destroy() {
+        mRegionalCapabilities = null;
         if (mProfileSupplier != null && mProfileCallback != null) {
             mProfileSupplier.removeObserver(mProfileCallback);
             mProfileCallback = null;
             mProfileSupplier = null;
         }
         if (mTemplateUrlService != null) {
-            mTemplateUrlService.removeObserver(this::onTemplateURLServiceChanged);
+            mTemplateUrlService.removeObserver(mTemplateUrlServiceObserver);
+            mTemplateUrlServiceObserver = null;
             mTemplateUrlService = null;
         }
     }
 
-    /**
-     * Returns the new Tab URL of the default search engine if should override any NTP's URL.
-     * Returns the given URL if don't need to override.
-     *
-     * @param gurl The URL to check.
-     * @param profile The instance of the current {@link Profile}.
-     */
-    public static GURL maybeGetOverrideUrl(GURL gurl, Profile profile) {
-        if ((profile != null && profile.isOffTheRecord())
-                || !shouldSwapOutNtp()
-                || isDefaultSearchEngineGoogle()
-                || !UrlUtilities.isNtpUrl(gurl)) {
-            return gurl;
-        }
-
-        TemplateUrlService templateUrlService =
-                profile != null ? TemplateUrlServiceFactory.getForProfile(profile) : null;
-        String newTabUrl = getDSENewTabUrl(templateUrlService);
-        return newTabUrl != null ? new GURL(newTabUrl) : gurl;
-    }
-
     /** Returns whether the feature NewTabSearchEngineUrlAndroid is enabled. */
     public static boolean isNewTabSearchEngineUrlAndroidEnabled() {
-        return ChromeFeatureList.sNewTabSearchEngineUrlAndroid.isEnabled()
-                && (SKIP_EEA_COUNTRY_CHECK.getValue()
-                        || (EEA_COUNTRY_ONLY.getValue()
-                                && ChromeSharedPreferences.getInstance()
-                                        .readBoolean(
-                                                ChromePreferenceKeys.IS_EEA_CHOICE_COUNTRY,
-                                                false)));
-    }
-
-    /**
-     * Returns whether the parameter SWAP_OUT_NTP is enabled. Note: this method only checks parts of
-     * isNewTabSearchEngineUrlAndroidEnabled(), i.e., it doesn't check country code.
-     */
-    public static boolean isSwapOutNtpFlagEnabled() {
-        return ChromeFeatureList.sTabResumptionModuleAndroid.isEnabled() && SWAP_OUT_NTP.getValue();
+        return ChromeSharedPreferences.getInstance()
+                        .readBoolean(ChromePreferenceKeys.IS_EEA_CHOICE_COUNTRY, false)
+                || (OmniboxFeatures.sOmniboxMobileParityUpdate.isEnabled()
+                        && OmniboxFeatures.sOmniboxParityEnableFeedOnlyForGoogle.getValue());
     }
 
     /**
@@ -148,8 +82,7 @@ public class DseNewTabUrlManager {
      * 3. Returns the default search engine's URL if the DSE doesn't provide a new Tab Url.
      * @param templateUrlService The instance of {@link TemplateUrlService}.
      */
-    @Nullable
-    public static String getDSENewTabUrl(TemplateUrlService templateUrlService) {
+    public static @Nullable String getDSENewTabUrl(TemplateUrlService templateUrlService) {
         if (templateUrlService == null) {
             return ChromeSharedPreferences.getInstance()
                     .readString(ChromePreferenceKeys.DSE_NEW_TAB_URL, null);
@@ -165,27 +98,29 @@ public class DseNewTabUrlManager {
     }
 
     @VisibleForTesting
-    public boolean isIncognito() {
-        return mProfileSupplier.hasValue() ? mProfileSupplier.get().isOffTheRecord() : false;
-    }
-
-    @VisibleForTesting
     void onProfileAvailable(Profile profile) {
+        mRegionalCapabilities = RegionalCapabilitiesServiceFactory.getForProfile(profile);
         mTemplateUrlService = TemplateUrlServiceFactory.getForProfile(profile);
-        mTemplateUrlService.addObserver(this::onTemplateURLServiceChanged);
+        if (mTemplateUrlServiceObserver == null) {
+            mTemplateUrlServiceObserver = this::onTemplateURLServiceChanged;
+            mTemplateUrlService.addObserver(mTemplateUrlServiceObserver);
+        }
         onTemplateURLServiceChanged();
+        assumeNonNull(mProfileCallback);
         mProfileSupplier.removeObserver(mProfileCallback);
         mProfileCallback = null;
     }
 
     private void onTemplateURLServiceChanged() {
+        assumeNonNull(mRegionalCapabilities);
+        assumeNonNull(mTemplateUrlService);
         boolean isDSEGoogle = mTemplateUrlService.isDefaultSearchEngineGoogle();
         ChromeSharedPreferences.getInstance()
                 .writeBoolean(ChromePreferenceKeys.IS_DSE_GOOGLE, isDSEGoogle);
         ChromeSharedPreferences.getInstance()
                 .writeBoolean(
                         ChromePreferenceKeys.IS_EEA_CHOICE_COUNTRY,
-                        mTemplateUrlService.isEeaChoiceCountry());
+                        mRegionalCapabilities.isInEeaCountry());
         if (isDSEGoogle) {
             ChromeSharedPreferences.getInstance().removeKey(ChromePreferenceKeys.DSE_NEW_TAB_URL);
         } else {
@@ -196,11 +131,7 @@ public class DseNewTabUrlManager {
         }
     }
 
-    private static boolean shouldSwapOutNtp() {
-        return isNewTabSearchEngineUrlAndroidEnabled() && SWAP_OUT_NTP.getValue();
-    }
-
-    public TemplateUrlService getTemplateUrlServiceForTesting() {
+    public @Nullable TemplateUrlService getTemplateUrlServiceForTesting() {
         return mTemplateUrlService;
     }
 

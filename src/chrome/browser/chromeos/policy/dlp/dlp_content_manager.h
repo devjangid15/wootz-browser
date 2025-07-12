@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_CHROMEOS_POLICY_DLP_DLP_CONTENT_MANAGER_H_
 #define CHROME_BROWSER_CHROMEOS_POLICY_DLP_DLP_CONTENT_MANAGER_H_
 
+#include <array>
 #include <memory>
 #include <string>
 #include <utility>
@@ -192,7 +193,6 @@ class DlpContentManager : public DlpContentObserver,
         content::MediaStreamUI::SourceCallback source_callback);
 
     bool operator==(const ScreenShareInfo& other) const;
-    bool operator!=(const ScreenShareInfo& other) const;
 
     const content::DesktopMediaID& media_id() const;
     const content::DesktopMediaID& new_media_id() const;

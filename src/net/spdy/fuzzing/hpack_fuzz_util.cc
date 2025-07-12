@@ -8,15 +8,18 @@
 #include <cmath>
 #include <memory>
 
+#include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/numerics/byte_conversions.h"
 #include "base/rand_util.h"
-#include "net/third_party/quiche/src/quiche/spdy/core/hpack/hpack_constants.h"
-#include "net/third_party/quiche/src/quiche/spdy/core/recording_headers_handler.h"
+#include "net/third_party/quiche/src/quiche/common/http/http_header_block.h"
+#include "net/third_party/quiche/src/quiche/http2/hpack/hpack_constants.h"
 
 namespace spdy {
 
 namespace {
+
+using quiche::HttpHeaderBlock;
 
 // Sampled exponential distribution parameters:
 // Number of headers in each header set.
@@ -73,9 +76,9 @@ void HpackFuzzUtil::InitializeGeneratorContext(GeneratorContext* context) {
 }
 
 // static
-Http2HeaderBlock HpackFuzzUtil::NextGeneratedHeaderSet(
+HttpHeaderBlock HpackFuzzUtil::NextGeneratedHeaderSet(
     GeneratorContext* context) {
-  Http2HeaderBlock headers;
+  HttpHeaderBlock headers;
 
   size_t header_count =
       1 + SampleExponential(kHeaderCountMean, kHeaderCountMax);
@@ -186,7 +189,7 @@ void HpackFuzzUtil::FlipBits(uint8_t* buffer,
   // Iteratively identify & flip offsets in the buffer bit-sequence.
   for (uint64_t i = 0; i != bits_to_flip; ++i) {
     uint64_t bit_offset = base::RandUint64() % buffer_bit_length;
-    buffer[bit_offset / 8u] ^= (1 << (bit_offset % 8u));
+    UNSAFE_TODO(buffer[bit_offset / 8u]) ^= (1 << (bit_offset % 8u));
   }
 }
 

@@ -97,11 +97,6 @@ class FakeDownloadDisplay : public DownloadDisplay {
   void AnnounceAccessibleAlertNow(const std::u16string& alert_text) override {
     ++announcement_count_;
   }
-  bool OpenMostSpecificDialog(
-      const offline_items_collection::ContentId& content_id) override {
-    detail_shown_ = true;
-    return true;
-  }
   bool IsFullscreenWithParentViewHidden() const override {
     return is_fullscreen_;
   }
@@ -311,7 +306,7 @@ class DownloadDisplayControllerTest : public testing::Test {
     Browser::CreateParams params(profile_, true);
     params.type = Browser::TYPE_NORMAL;
     params.window = window_.get();
-    browser_ = std::unique_ptr<Browser>(Browser::Create(params));
+    browser_ = Browser::DeprecatedCreateOwnedForTesting(params);
     bubble_controller_ = std::make_unique<DownloadBubbleUIController>(
         browser_.get(), mock_update_service_.get());
     controller_ = std::make_unique<DownloadDisplayController>(

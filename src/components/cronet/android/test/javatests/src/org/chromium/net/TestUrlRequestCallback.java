@@ -20,13 +20,13 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Callback that tracks information from different callbacks and and has a
- * method to block thread until the request completes on another thread.
- * Allows to cancel, block request or throw an exception from an arbitrary step.
+ * Callback that tracks information from different callbacks and and has a method to block thread
+ * until the request completes on another thread. Allows to cancel, block request or throw an
+ * exception from an arbitrary step.
  */
 public class TestUrlRequestCallback extends UrlRequest.Callback {
-    public ArrayList<UrlResponseInfo> mRedirectResponseInfoList = new ArrayList<UrlResponseInfo>();
-    public ArrayList<String> mRedirectUrlList = new ArrayList<String>();
+    public ArrayList<UrlResponseInfo> mRedirectResponseInfoList = new ArrayList<>();
+    public ArrayList<String> mRedirectUrlList = new ArrayList<>();
     private UrlResponseInfo mResponseInfo;
     public CronetException mError;
 
@@ -52,7 +52,7 @@ public class TestUrlRequestCallback extends UrlRequest.Callback {
 
     // The executor thread will block on this after reaching a terminal method.
     // Terminal methods are (onSucceeded, onFailed or onCancelled)
-    private ConditionVariable mBlockOnTerminalState = new ConditionVariable(true);
+    private final ConditionVariable mBlockOnTerminalState = new ConditionVariable(true);
 
     // Conditionally fail on certain steps.
     private FailureType mFailureType = FailureType.NONE;
@@ -198,7 +198,7 @@ public class TestUrlRequestCallback extends UrlRequest.Callback {
             // Termination shouldn't take long. Use 1 min which should be more than enough.
             mExecutorService.awaitTermination(1, TimeUnit.MINUTES);
         } catch (InterruptedException e) {
-            fail("ExecutorService is interrupted while waiting for termination");
+            throw new RuntimeException(e);
         }
         assertThat(mExecutorService.isTerminated()).isTrue();
     }
@@ -322,6 +322,7 @@ public class TestUrlRequestCallback extends UrlRequest.Callback {
         assertThat(mError).isNull();
 
         mResponseStep = ResponseStep.ON_CANCELED;
+        mResponseInfo = info;
         mOnCanceledCalled = true;
         openDone();
         mBlockOnTerminalState.block();

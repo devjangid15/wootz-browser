@@ -8,22 +8,31 @@
 
 #include <memory>
 
-#include "chrome/browser/android/tab_android.h"
+#include "base/auto_reset.h"
+#include "base/notimplemented.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/crx_installer.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
 #include "chrome/browser/extensions/extension_management.h"
 #include "chrome/browser/extensions/webstore_installer.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/android/tab_model/tab_model.h"
-#include "chrome/browser/ui/android/tab_model/tab_model_list.h"
-#include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_finder.h"
-#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "components/download/public/common/download_item.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/download_item_utils.h"
-#include "extensions/browser/extension_system.h"
+#include "extensions/buildflags/buildflags.h"
+#include "extensions/common/extension.h"
+#include "extensions/common/extension_urls.h"
 #include "extensions/common/user_script.h"
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_finder.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
+#else
+#include "base/notimplemented.h"
+#endif
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 using content::BrowserThread;
 using download::DownloadItem;
@@ -45,6 +54,7 @@ ExtensionInstallPrompt* mock_install_prompt_for_testing = nullptr;
 std::unique_ptr<ExtensionInstallPrompt> CreateExtensionInstallPrompt(
     Profile* profile,
     const DownloadItem& download_item) {
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   // Use a mock if one is present.  Otherwise, create a real extensions
   // install UI.
   if (mock_install_prompt_for_testing) {
@@ -56,20 +66,20 @@ std::unique_ptr<ExtensionInstallPrompt> CreateExtensionInstallPrompt(
         content::DownloadItemUtils::GetWebContents(
             const_cast<DownloadItem*>(&download_item));
     if (!web_contents) {
-      // Browser* browser = chrome::FindLastActiveWithProfile(profile);
-      // if (!browser) {
-      //   browser = Browser::Create(
-      //       Browser::CreateParams(Browser::TYPE_NORMAL, profile, true));
-      // }
-      // web_contents = browser->tab_strip_model()->GetActiveWebContents();
-      for (const TabModel* model : TabModelList::models()) {
-        if (model->IsActiveModel()) {
-          web_contents = model->GetActiveWebContents();
-        }
+      Browser* browser = chrome::FindLastActiveWithProfile(profile);
+      if (!browser) {
+        browser = Browser::Create(
+            Browser::CreateParams(Browser::TYPE_NORMAL, profile, true));
       }
+      web_contents = browser->tab_strip_model()->GetActiveWebContents();
     }
     return std::make_unique<ExtensionInstallPrompt>(web_contents);
   }
+#else
+  // TODO(crbug.com/397754565): Show extension install UI on desktop Android.
+  NOTIMPLEMENTED() << "CreateExtensionInstallPrompt";
+  return nullptr;
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 }
 
 }  // namespace
@@ -90,43 +100,40 @@ void SetMockInstallPromptForTesting(
 scoped_refptr<extensions::CrxInstaller> CreateCrxInstaller(
     Profile* profile,
     const download::DownloadItem& download_item) {
-  extensions::ExtensionService* service =
-      extensions::ExtensionSystem::Get(profile)->extension_service();
-  CHECK(service);
-
   scoped_refptr<extensions::CrxInstaller> installer(
       extensions::CrxInstaller::Create(
-          service, CreateExtensionInstallPrompt(profile, download_item),
-          nullptr));  // woots exts patch
-  // WebstoreInstaller::GetAssociatedApproval(download_item)));
+          profile, CreateExtensionInstallPrompt(profile, download_item),
+          WebstoreInstaller::GetAssociatedApproval(download_item)));
 
   installer->set_error_on_unsupported_requirements(true);
   installer->set_delete_source(true);
-  installer->set_install_cause(extension_misc::INSTALL_CAUSE_USER_DOWNLOAD);
+  installer->set_was_triggered_by_user_download();
   installer->set_original_mime_type(download_item.GetOriginalMimeType());
   installer->set_apps_require_extension_mime_type(true);
 
   return installer;
 }
 
-// bool IsExtensionDownload(const DownloadItem& download_item) {
-//   if (download_item.GetTargetDisposition() ==
-//       DownloadItem::TARGET_DISPOSITION_PROMPT)
-//     return false;
+bool IsExtensionDownload(const DownloadItem& download_item) {
+  if (download_item.GetTargetDisposition() ==
+      DownloadItem::TARGET_DISPOSITION_PROMPT)
+    return false;
 
-// if (download_item.GetMimeType() == extensions::Extension::kMimeType ||
-//     extensions::UserScript::IsURLUserScript(download_item.GetURL(),
-//                                             download_item.GetMimeType())) {
-//     return true;
-//   } else {
-//     return false;
-//   }
-// }
+  if (download_item.GetMimeType() == extensions::Extension::kMimeType ||
+      extensions::UserScript::IsURLUserScript(download_item.GetURL(),
+                                              download_item.GetMimeType())) {
+    return true;
+  } else {
+    return false;
+  }
+}
 
-// bool IsTrustedExtensionDownload(Profile* profile, const DownloadItem& item) {
-//   return IsExtensionDownload(item) &&
-//          OffStoreInstallAllowedByPrefs(profile, item);
-// }
+bool IsTrustedExtensionDownload(Profile* profile, const DownloadItem& item) {
+  return IsExtensionDownload(item) &&
+         (OffStoreInstallAllowedByPrefs(profile, item) ||
+          extension_urls::IsWebstoreUpdateUrl(item.GetOriginalUrl()) ||
+          extension_urls::IsWebstoreDomain(item.GetOriginalUrl()));
+}
 
 std::unique_ptr<base::AutoReset<bool>> OverrideOffstoreInstallAllowedForTesting(
     bool allowed) {

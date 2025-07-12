@@ -43,7 +43,7 @@ namespace {
 
 // An entry can store sparse data taking up to 1 / kMaxSparseDataSizeDivisor of
 // the cache.
-const int64_t kMaxSparseDataSizeDivisor = 10;
+constexpr int64_t kMaxSparseDataSizeDivisor = 10;
 
 OpenEntryIndexEnum ComputeIndexState(SimpleBackendImpl* backend,
                                      uint64_t entry_hash) {
@@ -142,21 +142,20 @@ SimpleEntryImpl::SimpleEntryImpl(
       entry_hash_(entry_hash),
       use_optimistic_operations_(operations_mode == OPTIMISTIC_OPERATIONS),
       last_used_(Time::Now()),
-      last_modified_(last_used_),
       prioritized_task_runner_(backend_->prioritized_task_runner()),
       net_log_(
           net::NetLogWithSource::Make(net_log,
                                       net::NetLogSourceType::DISK_CACHE_ENTRY)),
       stream_0_data_(base::MakeRefCounted<net::GrowableIOBuffer>()),
       entry_priority_(entry_priority) {
-  static_assert(std::extent<decltype(data_size_)>() ==
-                    std::extent<decltype(crc32s_end_offset_)>(),
+  static_assert(std::tuple_size<decltype(data_size_)>() ==
+                    std::tuple_size<decltype(crc32s_end_offset_)>(),
                 "arrays should be the same size");
-  static_assert(
-      std::extent<decltype(data_size_)>() == std::extent<decltype(crc32s_)>(),
-      "arrays should be the same size");
-  static_assert(std::extent<decltype(data_size_)>() ==
-                    std::extent<decltype(have_written_)>(),
+  static_assert(std::tuple_size<decltype(data_size_)>() ==
+                    std::tuple_size<decltype(crc32s_)>(),
+                "arrays should be the same size");
+  static_assert(std::tuple_size<decltype(data_size_)>() ==
+                    std::tuple_size<decltype(have_written_)>(),
                 "arrays should be the same size");
   ResetEntry();
   NetLogSimpleEntryConstruction(net_log_,
@@ -364,11 +363,6 @@ Time SimpleEntryImpl::GetLastUsed() const {
   return last_used_;
 }
 
-Time SimpleEntryImpl::GetLastModified() const {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return last_modified_;
-}
-
 int32_t SimpleEntryImpl::GetDataSize(int stream_index) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK_LE(0, data_size_[stream_index]);
@@ -389,7 +383,7 @@ int SimpleEntryImpl::ReadData(int stream_index,
   }
 
   if (stream_index < 0 || stream_index >= kSimpleEntryStreamCount ||
-      buf_len < 0) {
+      offset < 0 || buf_len < 0) {
     if (net_log_.IsCapturing()) {
       NetLogReadWriteComplete(
           net_log_, net::NetLogEventType::SIMPLE_CACHE_ENTRY_READ_END,
@@ -432,7 +426,7 @@ int SimpleEntryImpl::WriteData(int stream_index,
   }
 
   if (stream_index < 0 || stream_index >= kSimpleEntryStreamCount ||
-      offset < 0 || buf_len < 0) {
+      offset < 0 || buf_len < 0 || (!buf && buf_len != 0)) {
     if (net_log_.IsCapturing()) {
       NetLogReadWriteComplete(
           net_log_, net::NetLogEventType::SIMPLE_CACHE_ENTRY_WRITE_END,
@@ -440,6 +434,7 @@ int SimpleEntryImpl::WriteData(int stream_index,
     }
     return net::ERR_INVALID_ARGUMENT;
   }
+
   int end_offset;
   if (!base::CheckAdd(offset, buf_len).AssignIfValid(&end_offset) ||
       (backend_.get() && end_offset > backend_->MaxFileSize())) {
@@ -485,7 +480,8 @@ int SimpleEntryImpl::WriteData(int stream_index,
     // operations.
     if (buf) {
       op_buf = base::MakeRefCounted<net::IOBufferWithSize>(buf_len);
-      std::copy(buf->data(), buf->data() + buf_len, op_buf->data());
+      // Note: buf_len >= 0 per check at function entry.
+      op_buf->span().copy_from(buf->first(static_cast<unsigned>(buf_len)));
     }
     op_callback = CompletionOnceCallback();
     ret_value = buf_len;
@@ -523,15 +519,16 @@ int SimpleEntryImpl::ReadSparseData(int64_t offset,
     return net::ERR_INVALID_ARGUMENT;
   }
 
-  // Truncate |buf_len| to make sure that |offset + buf_len| does not overflow.
+  // Truncate `buf_len` to make sure that `offset + buf_len` does not overflow.
   // This is OK since one can't write that far anyway.
-  // The result of std::min is guaranteed to fit into int since |buf_len| did.
-  buf_len = std::min(static_cast<int64_t>(buf_len),
-                     std::numeric_limits<int64_t>::max() - offset);
+  // The result of std::min is guaranteed to fit into size_t since `buf_len`
+  // did.
+  size_t length = std::min(static_cast<int64_t>(buf_len),
+                           std::numeric_limits<int64_t>::max() - offset);
 
   ScopedOperationRunner operation_runner(this);
   pending_operations_.push(SimpleEntryOperation::ReadSparseOperation(
-      this, offset, buf_len, buf, std::move(callback)));
+      this, static_cast<uint64_t>(offset), length, buf, std::move(callback)));
   return net::ERR_IO_PENDING;
 }
 
@@ -558,7 +555,8 @@ int SimpleEntryImpl::WriteSparseData(int64_t offset,
 
   ScopedOperationRunner operation_runner(this);
   pending_operations_.push(SimpleEntryOperation::WriteSparseOperation(
-      this, offset, buf_len, buf, std::move(callback)));
+      this, static_cast<uint64_t>(offset), static_cast<size_t>(buf_len), buf,
+      std::move(callback)));
   return net::ERR_IO_PENDING;
 }
 
@@ -569,15 +567,16 @@ RangeResult SimpleEntryImpl::GetAvailableRange(int64_t offset,
   if (offset < 0 || len < 0)
     return RangeResult(net::ERR_INVALID_ARGUMENT);
 
-  // Truncate |len| to make sure that |offset + len| does not overflow.
+  // Truncate `buf_len` to make sure that `offset + buf_len` does not overflow.
   // This is OK since one can't write that far anyway.
-  // The result of std::min is guaranteed to fit into int since |len| did.
-  len = std::min(static_cast<int64_t>(len),
-                 std::numeric_limits<int64_t>::max() - offset);
+  // The result of std::min is guaranteed to fit into size_t since `buf_len`
+  // did.
+  size_t length = std::min(static_cast<int64_t>(len),
+                           std::numeric_limits<int64_t>::max() - offset);
 
   ScopedOperationRunner operation_runner(this);
   pending_operations_.push(SimpleEntryOperation::GetAvailableRangeOperation(
-      this, offset, len, std::move(callback)));
+      this, static_cast<uint64_t>(offset), length, std::move(callback)));
   return RangeResult(net::ERR_IO_PENDING);
 }
 
@@ -653,10 +652,10 @@ void SimpleEntryImpl::ResetEntry() {
   // we no longer own the name and are disconnected from the active entry table.
   // We preserve doom_state_ accross this entry for this same reason.
   state_ = doom_state_ == DOOM_COMPLETED ? STATE_FAILURE : STATE_UNINITIALIZED;
-  std::memset(crc32s_end_offset_, 0, sizeof(crc32s_end_offset_));
-  std::memset(crc32s_, 0, sizeof(crc32s_));
-  std::memset(have_written_, 0, sizeof(have_written_));
-  std::memset(data_size_, 0, sizeof(data_size_));
+  std::ranges::fill(crc32s_end_offset_, 0);
+  std::ranges::fill(crc32s_, 0);
+  std::ranges::fill(have_written_, 0);
+  std::ranges::fill(data_size_, 0);
 }
 
 void SimpleEntryImpl::ReturnEntryToCaller() {
@@ -740,22 +739,24 @@ void SimpleEntryImpl::RunNextOperationIfNeeded() {
         break;
       case SimpleEntryOperation::TYPE_READ_SPARSE:
         ReadSparseDataInternal(operation.sparse_offset(), operation.buf(),
-                               operation.length(), operation.ReleaseCallback());
+                               operation.sparse_length(),
+                               operation.ReleaseCallback());
         break;
       case SimpleEntryOperation::TYPE_WRITE_SPARSE:
         WriteSparseDataInternal(operation.sparse_offset(), operation.buf(),
-                                operation.length(),
+                                operation.sparse_length(),
                                 operation.ReleaseCallback());
         break;
       case SimpleEntryOperation::TYPE_GET_AVAILABLE_RANGE:
-        GetAvailableRangeInternal(operation.sparse_offset(), operation.length(),
+        GetAvailableRangeInternal(operation.sparse_offset(),
+                                  operation.sparse_length(),
                                   operation.ReleaseRangeResultCalback());
         break;
       case SimpleEntryOperation::TYPE_DOOM:
         DoomEntryInternal(operation.ReleaseCallback());
         break;
       default:
-        NOTREACHED_IN_MIGRATION();
+        NOTREACHED();
     }
     // |this| may have been deleted.
   }
@@ -791,10 +792,10 @@ void SimpleEntryImpl::OpenEntryInternal(
   DCHECK(!synchronous_entry_);
   state_ = STATE_IO_PENDING;
   const base::TimeTicks start_time = base::TimeTicks::Now();
-  auto results = std::make_unique<SimpleEntryCreationResults>(SimpleEntryStat(
-      last_used_, last_modified_, data_size_, sparse_data_size_));
+  auto results = std::make_unique<SimpleEntryCreationResults>(
+      SimpleEntryStat(last_used_, data_size_, sparse_data_size_));
 
-  int32_t trailer_prefetch_size = -1;
+  uint32_t trailer_prefetch_size = 0;
   base::Time last_used_time;
   if (SimpleBackendImpl* backend = backend_.get()) {
     if (cache_type_ == net::APP_CACHE) {
@@ -843,13 +844,13 @@ void SimpleEntryImpl::CreateEntryInternal(
 
   state_ = STATE_IO_PENDING;
 
-  // Since we don't know the correct values for |last_used_| and
-  // |last_modified_| yet, we make this approximation.
-  last_used_ = last_modified_ = base::Time::Now();
+  // Since we don't know the correct value for |last_used_| yet, we make this
+  // approximation.
+  last_used_ = base::Time::Now();
 
   const base::TimeTicks start_time = base::TimeTicks::Now();
-  auto results = std::make_unique<SimpleEntryCreationResults>(SimpleEntryStat(
-      last_used_, last_modified_, data_size_, sparse_data_size_));
+  auto results = std::make_unique<SimpleEntryCreationResults>(
+      SimpleEntryStat(last_used_, data_size_, sparse_data_size_));
 
   OnceClosure task =
       base::BindOnce(&SimpleSynchronousEntry::CreateEntry, cache_type_, path_,
@@ -898,10 +899,10 @@ void SimpleEntryImpl::OpenOrCreateEntryInternal(
   DCHECK(!synchronous_entry_);
   state_ = STATE_IO_PENDING;
   const base::TimeTicks start_time = base::TimeTicks::Now();
-  auto results = std::make_unique<SimpleEntryCreationResults>(SimpleEntryStat(
-      last_used_, last_modified_, data_size_, sparse_data_size_));
+  auto results = std::make_unique<SimpleEntryCreationResults>(
+      SimpleEntryStat(last_used_, data_size_, sparse_data_size_));
 
-  int32_t trailer_prefetch_size = -1;
+  uint32_t trailer_prefetch_size = 0;
   base::Time last_used_time;
   if (SimpleBackendImpl* backend = backend_.get()) {
     if (cache_type_ == net::APP_CACHE) {
@@ -962,8 +963,7 @@ void SimpleEntryImpl::CloseInternal() {
   if (synchronous_entry_) {
     OnceClosure task = base::BindOnce(
         &SimpleSynchronousEntry::Close, base::Unretained(synchronous_entry_),
-        SimpleEntryStat(last_used_, last_modified_, data_size_,
-                        sparse_data_size_),
+        SimpleEntryStat(last_used_, data_size_, sparse_data_size_),
         std::move(crc32s_to_write), base::RetainedRef(stream_0_data_),
         results.get());
     OnceClosure reply = base::BindOnce(&SimpleEntryImpl::CloseOperationComplete,
@@ -1004,7 +1004,7 @@ int SimpleEntryImpl::ReadDataInternal(bool sync_possible,
                                   net::ERR_FAILED);
   }
   DCHECK_EQ(STATE_READY, state_);
-  if (offset >= GetDataSize(stream_index) || offset < 0 || !buf_len) {
+  if (offset >= GetDataSize(stream_index) || !buf_len) {
     // If there is nothing to read, we bail out before setting state_ to
     // STATE_IO_PENDING (so ScopedOperationRunner might start us on next op
     // here).
@@ -1052,8 +1052,8 @@ int SimpleEntryImpl::ReadDataInternal(bool sync_possible,
   }
 
   auto result = std::make_unique<SimpleSynchronousEntry::ReadResult>();
-  auto entry_stat = std::make_unique<SimpleEntryStat>(
-      last_used_, last_modified_, data_size_, sparse_data_size_);
+  auto entry_stat = std::make_unique<SimpleEntryStat>(last_used_, data_size_,
+                                                      sparse_data_size_);
   OnceClosure task = base::BindOnce(
       &SimpleSynchronousEntry::ReadData, base::Unretained(synchronous_entry_),
       read_req, entry_stat.get(), base::RetainedRef(buf), result.get());
@@ -1142,8 +1142,8 @@ void SimpleEntryImpl::WriteDataInternal(int stream_index,
   }
 
   // |entry_stat| needs to be initialized before modifying |data_size_|.
-  auto entry_stat = std::make_unique<SimpleEntryStat>(
-      last_used_, last_modified_, data_size_, sparse_data_size_);
+  auto entry_stat = std::make_unique<SimpleEntryStat>(last_used_, data_size_,
+                                                      sparse_data_size_);
   if (truncate) {
     data_size_[stream_index] = offset + buf_len;
   } else {
@@ -1153,9 +1153,9 @@ void SimpleEntryImpl::WriteDataInternal(int stream_index,
 
   auto write_result = std::make_unique<SimpleSynchronousEntry::WriteResult>();
 
-  // Since we don't know the correct values for |last_used_| and
-  // |last_modified_| yet, we make this approximation.
-  last_used_ = last_modified_ = base::Time::Now();
+  // Since we don't know the correct value for |last_used_| yet, we make this
+  // approximation.
+  last_used_ = base::Time::Now();
 
   have_written_[stream_index] = true;
   // Writing on stream 1 affects the placement of stream 0 in the file, the EOF
@@ -1265,10 +1265,10 @@ void SimpleEntryImpl::WriteSparseDataInternal(
     max_sparse_data_size = max_cache_size / kMaxSparseDataSizeDivisor;
   }
 
-  auto entry_stat = std::make_unique<SimpleEntryStat>(
-      last_used_, last_modified_, data_size_, sparse_data_size_);
+  auto entry_stat = std::make_unique<SimpleEntryStat>(last_used_, data_size_,
+                                                      sparse_data_size_);
 
-  last_used_ = last_modified_ = base::Time::Now();
+  last_used_ = base::Time::Now();
 
   auto result = std::make_unique<int>();
   OnceClosure task = base::BindOnce(
@@ -1573,8 +1573,7 @@ void SimpleEntryImpl::ReadSparseOperationComplete(
         net::NetLogEventPhase::NONE, *result);
   }
 
-  SimpleEntryStat entry_stat(*last_used, last_modified_, data_size_,
-                             sparse_data_size_);
+  SimpleEntryStat entry_stat(*last_used, data_size_, sparse_data_size_);
   EntryOperationComplete(std::move(completion_callback), entry_stat, *result);
 }
 
@@ -1602,8 +1601,7 @@ void SimpleEntryImpl::GetAvailableRangeOperationComplete(
   DCHECK(synchronous_entry_);
   DCHECK(result);
 
-  SimpleEntryStat entry_stat(last_used_, last_modified_, data_size_,
-                             sparse_data_size_);
+  SimpleEntryStat entry_stat(last_used_, data_size_, sparse_data_size_);
   UpdateStateAfterOperationComplete(entry_stat, result->net_error);
   if (!completion_callback.is_null()) {
     base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
@@ -1654,7 +1652,6 @@ void SimpleEntryImpl::UpdateDataFromEntryStat(
   CHECK_EQ(state_, STATE_IO_PENDING);
 
   last_used_ = entry_stat.last_used();
-  last_modified_ = entry_stat.last_modified();
   for (int i = 0; i < kSimpleEntryStreamCount; ++i) {
     data_size_[i] = entry_stat.data_size(i);
   }
@@ -1682,10 +1679,10 @@ void SimpleEntryImpl::ReadFromBuffer(net::GrowableIOBuffer* in_buf,
                                      net::IOBuffer* out_buf) {
   DCHECK_GE(buf_len, 0);
 
-  std::copy(in_buf->data() + offset, in_buf->data() + offset + buf_len,
-            out_buf->data());
-  UpdateDataFromEntryStat(SimpleEntryStat(base::Time::Now(), last_modified_,
-                                          data_size_, sparse_data_size_));
+  out_buf->span().copy_prefix_from(in_buf->span().subspan(
+      base::checked_cast<size_t>(offset), base::checked_cast<size_t>(buf_len)));
+  UpdateDataFromEntryStat(
+      SimpleEntryStat(base::Time::Now(), data_size_, sparse_data_size_));
 }
 
 void SimpleEntryImpl::SetStream0Data(net::IOBuffer* buf,
@@ -1701,7 +1698,10 @@ void SimpleEntryImpl::SetStream0Data(net::IOBuffer* buf,
   int data_size = GetDataSize(0);
   if (offset == 0 && truncate) {
     stream_0_data_->SetCapacity(buf_len);
-    std::copy(buf->data(), buf->data() + buf_len, stream_0_data_->data());
+    if (buf_len) {
+      stream_0_data_->span().copy_from(
+          buf->first(base::checked_cast<size_t>(buf_len)));
+    }
     data_size_[0] = buf_len;
   } else {
     const int buffer_size =
@@ -1711,12 +1711,15 @@ void SimpleEntryImpl::SetStream0Data(net::IOBuffer* buf,
     // zero-filled.
     const int fill_size = offset <= data_size ? 0 : offset - data_size;
     if (fill_size > 0) {
-      std::fill(stream_0_data_->data() + data_size,
-                stream_0_data_->data() + data_size + fill_size, 0);
+      std::ranges::fill(
+          stream_0_data_->span().subspan(base::checked_cast<size_t>(data_size),
+                                         base::checked_cast<size_t>(fill_size)),
+          0);
     }
     if (buf) {
-      std::copy(buf->data(), buf->data() + buf_len,
-                stream_0_data_->data() + offset);
+      stream_0_data_->span()
+          .subspan(base::checked_cast<size_t>(offset))
+          .copy_prefix_from(buf->first(base::checked_cast<size_t>(buf_len)));
     }
     data_size_[0] = buffer_size;
   }
@@ -1728,8 +1731,7 @@ void SimpleEntryImpl::SetStream0Data(net::IOBuffer* buf,
   crc32s_end_offset_[0] = 0;
 
   UpdateDataFromEntryStat(
-      SimpleEntryStat(modification_time, modification_time, data_size_,
-                      sparse_data_size_));
+      SimpleEntryStat(modification_time, data_size_, sparse_data_size_));
 }
 
 }  // namespace disk_cache

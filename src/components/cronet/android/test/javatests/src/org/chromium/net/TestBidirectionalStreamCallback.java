@@ -45,7 +45,7 @@ public class TestBidirectionalStreamCallback extends BidirectionalStream.Callbac
 
     // The executor thread will block on this after reaching a terminal method.
     // Terminal methods are (onSucceeded, onFailed or onCancelled)
-    private ConditionVariable mBlockOnTerminalState = new ConditionVariable(true);
+    private final ConditionVariable mBlockOnTerminalState = new ConditionVariable(true);
 
     // Conditionally fail on certain steps.
     private FailureType mFailureType = FailureType.NONE;
@@ -67,10 +67,10 @@ public class TestBidirectionalStreamCallback extends BidirectionalStream.Callbac
     private int mBufferPositionBeforeRead;
 
     // Data to write.
-    private final ArrayList<WriteBuffer> mWriteBuffers = new ArrayList<WriteBuffer>();
+    private final ArrayList<WriteBuffer> mWriteBuffers = new ArrayList<>();
 
     // Buffers that we yet to receive the corresponding onWriteCompleted callback.
-    private final ArrayList<WriteBuffer> mWriteBuffersToBeAcked = new ArrayList<WriteBuffer>();
+    private final ArrayList<WriteBuffer> mWriteBuffersToBeAcked = new ArrayList<>();
 
     // Whether to use a direct executor.
     private final boolean mUseDirectExecutor;

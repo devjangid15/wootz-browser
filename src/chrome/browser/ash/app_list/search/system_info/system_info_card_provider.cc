@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/ash/app_list/search/system_info/system_info_card_provider.h"
 
 #include <iomanip>
@@ -9,9 +14,12 @@
 #include <optional>
 #include <string>
 
+#include "ash/app_list/vector_icons/vector_icons.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/webui/settings/public/constants/routes.mojom-forward.h"
 #include "base/functional/bind.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/ash/app_list/search/common/icon_constants.h"
@@ -19,7 +27,6 @@
 #include "chrome/browser/ash/app_list/search/system_info/cpu_answer_result.h"
 #include "chrome/browser/ash/app_list/search/system_info/memory_answer_result.h"
 #include "chrome/browser/ash/app_list/search/system_info/system_info_answer_result.h"
-#include "chrome/browser/ash/app_list/vector_icons/vector_icons.h"
 #include "chrome/browser/ui/webui/ash/settings/calculator/size_calculator.h"
 #include "chrome/browser/ui/webui/ash/settings/pages/storage/device_storage_util.h"
 #include "chrome/common/channel_info.h"
@@ -523,9 +530,7 @@ void SystemInfoCardProvider::OnStorageInfoUpdated() {
   if (total_bytes <= 0 || available_bytes < 0) {
     // We can't get useful information from the storage page if total_bytes <=
     // 0 or available_bytes is less than 0. This is not expected to happen.
-    NOTREACHED_IN_MIGRATION()
-        << "Unable to retrieve total or available disk space";
-    return;
+    NOTREACHED() << "Unable to retrieve total or available disk space";
   }
   CreateStorageAnswerCard();
 }

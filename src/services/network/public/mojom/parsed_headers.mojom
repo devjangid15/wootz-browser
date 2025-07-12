@@ -7,6 +7,7 @@ module network.mojom;
 import "services/network/public/mojom/content_security_policy.mojom";
 import "services/network/public/mojom/cross_origin_embedder_policy.mojom";
 import "services/network/public/mojom/cross_origin_opener_policy.mojom";
+import "services/network/public/mojom/integrity_policy.mojom";
 import "services/network/public/mojom/document_isolation_policy.mojom";
 import "services/network/public/mojom/link_header.mojom";
 import "services/network/public/mojom/no_vary_search.mojom";
@@ -43,6 +44,11 @@ struct ParsedHeaders {
   // The parsed value of the Document-Isolation-Policy (DIP) and
   // Document-Isolation-Policy-Report-Only headers.
   DocumentIsolationPolicy document_isolation_policy;
+
+  // The parsed value of the Integrity-Policy header.
+  IntegrityPolicy integrity_policy;
+  // The parsed value of the Integrity-Policy-Report-Only header.
+  IntegrityPolicy integrity_policy_report_only;
 
   // The parsed value of the Origin-Agent-Cluster header.
   OriginAgentClusterValue origin_agent_cluster;
@@ -144,6 +150,10 @@ struct ParsedHeaders {
   // The parsed value of the Observe-Browsing-Topics header. See:
   // https://patcg-individual-drafts.github.io/topics/#the-observe-browsing-topics-http-response-header-header
   bool observe_browsing_topics;
+
+  // The parsed value of the Allow-Cross-Origin-Event-Reporting header. See:
+  // https://wicg.github.io/fenced-frame/#fenced-frame-config-cross-origin-reporting-allowed
+  bool allow_cross_origin_event_reporting;
 
   // Please update `CheckParsedHeadersEquals` after adding new fields.
 };

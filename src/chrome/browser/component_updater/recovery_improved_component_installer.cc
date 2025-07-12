@@ -49,6 +49,14 @@ constexpr base::TaskTraits
 constexpr base::TaskTraits
     RecoveryComponentActionHandler::kThreadPoolTaskTraitsRunCommand;
 
+constexpr char kRecoveryImprovedComponentId[] =
+    "ihnlcenocehgdaegdmhbidjhnhdchfmm";
+// The SHA256 of the SubjectPublicKeyInfo used to sign the component CRX.
+constexpr uint8_t kRecoveryImprovedPublicKeySHA256[32] = {
+    0x87, 0xdb, 0x24, 0xde, 0x24, 0x76, 0x30, 0x46, 0x3c, 0x71, 0x83,
+    0x97, 0xd7, 0x32, 0x75, 0xcc, 0xd5, 0x7f, 0xec, 0x09, 0x60, 0x6d,
+    0x20, 0xc3, 0x81, 0xd7, 0xce, 0x7b, 0x10, 0x15, 0x44, 0xd1};
+
 RecoveryComponentActionHandler::RecoveryComponentActionHandler(
     const std::vector<uint8_t>& key_hash,
     crx_file::VerifierFormat verifier_format)
@@ -79,7 +87,8 @@ void RecoveryComponentActionHandler::Unpack() {
                       base::BindRepeating(&unzip::LaunchUnzipper))
                       ->Create();
   update_client::Unpacker::Unpack(
-      key_hash_, crx_path_, std::move(unzipper), verifier_format_,
+      kRecoveryImprovedComponentId, key_hash_, crx_path_, std::move(unzipper),
+      verifier_format_,
       base::BindOnce(&RecoveryComponentActionHandler::UnpackComplete, this));
 }
 
@@ -131,7 +140,7 @@ void RecoveryComponentActionHandler::WaitForCommand(
   int exit_code = 0;
   int extra_code1 = 0;
   bool succeeded = false;
-  constexpr base::TimeDelta kMaxWaitTime = base::Seconds(600);
+  static constexpr base::TimeDelta kMaxWaitTime = base::Seconds(600);
   if (process_or_error.has_value()) {
     succeeded =
         process_or_error->WaitForExitWithTimeout(kMaxWaitTime, &exit_code);
@@ -145,13 +154,6 @@ void RecoveryComponentActionHandler::WaitForCommand(
       FROM_HERE,
       base::BindOnce(std::move(callback_), succeeded, exit_code, extra_code1));
 }
-
-// The SHA256 of the SubjectPublicKeyInfo used to sign the component CRX.
-// The component id is: ihnlcenocehgdaegdmhbidjhnhdchfmm
-constexpr uint8_t kRecoveryImprovedPublicKeySHA256[32] = {
-    0x87, 0xdb, 0x24, 0xde, 0x24, 0x76, 0x30, 0x46, 0x3c, 0x71, 0x83,
-    0x97, 0xd7, 0x32, 0x75, 0xcc, 0xd5, 0x7f, 0xec, 0x09, 0x60, 0x6d,
-    0x20, 0xc3, 0x81, 0xd7, 0xce, 0x7b, 0x10, 0x15, 0x44, 0xd1};
 
 bool RecoveryImprovedInstallerPolicy::
     SupportsGroupPolicyEnabledComponentUpdates() const {

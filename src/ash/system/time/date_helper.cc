@@ -12,6 +12,7 @@
 #include "base/containers/contains.h"
 #include "base/i18n/unicodestring.h"
 #include "base/memory/ptr_util.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/time/time.h"
 #include "third_party/icu/source/common/unicode/dtintrv.h"
 #include "third_party/icu/source/i18n/unicode/dtitvfmt.h"
@@ -67,8 +68,7 @@ icu::UnicodeString getHoursPattern(const icu::UnicodeString& unicode_pattern) {
     return icu::UnicodeString("k");
   }
 
-  NOTREACHED_IN_MIGRATION() << "Hours pattern not found.";
-  return icu::UnicodeString("HH");
+  NOTREACHED() << "Hours pattern not found.";
 }
 
 }  // namespace
@@ -309,11 +309,8 @@ void DateHelper::CalculateLocalWeekTitles() {
     DCHECK(result);
     ++safe_index;
     if (safe_index == calendar_utils::kDateInOneWeek) {
-      NOTREACHED_IN_MIGRATION()
-          << "Should already find the first day within 7 times, since "
-             "there are only 7 days in a week";
-      week_titles_ = kDefaultWeekTitle;
-      return;
+      NOTREACHED() << "Should already find the first day within 7 times, since "
+                      "there are only 7 days in a week";
     }
   }
 

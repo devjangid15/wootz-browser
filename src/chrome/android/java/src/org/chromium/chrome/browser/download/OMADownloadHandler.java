@@ -13,7 +13,6 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Environment;
 import android.os.ParcelFileDescriptor;
 import android.provider.Browser;
@@ -132,28 +131,28 @@ public class OMADownloadHandler extends BroadcastReceiver {
     private static final NetworkTrafficAnnotationTag TRAFFIC_ANNOTATION =
             NetworkTrafficAnnotationTag.createComplete(
                     "oma_download_handler_android",
-                    "semantics {"
-                            + "  sender: 'OMA Download Handler (Android)'"
-                            + "  description: 'Uploads file download status to the server URL '"
-                            + "               'specified in the download descriptor XML, as ' "
-                            + "               'required by the OMA DRM specification.'"
-                            + "  trigger: 'After an OMA DRM file download completes.'"
-                            + "  data: 'Info related to the download.'"
-                            + "  destination: OTHER"
-                            + "}"
-                            + "policy {"
-                            + "  cookies_allowed: NO"
-                            + "  setting: 'This feature cannot be disabled by settings as it is '"
-                            + "           'part of the OMA DRM specification.'"
-                            + "  policy_exception_justification:"
-                            + "      'Not implemented.'"
-                            + "}");
+                    """
+                    semantics {
+                      sender: "OMA Download Handler (Android)"
+                      description:
+                        "Uploads file download status to the server URL specified in the download "
+                        "descriptor XML, as required by the OMA DRM specification."
+                      trigger: "After an OMA DRM file download completes."
+                      data: "Info related to the download."
+                      destination: OTHER
+                    }
+                    policy {
+                      cookies_allowed: NO
+                      setting:
+                        "This feature cannot be disabled by settings as it is part of the OMA DRM "
+                        "specification."
+                      policy_exception_justification: "Not implemented."
+                    }""");
 
     private final Context mContext;
     private final SharedPreferencesManager mSharedPrefs;
-    private final LongSparseArray<DownloadItem> mSystemDownloadIdMap =
-            new LongSparseArray<DownloadItem>();
-    private final LongSparseArray<OMAInfo> mPendingOMADownloads = new LongSparseArray<OMAInfo>();
+    private final LongSparseArray<DownloadItem> mSystemDownloadIdMap = new LongSparseArray<>();
+    private final LongSparseArray<OMAInfo> mPendingOMADownloads = new LongSparseArray<>();
     private final ObserverList<TestObserver> mObservers = new ObserverList<>();
 
     /**
@@ -166,8 +165,8 @@ public class OMADownloadHandler extends BroadcastReceiver {
         private final List<String> mTypes;
 
         OMAInfo() {
-            mDescription = new HashMap<String, String>();
-            mTypes = new ArrayList<String>();
+            mDescription = new HashMap<>();
+            mTypes = new ArrayList<>();
         }
 
         /**
@@ -312,21 +311,13 @@ public class OMADownloadHandler extends BroadcastReceiver {
         @Override
         public OMAInfo doInBackground() {
             OMAInfo omaInfo = null;
-            final DownloadManager manager =
-                    (DownloadManager) mContext.getSystemService(Context.DOWNLOAD_SERVICE);
             boolean isContentUri =
                     (mDownloadId == DownloadConstants.INVALID_DOWNLOAD_ID)
                             && ContentUriUtils.isContentUri(mDownloadInfo.getFilePath());
             try {
                 ParcelFileDescriptor fd = null;
                 if (isContentUri) {
-                    int fileDescriptor =
-                            ContentUriUtils.openContentUriForRead(mDownloadInfo.getFilePath());
-                    if (fileDescriptor > 0) {
-                        fd = ParcelFileDescriptor.fromFd(fileDescriptor);
-                    }
-                } else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-                    fd = manager.openDownloadedFile(mDownloadId);
+                    fd = ContentUriUtils.openContentUri(mDownloadInfo.getFilePath(), "r");
                 } else {
                     fd =
                             ParcelFileDescriptor.open(
@@ -539,15 +530,15 @@ public class OMADownloadHandler extends BroadcastReceiver {
                 (LayoutInflater) mContext.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
         View v = inflater.inflate(R.layout.confirm_oma_download, null);
 
-        TextView textView = (TextView) v.findViewById(R.id.oma_download_name);
+        TextView textView = v.findViewById(R.id.oma_download_name);
         textView.setText(omaInfo.getValue(OMA_NAME));
-        textView = (TextView) v.findViewById(R.id.oma_download_vendor);
+        textView = v.findViewById(R.id.oma_download_vendor);
         textView.setText(omaInfo.getValue(OMA_VENDOR));
-        textView = (TextView) v.findViewById(R.id.oma_download_size);
+        textView = v.findViewById(R.id.oma_download_size);
         textView.setText(omaInfo.getValue(OMA_SIZE));
-        textView = (TextView) v.findViewById(R.id.oma_download_type);
+        textView = v.findViewById(R.id.oma_download_type);
         textView.setText(getOpennableType(omaInfo));
-        textView = (TextView) v.findViewById(R.id.oma_download_description);
+        textView = v.findViewById(R.id.oma_download_description);
         textView.setText(omaInfo.getValue(OMA_DESCRIPTION));
 
         DialogInterface.OnClickListener clickListener =
@@ -682,7 +673,7 @@ public class OMADownloadHandler extends BroadcastReceiver {
             OMAInfo info = new OMAInfo();
             StringBuilder sb = null;
             List<String> attributeList =
-                    new ArrayList<String>(
+                    new ArrayList<>(
                             Arrays.asList(
                                     OMA_TYPE,
                                     OMA_SIZE,
@@ -929,7 +920,7 @@ public class OMADownloadHandler extends BroadcastReceiver {
     private void showDownloadOnInfoBar(DownloadItem downloadItem, int downloadStatus) {
         DownloadMessageUiController messageUiController =
                 DownloadManagerService.getDownloadManagerService()
-                        .getMessageUiController(downloadItem.getDownloadInfo().getOTRProfileId());
+                        .getMessageUiController(downloadItem.getDownloadInfo().getOtrProfileId());
         if (messageUiController == null) return;
         OfflineItem offlineItem = DownloadItem.createOfflineItem(downloadItem);
         offlineItem.id.namespace = LegacyHelpers.LEGACY_ANDROID_DOWNLOAD_NAMESPACE;
@@ -1056,66 +1047,32 @@ public class OMADownloadHandler extends BroadcastReceiver {
                 String path = mDownloadInfo.getFilePath();
                 if (!TextUtils.isEmpty(path)) {
                     File fromFile = new File(path);
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        // Copy the downloaded content to the intermediate URI and publish it.
-                        String pendingUri =
-                                DownloadCollectionBridge.createIntermediateUriForPublish(
-                                        mDownloadInfo.getFileName(),
-                                        mDownloadInfo.getMimeType(),
-                                        mDownloadInfo.getOriginalUrl().getSpec(),
-                                        mDownloadInfo.getReferrer().getSpec());
-                        success =
-                                DownloadCollectionBridge.copyFileToIntermediateUri(
-                                        path, pendingUri);
-                        if (success) {
-                            String uri = DownloadCollectionBridge.publishDownload(pendingUri);
-                            fromFile.delete();
-                            // Post a nofification to open the Android download page.
-                            mNewDownloadInfo =
-                                    DownloadInfo.Builder.fromDownloadInfo(mDownloadInfo)
-                                            .setFilePath(uri)
-                                            .setContentId(
-                                                    new ContentId("", String.valueOf(mDownloadId)))
-                                            .build();
-                        } else {
-                            DownloadCollectionBridge.deleteIntermediateUri(pendingUri);
-                        }
-                    } else {
-                        // Move the downloaded content from the app directory to public directory.
-                        String fileName = fromFile.getName();
-                        DownloadManager manager =
-                                (DownloadManager)
-                                        mContext.getSystemService(Context.DOWNLOAD_SERVICE);
-                        File toFile =
-                                new File(
-                                        Environment.getExternalStoragePublicDirectory(
-                                                Environment.DIRECTORY_DOWNLOADS),
-                                        fileName);
-                        success = fromFile.renameTo(toFile);
-                        if (success) {
-                            manager.addCompletedDownload(
-                                    fileName,
-                                    mDownloadInfo.getDescription(),
-                                    false,
+                    // Copy the downloaded content to the intermediate URI and publish it.
+                    String pendingUri =
+                            DownloadCollectionBridge.createIntermediateUriForPublish(
+                                    mDownloadInfo.getFileName(),
                                     mDownloadInfo.getMimeType(),
-                                    toFile.getPath(),
-                                    mDownloadInfo.getBytesReceived(),
-                                    true);
-                        }
+                                    mDownloadInfo.getOriginalUrl().getSpec(),
+                                    mDownloadInfo.getReferrer().getSpec());
+                    success = DownloadCollectionBridge.copyFileToIntermediateUri(path, pendingUri);
+                    if (success) {
+                        String uri = DownloadCollectionBridge.publishDownload(pendingUri);
+                        fromFile.delete();
+                        // Post a nofification to open the Android download page.
+                        mNewDownloadInfo =
+                                DownloadInfo.Builder.fromDownloadInfo(mDownloadInfo)
+                                        .setFilePath(uri)
+                                        .setContentId(
+                                                new ContentId("", String.valueOf(mDownloadId)))
+                                        .build();
+                    } else {
+                        DownloadCollectionBridge.deleteIntermediateUri(pendingUri);
                     }
                     if (!success) {
                         if (fromFile.delete()) {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                Log.w(TAG, "Failed to publish the downloaded file.");
-                            } else {
-                                Log.w(TAG, "Failed to rename the file.");
-                            }
+                            Log.w(TAG, "Failed to publish the downloaded file.");
                         } else {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                Log.w(TAG, "Failed to publish and delete the file.");
-                            } else {
-                                Log.w(TAG, "Failed to rename and delete the file.");
-                            }
+                            Log.w(TAG, "Failed to publish and delete the file.");
                         }
                     }
                 }

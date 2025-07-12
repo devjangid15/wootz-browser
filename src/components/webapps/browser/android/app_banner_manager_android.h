@@ -15,7 +15,6 @@
 #include "base/memory/weak_ptr.h"
 #include "base/types/expected.h"
 #include "components/webapps/browser/android/add_to_homescreen_installer.h"
-#include "components/webapps/browser/android/ambient_badge_metrics.h"
 #include "components/webapps/browser/android/installable/installable_ambient_badge_client.h"
 #include "components/webapps/browser/android/installable/installable_ambient_badge_message_controller.h"
 #include "components/webapps/browser/banners/app_banner_manager.h"
@@ -112,8 +111,7 @@ class AppBannerManagerAndroid
       const base::android::JavaParamRef<jobject>& java_web_contents);
 
   // Returns true if the banner pipeline is currently running.
-  bool IsRunningForTesting(JNIEnv* env,
-                           const base::android::JavaParamRef<jobject>& jobj);
+  bool IsRunningForTesting(JNIEnv* env);
 
   // Returns the state of the processing pipeline for testing purposes.
   int GetPipelineStatusForTesting(JNIEnv* env);
@@ -124,7 +122,6 @@ class AppBannerManagerAndroid
   // Returns |false| if an icon fetch couldn't be kicked off.
   void OnAppDetailsRetrieved(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
       int request_id,
       const base::android::JavaParamRef<jobject>& japp_data,
       const base::android::JavaParamRef<jstring>& japp_title,
@@ -189,8 +186,6 @@ class AppBannerManagerAndroid
   void InvalidateWeakPtrsForThisNavigation() override;
   void ResetCurrentPageData() override;
 
-  void CheckEngagementForAmbientBadge();
-
   // Use as a callback to notify |this| after an install event such as a dialog
   // being cancelled or an app being installed has occurred.
   void OnInstallEvent(GURL validated_url,
@@ -243,12 +238,6 @@ class AppBannerManagerAndroid
                               std::u16string app_title,
                               GURL primary_icon_url,
                               const SkBitmap& bitmap);
-
-  // Run before showing the ambient badge. This calls back to the
-  // InstallableManager to continue checking service worker criteria for showing
-  // ambient badge.
-  void PerformWorkerCheckForAmbientBadge(InstallableParams params,
-                                         InstallableCallback callback);
 
   const std::unique_ptr<ChromeDelegate> delegate_;
 

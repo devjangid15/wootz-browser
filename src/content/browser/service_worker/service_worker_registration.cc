@@ -9,9 +9,10 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/observer_list.h"
+#include "base/strings/stringprintf.h"
 #include "base/task/single_thread_task_runner.h"
+#include "content/browser/service_worker/service_worker_client.h"
 #include "content/browser/service_worker/service_worker_consts.h"
-#include "content/browser/service_worker/service_worker_container_host.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
 #include "content/browser/service_worker/service_worker_info.h"
@@ -115,8 +116,7 @@ void ServiceWorkerRegistration::SetStatus(Status status) {
       // - To kUninstalled: finished uninstalling.
       break;
     case Status::kUninstalled:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
 #endif  // DCHECK_IS_ON()
 
@@ -313,8 +313,10 @@ void ServiceWorkerRegistration::ClaimClients() {
   const bool include_reserved_clients = false;
   // Include clients in BackForwardCache in order to evict them if needed.
   const bool include_back_forward_cached_clients = true;
-  for (auto it = context_->GetServiceWorkerClients(
-           key_, include_reserved_clients, include_back_forward_cached_clients);
+  for (auto it =
+           context_->service_worker_client_owner().GetServiceWorkerClients(
+               key_, include_reserved_clients,
+               include_back_forward_cached_clients);
        !it.IsAtEnd(); ++it) {
     // "1. If client’s execution ready flag is unset or client’s discarded flag
     //     is set, continue."
@@ -360,7 +362,7 @@ void ServiceWorkerRegistration::DeleteAndClearWhenReady() {
     return;
   }
 
-  context_->registry()->DeleteRegistration(
+  context_->registry().DeleteRegistration(
       this, base::BindOnce(&ServiceWorkerRegistration::OnDeleteFinished, this));
 
   if (!active_version() || !active_version()->HasControllee())
@@ -370,7 +372,7 @@ void ServiceWorkerRegistration::DeleteAndClearWhenReady() {
 void ServiceWorkerRegistration::DeleteAndClearImmediately() {
   DCHECK(context_);
   if (!is_deleted()) {
-    context_->registry()->DeleteRegistration(
+    context_->registry().DeleteRegistration(
         this,
         base::BindOnce(&ServiceWorkerRegistration::OnDeleteFinished, this));
   }
@@ -389,19 +391,18 @@ void ServiceWorkerRegistration::AbortPendingClear(StatusCallback callback) {
     case Status::kUninstalling:
       break;
     case Status::kUninstalled:
-      NOTREACHED_IN_MIGRATION()
+      NOTREACHED()
           << "attempt to resurrect a completely uninstalled registration";
-      break;
   }
 
-  context_->registry()->NotifyDoneUninstallingRegistration(this,
-                                                           Status::kIntact);
+  context_->registry().NotifyDoneUninstallingRegistration(this,
+                                                          Status::kIntact);
 
   scoped_refptr<ServiceWorkerVersion> most_recent_version =
       waiting_version() ? waiting_version() : active_version();
   DCHECK(most_recent_version.get());
-  context_->registry()->NotifyInstallingRegistration(this);
-  context_->registry()->StoreRegistration(
+  context_->registry().NotifyInstallingRegistration(this);
+  context_->registry().StoreRegistration(
       this, most_recent_version.get(),
       base::BindOnce(&ServiceWorkerRegistration::OnRestoreFinished, this,
                      std::move(callback), most_recent_version));
@@ -612,13 +613,13 @@ void ServiceWorkerRegistration::ForceDelete() {
 
   // Delete the registration and its state from storage.
   if (status() == Status::kIntact) {
-    context_->registry()->DeleteRegistration(
+    context_->registry().DeleteRegistration(
         this,
         base::BindOnce(&ServiceWorkerRegistration::OnDeleteFinished, protect));
   }
   DCHECK(is_uninstalling());
-  context_->registry()->NotifyDoneUninstallingRegistration(
-      this, Status::kUninstalled);
+  context_->registry().NotifyDoneUninstallingRegistration(this,
+                                                          Status::kUninstalled);
 
   // Tell observers that this registration is gone.
   NotifyRegistrationFailed();
@@ -713,7 +714,7 @@ void ServiceWorkerRegistration::OnActivateEventFinished(
     activating_version->router_evaluator()->RecordRouterRuleInfo();
   }
 
-  context_->registry()->UpdateToActiveState(id(), key_, base::DoNothing());
+  context_->registry().UpdateToActiveState(id(), key_, base::DoNothing());
 }
 
 void ServiceWorkerRegistration::OnDeleteFinished(
@@ -735,7 +736,7 @@ void ServiceWorkerRegistration::Clear() {
   auto protect = base::WrapRefCounted(this);
 
   if (context_) {
-    context_->registry()->NotifyDoneUninstallingRegistration(
+    context_->registry().NotifyDoneUninstallingRegistration(
         this, Status::kUninstalled);
   }
 
@@ -780,8 +781,8 @@ void ServiceWorkerRegistration::OnRestoreFinished(
     std::move(callback).Run(blink::ServiceWorkerStatusCode::kErrorAbort);
     return;
   }
-  context_->registry()->NotifyDoneInstallingRegistration(this, version.get(),
-                                                         status);
+  context_->registry().NotifyDoneInstallingRegistration(this, version.get(),
+                                                        status);
   std::move(callback).Run(status);
 }
 

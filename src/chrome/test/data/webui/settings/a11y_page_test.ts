@@ -7,20 +7,21 @@ import 'chrome://settings/lazy_load.js';
 // clang-format off
 // <if expr="is_win or is_linux or is_macosx">
 import {webUIListenerCallback} from 'chrome://resources/js/cr.js';
-import type {SettingsAxAnnotationsSubpageElement} from 'chrome://settings/lazy_load.js';
-import {ScreenAiInstallStatus} from 'chrome://settings/lazy_load.js';
-import {assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
+import type {SettingsAxAnnotationsSectionElement} from 'chrome://settings/lazy_load.js';
+import { assertFalse, assertTrue, assertEquals } from 'chrome://webui-test/chai_assert.js';
 import {flushTasks} from 'chrome://webui-test/polymer_test_util.js';
 import {isVisible} from 'chrome://webui-test/test_util.js';
 // </if>
 // clang-format on
 
 import {flush} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
-import type {AccessibilityBrowserProxy, LanguageHelper, SettingsA11yPageElement} from 'chrome://settings/lazy_load.js';
-import {AccessibilityBrowserProxyImpl} from 'chrome://settings/lazy_load.js';
-import type {SettingsPrefsElement} from 'chrome://settings/settings.js';
+import type {AccessibilityBrowserProxy, SettingsA11yPageElement} from 'chrome://settings/lazy_load.js';
+import {AccessibilityBrowserProxyImpl, ToastAlertLevel} from 'chrome://settings/lazy_load.js';
+import type {SettingsPrefsElement, SettingsToggleButtonElement} from 'chrome://settings/settings.js';
 import {CrSettingsPrefs, loadTimeData} from 'chrome://settings/settings.js';
 import {FakeSettingsPrivate} from 'chrome://webui-test/fake_settings_private.js';
+import type {MetricsTracker} from 'chrome://webui-test/metrics_test_support.js';
+import {fakeMetricsPrivate} from 'chrome://webui-test/metrics_test_support.js';
 import {fakeDataBind} from 'chrome://webui-test/polymer_test_util.js';
 import {TestBrowserProxy} from 'chrome://webui-test/test_browser_proxy.js';
 
@@ -29,19 +30,12 @@ import {getFakeLanguagePrefs} from './fake_language_settings_private.js';
 
 class TestAccessibilityBrowserProxy extends TestBrowserProxy implements
     AccessibilityBrowserProxy {
-  private screenAIState_: ScreenAiInstallStatus;
-
   constructor() {
     super([
       'openTrackpadGesturesSettings',
       'recordOverscrollHistoryNavigationChanged',
-      // <if expr="is_win or is_linux or is_macosx">
-      'getScreenAiInstallState',
-      // </if>
       'getScreenReaderState',
     ]);
-
-    this.screenAIState_ = ScreenAiInstallStatus.NOT_DOWNLOADED;
   }
 
   openTrackpadGesturesSettings() {
@@ -51,13 +45,6 @@ class TestAccessibilityBrowserProxy extends TestBrowserProxy implements
   recordOverscrollHistoryNavigationChanged(enabled: boolean) {
     this.methodCalled('recordOverscrollHistoryNavigationChanged', enabled);
   }
-
-  // <if expr="is_win or is_linux or is_macosx">
-  getScreenAiInstallState() {
-    this.methodCalled('getScreenAiInstallState');
-    return Promise.resolve(this.screenAIState_);
-  }
-  // </if>
 
   getScreenReaderState() {
     this.methodCalled('getScreenReaderState');
@@ -69,16 +56,15 @@ suite('A11yPage', () => {
   let a11yPage: SettingsA11yPageElement;
   let settingsPrefs: SettingsPrefsElement;
   let browserProxy: TestAccessibilityBrowserProxy;
-  let languageHelper: LanguageHelper;
+  let metrics: MetricsTracker;
 
-  suiteSetup(function() {
+  setup(function() {
     loadTimeData.overrideValues({
+      axTreeFixingEnabled: true,
       mainNodeAnnotationsEnabled: true,
-      pdfOcrEnabled: true,
     });
-  });
 
-  setup(async function() {
+    metrics = fakeMetricsPrivate();
     document.body.innerHTML = window.trustedTypes!.emptyHTML;
     settingsPrefs = document.createElement('settings-prefs');
     const settingsPrivate = new FakeSettingsPrivate(getFakeLanguagePrefs());
@@ -100,42 +86,79 @@ suite('A11yPage', () => {
       a11yPage.prefs = settingsPrefs.prefs;
       fakeDataBind(settingsPrefs, a11yPage, 'prefs');
 
-      a11yPage.languageHelper = settingsLanguages.languageHelper;
-      fakeDataBind(settingsLanguages, a11yPage, 'language-helper');
-
       document.body.appendChild(a11yPage);
       flush();
 
-      languageHelper = a11yPage.languageHelper;
-      return languageHelper.whenReady();
+      return settingsLanguages.whenReady();
     });
+  });
+
+  test('test ax tree fixing toggle and pref', async () => {
+    assertTrue(loadTimeData.getBoolean('axTreeFixingEnabled'));
+
+    const toggle =
+        a11yPage.shadowRoot!.querySelector<SettingsToggleButtonElement>(
+            '#axTreeFixing');
+    assertTrue(!!toggle);
+    await flushTasks();
+
+    // The AX Tree Fixing pref is off by default, so the button should be
+    // toggled off.
+    assertFalse(a11yPage.getPref('settings.a11y.enable_ax_tree_fixing').value);
+    assertFalse(toggle.checked);
+
+    toggle.click();
+    await flushTasks();
+    assertTrue(a11yPage.getPref('settings.a11y.enable_ax_tree_fixing').value);
+    assertTrue(toggle.checked);
   });
 
   // <if expr="is_win or is_linux or is_macosx">
   test('check ax annotations subpage visibility', async () => {
     assertTrue(loadTimeData.getBoolean('mainNodeAnnotationsEnabled'));
-    assertTrue(loadTimeData.getBoolean('pdfOcrEnabled'));
 
     // Simulate disabling a screen reader to exclude the ax annotations subpage
     // in a DOM.
     webUIListenerCallback('screen-reader-state-changed', false);
 
     await flushTasks();
-    let axAnnotationsSubpage =
-        a11yPage.shadowRoot!.querySelector<SettingsAxAnnotationsSubpageElement>(
-            '#AxAnnotationsSubpage');
-    assertFalse(!!axAnnotationsSubpage);
+    let axAnnotationsSection =
+        a11yPage.shadowRoot!.querySelector<SettingsAxAnnotationsSectionElement>(
+            '#AxAnnotationsSection');
+    assertFalse(!!axAnnotationsSection);
 
     // Simulate enabling a screen reader to include the ax annotations subpage
     // in a DOM.
     webUIListenerCallback('screen-reader-state-changed', true);
 
     await flushTasks();
-    axAnnotationsSubpage =
-        a11yPage.shadowRoot!.querySelector<SettingsAxAnnotationsSubpageElement>(
-            '#AxAnnotationsSubpage');
-    assertTrue(!!axAnnotationsSubpage);
-    assertTrue(isVisible(axAnnotationsSubpage));
+    axAnnotationsSection =
+        a11yPage.shadowRoot!.querySelector<SettingsAxAnnotationsSectionElement>(
+            '#AxAnnotationsSection');
+    assertTrue(!!axAnnotationsSection);
+    assertTrue(isVisible(axAnnotationsSection));
+  });
+
+  test('toast toggle mapping from enum', () => {
+    const toastToggle =
+        a11yPage.shadowRoot!.querySelector<SettingsToggleButtonElement>(
+            '#toastToggle');
+    assertTrue(!!toastToggle);
+
+    toastToggle.click();
+    assertEquals(
+        ToastAlertLevel.ACTIONABLE,
+        a11yPage.getPref('settings.toast.alert_level').value);
+    assertFalse(toastToggle.checked);
+
+    toastToggle.click();
+    assertEquals(
+        ToastAlertLevel.ALL,
+        a11yPage.getPref('settings.toast.alert_level').value);
+    assertTrue(toastToggle.checked);
+
+    // Logged metrics for both pref changes.
+    assertEquals(2, metrics.count('Toast.FrequencyPrefChanged'));
   });
   // </if>
 

@@ -29,7 +29,8 @@ class LogicalLineBuilder {
                      const ConstraintSpace& constraint_space,
                      const InlineBreakToken* break_token,
                      InlineLayoutStateStack* state_stack,
-                     InlineChildLayoutContext* context);
+                     InlineChildLayoutContext* context,
+                     bool should_scale_line_height);
 
   void RebuildBoxStates(const LineInfo& line_info,
                         wtf_size_t start_item_index,
@@ -60,6 +61,7 @@ class LogicalLineBuilder {
                                     InlineBoxState* box);
   InlineBoxState* HandleOpenTag(const InlineItem&,
                                 const InlineItemResult&,
+                                float text_scale,
                                 LogicalLineItems*);
   InlineBoxState* HandleCloseTag(const InlineItem&,
                                  const InlineItemResult&,
@@ -90,6 +92,7 @@ class LogicalLineBuilder {
                                   LogicalLineItems& line_box,
                                   InlineBoxState* box);
   void PlaceRubyAnnotation(InlineItemResult& item_result,
+                           std::optional<LayoutUnit> line_available_size,
                            wtf_size_t index,
                            LineInfo& annotation_line,
                            LogicalRubyColumn& logical_column);
@@ -109,6 +112,8 @@ class LogicalLineBuilder {
   // True if in quirks or limited-quirks mode, which require line-height quirks.
   // https://quirks.spec.whatwg.org/#the-line-height-calculation-quirk
   const bool quirks_mode_ : 1;
+  // For text-grow and text-shrink handling.
+  [[maybe_unused]] const bool should_scale_line_height_ : 1;
 
   // Output of CreateLine():
 

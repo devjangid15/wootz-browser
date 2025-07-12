@@ -10,6 +10,8 @@ import androidx.annotation.ColorInt;
 import androidx.annotation.ColorRes;
 
 import org.chromium.base.library_loader.LibraryLoader;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.omnibox.LocationBarDataProvider;
 import org.chromium.chrome.browser.omnibox.NewTabPageDelegate;
 import org.chromium.chrome.browser.omnibox.UrlBarData;
@@ -19,20 +21,12 @@ import org.chromium.components.browser_ui.styles.ChromeColors;
 import org.chromium.components.security_state.ConnectionSecurityLevel;
 import org.chromium.url.GURL;
 
+@NullMarked
 class SearchBoxDataProvider implements LocationBarDataProvider {
     private /* PageClassification */ int mPageClassification;
     private @ColorInt int mPrimaryColor;
-    private Tab mTab;
-    private GURL mGurl;
-
-    /**
-     * Called when native library is loaded and a tab has been initialized.
-     *
-     * @param tab The tab to use.
-     */
-    public void onNativeLibraryReady(Tab tab) {
-        mTab = tab;
-    }
+    private @Nullable GURL mGurl;
+    private boolean mIsIncognito;
 
     /**
      * Initialize this instance of the SearchBoxDataProvider.
@@ -42,8 +36,9 @@ class SearchBoxDataProvider implements LocationBarDataProvider {
      *
      * @param context current context
      */
-    /* package */ void initialize(Context context) {
-        mPrimaryColor = ChromeColors.getPrimaryBackgroundColor(context, isIncognito());
+    /* package */ void initialize(Context context, boolean isIncognito) {
+        mPrimaryColor = ChromeColors.getPrimaryBackgroundColor(context, isIncognito);
+        mIsIncognito = isIncognito;
     }
 
     @Override
@@ -53,11 +48,16 @@ class SearchBoxDataProvider implements LocationBarDataProvider {
 
     @Override
     public boolean isIncognito() {
-        return false;
+        return mIsIncognito;
     }
 
     @Override
-    public boolean isInOverviewAndShowingOmnibox() {
+    public boolean isIncognitoBranded() {
+        return mIsIncognito;
+    }
+
+    @Override
+    public boolean isOffTheRecord() {
         return false;
     }
 
@@ -72,13 +72,13 @@ class SearchBoxDataProvider implements LocationBarDataProvider {
     }
 
     @Override
-    public Tab getTab() {
-        return mTab;
+    public @Nullable Tab getTab() {
+        return null;
     }
 
     @Override
     public boolean hasTab() {
-        return mTab != null;
+        return false;
     }
 
     @Override
@@ -123,7 +123,7 @@ class SearchBoxDataProvider implements LocationBarDataProvider {
     }
 
     @Override
-    public int getPageClassification(boolean isFocusedFromFakebox, boolean isPrefetch) {
+    public int getPageClassification(boolean isPrefetch) {
         return mPageClassification;
     }
 
@@ -148,5 +148,9 @@ class SearchBoxDataProvider implements LocationBarDataProvider {
 
     void setCurrentUrl(GURL url) {
         mGurl = url;
+    }
+
+    void setIsIncognitoForTesting(boolean isIncognito) {
+        mIsIncognito = isIncognito;
     }
 }

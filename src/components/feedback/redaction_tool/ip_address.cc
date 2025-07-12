@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 // This is a copy of net/base/ip_address.cc circa 2023. It should be used only
 // by components/feedback/redaction_tool/. We need a copy because the
 // components/feedback/redaction_tool source code is shared into ChromeOS and
@@ -15,7 +20,6 @@
 
 #include "base/check_op.h"
 #include "base/notreached.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
@@ -108,11 +112,7 @@ bool IPAddressBytes::operator<(const IPAddressBytes& other) const {
 }
 
 bool IPAddressBytes::operator==(const IPAddressBytes& other) const {
-  return base::ranges::equal(*this, other);
-}
-
-bool IPAddressBytes::operator!=(const IPAddressBytes& other) const {
-  return !(*this == other);
+  return std::ranges::equal(*this, other);
 }
 
 // static
@@ -211,14 +211,6 @@ IPAddress IPAddress::IPv4AllZeros() {
 // static
 IPAddress IPAddress::IPv6AllZeros() {
   return AllZeros(kIPv6AddressSize);
-}
-
-bool IPAddress::operator==(const IPAddress& that) const {
-  return ip_address_ == that.ip_address_;
-}
-
-bool IPAddress::operator!=(const IPAddress& that) const {
-  return ip_address_ != that.ip_address_;
 }
 
 bool IPAddress::operator<(const IPAddress& that) const {

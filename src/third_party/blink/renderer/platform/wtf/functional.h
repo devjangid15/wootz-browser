@@ -175,7 +175,7 @@ struct CheckGCedTypeRestriction {
                 "Raw pointers are not allowed to bind into WTF::Function. Wrap "
                 "it with either WrapPersistent, WrapWeakPersistent, "
                 "WrapCrossThreadPersistent, WrapCrossThreadWeakPersistent, "
-                "RefPtr or unretained.");
+                "RetainedRef or Unretained.");
   static_assert(!WTF::IsMemberOrWeakMemberType<T>::value,
                 "Member and WeakMember are not allowed to bind into "
                 "WTF::Function. Wrap it with either WrapPersistent, "
@@ -183,7 +183,7 @@ struct CheckGCedTypeRestriction {
                 "WrapCrossThreadWeakPersistent.");
   static_assert(!WTF::IsGarbageCollectedType<T>::value,
                 "GCed types are forbidden as bound parameters.");
-  static_assert(!WTF::IsStackAllocatedType<T>,
+  static_assert(!WTF::IsStackAllocatedTypeV<T>,
                 "Stack allocated types are forbidden as bound parameters.");
   static_assert(
       !(WTF::IsDisallowNew<T> && WTF::IsTraceable<T>::value),
@@ -406,37 +406,42 @@ using CrossThreadClosure = CrossThreadFunction<void()>;
 
 using CrossThreadOnceClosure = CrossThreadOnceFunction<void()>;
 
+}  // namespace WTF
+
+namespace blink {
+
 template <typename T>
-struct CrossThreadCopier<RetainedRefWrapper<T>> {
+struct CrossThreadCopier<WTF::RetainedRefWrapper<T>> {
   STATIC_ONLY(CrossThreadCopier);
-  static_assert(IsSubclassOfTemplate<T, base::RefCountedThreadSafe>::value,
+  static_assert(WTF::IsSubclassOfTemplate<T, base::RefCountedThreadSafe>::value,
                 "scoped_refptr<T> can be passed across threads only if T is "
                 "ThreadSafeRefCounted or base::RefCountedThreadSafe.");
-  using Type = RetainedRefWrapper<T>;
+  using Type = WTF::RetainedRefWrapper<T>;
   static Type Copy(Type pointer) { return pointer; }
 };
 
 template <typename T>
-struct CrossThreadCopier<CrossThreadUnretainedWrapper<T>>
-    : public CrossThreadCopierPassThrough<CrossThreadUnretainedWrapper<T>> {
+struct CrossThreadCopier<WTF::CrossThreadUnretainedWrapper<T>>
+    : public CrossThreadCopierPassThrough<
+          WTF::CrossThreadUnretainedWrapper<T>> {
   STATIC_ONLY(CrossThreadCopier);
 };
 
 template <typename Signature>
-struct CrossThreadCopier<CrossThreadFunction<Signature>> {
+struct CrossThreadCopier<WTF::CrossThreadFunction<Signature>> {
   STATIC_ONLY(CrossThreadCopier);
-  using Type = CrossThreadFunction<Signature>;
+  using Type = WTF::CrossThreadFunction<Signature>;
   static Type Copy(Type&& value) { return std::move(value); }
 };
 
 template <typename Signature>
-struct CrossThreadCopier<CrossThreadOnceFunction<Signature>> {
+struct CrossThreadCopier<WTF::CrossThreadOnceFunction<Signature>> {
   STATIC_ONLY(CrossThreadCopier);
-  using Type = CrossThreadOnceFunction<Signature>;
+  using Type = WTF::CrossThreadOnceFunction<Signature>;
   static Type Copy(Type&& value) { return std::move(value); }
 };
 
-}  // namespace WTF
+}  // namespace blink
 
 namespace base {
 

@@ -13,10 +13,12 @@
 #include "ash/wm/window_state.h"
 #include "ash/wm/window_state_observer.h"
 #include "ash/wm/window_util.h"
+#include "ash/wm/wm_highlight_border_overlay_delegate.h"
 #include "base/check_op.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "chromeos/constants/chromeos_features.h"
+#include "chromeos/ui/base/chromeos_ui_constants.h"
 #include "chromeos/ui/base/window_properties.h"
 #include "chromeos/ui/frame/caption_buttons/frame_caption_button_container_view.h"
 #include "chromeos/ui/frame/frame_utils.h"
@@ -33,6 +35,7 @@
 #include "ui/display/tablet_state.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_conversions.h"
+#include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/views/context_menu_controller.h"
@@ -173,6 +176,11 @@ NonClientFrameViewAsh::NonClientFrameViewAsh(views::Widget* frame)
   }
 
   frame_window->SetProperty(kNonClientFrameViewAshKey, this);
+  if (!frame_window->GetProperty(aura::client::kWindowRoundedCornersKey)) {
+    frame_window->SetProperty(aura::client::kWindowRoundedCornersKey,
+                              chromeos::GetWindowRoundedCorners());
+  }
+
   window_observation_.Observe(frame_window);
 
   header_view_->set_context_menu_controller(
@@ -285,7 +293,8 @@ void NonClientFrameViewAsh::SetFrameOverlapped(bool overlapped) {
     // whole rect, including the two upper corners.
     // Therefore, the header view layer also needs to be non-opaque to prevent
     // visual artifacts from appearing around the upper corners.
-    if (chromeos::ShouldWindowHaveRoundedCorners(frame_->GetNativeWindow())) {
+    const aura::Window* window = frame_->GetNativeWindow();
+    if (WindowState::Get(window)->ShouldWindowHaveRoundedCorners()) {
       fills_bounds_opaquely = false;
     }
   }
@@ -309,18 +318,18 @@ void NonClientFrameViewAsh::ClearToggleResizeLockMenuCallback() {
 void NonClientFrameViewAsh::OnWindowPropertyChanged(aura::Window* window,
                                                     const void* key,
                                                     intptr_t old) {
-  // ChromeOS has rounded frames for certain window states. If these states
+  // ChromeOS has rounded windows for certain window states. If these states
   // changes, we need to update the rounded corners of the frame associate with
   // the `window`accordingly.
-  if (chromeos::CanPropertyEffectFrameRadius(key)) {
+  if (key == chromeos::kWindowHasRoundedCornersKey) {
     UpdateWindowRoundedCorners();
 
-    bool fills_bounds_opaquely = true;
     // For overlapped frames header_view_ layer needs to non-opaque to avoid
     // visual artifacts at the upper corners.
     // See comment in NonClientFrameViewAsh::SetFrameOverlapped.
+    bool fills_bounds_opaquely = true;
     if (frame_overlapped_ &&
-        chromeos::ShouldWindowHaveRoundedCorners(frame_->GetNativeWindow())) {
+        WindowState::Get(window)->ShouldWindowHaveRoundedCorners()) {
       fills_bounds_opaquely = false;
     }
     if (header_view_->layer()) {
@@ -338,21 +347,24 @@ void NonClientFrameViewAsh::UpdateWindowRoundedCorners() {
     return;
   }
 
-  aura::Window* frame_window = GetWidget()->GetNativeWindow();
+  aura::Window* window = GetWidget()->GetNativeWindow();
+  auto* window_state = ash::WindowState::Get(window);
 
-  const int corner_radius = chromeos::GetFrameCornerRadius(frame_window);
-  frame_window->SetProperty(aura::client::kWindowCornerRadiusKey,
-                            corner_radius);
-
-  if (frame_enabled_) {
-    header_view_->SetHeaderCornerRadius(corner_radius);
-  }
-
-  if (!chromeos::features::IsRoundedWindowsEnabled()) {
+  // For certain windows, we do not window state associated with them. (See
+  // `ash::WindowState::Get()` for details)
+  if (!window_state) {
     return;
   }
 
-  GetWidget()->client_view()->UpdateWindowRoundedCorners(corner_radius);
+  const gfx::RoundedCornersF window_radii =
+      window_state->GetWindowRoundedCorners();
+
+  if (frame_enabled_) {
+    CHECK_EQ(window_radii.upper_left(), window_radii.upper_right());
+    header_view_->SetHeaderCornerRadius(window_radii.upper_left());
+  }
+
+  GetWidget()->client_view()->UpdateWindowRoundedCorners(window_radii);
 }
 
 base::RepeatingCallback<void()>
@@ -378,8 +390,8 @@ void NonClientFrameViewAsh::AddedToWidget() {
     return;
   }
 
-  highlight_border_overlay_ =
-      std::make_unique<HighlightBorderOverlay>(GetWidget());
+  highlight_border_overlay_ = std::make_unique<HighlightBorderOverlay>(
+      GetWidget(), std::make_unique<ash::WmHighlightBorderOverlayDelegate>());
 }
 
 chromeos::FrameCaptionButtonContainerView*

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "components/search/start_suggest_service.h"
 
 #include <algorithm>
@@ -12,6 +17,7 @@
 #include "base/functional/callback_helpers.h"
 #include "base/rand_util.h"
 #include "base/stl_util.h"
+#include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/values.h"
 #include "components/omnibox/browser/autocomplete_scheme_classifier.h"

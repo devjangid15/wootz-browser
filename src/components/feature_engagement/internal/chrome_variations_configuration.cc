@@ -15,7 +15,6 @@
 #include "base/feature_list.h"
 #include "base/logging.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "components/feature_engagement/public/configuration.h"
 #include "components/feature_engagement/public/configuration_provider.h"
 #include "components/feature_engagement/public/feature_list.h"
@@ -85,7 +84,7 @@ void ChromeVariationsConfiguration::LoadConfigs(
 
   for (auto* feature : features) {
     LoadFeatureConfig(*feature, configuration_providers, features, groups);
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     LoadAllowedEventPrefixes(*feature, configuration_providers);
 #endif
   }
@@ -97,7 +96,7 @@ void ChromeVariationsConfiguration::LoadConfigs(
   }
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 void ChromeVariationsConfiguration::UpdateConfig(
     const base::Feature& feature,
     const ConfigurationProvider* provider) {
@@ -168,7 +167,7 @@ void ChromeVariationsConfiguration::LoadGroupConfig(
   }
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 void ChromeVariationsConfiguration::LoadAllowedEventPrefixes(
     const base::Feature& feature,
     const ConfigurationProviderList& configuration_providers) {
@@ -221,14 +220,14 @@ void ChromeVariationsConfiguration::ExpandGroupNamesInFeatures(
 const FeatureConfig& ChromeVariationsConfiguration::GetFeatureConfig(
     const base::Feature& feature) const {
   auto it = configs_.find(feature.name);
-  DCHECK(it != configs_.end());
+  CHECK(it != configs_.end());
   return it->second;
 }
 
 const FeatureConfig& ChromeVariationsConfiguration::GetFeatureConfigByName(
     const std::string& feature_name) const {
   auto it = configs_.find(feature_name);
-  DCHECK(it != configs_.end());
+  CHECK(it != configs_.end());
   return it->second;
 }
 
@@ -248,14 +247,14 @@ ChromeVariationsConfiguration::GetRegisteredFeatures() const {
 const GroupConfig& ChromeVariationsConfiguration::GetGroupConfig(
     const base::Feature& group) const {
   auto it = group_configs_.find(group.name);
-  DCHECK(it != group_configs_.end());
+  CHECK(it != group_configs_.end());
   return it->second;
 }
 
 const GroupConfig& ChromeVariationsConfiguration::GetGroupConfigByName(
     const std::string& group_name) const {
   auto it = group_configs_.find(group_name);
-  DCHECK(it != group_configs_.end());
+  CHECK(it != group_configs_.end());
   return it->second;
 }
 

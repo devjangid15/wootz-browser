@@ -11,6 +11,7 @@
 #include "base/functional/callback_helpers.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/notreached.h"
+#include "base/strings/string_util.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/mock_callback.h"
@@ -30,7 +31,7 @@
 #include "chrome/test/base/testing_profile_manager.h"
 #include "chromeos/ash/components/disks/disk_mount_manager.h"
 #include "chromeos/ash/components/disks/fake_disk_mount_manager.h"
-#include "components/enterprise/data_controls/dlp_histogram_helper.h"
+#include "components/enterprise/data_controls/core/browser/dlp_histogram_helper.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/test/browser_task_environment.h"
 #include "storage/browser/file_system/file_system_url.h"
@@ -117,7 +118,7 @@ FilesPolicyDialog::BlockReason ConvertPolicy(
       // return a generic reason.
       return FilesPolicyDialog::BlockReason::kEnterpriseConnectors;
     case file_manager::io_task::PolicyErrorType::kDlpWarningTimeout:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -831,6 +832,7 @@ INSTANTIATE_TEST_SUITE_P(
     ::testing::Values(
         FilesPolicyDialog::BlockReason::kDlp,
         FilesPolicyDialog::BlockReason::kEnterpriseConnectorsUnknownScanResult,
+        FilesPolicyDialog::BlockReason::kEnterpriseConnectorsScanFailed,
         FilesPolicyDialog::BlockReason::kEnterpriseConnectorsSensitiveData,
         FilesPolicyDialog::BlockReason::kEnterpriseConnectorsMalware,
         FilesPolicyDialog::BlockReason::kEnterpriseConnectorsEncryptedFile,

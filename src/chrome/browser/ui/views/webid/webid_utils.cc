@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/views/webid/webid_utils.h"
 
 #include "chrome/grit/generated_resources.h"
+#include "content/public/browser/identity_request_dialog_controller.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/view.h"
@@ -25,13 +26,12 @@ int SelectSingleIdpTitleResourceId(blink::mojom::RpContext rp_context) {
 
 // Returns the title to be shown in the dialog. This does not include the
 // subtitle. For screen reader purposes, GetAccessibleTitle() is used instead.
-std::u16string GetTitle(const std::u16string& top_frame_for_display,
-                        const std::optional<std::u16string>& iframe_for_display,
+std::u16string GetTitle(const content::RelyingPartyData& rp_data,
                         const std::optional<std::u16string>& idp_title,
                         blink::mojom::RpContext rp_context) {
-  std::u16string frame_in_title = iframe_for_display.has_value()
-                                      ? iframe_for_display.value()
-                                      : top_frame_for_display;
+  std::u16string frame_in_title = rp_data.iframe_for_display.empty()
+                                      ? rp_data.rp_for_display
+                                      : rp_data.iframe_for_display;
   return idp_title.has_value()
              ? l10n_util::GetStringFUTF16(
                    SelectSingleIdpTitleResourceId(rp_context), frame_in_title,
@@ -41,22 +41,13 @@ std::u16string GetTitle(const std::u16string& top_frame_for_display,
                    frame_in_title);
 }
 
-std::u16string GetSubtitle(const std::u16string& top_frame_for_display) {
+std::u16string GetSubtitle(const content::RelyingPartyData& rp_data) {
+  if (rp_data.iframe_for_display.empty()) {
+    return std::u16string();
+  }
   return l10n_util::GetStringFUTF16(IDS_ACCOUNT_SELECTION_SHEET_SUBTITLE,
-                                    top_frame_for_display);
-}
-
-// Returns the title combined with the subtitle for screen reader purposes.
-std::u16string GetAccessibleTitle(
-    const std::u16string& top_frame_for_display,
-    const std::optional<std::u16string>& iframe_for_display,
-    const std::optional<std::u16string>& idp_title,
-    blink::mojom::RpContext rp_context) {
-  std::u16string title = GetTitle(top_frame_for_display, iframe_for_display,
-                                  idp_title, rp_context);
-  return iframe_for_display.has_value()
-             ? title + u" " + GetSubtitle(top_frame_for_display)
-             : title;
+                                    rp_data.rp_for_display,
+                                    rp_data.iframe_for_display);
 }
 
 void SendAccessibilityEvent(views::Widget* widget,

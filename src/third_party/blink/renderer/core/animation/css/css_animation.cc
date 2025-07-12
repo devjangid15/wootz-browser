@@ -27,12 +27,10 @@ CSSAnimation::CSSAnimation(ExecutionContext* execution_context,
 bool CSSAnimation::IsEventDispatchAllowed() const {
   // If there is no owning element, CSS animation events are not dispatched:
   // https://drafts.csswg.org/css-animations-2/#event-dispatch
-  return (!RuntimeEnabledFeatures::UnownedAnimationsSkipCSSEventsEnabled() ||
-          OwningElement()) &&
-         Animation::IsEventDispatchAllowed();
+  return OwningElement() && Animation::IsEventDispatchAllowed();
 }
 
-String CSSAnimation::playState() const {
+V8AnimationPlayState CSSAnimation::playState() const {
   FlushStyles();
   return Animation::playState();
 }
@@ -123,6 +121,12 @@ CSSAnimation::PlayStateTransitionScope::~PlayStateTransitionScope() {
   bool is_paused = animation_.Paused();
   if (was_paused_ != is_paused)
     animation_.ignore_css_play_state_ = true;
+}
+
+void CSSAnimation::Trace(blink::Visitor* visitor) const {
+  Animation::Trace(visitor);
+  visitor->Trace(owning_element_);
+  visitor->Trace(css_trigger_);
 }
 
 }  // namespace blink

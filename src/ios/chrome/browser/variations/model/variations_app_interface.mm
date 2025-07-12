@@ -9,6 +9,7 @@
 #import "base/metrics/field_trial.h"
 #import "components/prefs/pref_service.h"
 #import "components/variations/pref_names.h"
+#import "components/variations/service/variations_service.h"
 #import "components/variations/variations_test_utils.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
@@ -19,26 +20,18 @@
   PrefService* prefService = GetApplicationContext()->GetLocalState();
 
   // Clear variations seed prefs.
-  prefService->ClearPref(variations::prefs::kVariationsCompressedSeed);
-  prefService->ClearPref(variations::prefs::kVariationsCountry);
-  prefService->ClearPref(variations::prefs::kVariationsLastFetchTime);
-  prefService->ClearPref(
-      variations::prefs::kVariationsPermanentConsistencyCountry);
+  variations::VariationsSeedStore* seed_store =
+      GetApplicationContext()->GetVariationsService()->GetSeedStoreForTesting();
+  seed_store->GetSeedReaderWriterForTesting()->ClearSeedInfo();
+  seed_store->ClearPermanentConsistencyCountryAndVersion();
   prefService->ClearPref(
       variations::prefs::kVariationsPermanentOverriddenCountry);
-  prefService->ClearPref(variations::prefs::kVariationsSeedDate);
-  prefService->ClearPref(variations::prefs::kVariationsSeedSignature);
 
   // Clear variations safe seed prefs.
-  prefService->ClearPref(variations::prefs::kVariationsSafeCompressedSeed);
-  prefService->ClearPref(variations::prefs::kVariationsSafeSeedDate);
-  prefService->ClearPref(variations::prefs::kVariationsSafeSeedFetchTime);
+  seed_store->GetSafeSeedReaderWriterForTesting()->ClearSeedInfo();
+  seed_store->GetSafeSeedReaderWriterForTesting()
+      ->ClearPermanentConsistencyCountryAndVersion();
   prefService->ClearPref(variations::prefs::kVariationsSafeSeedLocale);
-  prefService->ClearPref(
-      variations::prefs::kVariationsSafeSeedPermanentConsistencyCountry);
-  prefService->ClearPref(
-      variations::prefs::kVariationsSafeSeedSessionConsistencyCountry);
-  prefService->ClearPref(variations::prefs::kVariationsSafeSeedSignature);
 
   // Clear variations policy prefs.
   prefService->ClearPref(variations::prefs::kVariationsRestrictionsByPolicy);
@@ -54,22 +47,51 @@
 }
 
 + (BOOL)hasSafeSeed {
-  PrefService* prefService = GetApplicationContext()->GetLocalState();
-  const std::string& safe_seed =
-      prefService->GetString(variations::prefs::kVariationsSafeCompressedSeed);
-  return !safe_seed.empty();
+  return !GetApplicationContext()
+              ->GetVariationsService()
+              ->GetSeedStoreForTesting()
+              ->GetSafeSeedReaderWriterForTesting()
+              ->GetSeedData()
+              .data.empty();
 }
 
 + (void)setTestSafeSeedAndSignature {
-  PrefService* prefService = GetApplicationContext()->GetLocalState();
-  variations::WriteSeedData(prefService, variations::kTestSeedData,
-                            variations::kSafeSeedPrefKeys);
+  GetApplicationContext()
+      ->GetVariationsService()
+      ->GetSeedStoreForTesting()
+      ->GetSafeSeedReaderWriterForTesting()
+      ->StoreValidatedSeedInfo(variations::ValidatedSeedInfo{
+          .compressed_seed_data = variations::kTestSeedData.GetCompressedData(),
+          .base64_seed_data = variations::kTestSeedData.base64_compressed_data,
+          .signature = variations::kTestSeedData.base64_signature,
+          .milestone = 92,  // Milestone number is arbitrary.
+          .seed_date = base::Time::Now(),
+          .client_fetch_time = base::Time::Now(),
+          .session_country_code = "us",
+          .permanent_country_code = "us",
+          // Permanent version is not stored in the safe seed, only the country.
+          .permanent_country_version = "",
+      });
 }
 
 + (void)setCrashingRegularSeedAndSignature {
-  PrefService* prefService = GetApplicationContext()->GetLocalState();
-  variations::WriteSeedData(prefService, variations::kCrashingSeedData,
-                            variations::kRegularSeedPrefKeys);
+  GetApplicationContext()
+      ->GetVariationsService()
+      ->GetSeedStoreForTesting()
+      ->GetSeedReaderWriterForTesting()
+      ->StoreValidatedSeedInfo(variations::ValidatedSeedInfo{
+          .compressed_seed_data =
+              variations::kCrashingSeedData.GetCompressedData(),
+          .base64_seed_data =
+              variations::kCrashingSeedData.base64_compressed_data,
+          .signature = variations::kCrashingSeedData.base64_signature,
+          .milestone = 92,  // Milestone number is arbitrary.
+          .seed_date = base::Time::Now(),
+          .client_fetch_time = base::Time::Now(),
+          .session_country_code = "us",
+          .permanent_country_code = "us",
+          .permanent_country_version = "1.2.3.4",
+      });
 }
 
 + (int)crashStreak {

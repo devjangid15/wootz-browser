@@ -20,7 +20,6 @@
 #include "build/build_config.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
-#include "url/gurl.h"
 
 class PrefService;
 
@@ -37,10 +36,6 @@ namespace translate {
 // Enables or disables using the most recent target language as the default
 // target language option.
 BASE_DECLARE_FEATURE(kTranslateRecentTarget);
-
-// This allows the user to disable translate by using the
-// `--disable-features=Translate` command-line flag.
-BASE_DECLARE_FEATURE(kTranslate);
 
 // Whether to migrate the obsolete always-translate languages pref to the new
 // pref during object construction as a fix for crbug/1291356, which had
@@ -256,15 +251,7 @@ class TranslatePrefs {
   // Removes the translate synonym of source_language from the always
   // translate dict.
   void RemoveLanguagePairFromAlwaysTranslateList(
-      std::string_view source_language,
-      std::string_view target_language);
-
-  // Sets the always translate state for a language.
-  // The always translate language list is actually a dict mapping
-  // source_language -> target_language.  We use the current target language
-  // when adding |language| to the dict.
-  void SetLanguageAlwaysTranslateState(std::string_view source_language,
-                                       bool always_translate);
+      std::string_view source_language);
 
   // Gets the languages that are set to always translate formatted as Chrome
   // language codes.

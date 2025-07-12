@@ -8,6 +8,7 @@
 #include <memory>
 #include <vector>
 
+#include "android_webview/browser/aw_cookie_access_policy.h"
 #include "base/android/jni_array.h"
 #include "base/android/scoped_java_ref.h"
 #include "base/containers/circular_deque.h"
@@ -115,57 +116,38 @@ class CookieManager {
   // be needed in production, as the default is the desirable behavior.
   void SetWorkaroundHttpSecureCookiesForTesting(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
       jboolean allow);
   void SetShouldAcceptCookies(JNIEnv* env,
-                              const base::android::JavaParamRef<jobject>& obj,
                               jboolean accept);
-  jboolean GetShouldAcceptCookies(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj);
+  jboolean GetShouldAcceptCookies(JNIEnv* env);
   void SetCookie(JNIEnv* env,
-                 const base::android::JavaParamRef<jobject>& obj,
                  const base::android::JavaParamRef<jstring>& url,
-                 const base::android::JavaParamRef<jstring>& value,
+                 std::string& value,
                  const base::android::JavaParamRef<jobject>& java_callback);
   void SetCookieSync(JNIEnv* env,
-                     const base::android::JavaParamRef<jobject>& obj,
                      const base::android::JavaParamRef<jstring>& url,
-                     const base::android::JavaParamRef<jstring>& value);
+                     std::string& value);
 
-  base::android::ScopedJavaLocalRef<jstring> GetCookie(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
-      const base::android::JavaParamRef<jstring>& url);
+  std::string GetCookie(JNIEnv* env,
+                        const base::android::JavaParamRef<jstring>& url);
 
   base::android::ScopedJavaLocalRef<jobjectArray> GetCookieInfo(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jstring>& url);
 
   void RemoveAllCookies(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jobject>& java_callback);
   void RemoveSessionCookies(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jobject>& java_callback);
-  void RemoveAllCookiesSync(JNIEnv* env,
-                            const base::android::JavaParamRef<jobject>& obj);
-  void RemoveSessionCookiesSync(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj);
-  void RemoveExpiredCookies(JNIEnv* env,
-                            const base::android::JavaParamRef<jobject>& obj);
-  void FlushCookieStore(JNIEnv* env,
-                        const base::android::JavaParamRef<jobject>& obj);
-  jboolean HasCookies(JNIEnv* env,
-                      const base::android::JavaParamRef<jobject>& obj);
+  void RemoveAllCookiesSync(JNIEnv* env);
+  void RemoveSessionCookiesSync(JNIEnv* env);
+  void RemoveExpiredCookies(JNIEnv* env);
+  void FlushCookieStore(JNIEnv* env);
+  jboolean HasCookies(JNIEnv* env);
   bool GetAllowFileSchemeCookies();
-  jboolean GetAllowFileSchemeCookies(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj);
+  jboolean GetAllowFileSchemeCookies(JNIEnv* env);
 
   // Configures whether CookieManager and WebView instances will honor requests
   // to set cookies for file:// scheme URLs. This method must be called (and
@@ -178,10 +160,13 @@ class CookieManager {
   // this call finishes.
   void SetAllowFileSchemeCookies(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
       jboolean allow);
 
   base::FilePath GetCookieStorePath();
+
+  AwCookieAccessPolicy* cookie_access_policy() {
+    return &cookie_access_policy_;
+  }
 
  private:
   // Returns the CookieStore, creating it if necessary. This must only be called
@@ -299,6 +284,10 @@ class CookieManager {
   // note in SetMojoCookieManager(). Must only be accessed on
   // |cookie_store_task_runner_|.
   bool setting_new_mojo_cookie_manager_;
+
+  // The cookie access policy is responsible for configuring when WebView allows
+  // cookies both globally, and per request.
+  AwCookieAccessPolicy cookie_access_policy_;
 
   // |tasks_| is a queue we manage, to allow us to delay tasks until after
   // SetMojoCookieManager()'s work is done. This is modified on different

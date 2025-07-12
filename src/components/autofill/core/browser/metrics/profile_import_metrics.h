@@ -5,8 +5,8 @@
 #ifndef COMPONENTS_AUTOFILL_CORE_BROWSER_METRICS_PROFILE_IMPORT_METRICS_H_
 #define COMPONENTS_AUTOFILL_CORE_BROWSER_METRICS_PROFILE_IMPORT_METRICS_H_
 
-#include "components/autofill/core/browser/autofill_client.h"
-#include "components/autofill/core/browser/autofill_profile_import_process.h"
+#include "components/autofill/core/browser/form_import/addresses/autofill_profile_import_process.h"
+#include "components/autofill/core/browser/foundations/autofill_client.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
 
 namespace autofill::autofill_metrics {
@@ -103,6 +103,36 @@ enum class AddressProfileImportStatusMetric {
   kMaxValue = kSectionUnionImport,
 };
 
+// These values are persisted to UMA logs. Entries should not be renumbered
+// and numeric values should never be reused. Represents the zip code
+// separator in extracted from form valid address profile considered for import.
+// LINT.IfChange(AutofillZipCodeSeparators)
+enum class AddressValidZipCodeSeparatorMetric {
+  kNoSeparator = 0,
+  kHyphenMinus = 1,
+  kEnDash = 2,
+  kEmDash = 3,
+  kHyphen = 4,
+  kNonBreakingHyphen = 5,
+  kMinusSign = 6,
+  kModifierMinus = 7,
+  kFigureDash = 8,
+  kHorizontalBar = 9,
+  kSmallHyphenMinus = 10,
+  kFullwidthHyphenMinus = 11,
+  kSpace = 12,
+  kNonBreakingSpace = 13,
+  kEnSpace = 14,
+  kEmSpace = 15,
+  kThinSpace = 16,
+  kIdeographicSpace = 17,
+  kFigureSpace = 18,
+  kNarrowNonBreakingSpace = 19,
+  kOther = 20,
+  kMaxValue = kOther,
+};
+// LINT.ThenChange(/tools/metrics/histograms/metadata/autofill/enums.xml:AutofillZipCodeSeparators)
+
 // Logs the address profile import UKM after the form submission.
 // `user_decision` is the user's decision based on the storage prompt, if
 // presented. `num_edited_fields` is the number of fields that were edited by
@@ -114,7 +144,10 @@ void LogAddressProfileImportUkm(
     AutofillProfileImportType import_type,
     AutofillClient::AddressPromptUserDecision user_decision,
     const ProfileImportMetadata& profile_import_metadata,
-    size_t num_edited_fields);
+    size_t num_edited_fields,
+    std::optional<AutofillProfile> import_candidate,
+    const std::vector<const AutofillProfile*>& existing_profiles,
+    std::string_view app_locale);
 
 // Logs the status of an address import requirement defined by type.
 void LogAddressFormImportRequirementMetric(
@@ -133,12 +166,28 @@ void LogProfileImportType(AutofillProfileImportType import_type);
 // Logs the type of a profile import that are used for the silent updates.
 void LogSilentUpdatesProfileImportType(AutofillProfileImportType import_type);
 
-// Logs the user decision for importing a new profile.
+// Logs the user decision for importing a new profile with variants for ready
+// users (users who have at least one profile stored already) and non-ready
+// users. Besides this, decision is also recorded for the subset of ready users
+// who have a a quasi-duplicate profile stored, and also in a separate histogram
+// for all users.
 void LogNewProfileImportDecision(
-    AutofillClient::AddressPromptUserDecision decision);
+    AutofillClient::AddressPromptUserDecision decision,
+    const std::vector<const AutofillProfile*>& existing_profiles,
+    const AutofillProfile& import_candidate,
+    std::string_view app_locale);
 
-// Logs the user decision for updating an exiting profile.
+// Logs the user decision for updating an exiting profile with variants for
+// users who have a quasi-duplicate profile stored (that is not
+// `import_candidate`), and also in a separate histogram for all users
 void LogProfileUpdateImportDecision(
+    AutofillClient::AddressPromptUserDecision decision,
+    const std::vector<const AutofillProfile*>& existing_profiles,
+    const AutofillProfile& import_candidate,
+    std::string_view app_locale);
+
+// Logs the user decision for saving a home/work profile superset.
+void LogHomeAndWorkSupersetImportDecision(
     AutofillClient::AddressPromptUserDecision decision);
 
 // Logs if at least one setting-inaccessible field was removed on import.
@@ -155,6 +204,9 @@ void LogPhoneNumberImportParsingResult(bool parsed_successfully);
 
 // Logs that a specific type was edited in a save prompt.
 void LogNewProfileEditedType(FieldType edited_type);
+
+// Logs which storage a newly imported profile will be saved to.
+void LogNewProfileStorageLocation(const AutofillProfile& import_candidate);
 
 // Logs that a specific type changed in a profile update that received the
 // user |decision|. Note that additional manual edits in the update prompt are
@@ -180,6 +232,14 @@ void LogProfileMigrationImportDecision(
 
 // Logs that a specific type was edited in a migration prompt.
 void LogProfileMigrationEditedType(FieldType edited_type);
+
+// Logs the length of a zip code found in a valid and complete
+// profile considered for import.
+void LogZipCodeLengthMetric(std::u16string_view zip);
+
+// Logs the specific zip code separator char found in a valid and complete
+// profile considered for import.
+void LogZipCodeSeparatorMetric(std::u16string_view zip);
 
 }  // namespace autofill::autofill_metrics
 

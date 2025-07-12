@@ -7,24 +7,23 @@
 
 #include <memory>
 #include <optional>
+#include <string>
 
 #include "base/unguessable_token.h"
 #include "services/network/public/mojom/blocked_by_response_reason.mojom-forward.h"
 #include "third_party/blink/public/mojom/devtools/inspector_issue.mojom-blink.h"
 #include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-blink.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/dom/dom_node_ids.h"
 #include "third_party/blink/renderer/core/frame/csp/content_security_policy_violation_type.h"
 #include "third_party/blink/renderer/core/inspector/protocol/audits.h"
+#include "third_party/blink/renderer/platform/graphics/dom_node_id.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_initiator_info.h"
+#include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/text/text_position.h"
-
-namespace WTF {
-class String;
-}
 
 namespace blink {
 
+class Document;
 class DocumentLoader;
 class Element;
 class ExecutionContext;
@@ -63,6 +62,16 @@ enum class ClientHintIssueReason {
   kMetaTagModifiedHTML,
 };
 
+enum class ElementAccessibilityIssueReason {
+  kDisallowedSelectChild,
+  kDisallowedOptGroupChild,
+  kNonPhrasingContentOptionChild,
+  kInteractiveContentOptionChild,
+  kInteractiveContentLegendChild,
+  kInteractiveContentSummaryDescendant,
+  kValidChild,
+};
+
 // |AuditsIssue| is a thin wrapper around the Audits::InspectorIssue
 // protocol class.
 //
@@ -99,7 +108,6 @@ class CORE_EXPORT AuditsIssue {
                                     String loader_id);
 
   static void ReportCorsIssue(ExecutionContext* execution_context,
-                              int64_t identifier,
                               RendererCorsIssueCode code,
                               WTF::String url,
                               WTF::String initiator_origin,
@@ -110,6 +118,7 @@ class CORE_EXPORT AuditsIssue {
       ExecutionContext* execution_context,
       mojom::blink::AttributionReportingIssueType type,
       Element* element,
+      const String& request_url,
       const String& request_id,
       const String& invalid_parameter);
 
@@ -162,7 +171,10 @@ class CORE_EXPORT AuditsIssue {
                                  mojom::blink::GenericIssueErrorType error_type,
                                  int violating_node_id,
                                  const String& violating_node_attribute);
-
+  static void ReportPartitioningBlobURLIssue(
+      LocalDOMWindow* window,
+      WTF::String blob_url,
+      mojom::blink::PartitioningBlobURLInfo info);
   static void ReportStylesheetLoadingLateImportIssue(Document* document,
                                                      const KURL& url,
                                                      WTF::OrdinalNumber line,
@@ -184,6 +196,17 @@ class CORE_EXPORT AuditsIssue {
       WTF::OrdinalNumber initiator_line,
       WTF::OrdinalNumber initiator_column,
       const String& failureMessage);
+
+  static void ReportElementAccessibilityIssue(
+      Document* document,
+      DOMNodeId node_id,
+      ElementAccessibilityIssueReason issue_reason,
+      bool has_disallowed_attributes);
+
+  static void ReportUserReidentificationIssue(
+      LocalFrame* frame,
+      std::optional<std::string> devtools_request_id,
+      const KURL& affected_request_url);
 
  private:
 

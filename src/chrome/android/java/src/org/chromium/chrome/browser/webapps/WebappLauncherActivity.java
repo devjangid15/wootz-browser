@@ -36,9 +36,11 @@ import org.chromium.chrome.browser.customtabs.BaseCustomTabActivity;
 import org.chromium.chrome.browser.customtabs.CustomTabLocator;
 import org.chromium.chrome.browser.document.ChromeLauncherActivity;
 import org.chromium.chrome.browser.firstrun.FirstRunFlowSequencer;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.intents.BrowserIntentUtils;
 import org.chromium.components.webapk.lib.client.WebApkValidator;
 import org.chromium.components.webapps.ShortcutSource;
+import org.chromium.webapk.lib.common.WebApkConstants;
 
 import java.lang.ref.WeakReference;
 
@@ -89,7 +91,7 @@ public class WebappLauncherActivity extends Activity {
 
     /** Creates intent to relaunch WebAPK. */
     public static Intent createRelaunchWebApkIntent(
-            Intent sourceIntent, @NonNull String webApkPackageName, @NonNull String url) {
+            Intent sourceIntent, @Nullable String webApkPackageName, @NonNull String url) {
         Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
         intent.setPackage(webApkPackageName);
         intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NEW_DOCUMENT);
@@ -134,7 +136,7 @@ public class WebappLauncherActivity extends Activity {
 
     @Override
     @SuppressWarnings("UnsafeIntentLaunch")
-    public void onCreate(Bundle savedInstanceState) {
+    public void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
         // Triggers UnsafeIntentLaunch lint warning. https://crbug.com/1412281
@@ -217,7 +219,10 @@ public class WebappLauncherActivity extends Activity {
             // filter for the URL.
             if (!TextUtils.isEmpty(launchData.url)
                     && WebApkValidator.canWebApkHandleUrl(
-                            appContext, launchData.webApkPackageName, launchData.url)) {
+                            appContext,
+                            launchData.webApkPackageName,
+                            launchData.url,
+                            ChromeFeatureList.sWebApkMinShellApkVersionValue.getValue())) {
                 return true;
             }
 

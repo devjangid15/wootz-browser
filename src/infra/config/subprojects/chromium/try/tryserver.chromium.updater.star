@@ -3,10 +3,11 @@
 # found in the LICENSE file.
 """Definitions of builders in the tryserver.chromium.updater builder group."""
 
-load("//lib/builders.star", "os", "siso")
+load("//lib/builders.star", "cpu", "os", "siso")
 load("//lib/try.star", "try_")
 load("//lib/consoles.star", "consoles")
 load("//lib/gn_args.star", "gn_args")
+load("//lib/html.star", "linkify")
 
 try_.defaults.set(
     executable = try_.DEFAULT_EXECUTABLE,
@@ -15,7 +16,6 @@ try_.defaults.set(
     builderless = True,
     execution_timeout = try_.DEFAULT_EXECUTION_TIMEOUT,
     service_account = try_.DEFAULT_SERVICE_ACCOUNT,
-    siso_enabled = True,
     siso_project = siso.project.DEFAULT_UNTRUSTED,
     siso_remote_jobs = siso.remote_jobs.LOW_JOBS_FOR_CQ,
 )
@@ -24,6 +24,9 @@ consoles.list_view(
     name = "tryserver.chromium.updater",
 )
 
+_UPDATER_LINK = linkify("https://chromium.googlesource.com/chromium/src/+/main/docs/updater/design_doc.md", "Chromium updater")
+_LOCATION_FILTER = ["chrome/updater/.+", "chrome/enterprise_companion/.+"]
+
 def updater_linux_builder(*, name, **kwargs):
     kwargs.setdefault("os", os.LINUX_DEFAULT)
     kwargs.setdefault("siso_project", siso.project.DEFAULT_UNTRUSTED)
@@ -31,7 +34,7 @@ def updater_linux_builder(*, name, **kwargs):
     return try_.builder(name = name, **kwargs)
 
 def updater_mac_builder(*, name, **kwargs):
-    kwargs.setdefault("os", os.MAC_ANY)
+    kwargs.setdefault("os", os.MAC_DEFAULT)
     return try_.builder(name = name, **kwargs)
 
 def updater_windows_builder(*, name, **kwargs):
@@ -41,6 +44,7 @@ def updater_windows_builder(*, name, **kwargs):
 
 updater_linux_builder(
     name = "linux-updater-try-builder-dbg",
+    description_html = _UPDATER_LINK + " Linux x64 debug builder.",
     mirrors = [
         "ci/linux-updater-builder-dbg",
         "ci/linux-updater-tester-dbg",
@@ -50,16 +54,16 @@ updater_linux_builder(
             "ci/linux-updater-builder-dbg",
         ],
     ),
+    contact_team_email = "omaha@google.com",
     main_list_view = "try",
     tryjob = try_.job(
-        location_filters = [
-            "chrome/updater/.+",
-        ],
+        location_filters = _LOCATION_FILTER,
     ),
 )
 
 updater_linux_builder(
     name = "linux-updater-try-builder-rel",
+    description_html = _UPDATER_LINK + " Linux x64 release builder.",
     mirrors = [
         "ci/linux-updater-builder-rel",
         "ci/linux-updater-tester-rel",
@@ -70,38 +74,40 @@ updater_linux_builder(
             "release_try_builder",
         ],
     ),
+    contact_team_email = "omaha@google.com",
     main_list_view = "try",
     tryjob = try_.job(
-        location_filters = [
-            "chrome/updater/.+",
-        ],
+        location_filters = _LOCATION_FILTER,
     ),
 )
 
 updater_mac_builder(
     name = "mac-updater-try-builder-dbg",
+    description_html = _UPDATER_LINK + " macOS 13 arm64 debug builder.",
     mirrors = [
-        "ci/mac-updater-builder-dbg",
-        "ci/mac10.15-updater-tester-dbg",
+        "ci/mac-updater-builder-arm64-dbg",
+        "ci/mac13-arm64-updater-tester-dbg",
     ],
     gn_args = gn_args.config(
         configs = [
-            "ci/mac-updater-builder-dbg",
+            "ci/mac-updater-builder-arm64-dbg",
         ],
     ),
+    cores = None,
+    cpu = cpu.ARM64,
+    contact_team_email = "omaha@google.com",
     main_list_view = "try",
     tryjob = try_.job(
-        location_filters = [
-            "chrome/updater/.+",
-        ],
+        location_filters = _LOCATION_FILTER,
     ),
 )
 
 updater_mac_builder(
     name = "mac-updater-try-builder-rel",
+    description_html = _UPDATER_LINK + " macOS 13 x64 release builder.",
     mirrors = [
         "ci/mac-updater-builder-rel",
-        "ci/mac10.15-updater-tester-rel",
+        "ci/mac13-x64-updater-tester-rel",
     ],
     gn_args = gn_args.config(
         configs = [
@@ -109,16 +115,37 @@ updater_mac_builder(
             "release_try_builder",
         ],
     ),
+    cpu = cpu.ARM64,
+    contact_team_email = "omaha@google.com",
     main_list_view = "try",
     tryjob = try_.job(
-        location_filters = [
-            "chrome/updater/.+",
+        location_filters = _LOCATION_FILTER,
+    ),
+)
+
+updater_windows_builder(
+    name = "win-arm64-updater-rel",
+    description_html = _UPDATER_LINK + " Windows 11 arm64 release builder.",
+    mirrors = [
+        "ci/win-arm64-updater-builder-rel",
+        "ci/win11-arm64-updater-tester-rel",
+    ],
+    gn_args = gn_args.config(
+        configs = [
+            "ci/win-arm64-updater-builder-rel",
+            "release_try_builder",
         ],
+    ),
+    contact_team_email = "omaha@google.com",
+    main_list_view = "try",
+    tryjob = try_.job(
+        location_filters = _LOCATION_FILTER,
     ),
 )
 
 updater_windows_builder(
     name = "win-updater-try-builder-dbg",
+    description_html = _UPDATER_LINK + " Windows 10 x64 debug builder.",
     mirrors = [
         "ci/win-updater-builder-dbg",
         "ci/win10-updater-tester-dbg",
@@ -128,16 +155,16 @@ updater_windows_builder(
             "ci/win-updater-builder-dbg",
         ],
     ),
+    contact_team_email = "omaha@google.com",
     main_list_view = "try",
     tryjob = try_.job(
-        location_filters = [
-            "chrome/updater/.+",
-        ],
+        location_filters = _LOCATION_FILTER,
     ),
 )
 
 updater_windows_builder(
     name = "win-updater-try-builder-rel",
+    description_html = _UPDATER_LINK + " Windows 10 x64 release builder.",
     mirrors = [
         "ci/win-updater-builder-rel",
         "ci/win10-updater-tester-rel",
@@ -148,10 +175,9 @@ updater_windows_builder(
             "release_try_builder",
         ],
     ),
+    contact_team_email = "omaha@google.com",
     main_list_view = "try",
     tryjob = try_.job(
-        location_filters = [
-            "chrome/updater/.+",
-        ],
+        location_filters = _LOCATION_FILTER,
     ),
 )

@@ -5,6 +5,7 @@
 #include "ash/test/ash_test_util.h"
 
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "ash/frame/non_client_frame_view_ash.h"
@@ -15,12 +16,14 @@
 #include "ash/system/unified/unified_system_tray.h"
 #include "base/auto_reset.h"
 #include "base/check.h"
+#include "base/containers/span.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
 #include "base/scoped_observation.h"
+#include "base/strings/string_view_util.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "chromeos/ui/frame/caption_buttons/frame_caption_button_container_view.h"
@@ -239,19 +242,20 @@ std::string CreateEncodedImageForTesting(const gfx::Size& size,
   if (image_out) {
     *image_out = test_image;
   }
-  std::vector<unsigned char> encoded_image;
+
+  std::optional<std::vector<uint8_t>> encoded_image;
   switch (codec) {
     case data_decoder::mojom::ImageCodec::kDefault:
-      CHECK(gfx::JPEG1xEncodedDataFromImage(gfx::Image(test_image), 100,
-                                            &encoded_image));
+      encoded_image =
+          gfx::JPEG1xEncodedDataFromImage(gfx::Image(test_image), 100);
       break;
     case data_decoder::mojom::ImageCodec::kPng:
-      CHECK(gfx::PNGCodec::EncodeBGRASkBitmap(
-          *test_image.bitmap(), /*discard_transparency=*/true, &encoded_image));
+      encoded_image = gfx::PNGCodec::EncodeBGRASkBitmap(
+          *test_image.bitmap(), /*discard_transparency=*/true);
       break;
   }
-  return std::string(reinterpret_cast<const char*>(encoded_image.data()),
-                     encoded_image.size());
+  CHECK(encoded_image.has_value());
+  return std::string(base::as_string_view(encoded_image.value()));
 }
 
 void DecorateWindow(aura::Window* window,
@@ -278,17 +282,17 @@ views::MenuItemView* WaitForMenuItemWithLabel(const std::u16string& label) {
 }
 
 chromeos::MultitaskMenu* ShowAndWaitMultitaskMenuForWindow(
-    absl::variant<aura::Window*, chromeos::FrameSizeButton*>
+    std::variant<aura::Window*, chromeos::FrameSizeButton*>
         window_or_size_button,
     chromeos::MultitaskMenuEntryType entry_type) {
   // If a size button object is passed, use that. Otherwise retrieve it from the
   // non client frame view ash.
   chromeos::FrameSizeButton* size_button = nullptr;
-  if (absl::holds_alternative<chromeos::FrameSizeButton*>(
+  if (std::holds_alternative<chromeos::FrameSizeButton*>(
           window_or_size_button)) {
-    size_button = absl::get<chromeos::FrameSizeButton*>(window_or_size_button);
+    size_button = std::get<chromeos::FrameSizeButton*>(window_or_size_button);
   } else {
-    aura::Window* window = absl::get<aura::Window*>(window_or_size_button);
+    aura::Window* window = std::get<aura::Window*>(window_or_size_button);
     CHECK(window);
     auto* frame_view = NonClientFrameViewAsh::Get(window);
     if (!frame_view) {

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "components/cronet/testing/test_server/test_server.h"
 
 #include <memory>
@@ -12,6 +17,7 @@
 #include "base/format_macros.h"
 #include "base/functional/bind.h"
 #include "base/lazy_instance.h"
+#include "base/no_destructor.h"
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -170,7 +176,7 @@ std::unique_ptr<net::test_server::HttpResponse> CronetTestRequestHandler(
 namespace cronet {
 
 /* static */
-bool TestServer::StartServeFilesFromDirectory(
+bool TestServer::PrepareServeFilesFromDirectory(
     const base::FilePath& test_files_root,
     net::EmbeddedTestServer::Type server_type,
     net::EmbeddedTestServer::ServerCertificate server_certificate) {
@@ -184,8 +190,12 @@ bool TestServer::StartServeFilesFromDirectory(
   g_test_server->ServeFilesFromDirectory(test_files_root);
   net::test_server::RegisterDefaultHandlers(g_test_server.get());
   g_test_server->SetSSLConfig(server_certificate);
-  CHECK(g_test_server->Start());
   return true;
+}
+
+void TestServer::StartPrepared() {
+  CHECK(g_test_server);
+  CHECK(g_test_server->Start());
 }
 
 /* static */
@@ -289,6 +299,12 @@ void TestServer::ReleaseBigDataURL() {
 std::string TestServer::GetFileURL(const std::string& file_path) {
   DCHECK(g_test_server);
   return g_test_server->GetURL(file_path).spec();
+}
+
+void TestServer::RegisterRequestHandler(
+    net::test_server::EmbeddedTestServer::HandleRequestCallback callback) {
+  CHECK(g_test_server);
+  g_test_server->RegisterRequestHandler(callback);
 }
 
 }  // namespace cronet

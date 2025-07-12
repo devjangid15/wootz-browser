@@ -7,6 +7,7 @@
 
 #include <memory>
 #include <unordered_set>
+#include <vector>
 
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
@@ -50,9 +51,6 @@ class PageLoadMetricsTestWaiter : public MetricsLifecycleObserver {
     LayoutShiftOnlyInBothFrames,
     NoLayoutShift,
   };
-
-  using FrameTreeNodeId =
-      page_load_metrics::PageLoadMetricsObserver::FrameTreeNodeId;
 
   explicit PageLoadMetricsTestWaiter(content::WebContents* web_contents);
   explicit PageLoadMetricsTestWaiter(content::WebContents* web_contents,
@@ -189,7 +187,7 @@ class PageLoadMetricsTestWaiter : public MetricsLifecycleObserver {
   // Manages a bitset of TimingFields.
   class TimingFieldBitSet {
    public:
-    TimingFieldBitSet() {}
+    TimingFieldBitSet() = default;
 
     // Returns whether this bitset has all bits unset.
     bool Empty() const { return bitmask_ == 0; }

@@ -42,7 +42,7 @@ FaviconCache::FaviconCache(favicon::FaviconService* favicon_service,
   }
 }
 
-FaviconCache::~FaviconCache() {}
+FaviconCache::~FaviconCache() = default;
 
 gfx::Image FaviconCache::GetFaviconForPageUrl(
     const GURL& page_url,
@@ -113,7 +113,7 @@ gfx::Image FaviconCache::GetFaviconInternal(
                             weak_factory_.GetWeakPtr(), request),
         &task_tracker_);
   } else {
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
 
   pending_requests_[request].push_back(std::move(on_favicon_fetched));
@@ -152,7 +152,7 @@ void FaviconCache::InvokeRequestCallbackWithFavicon(const Request& request,
   lru_cache_.Put(request, image);
 
   auto it = pending_requests_.find(request);
-  DCHECK(it != pending_requests_.end());
+  CHECK(it != pending_requests_.end());
   for (auto& callback : it->second) {
     std::move(callback).Run(image);
   }

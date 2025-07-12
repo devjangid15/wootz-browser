@@ -12,6 +12,9 @@ import org.xml.sax.SAXException;
 import org.xml.sax.SAXParseException;
 import org.xml.sax.helpers.DefaultHandler;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+
 import java.io.IOException;
 import java.io.StringReader;
 import java.util.ArrayList;
@@ -25,16 +28,17 @@ import javax.xml.parsers.SAXParser;
 import javax.xml.parsers.SAXParserFactory;
 
 /** Breaks XML down into its constituent elements and attributes. */
+@NullMarked
 public class XMLParser extends DefaultHandler {
     static final class Node {
-        public final String tag;
+        public final @Nullable String tag;
         public final Map<String, String> attributes;
         public final List<Node> children;
 
-        public Node(String tagName) {
+        public Node(@Nullable String tagName) {
             tag = tagName;
-            attributes = new HashMap<String, String>();
-            children = new ArrayList<Node>();
+            attributes = new HashMap<>();
+            children = new ArrayList<>();
         }
     }
 
@@ -43,7 +47,7 @@ public class XMLParser extends DefaultHandler {
 
     public XMLParser(String serverResponse) throws RequestFailureException {
         mRootNode = new Node(null);
-        mTagStack = new Stack<Node>();
+        mTagStack = new Stack<>();
         mTagStack.push(mRootNode);
 
         try {

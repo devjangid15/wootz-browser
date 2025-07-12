@@ -14,7 +14,6 @@
 #include "base/functional/callback.h"
 #include "base/functional/callback_forward.h"
 #include "base/functional/callback_helpers.h"
-#include "base/strings/string_piece.h"
 #include "components/reporting/proto/synced/status.pb.h"
 
 namespace reporting {
@@ -80,8 +79,7 @@ class [[nodiscard]] Status {
   const std::string& error_message() const { return error_message_; }
   const std::string& message() const { return error_message_; }
 
-  bool operator==(const Status& x) const;
-  bool operator!=(const Status& x) const { return !operator==(x); }
+  friend bool operator==(const Status&, const Status&) = default;
 
   // Return a combination of the error code name and message.
   std::string ToString() const;
@@ -161,4 +159,4 @@ class Scoped : public base::OnceCallback<void(Failed)> {
 };
 }  // namespace reporting
 
-#endif  // MISSIVE_UTIL_STATUS_H_
+#endif  // COMPONENTS_REPORTING_UTIL_STATUS_H_

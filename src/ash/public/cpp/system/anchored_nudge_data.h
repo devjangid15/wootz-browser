@@ -15,13 +15,13 @@
 #include "base/functional/callback_helpers.h"
 #include "base/time/time.h"
 #include "ui/events/keycodes/keyboard_codes_posix.h"
-#include "ui/gfx/paint_vector_icon.h"
 #include "ui/views/bubble/bubble_border.h"
 #include "ui/views/view_tracker.h"
 
 namespace views {
 class View;
-}
+class Widget;
+}  // namespace views
 
 namespace ash {
 
@@ -121,6 +121,16 @@ struct ASH_PUBLIC_EXPORT AnchoredNudgeData {
 
   // If true, set the `anchor_view` as parent.
   bool set_anchor_view_as_parent = false;
+
+  // If false, the ChromeVox will not announce `body_text`.
+  bool announce_chromevox = true;
+
+  // If not null, the nudge will anchor inside the `anchor_widget`, which is a
+  // `views::Widget`. Used together with the `views::BubbleBorder::Arrow`, but
+  // currently only support anchoring to the bottom corners of the
+  // `anchor_widget`. NOTE: This is a new type of anchoring, which is different
+  // than the `anchor_view`. At most only one of them can be set.
+  raw_ptr<views::Widget> anchor_widget = nullptr;
 
   // Nudge action custom callbacks.
   HoverChangedCallback hover_changed_callback;

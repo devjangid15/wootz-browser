@@ -9,6 +9,10 @@
 #include "components/history_embeddings/history_embeddings_features.h"
 #include "content/public/test/browser_test.h"
 
+#if BUILDFLAG(IS_CHROMEOS)
+#include "chromeos/constants/chromeos_features.h"
+#endif  // BUILDFLAG(IS_CHROMEOS)
+
 class HistoryUIBrowserTest : public WebUIMochaBrowserTest {
  protected:
   HistoryUIBrowserTest() {
@@ -140,7 +144,16 @@ IN_PROC_BROWSER_TEST_F(HistoryListTest, DeletingItemsUsingShortcuts) {
   RunTestCase("DeletingItemsUsingShortcuts");
 }
 
-IN_PROC_BROWSER_TEST_F(HistoryListTest, DeleteDialogClosedOnBackNavigation) {
+// TODO(crbug.com/421264968): Re-enable flaky test
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
+#define MAYBE_DeleteDialogClosedOnBackNavigation \
+  DISABLED_DeleteDialogClosedOnBackNavigation
+#else
+#define MAYBE_DeleteDialogClosedOnBackNavigation \
+  DeleteDialogClosedOnBackNavigation
+#endif  // BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
+IN_PROC_BROWSER_TEST_F(HistoryListTest,
+                       MAYBE_DeleteDialogClosedOnBackNavigation) {
   RunTestCase("DeleteDialogClosedOnBackNavigation");
 }
 
@@ -161,11 +174,29 @@ IN_PROC_BROWSER_TEST_F(HistoryListTest, SetsScrollOffset) {
   RunTestCase("SetsScrollOffset");
 }
 
+IN_PROC_BROWSER_TEST_F(HistoryListTest, AnnouncesExactMatches) {
+  RunTestCase("AnnouncesExactMatches");
+}
+
+IN_PROC_BROWSER_TEST_F(HistoryListTest, ScrollingLoadsMore) {
+  RunTestCase("ScrollingLoadsMore");
+}
+
+IN_PROC_BROWSER_TEST_F(HistoryListTest, ResizingLoadsMore) {
+  RunTestCase("ResizingLoadsMore");
+}
+
 class HistoryWithHistoryEmbeddingsTest : public WebUIMochaBrowserTest {
  protected:
   HistoryWithHistoryEmbeddingsTest() {
-    scoped_feature_list_.InitAndEnableFeature(
-        history_embeddings::kHistoryEmbeddings);
+    scoped_feature_list_.InitWithFeatures(
+        /*enabled_features=*/{history_embeddings::kHistoryEmbeddings,
+#if BUILDFLAG(IS_CHROMEOS)
+                              chromeos::features::
+                                  kFeatureManagementHistoryEmbedding
+#endif  // BUILDFLAG(IS_CHROMEOS)
+        },
+        /*disabled_features=*/{});
     set_test_loader_host(chrome::kChromeUIHistoryHost);
   }
 

@@ -35,7 +35,6 @@ class DeviceSharingBrowserAgent
 
  private:
   friend class BrowserUserData<DeviceSharingBrowserAgent>;
-  BROWSER_USER_DATA_KEY_DECL();
 
   explicit DeviceSharingBrowserAgent(Browser* browser);
 
@@ -57,8 +56,6 @@ class DeviceSharingBrowserAgent
   // web::WebStateObserver
   void TitleWasSet(web::WebState* web_state) override;
 
-  // The Browser this agent is associated with.
-  raw_ptr<Browser> browser_;
   // Whether the browser state associated with `browser_` is incognito or not.
   const bool is_incognito_ = true;
   // Observer for the active web state in `browser_`'s browser list.

@@ -3,7 +3,6 @@
 # found in the LICENSE file.
 
 import("//build/config/android/rules.gni")
-import("//build/config/locales.gni")
 import("//chrome/android/features/android_library_factory_tmpl.gni")
 import("//chrome/common/features.gni")
 import("//third_party/jni_zero/jni_zero.gni")
@@ -81,6 +80,7 @@ android_library("internal_java") {
     "//build/android:build_java",
     "//chrome/android:chrome_app_java_resources",
     "//chrome/browser/device_reauth/android:java",
+    "//chrome/browser/feedback/android:factory_java",
     "//chrome/browser/feedback/android:java",
     "//chrome/browser/flags:java",
     "//chrome/browser/password_check/android:password_check_java_enums",
@@ -154,9 +154,4 @@ android_resources("java_resources") {
 java_strings_grd("java_strings_grd") {
   defines = chrome_grit_defines
   grd_file = "java/strings/android_password_check_strings.grd"
-  outputs =
-      [ "values/android_password_check_strings.xml" ] +
-      process_file_template(
-          android_bundle_locales_as_resources,
-          [ "values-{{source_name_part}}/android_password_check_strings.xml" ])
 }

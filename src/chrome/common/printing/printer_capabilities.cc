@@ -13,7 +13,6 @@
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/strcat.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/scoped_blocking_call.h"
@@ -21,7 +20,6 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "build/buildflag.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/common/printing/printing_buildflags.h"
 #include "components/crash/core/common/crash_keys.h"
 #include "components/device_event_log/device_event_log.h"
@@ -44,9 +42,6 @@
 
 #if BUILDFLAG(PRINT_MEDIA_L10N_ENABLED)
 #include "chrome/common/printing/print_media_l10n.h"
-#if BUILDFLAG(IS_MAC)
-#include "printing/printing_features.h"
-#endif  // BUILDFLAG(IS_MAC)
 #endif  // BUILDFLAG(PRINT_MEDIA_L10N_ENABLED)
 
 namespace printing {
@@ -127,24 +122,18 @@ base::Value AssemblePrinterCapabilities(const std::string& device_name,
     return base::Value();
 
 #if BUILDFLAG(PRINT_MEDIA_L10N_ENABLED)
-  bool populate_paper_names = true;
-#if BUILDFLAG(IS_MAC)
-  // Paper display name localization and vendor ID assignment is intended for
-  // use with the CUPS IPP backend. If the CUPS IPP backend is not enabled,
-  // localization will not properly occur.
-  populate_paper_names =
-      base::FeatureList::IsEnabled(features::kCupsIppPrintingBackend);
-#endif
-  if (populate_paper_names) {
-    PopulateAndSortAllPaperNames(*caps);
-  }
+  // TODO(crbug.com/339188518): Is this needed on Linux? If so, need to add back
+  // the `features::kCupsIppPrintingBackend` check when the
+  // `enable_print_media_l10n` GN variable gets set to true for Linux.
+  PopulateAndSortAllPaperNames(*caps);
 #endif  // BUILDFLAG(PRINT_MEDIA_L10N_ENABLED)
 
 #if BUILDFLAG(IS_CHROMEOS)
   PopulateMediaTypeLocalization(caps->media_types);
 
-  if (!has_secure_protocol)
+  if (!has_secure_protocol) {
     caps->pin_supported = false;
+  }
 
   PopulateAdvancedCapsLocalization(&caps->advanced_capabilities);
 #endif  // BUILDFLAG(IS_CHROMEOS)

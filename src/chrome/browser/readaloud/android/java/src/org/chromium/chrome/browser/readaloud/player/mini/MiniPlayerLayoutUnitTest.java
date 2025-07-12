@@ -7,6 +7,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.anyInt;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.eq;
@@ -25,11 +26,13 @@ import android.widget.TextView;
 import androidx.appcompat.app.AppCompatActivity;
 
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.Mockito;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.Robolectric;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowSystemClock;
@@ -37,8 +40,9 @@ import org.robolectric.shadows.ShadowSystemClock;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.chrome.browser.readaloud.player.InteractionHandler;
 import org.chromium.chrome.browser.readaloud.player.R;
+import org.chromium.chrome.modules.readaloud.PlaybackArgs.PlaybackMode;
 import org.chromium.chrome.modules.readaloud.PlaybackListener;
-import org.chromium.components.browser_ui.styles.ChromeColors;
+import org.chromium.components.browser_ui.styles.SemanticColorUtils;
 
 /** Unit tests for {@link PlayerCoordinator}. */
 @RunWith(BaseRobolectricTestRunner.class)
@@ -46,6 +50,7 @@ import org.chromium.components.browser_ui.styles.ChromeColors;
         manifest = Config.NONE,
         shadows = {ShadowSystemClock.class})
 public class MiniPlayerLayoutUnitTest {
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     private final Activity mActivity;
     private MiniPlayerLayout mLayout;
 
@@ -60,7 +65,6 @@ public class MiniPlayerLayoutUnitTest {
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
         mLayout =
                 (MiniPlayerLayout)
                         mActivity
@@ -78,6 +82,33 @@ public class MiniPlayerLayoutUnitTest {
         assertEquals(View.VISIBLE, mLayout.findViewById(R.id.buffering_layout).getVisibility());
         assertEquals(View.GONE, mLayout.findViewById(R.id.normal_layout).getVisibility());
         assertEquals(View.GONE, mLayout.findViewById(R.id.error_layout).getVisibility());
+    }
+
+    @Test
+    public void testBufferingWhenCreatingPlayback() {
+      mLayout.onPlaybackStateChanged(PlaybackListener.State.PLAYBACK_CREATION);
+      assertEquals(View.GONE, mLayout.findViewById(R.id.progress_bar).getVisibility());
+
+      // Only the buffering layout is visible.
+      assertEquals(View.VISIBLE, mLayout.findViewById(R.id.buffering_layout).getVisibility());
+      assertEquals(View.GONE, mLayout.findViewById(R.id.normal_layout).getVisibility());
+      assertEquals(View.GONE, mLayout.findViewById(R.id.error_layout).getVisibility());
+    }
+
+    @Test
+    public void testBufferingStrings() {
+        mLayout.setRequestedPlaybackMode(PlaybackMode.OVERVIEW);
+        mLayout.onPlaybackStateChanged(PlaybackListener.State.BUFFERING);
+
+        assertEquals(View.VISIBLE, mLayout.findViewById(R.id.buffering_layout).getVisibility());
+        assertEquals(
+                mLayout.getContext().getString(R.string.readaloud_mini_player_loading_ai_playback),
+                ((TextView) mLayout.findViewById(R.id.loading_message)).getText());
+
+        mLayout.setRequestedPlaybackMode(PlaybackMode.CLASSIC);
+        assertEquals(
+                mLayout.getContext().getString(R.string.readaloud_playback_loading),
+                ((TextView) mLayout.findViewById(R.id.loading_message)).getText());
     }
 
     @Test
@@ -145,10 +176,11 @@ public class MiniPlayerLayoutUnitTest {
     }
 
     @Test
-    public void testSetPublisher() {
+    public void testSetSubtitle() {
         mLayout.onPlaybackStateChanged(PlaybackListener.State.PLAYING);
-        mLayout.setPublisher("Publisher");
-        assertEquals("Publisher", ((TextView) mLayout.findViewById(R.id.publisher)).getText());
+        mLayout.setPlaybackMode(PlaybackMode.OVERVIEW);
+        assertEquals(
+                "AI playback", ((TextView) mLayout.findViewById(R.id.subtitle)).getText());
     }
 
     @Test
@@ -195,7 +227,7 @@ public class MiniPlayerLayoutUnitTest {
 
         assertNull(mLayout.getAnimatorForTesting());
         assertEquals(1f, mLayout.getAlpha(), /* delta= */ 0f);
-        verify(mMediator).onFullOpacityReached();
+        verify(mMediator).onFullOpacityReached(any(View.class));
     }
 
     @Test
@@ -211,7 +243,7 @@ public class MiniPlayerLayoutUnitTest {
 
         animator.end();
         assertEquals(1f, mLayout.getAlpha(), /* delta= */ 0f);
-        verify(mMediator).onFullOpacityReached();
+        verify(mMediator).onFullOpacityReached(any(View.class));
     }
 
     @Test
@@ -259,12 +291,12 @@ public class MiniPlayerLayoutUnitTest {
 
         // 0 -> 1
         mLayout.changeOpacity(0f, 1f);
-        verify(mMediator).onFullOpacityReached();
+        verify(mMediator).onFullOpacityReached(any(View.class));
         reset(mMediator);
 
         // 0 -> 1 again has no effect.
         mLayout.changeOpacity(0f, 1f);
-        verify(mMediator, never()).onFullOpacityReached();
+        verify(mMediator, never()).onFullOpacityReached(any(View.class));
 
         // 1 -> 0
         mLayout.changeOpacity(1f, 0f);
@@ -325,7 +357,7 @@ public class MiniPlayerLayoutUnitTest {
     public void testDarkModeBackgroundColor() {
         View spyBackdrop = replaceWithSpy(R.id.backdrop);
         mLayout.onFinishInflate();
-        int bg = ChromeColors.getSurfaceColor(mActivity, R.dimen.default_elevation_4);
+        int bg = SemanticColorUtils.getDefaultBgColor(mActivity);
         verify(spyBackdrop).setBackgroundColor(eq(bg));
         verify(mMediator).onBackgroundColorUpdated(eq(bg));
     }

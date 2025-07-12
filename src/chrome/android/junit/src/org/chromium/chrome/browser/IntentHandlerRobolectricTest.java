@@ -30,6 +30,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
+import org.mockito.Mockito;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 import org.mockito.quality.Strictness;
@@ -44,11 +45,11 @@ import org.robolectric.shadows.ShadowPowerManager;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.IntentUtils;
 import org.chromium.base.library_loader.LibraryLoader;
-import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Feature;
-import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.Features.EnableFeatures;
+import org.chromium.base.test.util.HistogramWatcher;
+import org.chromium.chrome.browser.IntentHandler.ExternalAppId;
 import org.chromium.chrome.browser.app.tabmodel.AsyncTabParamsManagerSingleton;
 import org.chromium.chrome.browser.customtabs.CustomTabsConnection;
 import org.chromium.chrome.browser.customtabs.CustomTabsIntentTestUtils;
@@ -73,7 +74,7 @@ import java.util.List;
 @Config(manifest = Config.NONE)
 public class IntentHandlerRobolectricTest {
     private static final String[] ACCEPTED_NON_HTTP_AND_HTTPS_URLS = {
-        "wootzapp://newtab",
+        "chrome://newtab",
         "file://foo.txt",
         "ftp://www.foo.com",
         "",
@@ -187,19 +188,17 @@ public class IntentHandlerRobolectricTest {
 
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule().strictness(Strictness.STRICT_STUBS);
 
-    @Rule public Features.JUnitProcessor mFeaturesProcessor = new Features.JUnitProcessor();
-
     @Captor ArgumentCaptor<LoadUrlParams> mLoadUrlParamsCaptor;
 
     private ShadowPowerManager mShadowPowerManager;
     private ShadowKeyguardManager mShadowKeyguardManager;
 
     private void processUrls(String[] urls, boolean isValid) {
-        List<String> failedTests = new ArrayList<String>();
+        List<String> failedTests = new ArrayList<>();
 
         for (String url : urls) {
             mIntent.setData(Uri.parse(url));
-            if (IntentHandler.intentHasValidUrl(mIntent) != isValid) {
+            if (IntentHandler.isValidUrl(url) != isValid) {
                 failedTests.add(url);
             }
         }
@@ -303,7 +302,7 @@ public class IntentHandlerRobolectricTest {
     @SmallTest
     @Feature({"Android-AppBase"})
     public void testRejectedGoogleChromeSchemeUrls() {
-        List<String> failedTests = new ArrayList<String>();
+        List<String> failedTests = new ArrayList<>();
 
         for (String url : REJECTED_GOOGLECHROME_URLS) {
             mIntent.setData(Uri.parse(url));
@@ -337,8 +336,8 @@ public class IntentHandlerRobolectricTest {
     @Feature({"Android-AppBase"})
     public void testNullUrlIntent() {
         mIntent.setData(null);
-        Assert.assertTrue(
-                "Intent with null data should be valid", IntentHandler.intentHasValidUrl(mIntent));
+        String url = IntentHandler.getUrlFromIntent(mIntent);
+        Assert.assertTrue("Intent with null data should be valid", IntentHandler.isValidUrl(url));
     }
 
     @Test
@@ -429,7 +428,7 @@ public class IntentHandlerRobolectricTest {
         Context context = ApplicationProvider.getApplicationContext();
         Intent intent = IntentHandler.createTrustedOpenNewTabIntent(context, true);
 
-        Assert.assertEquals(intent.getAction(), Intent.ACTION_VIEW);
+        Assert.assertEquals(Intent.ACTION_VIEW, intent.getAction());
         Assert.assertEquals(intent.getData(), Uri.parse(UrlConstants.NTP_URL));
         Assert.assertTrue(intent.getBooleanExtra(Browser.EXTRA_CREATE_NEW_TAB, false));
         Assert.assertTrue(IntentHandler.wasIntentSenderChrome(intent));
@@ -541,15 +540,11 @@ public class IntentHandlerRobolectricTest {
         Assert.assertNull(IntentHandler.getUrlFromShareIntent(intent));
         for (Object[] shareCase : SHARE_INTENT_CASES) {
             intent.putExtra(Intent.EXTRA_TEXT, (String) shareCase[0]);
-            int before =
-                    RecordHistogram.getHistogramValueCountForTesting(
+            var histogramWatcher =
+                    HistogramWatcher.newSingleRecordWatcher(
                             IntentHandler.SHARE_INTENT_HISTOGRAM, (int) shareCase[2]);
             Assert.assertEquals((String) shareCase[1], IntentHandler.getUrlFromShareIntent(intent));
-            Assert.assertEquals(
-                    "Test case: " + (String) shareCase[0],
-                    before + 1,
-                    RecordHistogram.getHistogramValueCountForTesting(
-                            IntentHandler.SHARE_INTENT_HISTOGRAM, (int) shareCase[2]));
+            histogramWatcher.assertExpected((String) shareCase[0]);
         }
     }
 
@@ -725,5 +720,26 @@ public class IntentHandlerRobolectricTest {
         Assert.assertEquals(
                 GOOGLE_URL, IntentHandler.getReferrerUrlIncludingExtraHeaders(trustedIntent));
         Assert.assertNull(IntentHandler.getExtraHeadersFromIntent(trustedIntent));
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Android-AppBase"})
+    public void testDetermineExternalIntentSource() {
+        Activity activity = Mockito.mock(Activity.class);
+        Intent intent = new Intent(Intent.ACTION_VIEW);
+        intent.putExtra(
+                IntentHandler.EXTRA_ACTIVITY_REFERRER,
+                "android-app://com.google.android.apps.nexuslauncher");
+        assertEquals(
+                ExternalAppId.PIXEL_LAUNCHER,
+                IntentHandler.determineExternalIntentSource(intent, activity));
+
+        intent.putExtra(
+                IntentHandler.EXTRA_ACTIVITY_REFERRER,
+                "android-app://com.sec.android.app.launcher");
+        assertEquals(
+                ExternalAppId.SAMSUNG_LAUNCHER,
+                IntentHandler.determineExternalIntentSource(intent, activity));
     }
 }

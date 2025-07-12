@@ -55,6 +55,7 @@ suite('LanguagesPageMetricsBrowser', function() {
       settingsLanguages.prefs = settingsPrefs.prefs;
       fakeDataBind(settingsPrefs, settingsLanguages, 'prefs');
       document.body.appendChild(settingsLanguages);
+      languageHelper = settingsLanguages;
 
       languagesPage = document.createElement('settings-languages-page');
 
@@ -62,15 +63,12 @@ suite('LanguagesPageMetricsBrowser', function() {
       languagesPage.prefs = settingsLanguages.prefs;
       fakeDataBind(settingsLanguages, languagesPage, 'prefs');
 
-      languagesPage.languageHelper = settingsLanguages.languageHelper;
-      fakeDataBind(settingsLanguages, languagesPage, 'language-helper');
-
       languagesPage.languages = settingsLanguages.languages;
       fakeDataBind(settingsLanguages, languagesPage, 'languages');
 
       document.body.appendChild(languagesPage);
-      languageHelper = languagesPage.languageHelper;
-      return languageHelper.whenReady();
+
+      return settingsLanguages.whenReady();
     });
   });
 
@@ -123,7 +121,7 @@ suite('LanguagesPageMetricsBrowser', function() {
   });
   // </if>
 
-  test('records on language list reorder', async () => {
+  test('records on language list reorder', () => {
     // Add several languages.
     for (const language of ['en-CA', 'en-US', 'tk', 'no']) {
       languageHelper.enableLanguage(language);
@@ -148,7 +146,7 @@ suite('LanguagesPageMetricsBrowser', function() {
       const menuItem = Array.from(menuItems).find(
           item => item.textContent!.trim() === i18nString);
       assertTrue(!!menuItem, 'Menu item "' + i18nKey + '" not found');
-      return menuItem!;
+      return menuItem;
     }
 
     let moveButton = getMenuItem('moveUp');

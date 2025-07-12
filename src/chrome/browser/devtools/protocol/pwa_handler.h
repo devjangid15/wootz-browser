@@ -10,6 +10,8 @@
 
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/devtools/protocol/pwa.h"
+#include "chrome/browser/web_applications/isolated_web_apps/commands/install_isolated_web_app_command.h"
+#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_downloader.h"
 
 class Profile;
 
@@ -38,15 +40,29 @@ class PWAHandler final : public protocol::PWA::Backend {
                      std::unique_ptr<GetOsAppStateCallback> callback) override;
 
   void Install(const std::string& in_manifest_id,
-               protocol::Maybe<std::string> in_install_url_or_bundle_url,
+               std::optional<std::string> in_install_url_or_bundle_url,
                std::unique_ptr<InstallCallback> callback) override;
 
   void Uninstall(const std::string& in_manifest_id,
                  std::unique_ptr<UninstallCallback> callback) override;
 
   void Launch(const std::string& in_manifest_id,
-              protocol::Maybe<std::string> in_url,
+              std::optional<std::string> in_url,
               std::unique_ptr<LaunchCallback> callback) override;
+
+  void LaunchFilesInApp(
+      const std::string& in_manifest_id,
+      std::unique_ptr<protocol::Array<std::string>> in_files,
+      std::unique_ptr<LaunchFilesInAppCallback> callback) override;
+
+  protocol::Response OpenCurrentPageInApp(
+      const std::string& in_manifest_id) override;
+
+  void ChangeAppUserSettings(
+      const std::string& in_manifest_id,
+      std::optional<bool> in_link_capturing,
+      std::optional<protocol::PWA::DisplayMode> in_display_mode,
+      std::unique_ptr<ChangeAppUserSettingsCallback> callback) override;
 
   /// Implementation details ///
 
@@ -57,13 +73,18 @@ class PWAHandler final : public protocol::PWA::Backend {
   // Installs from the url; requires the manifest_id from the url to match the
   // input in_manifest_id.
   void InstallFromUrl(const std::string& in_manifest_id,
-                      std::string in_install_url_or_bundle_url,
+                      const std::string& in_install_url_or_bundle_url,
                       std::unique_ptr<InstallCallback> callback);
+
+  // Installs Isolated Web App bundle from url.
+  void InstallWebBundleFromUrl(const GURL& manifest_url,
+                               const GURL& web_bundle_url,
+                               std::unique_ptr<InstallCallback> callback);
 
   // Is called by InstallFromUrl only.
   void InstallFromInstallInfo(
-      std::string in_manifest_id,
-      std::string in_install_url_or_bundle_url,
+      const std::string& in_manifest_id,
+      const std::string& in_install_url_or_bundle_url,
       std::unique_ptr<InstallCallback> callback,
       std::unique_ptr<web_app::WebAppInstallInfo> web_app_info);
 

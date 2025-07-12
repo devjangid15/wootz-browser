@@ -7,12 +7,19 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 #include "ash/app_list/app_list_controller_impl.h"
+#include "ash/app_list/app_list_model_provider.h"
+#include "ash/app_list/app_list_presenter_impl.h"
+#include "ash/app_list/app_list_public_test_util.h"
 #include "ash/app_list/app_list_test_view_delegate.h"
 #include "ash/app_list/model/search/test_search_result.h"
 #include "ash/app_list/test/app_list_test_helper.h"
+#include "ash/app_list/test_app_list_client.h"
+#include "ash/app_list/views/app_list_bubble_view.h"
 #include "ash/app_list/views/app_list_main_view.h"
 #include "ash/app_list/views/app_list_search_view.h"
 #include "ash/app_list/views/app_list_view.h"
@@ -21,10 +28,22 @@
 #include "ash/app_list/views/search_box_view_delegate.h"
 #include "ash/app_list/views/search_result_list_view.h"
 #include "ash/app_list/views/search_result_page_view.h"
+#include "ash/capture_mode/base_capture_mode_session.h"
+#include "ash/capture_mode/capture_mode_controller.h"
+#include "ash/capture_mode/capture_mode_types.h"
+#include "ash/capture_mode/test_capture_mode_delegate.h"
 #include "ash/constants/ash_features.h"
+#include "ash/constants/ash_pref_names.h"
+#include "ash/constants/ash_switches.h"
+#include "ash/constants/web_app_id_constants.h"
 #include "ash/public/cpp/app_list/app_list_features.h"
 #include "ash/public/cpp/app_list/vector_icons/vector_icons.h"
+#include "ash/scanner/scanner_enterprise_policy.h"
 #include "ash/search_box/search_box_constants.h"
+#include "ash/session/session_controller_impl.h"
+#include "ash/session/test_session_controller_client.h"
+#include "ash/shelf/home_button.h"
+#include "ash/shelf/shelf_navigation_widget.h"
 #include "ash/shell.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/style/ash_color_id.h"
@@ -32,16 +51,29 @@
 #include "ash/style/ash_color_provider.h"
 #include "ash/test/ash_test_base.h"
 #include "ash/wm/tablet_mode/tablet_mode_controller_test_api.h"
+#include "ash/wm/window_state.h"
 #include "base/containers/contains.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/metrics/user_action_tester.h"
 #include "base/test/scoped_feature_list.h"
+#include "base/test/test_future.h"
+#include "chromeos/ash/services/assistant/public/cpp/features.h"
+#include "chromeos/ash/services/assistant/test_support/scoped_assistant_browser_delegate.h"
 #include "chromeos/constants/chromeos_features.h"
+#include "components/account_id/account_id.h"
+#include "components/services/app_service/public/cpp/app.h"
+#include "components/services/app_service/public/cpp/app_registry_cache.h"
+#include "components/services/app_service/public/cpp/app_registry_cache_wrapper.h"
+#include "components/services/app_service/public/cpp/app_types.h"
 #include "components/vector_icons/vector_icons.h"
+#include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/abseil-cpp/absl/strings/ascii.h"
+#include "ui/accessibility/ax_enums.mojom.h"
+#include "ui/accessibility/platform/ax_platform_node.h"
 #include "ui/base/ime/composition_text.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/color/color_provider_manager.h"
@@ -54,13 +86,21 @@
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/image/image_unittest_util.h"
 #include "ui/gfx/paint_vector_icon.h"
+#include "ui/views/accessibility/view_accessibility.h"
+#include "ui/views/controls/button/image_button.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/textfield/textfield.h"
+#include "ui/views/test/views_test_utils.h"
 #include "ui/views/test/widget_test.h"
+#include "ui/views/view.h"
+#include "ui/wm/core/window_util.h"
 
 namespace {
 // kBestMatch is the second result container for productivity launcher search.
 constexpr int kBestMatchIndex = 1;
+
+// Copied from ash/app_list/views/app_list_search_view.cc
+constexpr base::TimeDelta kNotifyA11yDelay = base::Milliseconds(1500);
 
 bool IsValidSearchBoxAccessibilityHint(const std::u16string& hint) {
   SCOPED_TRACE(testing::Message() << "Hint Text: " << hint);
@@ -94,6 +134,20 @@ namespace {
 
 using test::AppListTestViewDelegate;
 
+void AddGeminiApp() {
+  std::unique_ptr<apps::App> app = std::make_unique<apps::App>(
+      apps::AppType::kSystemWeb, std::string(kGeminiAppId));
+  app->name = "Gemini";
+  std::vector<apps::AppPtr> apps;
+  apps.push_back(std::move(app));
+  apps::AppRegistryCache* cache =
+      apps::AppRegistryCacheWrapper::Get().GetAppRegistryCache(
+          Shell::Get()->session_controller()->GetActiveAccountId());
+  ASSERT_TRUE(cache);
+  cache->OnAppsForTesting(std::move(apps), apps::AppType::kSystemWeb,
+                          /*should_notify_initialized=*/false);
+}
+
 SearchModel* GetSearchModel() {
   return AppListModelProvider::Get()->search_model();
 }
@@ -123,9 +177,10 @@ class KeyPressCounterView : public ContentsView {
 class SearchBoxViewTest : public views::test::WidgetTest,
                           public SearchBoxViewDelegate {
  public:
-  SearchBoxViewTest() {
-    scoped_feature_list_.InitAndEnableFeature(chromeos::features::kJelly);
-  }
+  SearchBoxViewTest()
+      : views::test::WidgetTest(std::make_unique<base::test::TaskEnvironment>(
+            base::test::TaskEnvironment::MainThreadType::UI,
+            base::test::TaskEnvironment::TimeSource::MOCK_TIME)) {}
 
   SearchBoxViewTest(const SearchBoxViewTest&) = delete;
   SearchBoxViewTest& operator=(const SearchBoxViewTest&) = delete;
@@ -182,7 +237,7 @@ class SearchBoxViewTest : public views::test::WidgetTest,
   }
 
   void KeyPress(ui::KeyboardCode key_code, bool is_shift_down = false) {
-    ui::KeyEvent event(ui::ET_KEY_PRESSED, key_code,
+    ui::KeyEvent event(ui::EventType::kKeyPressed, key_code,
                        is_shift_down ? ui::EF_SHIFT_DOWN : ui::EF_NONE);
     view()->search_box()->OnKeyEvent(&event);
     // Emulates the input method.
@@ -230,6 +285,11 @@ class SearchBoxViewTest : public views::test::WidgetTest,
         ->GetFirstResultView();
   }
 
+  SearchResultBaseView* GetResultViewAt(size_t index) {
+    return search_view_->result_container_views_for_test()[kBestMatchIndex]
+        ->GetResultViewAt(index);
+  }
+
   ResultSelectionController* GetResultSelectionController() {
     return search_view_->result_selection_controller_for_test();
   }
@@ -254,11 +314,7 @@ class SearchBoxViewTest : public views::test::WidgetTest,
   void ActiveChanged(SearchBoxViewBase* sender) override {}
   void OnSearchBoxKeyEvent(ui::KeyEvent* event) override {}
   bool CanSelectSearchResults() override { return true; }
-  bool HandleFocusMoveAboveSearchResults(const ui::KeyEvent& event) override {
-    return false;
-  }
 
-  base::test::ScopedFeatureList scoped_feature_list_;
   AshColorProvider ash_color_provider_;
   raw_ptr<AppListSearchView, DanglingUntriaged> search_view_ = nullptr;
   AppListTestViewDelegate view_delegate_;
@@ -289,21 +345,17 @@ TEST_F(SearchBoxViewTest, CloseButtonVisibleAfterTyping) {
   EXPECT_TRUE(view()->filter_and_close_button_container()->GetVisible());
 }
 
-// Tests that the filter button is not created if the image search feature is
+// Tests that the filter button is created even if the image search feature is
 // disabled.
-TEST_F(SearchBoxViewTest, FilterButtonNotCreatedWithDisabledImageSearch) {
+TEST_F(SearchBoxViewTest, FilterButtonCreatedWithDisabledImageSearch) {
   ASSERT_FALSE(features::IsProductivityLauncherImageSearchEnabled());
-  EXPECT_FALSE(view()->filter_button());
-
-  // The filter button is still not created after typing in the search box.
-  KeyPress(ui::VKEY_A);
-  EXPECT_FALSE(view()->filter_button());
+  EXPECT_TRUE(view()->filter_button());
 }
 
 // Tests that the close button is still visible after the search box is
 // activated (in zero state).
 TEST_F(SearchBoxViewTest, CloseButtonVisibleInZeroStateSearchBox) {
-  SetSearchBoxActive(true, ui::ET_MOUSE_PRESSED);
+  SetSearchBoxActive(true, ui::EventType::kMousePressed);
   EXPECT_FALSE(view()->filter_and_close_button_container()->GetVisible());
 }
 
@@ -311,16 +363,16 @@ TEST_F(SearchBoxViewTest, CloseButtonVisibleInZeroStateSearchBox) {
 TEST_F(SearchBoxViewTest,
        DISABLED_AccessibilityHintRemovedWhenSearchBoxActive) {
   EXPECT_TRUE(IsValidSearchBoxAccessibilityHint(
-      view()->search_box()->GetAccessibleName()));
-  SetSearchBoxActive(true, ui::ET_MOUSE_PRESSED);
+      view()->search_box()->GetViewAccessibility().GetCachedName()));
+  SetSearchBoxActive(true, ui::EventType::kMousePressed);
   EXPECT_TRUE(IsValidSearchBoxAccessibilityHint(
-      view()->search_box()->GetAccessibleName()));
+      view()->search_box()->GetViewAccessibility().GetCachedName()));
 }
 
 // Tests that the black Google icon is used for an inactive Google search.
 TEST_F(SearchBoxViewTest, SearchBoxInactiveSearchBoxGoogle) {
   SetSearchEngineIsGoogle(true);
-  SetSearchBoxActive(false, ui::ET_UNKNOWN);
+  SetSearchBoxActive(false, ui::EventType::kUnknown);
   const gfx::ImageSkia expected_icon = gfx::CreateVectorIcon(
       kGoogleBlackIcon, view()->GetSearchBoxIconSize(),
       view()->GetColorProvider()->GetColor(kColorAshButtonIconColor));
@@ -334,7 +386,7 @@ TEST_F(SearchBoxViewTest, SearchBoxInactiveSearchBoxGoogle) {
 // Tests that the colored Google icon is used for an active Google search.
 TEST_F(SearchBoxViewTest, SearchBoxActiveSearchEngineGoogle) {
   SetSearchEngineIsGoogle(true);
-  SetSearchBoxActive(true, ui::ET_MOUSE_PRESSED);
+  SetSearchBoxActive(true, ui::EventType::kMousePressed);
   const gfx::ImageSkia expected_icon = gfx::CreateVectorIcon(
       vector_icons::kGoogleColorIcon, view()->GetSearchBoxIconSize(),
       view()->GetColorProvider()->GetColor(kColorAshButtonIconColor));
@@ -348,7 +400,7 @@ TEST_F(SearchBoxViewTest, SearchBoxActiveSearchEngineGoogle) {
 // Tests that the non-Google icon is used for an inactive non-Google search.
 TEST_F(SearchBoxViewTest, SearchBoxInactiveSearchEngineNotGoogle) {
   SetSearchEngineIsGoogle(false);
-  SetSearchBoxActive(false, ui::ET_UNKNOWN);
+  SetSearchBoxActive(false, ui::EventType::kUnknown);
   const gfx::ImageSkia expected_icon = gfx::CreateVectorIcon(
       kSearchEngineNotGoogleIcon, view()->GetSearchBoxIconSize(),
       view()->GetColorProvider()->GetColor(kColorAshButtonIconColor));
@@ -362,7 +414,7 @@ TEST_F(SearchBoxViewTest, SearchBoxInactiveSearchEngineNotGoogle) {
 // Tests that the non-Google icon is used for an active non-Google search.
 TEST_F(SearchBoxViewTest, SearchBoxActiveSearchEngineNotGoogle) {
   SetSearchEngineIsGoogle(false);
-  SetSearchBoxActive(true, ui::ET_UNKNOWN);
+  SetSearchBoxActive(true, ui::EventType::kUnknown);
   const gfx::ImageSkia expected_icon = gfx::CreateVectorIcon(
       kSearchEngineNotGoogleIcon, view()->GetSearchBoxIconSize(),
       view()->GetColorProvider()->GetColor(kColorAshButtonIconColor));
@@ -631,7 +683,7 @@ TEST_F(SearchBoxViewTest, ResetSelectionAfterResettingSearchBox) {
 
   // Reset the search box.
   view()->ClearSearchAndDeactivateSearchBox();
-  SetSearchBoxActive(true, ui::ET_UNKNOWN);
+  SetSearchBoxActive(true, ui::EventType::kUnknown);
 }
 
 TEST_F(SearchBoxViewTest, NewSearchQueryActionRecordedWhenUserType) {
@@ -651,44 +703,105 @@ TEST_F(SearchBoxViewTest, NewSearchQueryActionRecordedWhenUserType) {
   EXPECT_EQ(2, user_action_tester.GetActionCount("AppList_SearchQueryStarted"));
 }
 
-class SearchBoxViewAssistantButtonTest : public SearchBoxViewTest {
- public:
-  SearchBoxViewAssistantButtonTest() = default;
-  SearchBoxViewAssistantButtonTest(const SearchBoxViewAssistantButtonTest&) =
-      delete;
-  SearchBoxViewAssistantButtonTest& operator=(
-      const SearchBoxViewAssistantButtonTest&) = delete;
-  ~SearchBoxViewAssistantButtonTest() override = default;
+// Tests that changing selection in the search box results updates the active
+// descendent id in the search box textfield.
+TEST_F(SearchBoxViewTest, SearchTextfieldAccessibleActiveDescendantId) {
+  ui::AXNodeData data_textfield;
+  auto* textfield = view()->search_box();
+  base::test::TaskEnvironment* task_environment_ = task_environment();
+  textfield->GetViewAccessibility().GetAccessibleNodeData(&data_textfield);
+  EXPECT_FALSE(data_textfield.HasIntAttribute(
+      ax::mojom::IntAttribute::kActivedescendantId));
 
-  // Overridden from testing::Test
-  void SetUp() override {
-    SearchBoxViewTest::SetUp();
-    GetSearchModel()->search_box()->SetShowAssistantButton(true);
-  }
-};
+  SimulateQuery(u"test");
+  CreateSearchResult(ash::SearchResultDisplayType::kList, 0.7, u"tester",
+                     std::u16string(), ash::AppListSearchResultCategory::kWeb);
+  CreateSearchResult(ash::SearchResultDisplayType::kList, 0.5, u"testing",
+                     std::u16string(), ash::AppListSearchResultCategory::kWeb);
+  base::RunLoop().RunUntilIdle();  // Finish search results update.
+  task_environment_->FastForwardBy(
+      kNotifyA11yDelay);  // Advance time to trigger a11y notification.
 
-// Tests that the assistant button is visible by default.
-TEST_F(SearchBoxViewAssistantButtonTest, AssistantButtonVisibleByDefault) {
-  EXPECT_TRUE(view()->assistant_button_container()->GetVisible());
+  // First result selected by default.
+  data_textfield = ui::AXNodeData();
+  textfield->GetViewAccessibility().GetAccessibleNodeData(&data_textfield);
+  EXPECT_TRUE(data_textfield.HasIntAttribute(
+      ax::mojom::IntAttribute::kActivedescendantId));
+  EXPECT_EQ(GetResultViewAt(0)->GetViewAccessibility().GetUniqueId(),
+            data_textfield.GetIntAttribute(
+                ax::mojom::IntAttribute::kActivedescendantId));
+
+  // Move down to select the second result.
+  KeyPress(ui::VKEY_DOWN);
+  base::RunLoop().RunUntilIdle();
+  task_environment_->FastForwardBy(kNotifyA11yDelay);
+  data_textfield = ui::AXNodeData();
+  textfield->GetViewAccessibility().GetAccessibleNodeData(&data_textfield);
+  EXPECT_EQ(GetResultViewAt(1)->GetViewAccessibility().GetUniqueId(),
+            data_textfield.GetIntAttribute(
+                ax::mojom::IntAttribute::kActivedescendantId));
+
+  // Removing selected result resets the selection to default.
+  results()->RemoveAt(1);
+  base::RunLoop().RunUntilIdle();
+  task_environment_->FastForwardBy(kNotifyA11yDelay);
+  data_textfield = ui::AXNodeData();
+  textfield->GetViewAccessibility().GetAccessibleNodeData(&data_textfield);
+  EXPECT_EQ(GetResultViewAt(0)->GetViewAccessibility().GetUniqueId(),
+            data_textfield.GetIntAttribute(
+                ax::mojom::IntAttribute::kActivedescendantId));
+
+  // Clear search results.
+  results()->RemoveAt(0);
+  base::RunLoop().RunUntilIdle();
+  task_environment_->FastForwardBy(kNotifyA11yDelay);
+  data_textfield = ui::AXNodeData();
+  textfield->GetViewAccessibility().GetAccessibleNodeData(&data_textfield);
+  EXPECT_FALSE(data_textfield.HasIntAttribute(
+      ax::mojom::IntAttribute::kActivedescendantId));
 }
 
-// Tests that the assistant button is invisible after typing in the search box,
-// and comes back when search box is empty.
-TEST_F(SearchBoxViewAssistantButtonTest,
-       AssistantButtonChangeVisibilityWithTyping) {
-  KeyPress(ui::VKEY_A);
-  EXPECT_FALSE(view()->assistant_button_container()->GetVisible());
+TEST_F(SearchBoxViewTest, AccessibleProperties) {
+  ui::AXNodeData data;
 
-  KeyPress(ui::VKEY_BACK);
-  EXPECT_TRUE(view()->assistant_button_container()->GetVisible());
+  view()->GetViewAccessibility().GetAccessibleNodeData(&data);
+  EXPECT_EQ(ax::mojom::Role::kTextField, data.role);
+}
+
+TEST_F(SearchBoxViewTest, SearchResultBaseViewAccessibleProperties) {
+  SimulateQuery(u"test");
+  CreateSearchResult(ash::SearchResultDisplayType::kList, 0.7, u"tester",
+                     std::u16string(), ash::AppListSearchResultCategory::kWeb);
+  base::RunLoop().RunUntilIdle();
+  auto* result_base_view = GetFirstResultView();
+  ui::AXNodeData data;
+
+  ASSERT_TRUE(result_base_view);
+  result_base_view->GetViewAccessibility().GetAccessibleNodeData(&data);
+  EXPECT_EQ(ax::mojom::DefaultActionVerb::kClick, data.GetDefaultActionVerb());
+
+  result_base_view->SetEnabled(false);
+  data = ui::AXNodeData();
+  result_base_view->GetViewAccessibility().GetAccessibleNodeData(&data);
+  EXPECT_EQ(ax::mojom::DefaultActionVerb::kClick, data.GetDefaultActionVerb());
+
+  result_base_view->SetVisible(false);
+  data = ui::AXNodeData();
+  result_base_view->GetViewAccessibility().GetAccessibleNodeData(&data);
+  EXPECT_FALSE(
+      data.HasIntAttribute(ax::mojom::IntAttribute::kDefaultActionVerb));
+
+  result_base_view->SetVisible(true);
+  data = ui::AXNodeData();
+  result_base_view->GetViewAccessibility().GetAccessibleNodeData(&data);
+  EXPECT_EQ(ax::mojom::DefaultActionVerb::kClick, data.GetDefaultActionVerb());
 }
 
 class SearchBoxViewFilterButtonTest : public SearchBoxViewTest {
  public:
   SearchBoxViewFilterButtonTest() {
-    scoped_feature_list_.Reset();
     scoped_feature_list_.InitWithFeatures(
-        {chromeos::features::kJelly, features::kLauncherSearchControl,
+        {features::kLauncherSearchControl,
          features::kFeatureManagementLocalImageSearch},
         {});
   }
@@ -696,6 +809,9 @@ class SearchBoxViewFilterButtonTest : public SearchBoxViewTest {
   SearchBoxViewFilterButtonTest& operator=(
       const SearchBoxViewFilterButtonTest&) = delete;
   ~SearchBoxViewFilterButtonTest() override = default;
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 // Tests that the filter button is invisible by default.
@@ -711,10 +827,7 @@ TEST_F(SearchBoxViewFilterButtonTest, FilterButtonVisibleAfterTyping) {
 
 class SearchBoxViewAutocompleteTest : public SearchBoxViewTest {
  public:
-  SearchBoxViewAutocompleteTest() {
-    scoped_feature_list_.Reset();
-    scoped_feature_list_.InitAndEnableFeature(chromeos::features::kJelly);
-  }
+  SearchBoxViewAutocompleteTest() = default;
   SearchBoxViewAutocompleteTest(const SearchBoxViewAutocompleteTest&) = delete;
   SearchBoxViewAutocompleteTest& operator=(
       const SearchBoxViewAutocompleteTest&) = delete;
@@ -816,15 +929,13 @@ TEST_F(SearchBoxViewAutocompleteTest, SearchBoxAutocompletesAcceptsNextChar) {
 
   // After typing L, the highlighted text will be replaced by L.
   KeyPress(ui::VKEY_L);
-  std::u16string selected_text = view()->search_box()->GetSelectedText();
   EXPECT_EQ(view()->search_box()->GetText(), u"hel");
-  EXPECT_EQ(u"", selected_text);
+  EXPECT_EQ(view()->search_box()->GetSelectedText(), u"");
 
   // After handling autocomplete, the highlighted text will show again.
   ProcessAutocomplete();
-  selected_text = view()->search_box()->GetSelectedText();
   EXPECT_EQ(view()->search_box()->GetText(), u"hello world!");
-  EXPECT_EQ(u"lo world!", selected_text);
+  EXPECT_EQ(view()->search_box()->GetSelectedText(), u"lo world!");
 
   EXPECT_EQ("Websites", view()->GetSearchBoxGhostTextForTest());
 }
@@ -834,8 +945,8 @@ TEST_F(SearchBoxViewAutocompleteTest, SearchBoxAutocompletesAcceptsNextChar) {
 TEST_F(SearchBoxViewAutocompleteTest, SearchBoxAcceptsAutocompleteForClick) {
   SetupAutocompleteBehaviorTest();
 
-  ui::MouseEvent mouse_event(ui::ET_MOUSE_PRESSED, gfx::Point(), gfx::Point(),
-                             ui::EventTimeForNow(), 0, 0);
+  ui::MouseEvent mouse_event(ui::EventType::kMousePressed, gfx::Point(),
+                             gfx::Point(), ui::EventTimeForNow(), 0, 0);
   // Forward |mouse_event| to HandleMouseEvent() directly because we cannot
   // test MouseEvents properly due to not having ash dependencies. Static cast
   // to TextfieldController because HandleGestureEvent() is a private method
@@ -853,8 +964,9 @@ TEST_F(SearchBoxViewAutocompleteTest, SearchBoxAcceptsAutocompleteForClick) {
 TEST_F(SearchBoxViewAutocompleteTest, SearchBoxAcceptsAutocompleteForTap) {
   SetupAutocompleteBehaviorTest();
 
-  ui::GestureEvent gesture_event(0, 0, 0, ui::EventTimeForNow(),
-                                 ui::GestureEventDetails(ui::ET_GESTURE_TAP));
+  ui::GestureEvent gesture_event(
+      0, 0, 0, ui::EventTimeForNow(),
+      ui::GestureEventDetails(ui::EventType::kGestureTap));
   // Forward |gesture_event| to HandleGestureEvent() directly because we
   // cannot test GestureEvents properly due to not having ash dependencies.
   // Static cast to TextfieldController because HandleGestureEvent() is
@@ -918,9 +1030,8 @@ TEST_F(SearchBoxViewAutocompleteTest, SearchBoxAutocompletesNotHandledForIME) {
 
   ProcessAutocomplete();
 
-  std::u16string selected_text = view()->search_box()->GetSelectedText();
   EXPECT_EQ(view()->search_box()->GetText(), u"hello world!");
-  EXPECT_EQ(u"llo world!", selected_text);
+  EXPECT_EQ(view()->search_box()->GetSelectedText(), u"llo world!");
   view()->search_box()->SetText(std::u16string());
 
   // Simulate IME composition text. The autocomplete should not be handled.
@@ -930,9 +1041,8 @@ TEST_F(SearchBoxViewAutocompleteTest, SearchBoxAutocompletesNotHandledForIME) {
   view()->set_highlight_range_for_test(gfx::Range(2, 2));
   ProcessAutocomplete();
 
-  selected_text = view()->search_box()->GetSelectedText();
   EXPECT_EQ(view()->search_box()->GetText(), u"he");
-  EXPECT_EQ(u"", selected_text);
+  EXPECT_EQ(view()->search_box()->GetSelectedText(), u"");
 
   EXPECT_EQ("", view()->GetSearchBoxGhostTextForTest());
 }
@@ -1057,7 +1167,7 @@ TEST_F(SearchBoxViewAppListBubbleTest, HasAccessibilityHintWhenActive) {
   EXPECT_TRUE(view->is_search_box_active());
 
   EXPECT_TRUE(IsValidSearchBoxAccessibilityHint(
-      view->search_box()->GetAccessibleName()));
+      view->search_box()->GetViewAccessibility().GetCachedName()));
 }
 
 class SearchBoxViewTabletTest : public AshTestBase {
@@ -1087,7 +1197,6 @@ class SearchBoxViewAnimationTest : public AshTestBase {
     non_zero_duration_mode_ =
         std::make_unique<ui::ScopedAnimationDurationScaleMode>(
             ui::ScopedAnimationDurationScaleMode::NON_ZERO_DURATION);
-    GetSearchModel()->search_box()->SetShowAssistantButton(true);
   }
 
   std::unique_ptr<ui::ScopedAnimationDurationScaleMode> non_zero_duration_mode_;
@@ -1096,15 +1205,17 @@ class SearchBoxViewAnimationTest : public AshTestBase {
 // Test that the search box image buttons fade in and out correctly when the
 // search box is activated and deactivated.
 TEST_F(SearchBoxViewAnimationTest, SearchBoxImageButtonAnimations) {
+  AddGeminiApp();
+
   auto* search_box = GetAppListTestHelper()->GetSearchBoxView();
 
-  // Initially the assistant button should be shown, and the close button
+  // Initially the Gemini button should be shown, and the close button
   // hidden.
   EXPECT_FALSE(search_box->filter_and_close_button_container()->GetVisible());
-  EXPECT_TRUE(search_box->assistant_button_container()->GetVisible());
+  EXPECT_TRUE(search_box->edge_button_container()->GetVisible());
 
   // Set search box to active state.
-  search_box->SetSearchBoxActive(true, ui::ET_MOUSE_PRESSED);
+  search_box->SetSearchBoxActive(true, ui::EventType::kMousePressed);
 
   // Close button should be fading in.
   EXPECT_TRUE(search_box->filter_and_close_button_container()->GetVisible());
@@ -1115,29 +1226,14 @@ TEST_F(SearchBoxViewAnimationTest, SearchBoxImageButtonAnimations) {
       ui::LayerAnimationElement::AnimatableProperty::OPACITY));
   EXPECT_EQ(close_animator->GetTargetOpacity(), 1.0f);
 
-  // Assistant button should be fading out.
-  EXPECT_TRUE(search_box->assistant_button_container()->GetVisible());
-  auto* assistant_animator =
-      search_box->assistant_button_container()->layer()->GetAnimator();
-  EXPECT_TRUE(assistant_animator->IsAnimatingProperty(
-      ui::LayerAnimationElement::AnimatableProperty::OPACITY));
-  EXPECT_EQ(assistant_animator->GetTargetOpacity(), 0.0f);
-
   // Set search box to inactive state, hiding the close button.
-  search_box->SetSearchBoxActive(false, ui::ET_MOUSE_PRESSED);
+  search_box->SetSearchBoxActive(false, ui::EventType::kMousePressed);
 
   // Close button should be fading out.
   EXPECT_TRUE(search_box->filter_and_close_button_container()->GetVisible());
   EXPECT_TRUE(close_animator->IsAnimatingProperty(
       ui::LayerAnimationElement::AnimatableProperty::OPACITY));
   EXPECT_EQ(close_animator->GetTargetOpacity(), 0.0f);
-
-  // Assistant button should be fading in.
-  EXPECT_TRUE(search_box->assistant_button_container()->GetVisible());
-  ASSERT_TRUE(assistant_animator);
-  EXPECT_TRUE(assistant_animator->IsAnimatingProperty(
-      ui::LayerAnimationElement::AnimatableProperty::OPACITY));
-  EXPECT_EQ(assistant_animator->GetTargetOpacity(), 1.0f);
 }
 
 // Test that activating and deactivating the search box causes the search icon
@@ -1149,7 +1245,7 @@ TEST_F(SearchBoxViewAnimationTest, SearchBoxIconImageViewAnimation) {
   auto* old_animator = search_box->search_icon()->layer()->GetAnimator();
 
   // Set search box to active state.
-  search_box->SetSearchBoxActive(true, ui::ET_MOUSE_PRESSED);
+  search_box->SetSearchBoxActive(true, ui::EventType::kMousePressed);
 
   // Check that the old layer is fading out and the new animator is fading in.
   auto* animator = search_box->search_icon()->layer()->GetAnimator();
@@ -1161,7 +1257,7 @@ TEST_F(SearchBoxViewAnimationTest, SearchBoxIconImageViewAnimation) {
   EXPECT_EQ(old_animator->GetTargetOpacity(), 0.0f);
 
   // Set search box to inactive state.
-  search_box->SetSearchBoxActive(false, ui::ET_MOUSE_PRESSED);
+  search_box->SetSearchBoxActive(false, ui::EventType::kMousePressed);
 
   old_animator = animator;
   animator = search_box->search_icon()->layer()->GetAnimator();
@@ -1173,6 +1269,282 @@ TEST_F(SearchBoxViewAnimationTest, SearchBoxIconImageViewAnimation) {
   EXPECT_TRUE(old_animator->IsAnimatingProperty(
       ui::LayerAnimationElement::AnimatableProperty::OPACITY));
   EXPECT_EQ(old_animator->GetTargetOpacity(), 0.0f);
+}
+
+// Accessible value test for the search box.
+TEST_F(SearchBoxViewAutocompleteTest, AccessibleValue) {
+  SimulateQuery(u"he");
+
+  // Add two SearchResults. The higher ranked result should be selected by
+  // default and it's title should be autocompleted into the search box.
+  CreateSearchResult(ash::SearchResultDisplayType::kList, 2.0, u"hello list",
+                     std::u16string(), ash::AppListSearchResultCategory::kWeb);
+  CreateSearchResult(ash::SearchResultDisplayType::kList, 1.0, u"hello list2",
+                     std::u16string(), ash::AppListSearchResultCategory::kApps);
+  base::RunLoop().RunUntilIdle();
+
+  ProcessAutocomplete();
+
+  ui::AXNodeData data;
+  view()->GetViewAccessibility().GetAccessibleNodeData(&data);
+  EXPECT_EQ(view()->search_box()->GetText(), u"hello list");
+  EXPECT_EQ(l10n_util::GetStringFUTF16(
+                IDS_APP_LIST_SEARCH_BOX_AUTOCOMPLETE,
+                std::u16string(view()->search_box()->GetText())),
+            data.GetString16Attribute(ax::mojom::StringAttribute::kValue));
+
+  EXPECT_EQ("Websites", view()->GetSearchBoxGhostTextForTest());
+  KeyPress(ui::VKEY_DOWN);
+  EXPECT_EQ("Apps", view()->GetSearchBoxGhostTextForTest());
+
+  ui::AXNodeData data2;
+  view()->GetViewAccessibility().GetAccessibleNodeData(&data2);
+  EXPECT_EQ(view()->search_box()->GetText(), u"hello list2");
+  EXPECT_EQ(l10n_util::GetStringFUTF16(
+                IDS_APP_LIST_SEARCH_BOX_AUTOCOMPLETE,
+                std::u16string(view()->search_box()->GetText())),
+            data2.GetString16Attribute(ax::mojom::StringAttribute::kValue));
+}
+
+class GeminiButtonTest : public AshTestBase,
+                         public testing::WithParamInterface<bool> {
+ public:
+  void SetUp() override {
+    AshTestBase::SetUp();
+
+    if (IsTabletMode()) {
+      ash::TabletModeControllerTestApi().EnterTabletMode();
+    }
+  }
+
+  void TearDown() override {
+    if (IsTabletMode()) {
+      ash::TabletModeControllerTestApi().LeaveTabletMode();
+    }
+
+    AshTestBase::TearDown();
+  }
+
+  ~GeminiButtonTest() override = default;
+
+  static std::string GenerateParamName(
+      const testing::TestParamInfo<bool>& info) {
+    return info.param ? "Tablet" : "Clamshell";
+  }
+
+ protected:
+  bool IsTabletMode() const { return GetParam(); }
+};
+
+INSTANTIATE_TEST_SUITE_P(All,
+                         GeminiButtonTest,
+                         testing::Bool(),
+                         &GeminiButtonTest::GenerateParamName);
+
+TEST_P(GeminiButtonTest, Visibility) {
+  AddGeminiApp();
+  GetAppListTestHelper()->ShowAppList();
+
+  views::ImageButton* gemini_button =
+      GetAppListTestHelper()->GetSearchBoxView()->gemini_button();
+  ASSERT_TRUE(gemini_button);
+  EXPECT_TRUE(gemini_button->GetVisible());
+
+  views::ImageButton* assistant_button =
+      GetAppListTestHelper()->GetSearchBoxView()->assistant_button();
+  ASSERT_TRUE(assistant_button);
+  EXPECT_FALSE(assistant_button->GetVisible());
+}
+
+TEST_P(GeminiButtonTest, Activation) {
+  TestAppListClient* test_app_list_client = GetTestAppListClient();
+  ASSERT_EQ(0, test_app_list_client->activate_item_count());
+
+  AddGeminiApp();
+
+  GetAppListTestHelper()->ShowAppList();
+  views::test::RunScheduledLayout(
+      IsTabletMode() ? static_cast<views::View*>(GetAppListView())
+                     : static_cast<views::View*>(GetAppListBubbleView()));
+
+  views::ImageButton* gemini_button =
+      GetAppListTestHelper()->GetSearchBoxView()->gemini_button();
+  ASSERT_TRUE(gemini_button);
+  ASSERT_TRUE(gemini_button->GetVisible());
+
+  ui::test::EventGenerator* generator = GetEventGenerator();
+  if (IsTabletMode()) {
+    generator->GestureTapAt(gemini_button->GetBoundsInScreen().CenterPoint());
+  } else {
+    generator->MoveMouseTo(gemini_button->GetBoundsInScreen().CenterPoint());
+    generator->ClickLeftButton();
+  }
+
+  EXPECT_EQ(1, test_app_list_client->activate_item_count());
+  EXPECT_EQ(kGeminiAppId, test_app_list_client->activate_item_last_id());
+}
+
+class SunfishLauncherButtonTest : public AshTestBase,
+                                  public testing::WithParamInterface<bool> {
+ public:
+  SunfishLauncherButtonTest() {
+    std::vector<base::test::FeatureRef> sunfish_features = {
+        features::kSunfishFeature,
+        features::kScannerUpdate,
+        features::kScannerDogfood,
+    };
+    if (IsSunfishEnabled()) {
+      scoped_feature_list_.InitWithFeatures(
+          /*enabled_features=*/sunfish_features, /*disabled_features=*/{});
+    } else {
+      scoped_feature_list_.InitWithFeatures(
+          /*enabled_features=*/{}, /*disabled_features=*/sunfish_features);
+    }
+  }
+  ~SunfishLauncherButtonTest() override = default;
+
+  bool IsSunfishEnabled() const { return GetParam(); }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+INSTANTIATE_TEST_SUITE_P(All, SunfishLauncherButtonTest, testing::Bool());
+
+// Tests the launcher button that may be found in the app list, next to the
+// search field.
+TEST_P(SunfishLauncherButtonTest, ButtonVisibility) {
+  const HomeButton* home_button =
+      GetPrimaryShelf()->navigation_widget()->GetHomeButton();
+  EXPECT_FALSE(home_button->IsShowingAppList());
+
+  LeftClickOn(home_button);
+
+  ASSERT_TRUE(home_button->IsShowingAppList());
+  auto* sunfish_button =
+      GetAppListTestHelper()->GetBubbleSearchBoxView()->sunfish_button();
+  ASSERT_TRUE(sunfish_button);
+  ASSERT_EQ(sunfish_button->GetVisible(), IsSunfishEnabled());
+
+  if (IsSunfishEnabled()) {
+    // `SetSunfishButtonVisibility` should control the visibility and icon of
+    // the button.
+    GetSearchModel()->search_box()->SetSunfishButtonVisibility(
+        SearchBoxModel::SunfishButtonVisibility::kHidden);
+    EXPECT_FALSE(sunfish_button->GetVisible());
+    GetSearchModel()->search_box()->SetSunfishButtonVisibility(
+        SearchBoxModel::SunfishButtonVisibility::kShownWithScannerIcon);
+    // There is no way of getting the exact `ui::ImageModel` for an
+    // `IconButton`, but we can indirectly get the icon by looking at the size.
+    EXPECT_TRUE(sunfish_button->GetVisible());
+    EXPECT_NE(sunfish_button->GetImage(views::ImageButton::STATE_NORMAL).size(),
+              gfx::Size(24, 24));
+    GetSearchModel()->search_box()->SetSunfishButtonVisibility(
+        SearchBoxModel::SunfishButtonVisibility::kHidden);
+    EXPECT_FALSE(sunfish_button->GetVisible());
+    GetSearchModel()->search_box()->SetSunfishButtonVisibility(
+        SearchBoxModel::SunfishButtonVisibility::kShownWithSunfishIcon);
+    EXPECT_TRUE(sunfish_button->GetVisible());
+    EXPECT_EQ(sunfish_button->GetImage(views::ImageButton::STATE_NORMAL).size(),
+              gfx::Size(24, 24));
+
+    // The app list will contain the sunfish launcher button next to the search
+    // field.
+    LeftClickOn(sunfish_button);
+
+    auto* session = CaptureModeController::Get()->capture_mode_session();
+    ASSERT_TRUE(session);
+    ASSERT_EQ(BehaviorType::kSunfish,
+              session->active_behavior()->behavior_type());
+  }
+}
+
+TEST_P(SunfishLauncherButtonTest,
+       SunfishSessionTurnedDisallowedWhileButtonShown) {
+  if (!IsSunfishEnabled()) {
+    // TODO: crbug.com/356877313: Consider unparametizing these tests.
+    GTEST_SKIP() << "skip if not enabled";
+  }
+  PrefService* prefs =
+      Shell::Get()->session_controller()->GetActivePrefService();
+  // Only control Sunfish policy in this test, not Scanner, for simplicity.
+  prefs->SetInteger(prefs::kScannerEnterprisePolicyAllowed,
+                    static_cast<int>(ScannerEnterprisePolicy::kDisallowed));
+  const HomeButton* home_button =
+      GetPrimaryShelf()->navigation_widget()->GetHomeButton();
+  EXPECT_FALSE(home_button->IsShowingAppList());
+
+  LeftClickOn(home_button);
+
+  ASSERT_TRUE(home_button->IsShowingAppList());
+  auto* sunfish_button =
+      GetAppListTestHelper()->GetBubbleSearchBoxView()->sunfish_button();
+  ASSERT_TRUE(sunfish_button);
+  ASSERT_TRUE(sunfish_button->GetVisible());
+  auto* test_capture_mode_delegate = static_cast<TestCaptureModeDelegate*>(
+      CaptureModeController::Get()->delegate_for_testing());
+  test_capture_mode_delegate->set_is_search_allowed_by_policy(false);
+  ASSERT_TRUE(sunfish_button->GetVisible());
+
+  // The app list will contain the sunfish launcher button next to the search
+  // field.
+  LeftClickOn(sunfish_button);
+
+  auto* session = CaptureModeController::Get()->capture_mode_session();
+  EXPECT_FALSE(session);
+  EXPECT_FALSE(sunfish_button->GetVisible());
+}
+
+TEST_P(SunfishLauncherButtonTest, TabletModeAppList) {
+  if (!IsSunfishEnabled()) {
+    // TODO(b/356877313): Consider unparametizing these tests.
+    GTEST_SKIP() << "skip if not enabled";
+  }
+  ash::TabletModeControllerTestApi().EnterTabletMode();
+
+  // Add a number of apps.
+  auto* helper = GetAppListTestHelper();
+  helper->AddAppItems(5);
+  helper->ShowAppList();
+  auto* presenter = Shell::Get()->app_list_controller()->fullscreen_presenter();
+  ASSERT_TRUE(presenter);
+  EXPECT_TRUE(presenter->GetTargetVisibility());
+
+  // Press the launcher button. Test the app list remains visible.
+  auto* sunfish_button = helper->GetSearchBoxView()->sunfish_button();
+  ASSERT_TRUE(sunfish_button);
+  GestureTapOn(sunfish_button);
+  EXPECT_TRUE(presenter->GetTargetVisibility());
+}
+
+TEST_P(SunfishLauncherButtonTest, TabletModeSwitchesToLastWindow) {
+  if (!IsSunfishEnabled()) {
+    // TODO(b/356877313): Consider unparametizing these tests.
+    GTEST_SKIP() << "skip if not enabled";
+  }
+  ash::TabletModeControllerTestApi().EnterTabletMode();
+  // Activate some windows.
+  std::unique_ptr<aura::Window> w1 = CreateTestWindow();
+  std::unique_ptr<aura::Window> w2 = CreateTestWindow();
+  std::unique_ptr<aura::Window> w3 = CreateTestWindow();
+  wm::ActivateWindow(w3.get());
+  wm::ActivateWindow(w2.get());
+  wm::ActivateWindow(w1.get());
+  // Add a number of apps.
+  AppListTestHelper* helper = GetAppListTestHelper();
+  helper->AddAppItems(5);
+  helper->ShowAppList();
+  AppListPresenterImpl* presenter =
+      Shell::Get()->app_list_controller()->fullscreen_presenter();
+  ASSERT_TRUE(presenter);
+  EXPECT_TRUE(presenter->GetTargetVisibility());
+
+  // Press the launcher button. Test the last window is now active.
+  views::ImageButton* sunfish_button =
+      helper->GetSearchBoxView()->sunfish_button();
+  ASSERT_TRUE(sunfish_button);
+  GestureTapOn(sunfish_button);
+  EXPECT_TRUE(WindowState::Get(w1.get())->IsActive());
 }
 
 }  // namespace

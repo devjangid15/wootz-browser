@@ -12,14 +12,16 @@
 #include "base/containers/unique_ptr_adapters.h"
 #include "base/functional/callback.h"
 #include "base/functional/callback_helpers.h"
+#include "base/memory/memory_pressure_listener.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "net/base/hash_value.h"
 #include "net/base/network_isolation_key.h"
 #include "net/extras/shared_dictionary/shared_dictionary_info.h"
-#include "net/extras/shared_dictionary/shared_dictionary_isolation_key.h"
 #include "net/extras/sqlite/sqlite_persistent_shared_dictionary_store.h"
+#include "net/shared_dictionary/shared_dictionary_isolation_key.h"
 #include "services/network/shared_dictionary/shared_dictionary_storage.h"
 #include "services/network/shared_dictionary/shared_dictionary_writer_on_disk.h"
 #include "url/gurl.h"
@@ -27,6 +29,7 @@
 
 namespace network {
 
+class SharedDictionaryCache;
 class SharedDictionaryManagerOnDisk;
 class SimpleUrlPatternMatcher;
 
@@ -53,23 +56,34 @@ class SharedDictionaryStorageOnDisk : public SharedDictionaryStorage {
     std::set<mojom::RequestDestination> match_dest_;
   };
 
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused.
+  enum class CacheResult {
+    kCacheMiss = 0,
+    kCacheHitLRU = 1,
+    kCacheHitActive = 2,
+    kMaxValue = kCacheHitActive,
+  };
+
   SharedDictionaryStorageOnDisk(
       base::WeakPtr<SharedDictionaryManagerOnDisk> manager,
       const net::SharedDictionaryIsolationKey& isolation_key,
-      base::ScopedClosureRunner on_deleted_closure_runner);
+      base::ScopedClosureRunner on_deleted_closure_runner,
+      scoped_refptr<SharedDictionaryCache> dictionary_cache);
 
   SharedDictionaryStorageOnDisk(const SharedDictionaryStorageOnDisk&) = delete;
   SharedDictionaryStorageOnDisk& operator=(
       const SharedDictionaryStorageOnDisk&) = delete;
 
   // SharedDictionaryStorage
-  std::unique_ptr<SharedDictionary> GetDictionarySync(
+  scoped_refptr<net::SharedDictionary> GetDictionarySync(
       const GURL& url,
       mojom::RequestDestination destination) override;
-  void GetDictionary(const GURL& url,
-                     mojom::RequestDestination destination,
-                     base::OnceCallback<void(std::unique_ptr<SharedDictionary>)>
-                         callback) override;
+  void GetDictionary(
+      const GURL& url,
+      mojom::RequestDestination destination,
+      base::OnceCallback<void(scoped_refptr<net::SharedDictionary>)> callback)
+      override;
   base::expected<scoped_refptr<SharedDictionaryWriter>,
                  mojom::SharedDictionaryError>
   CreateWriter(const GURL& url,
@@ -101,15 +115,15 @@ class SharedDictionaryStorageOnDisk : public SharedDictionaryStorage {
   friend class SharedDictionaryManagerTest;
   friend class SharedDictionaryManagerOnDiskTest;
 
-  class RefCountedSharedDictionary;
-  class WrappedSharedDictionary;
-
   void OnDatabaseRead(
       net::SQLitePersistentSharedDictionaryStore::DictionaryListOrError result);
   void OnDictionaryWritten(std::unique_ptr<SimpleUrlPatternMatcher> matcher,
                            net::SharedDictionaryInfo info);
-  void OnRefCountedSharedDictionaryDeleted(
+  void OnSharedDictionaryDeleted(
       const base::UnguessableToken& disk_cache_key_token);
+
+  void OnMemoryPressure(
+      base::MemoryPressureListener::MemoryPressureLevel level);
 
   const std::map<
       url::SchemeHostPort,
@@ -128,8 +142,13 @@ class SharedDictionaryStorageOnDisk : public SharedDictionaryStorage {
                WrappedDictionaryInfo>>
       dictionary_info_map_;
 
-  std::map<base::UnguessableToken, raw_ptr<RefCountedSharedDictionary>>
+  scoped_refptr<SharedDictionaryCache> dictionary_cache_;
+  std::map<base::UnguessableToken, raw_ptr<net::SharedDictionary>>
       dictionaries_;
+
+  std::unique_ptr<base::MemoryPressureListener> memory_pressure_listener_;
+  base::MemoryPressureListener::MemoryPressureLevel memory_pressure_level_ =
+      base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_NONE;
 
   bool get_dictionary_called_ = false;
   bool is_metadata_ready_ = false;

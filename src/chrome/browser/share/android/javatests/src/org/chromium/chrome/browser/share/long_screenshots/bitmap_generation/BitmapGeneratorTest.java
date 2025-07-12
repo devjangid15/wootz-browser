@@ -19,6 +19,7 @@ import org.junit.rules.TemporaryFolder;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.Callback;
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Criteria;
 import org.chromium.base.test.util.CriteriaHelper;
@@ -27,9 +28,10 @@ import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.paint_preview.PaintPreviewCompositorUtils;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
+import org.chromium.chrome.test.transit.page.WebPageStation;
 import org.chromium.components.paintpreview.player.CompositorStatus;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.net.test.EmbeddedTestServer;
 
 /** Tests for the LongScreenshotsEntryTest. */
@@ -37,26 +39,27 @@ import org.chromium.net.test.EmbeddedTestServer;
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class BitmapGeneratorTest {
     @Rule
-    public final ChromeTabbedActivityTestRule mActivityTestRule =
-            new ChromeTabbedActivityTestRule();
+    public final FreshCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.freshChromeTabbedActivityRule();
 
     @Rule public TemporaryFolder mTemporaryFolder = new TemporaryFolder();
 
     private Tab mTab;
     private BitmapGenerator mGenerator;
     private boolean mBitmapCreated;
+    private WebPageStation mInitialPage;
 
     @Before
     public void setUp() throws Exception {
         EmbeddedTestServer testServer = mActivityTestRule.getTestServer();
         final String url = testServer.getURL("/chrome/test/data/android/about.html");
-        mActivityTestRule.startMainActivityWithURL(url);
-        mTab = mActivityTestRule.getActivity().getActivityTab();
+        mInitialPage = mActivityTestRule.startOnUrl(url);
+        mTab = mInitialPage.loadedTabElement.get();
     }
 
     @After
     public void tearDown() throws Exception {
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     if (mGenerator != null) {
                         mGenerator.destroy();
@@ -78,7 +81,7 @@ public class BitmapGeneratorTest {
                 };
 
         Callback<Bitmap> onBitmapGenerated =
-                new Callback<Bitmap>() {
+                new Callback<>() {
                     @Override
                     public void onResult(Bitmap result) {
                         Assert.assertNotNull(result);
@@ -90,7 +93,7 @@ public class BitmapGeneratorTest {
             @Override
             public void onCompositorResult(@CompositorStatus int status) {
                 Assert.assertEquals(CompositorStatus.OK, status);
-                TestThreadUtils.runOnUiThreadBlocking(
+                ThreadUtils.runOnUiThreadBlocking(
                         () -> {
                             mGenerator.compositeBitmap(
                                     new Rect(0, 0, 100, 100), onErrorCallback, onBitmapGenerated);
@@ -103,7 +106,7 @@ public class BitmapGeneratorTest {
             }
         }
 
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mGenerator =
                             new BitmapGenerator(

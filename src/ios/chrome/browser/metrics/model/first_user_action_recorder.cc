@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ios/chrome/browser/metrics/model/first_user_action_recorder.h"
 
 #include "base/functional/bind.h"
@@ -177,8 +182,7 @@ void FirstUserActionRecorder::RecordAction(
       case START_ON_NTP:
         break;
       default:
-        NOTREACHED_IN_MIGRATION();
-        break;
+        NOTREACHED();
     }
   }
 }
@@ -186,8 +190,9 @@ void FirstUserActionRecorder::RecordAction(
 bool FirstUserActionRecorder::ShouldProcessAction(
     const std::string& action_name,
     base::TimeTicks action_time) {
-  if (recorded_action_)
+  if (recorded_action_) {
     return false;
+  }
 
   if (!action_pending_ &&
       ArrayContainsString(kRethrownActions, std::size(kRethrownActions),
@@ -217,8 +222,9 @@ bool FirstUserActionRecorder::ArrayContainsString(const char* to_search[],
                                                   const size_t to_search_size,
                                                   const char* to_find) {
   for (size_t i = 0; i < to_search_size; ++i) {
-    if (strcmp(to_find, to_search[i]) == 0)
+    if (strcmp(to_find, to_search[i]) == 0) {
       return true;
+    }
   }
   return false;
 }

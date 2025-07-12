@@ -7,6 +7,8 @@
 #include <memory>
 
 #include "base/test/task_environment.h"
+#include "components/data_sharing/public/data_sharing_network_loader.h"
+#include "components/data_sharing/public/group_data.h"
 #include "components/endpoint_fetcher/mock_endpoint_fetcher.h"
 #include "components/signin/public/identity_manager/identity_test_environment.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
@@ -14,6 +16,8 @@
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
 #include "services/network/test/test_url_loader_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+using endpoint_fetcher::MockEndpointFetcher;
 
 namespace data_sharing {
 
@@ -31,7 +35,7 @@ class MockDataSharingNetworkLoaderImpl : public DataSharingNetworkLoaderImpl {
       const MockDataSharingNetworkLoaderImpl&) = delete;
   ~MockDataSharingNetworkLoaderImpl() override = default;
 
-  MOCK_METHOD(std::unique_ptr<EndpointFetcher>,
+  MOCK_METHOD(std::unique_ptr<endpoint_fetcher::EndpointFetcher>,
               CreateEndpointFetcher,
               (const GURL& url,
                const std::vector<std::string>& scopes,
@@ -74,8 +78,13 @@ TEST_F(DataSharingNetworkLoaderImplTest, BadHttpStatusCode) {
       GURL("http://foo.com"), std::vector<std::string>(), std::string(),
       TRAFFIC_ANNOTATION_FOR_TESTS,
       base::BindOnce(
-          [](base::RunLoop* run_loop, std::unique_ptr<std::string> response) {
-            ASSERT_FALSE(response);
+          [](base::RunLoop* run_loop,
+             std::unique_ptr<DataSharingNetworkLoader::LoadResult> response) {
+            ASSERT_EQ(response->status,
+                      DataSharingNetworkLoader::NetworkLoaderStatus::
+                          kTransientFailure);
+            ASSERT_TRUE(response->result_bytes.empty());
+            ASSERT_EQ(response->network_error_code, 400);
             run_loop->Quit();
           },
           &run_loop));
@@ -89,8 +98,11 @@ TEST_F(DataSharingNetworkLoaderImplTest, CallbackRunOnUrlResponse) {
       GURL("http://foo.com"), std::vector<std::string>(), std::string(),
       TRAFFIC_ANNOTATION_FOR_TESTS,
       base::BindOnce(
-          [](base::RunLoop* run_loop, std::unique_ptr<std::string> response) {
-            ASSERT_EQ(*response, kExpectedResponse);
+          [](base::RunLoop* run_loop,
+             std::unique_ptr<DataSharingNetworkLoader::LoadResult> response) {
+            ASSERT_EQ(response->status,
+                      DataSharingNetworkLoader::NetworkLoaderStatus::kSuccess);
+            ASSERT_EQ(response->result_bytes, kExpectedResponse);
             run_loop->Quit();
           },
           &run_loop));

@@ -13,10 +13,11 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.TextView;
 
-import androidx.annotation.NonNull;
 import androidx.annotation.VisibleForTesting;
 import androidx.core.widget.ImageViewCompat;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.components.browser_ui.widget.R;
 import org.chromium.components.browser_ui.widget.RoundedCornerOutlineProvider;
 
@@ -25,10 +26,11 @@ import org.chromium.components.browser_ui.widget.RoundedCornerOutlineProvider;
  *
  * Displays the title of the site beneath a large icon.
  */
+@NullMarked
 public class TileView extends FrameLayout {
     private ImageView mBadgeView;
     private TextView mTitleView;
-    private Runnable mOnFocusViaSelectionListener;
+    private @Nullable Runnable mOnFocusViaSelectionListener;
     private RoundedCornerOutlineProvider mRoundingOutline;
     protected ImageView mIconView;
     protected View mIconBackgroundView;
@@ -68,20 +70,20 @@ public class TileView extends FrameLayout {
      * @param icon The icon to display on the tile.
      * @param titleLines The number of text lines to use for the tile title.
      */
-    protected void initialize(
-            String title, boolean showOfflineBadge, Drawable icon, int titleLines) {
+    public void initialize(
+            String title, boolean showOfflineBadge, @Nullable Drawable icon, int titleLines) {
         setOfflineBadgeVisibility(showOfflineBadge);
         setIconDrawable(icon);
         setTitle(title, titleLines);
     }
 
     /** Renders the icon or clears it from the view if the icon is null. */
-    public void setIconDrawable(Drawable icon) {
+    public void setIconDrawable(@Nullable Drawable icon) {
         mIconView.setImageDrawable(icon);
     }
 
     /** Applies or clears icon tint. */
-    public void setIconTint(ColorStateList color) {
+    public void setIconTint(@Nullable ColorStateList color) {
         ImageViewCompat.setImageTintList(mIconView, color);
     }
 
@@ -113,7 +115,7 @@ public class TileView extends FrameLayout {
     }
 
     @VisibleForTesting(otherwise = VisibleForTesting.PROTECTED)
-    public @NonNull TextView getTitleView() {
+    public TextView getTitleView() {
         return mTitleView;
     }
 
@@ -125,8 +127,8 @@ public class TileView extends FrameLayout {
         }
     }
 
-    @Override
-    public boolean isFocused() {
-        return super.isFocused() || (isSelected() && !isInTouchMode());
+    /** Returns whether the tile can be moved using drag-and-drop. */
+    public boolean isDraggable() {
+        return false;
     }
 }

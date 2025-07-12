@@ -21,8 +21,8 @@
 namespace web_app {
 
 TabbedWebAppNavigationThrottle::TabbedWebAppNavigationThrottle(
-    content::NavigationHandle* navigation_handle)
-    : content::NavigationThrottle(navigation_handle) {}
+    content::NavigationThrottleRegistry& registry)
+    : content::NavigationThrottle(registry) {}
 
 TabbedWebAppNavigationThrottle::~TabbedWebAppNavigationThrottle() = default;
 
@@ -31,42 +31,42 @@ const char* TabbedWebAppNavigationThrottle::GetNameForLogging() {
 }
 
 // static
-std::unique_ptr<content::NavigationThrottle>
-TabbedWebAppNavigationThrottle::MaybeCreateThrottleFor(
-    content::NavigationHandle* handle) {
-  if (!handle->IsInPrimaryMainFrame())
-    return nullptr;
-
-  // Reloading the page should not cause the tab to change.
-  if (handle->GetReloadType() != content::ReloadType::NONE) {
-    return nullptr;
+void TabbedWebAppNavigationThrottle::MaybeCreateAndAdd(
+    content::NavigationThrottleRegistry& registry) {
+  content::NavigationHandle& handle = registry.GetNavigationHandle();
+  if (!handle.IsInPrimaryMainFrame()) {
+    return;
   }
 
-  content::WebContents* web_contents = handle->GetWebContents();
+  // Reloading the page should not cause the tab to change.
+  if (handle.GetReloadType() != content::ReloadType::NONE) {
+    return;
+  }
+
+  content::WebContents* web_contents = handle.GetWebContents();
 
   Browser* browser = chrome::FindBrowserWithTab(web_contents);
-  if (!browser || !browser->app_controller())
-    return nullptr;
+  if (!browser || !browser->app_controller()) {
+    return;
+  }
 
   WebAppProvider* provider = WebAppProvider::GetForWebContents(web_contents);
-  if (!provider)
-    return nullptr;
+  if (!provider) {
+    return;
+  }
 
   const webapps::AppId& app_id = browser->app_controller()->app_id();
 
   std::optional<GURL> home_tab_url =
       provider->registrar_unsafe().GetAppPinnedHomeTabUrl(app_id);
 
-  auto* tab_helper = WebAppTabHelper::FromWebContents(web_contents);
-
   // Only create the throttle for tabbed web apps that have a home tab.
-  if (tab_helper && tab_helper->acting_as_app() &&
+  if (WebAppTabHelper::GetAppId(web_contents) &&
       provider->registrar_unsafe().IsTabbedWindowModeEnabled(app_id) &&
       home_tab_url.has_value()) {
-    return std::make_unique<TabbedWebAppNavigationThrottle>(handle);
+    registry.AddThrottle(
+        std::make_unique<TabbedWebAppNavigationThrottle>(registry));
   }
-
-  return nullptr;
 }
 
 content::NavigationThrottle::ThrottleCheckResult
@@ -83,13 +83,15 @@ TabbedWebAppNavigationThrottle::WillStartRequest() {
 
   const webapps::AppId& app_id = app_controller->app_id();
 
-  std::optional<GURL> home_tab_url =
-      provider->registrar_unsafe().GetAppPinnedHomeTabUrl(app_id);
-  DCHECK(home_tab_url.has_value());
+  if (!app_controller->GetPinnedHomeTab() ||
+      !provider->registrar_unsafe()
+           .GetAppPinnedHomeTabUrl(app_id)
+           .has_value()) {
+    return content::NavigationThrottle::PROCEED;
+  }
 
-  auto* tab_helper = WebAppTabHelper::FromWebContents(web_contents);
-  DCHECK(tab_helper);
-  bool navigating_from_home_tab = tab_helper->is_pinned_home_tab();
+  bool navigating_from_home_tab =
+      app_controller->GetPinnedHomeTab() == web_contents;
   bool navigation_url_is_home_url =
       app_controller->IsUrlInHomeTabScope(navigation_handle()->GetURL());
 
@@ -106,7 +108,7 @@ TabbedWebAppNavigationThrottle::WillStartRequest() {
         !web_contents->GetLastCommittedURL().is_valid()) {
       web_contents->ClosePage();
     }
-    return FocusHomeTab();
+    return FocusHomeTab(browser);
   }
 
   return content::NavigationThrottle::PROCEED;
@@ -114,7 +116,7 @@ TabbedWebAppNavigationThrottle::WillStartRequest() {
 
 content::NavigationThrottle::ThrottleCheckResult
 TabbedWebAppNavigationThrottle::WillRedirectRequest() {
-  // TODO(crbug.com/40598974): Figure out how redirects should be handled.
+  // TODO(crbug.com/400761084): Figure out how redirects should be handled.
   return content::NavigationThrottle::PROCEED;
 }
 
@@ -123,28 +125,35 @@ TabbedWebAppNavigationThrottle::OpenInNewTab() {
   content::OpenURLParams params =
       content::OpenURLParams::FromNavigationHandle(navigation_handle());
   params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
+  // Clear the FrameTreeNode id, as the new navigation will be in a new tab
+  // rather than the frame of the original navigation.
+  params.frame_tree_node_id = content::FrameTreeNodeId();
   navigation_handle()->GetWebContents()->OpenURL(
       std::move(params), /*navigation_handle_callback=*/{});
   return content::NavigationThrottle::CANCEL_AND_IGNORE;
 }
 
 content::NavigationThrottle::ThrottleCheckResult
-TabbedWebAppNavigationThrottle::FocusHomeTab() {
-  Browser* browser =
-      chrome::FindBrowserWithTab(navigation_handle()->GetWebContents());
+TabbedWebAppNavigationThrottle::FocusHomeTab(Browser* browser) {
+  content::WebContents* web_contents = navigation_handle()->GetWebContents();
   TabStripModel* tab_strip = browser->tab_strip_model();
 
   content::OpenURLParams params =
       content::OpenURLParams::FromNavigationHandle(navigation_handle());
   params.disposition = WindowOpenDisposition::CURRENT_TAB;
-  params.frame_tree_node_id = content::RenderFrameHost::kNoFrameTreeNodeId;
+  params.frame_tree_node_id = content::FrameTreeNodeId();
 
-  if (params.url != tab_strip->GetWebContentsAt(0)->GetLastCommittedURL()) {
+  CHECK(browser->app_controller());
+  content::WebContents* pinned_home_tab =
+      browser->app_controller()->GetPinnedHomeTab();
+  CHECK(pinned_home_tab);
+  CHECK_NE(pinned_home_tab, web_contents);
+  if (params.url != pinned_home_tab->GetLastCommittedURL()) {
     // Only do the navigation if the URL has changed.
-    tab_strip->GetWebContentsAt(0)->OpenURL(std::move(params),
-                                            /*navigation_handle_callback=*/{});
+    pinned_home_tab->OpenURL(std::move(params),
+                             /*navigation_handle_callback=*/{});
   }
-  tab_strip->ActivateTabAt(0);
+  tab_strip->ActivateTabAt(tab_strip->GetIndexOfWebContents(pinned_home_tab));
   return content::NavigationThrottle::CANCEL_AND_IGNORE;
 }
 

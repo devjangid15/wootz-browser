@@ -2,13 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <string>
+#include "net/cookies/parsed_cookie.h"
 
+#include <array>
+#include <optional>
+#include <string>
+#include <string_view>
+
+#include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/test/scoped_feature_list.h"
 #include "net/base/features.h"
 #include "net/cookies/cookie_constants.h"
 #include "net/cookies/cookie_inclusion_status.h"
-#include "net/cookies/parsed_cookie.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace net {
@@ -21,10 +27,10 @@ TEST(ParsedCookieTest, TestBasic) {
   EXPECT_FALSE(pc1.IsPartitioned());
   EXPECT_EQ("a", pc1.Name());
   EXPECT_EQ("b", pc1.Value());
-  EXPECT_FALSE(pc1.HasPath());
-  EXPECT_FALSE(pc1.HasDomain());
-  EXPECT_FALSE(pc1.HasExpires());
-  EXPECT_FALSE(pc1.HasMaxAge());
+  EXPECT_FALSE(pc1.Path());
+  EXPECT_FALSE(pc1.Domain());
+  EXPECT_FALSE(pc1.Expires());
+  EXPECT_FALSE(pc1.MaxAge());
   EXPECT_EQ(CookieSameSite::UNSPECIFIED, pc1.SameSite());
   EXPECT_EQ(CookiePriority::COOKIE_PRIORITY_DEFAULT, pc1.Priority());
 
@@ -37,12 +43,9 @@ TEST(ParsedCookieTest, TestBasic) {
   EXPECT_TRUE(pc2.IsPartitioned());
   EXPECT_EQ("c", pc2.Name());
   EXPECT_EQ("d", pc2.Value());
-  EXPECT_TRUE(pc2.HasPath());
   EXPECT_EQ("/foo", pc2.Path());
-  EXPECT_TRUE(pc2.HasDomain());
   EXPECT_EQ("bar.test", pc2.Domain());
-  EXPECT_FALSE(pc2.HasExpires());
-  EXPECT_TRUE(pc2.HasMaxAge());
+  EXPECT_FALSE(pc2.Expires());
   EXPECT_EQ("60", pc2.MaxAge());
   EXPECT_EQ(CookieSameSite::LAX_MODE, pc2.SameSite());
   EXPECT_EQ(CookiePriority::COOKIE_PRIORITY_HIGH, pc2.Priority());
@@ -124,11 +127,11 @@ TEST(ParsedCookieTest, ParseValueStrings) {
 
   // Strings with trailing whitespace or the separator character should parse OK
   // but ValueMatchesParsedValue() should fail.
-  std::string valid_values_with_trailing_chars[] = {
+  auto valid_values_with_trailing_chars = std::to_array<std::string>({
       "lastRequest=1624663552846 ",   // Space at end
       "lastRequest=1624663552846\t",  // Tab at end
       "lastRequest=1624663552846;",   // Token separator at end
-  };
+  });
   const size_t valid_value_length =
       valid_values_with_trailing_chars[0].length() - 1;
   for (const auto& value : valid_values_with_trailing_chars) {
@@ -185,7 +188,6 @@ TEST(ParsedCookieTest, TestQuoted) {
     EXPECT_TRUE(pc.IsValid());
     EXPECT_FALSE(pc.IsSecure());
     EXPECT_TRUE(pc.IsHttpOnly());
-    EXPECT_TRUE(pc.HasPath());
     EXPECT_EQ("aBc", pc.Name());
     EXPECT_EQ(test.expected, pc.Value());
 
@@ -203,7 +205,6 @@ TEST(ParsedCookieTest, TestNameless) {
   ParsedCookie pc("BLAHHH; path=/; secure;");
   EXPECT_TRUE(pc.IsValid());
   EXPECT_TRUE(pc.IsSecure());
-  EXPECT_TRUE(pc.HasPath());
   EXPECT_EQ("/", pc.Path());
   EXPECT_EQ("", pc.Name());
   EXPECT_EQ("BLAHHH", pc.Value());
@@ -219,7 +220,6 @@ TEST(ParsedCookieTest, TestAttributeCase) {
   EXPECT_TRUE(pc.IsHttpOnly());
   EXPECT_TRUE(pc.IsPartitioned());
   EXPECT_EQ(CookieSameSite::LAX_MODE, pc.SameSite());
-  EXPECT_TRUE(pc.HasPath());
   EXPECT_EQ("/", pc.Path());
   EXPECT_EQ("", pc.Name());
   EXPECT_EQ("BLAH", pc.Value());
@@ -231,7 +231,6 @@ TEST(ParsedCookieTest, TestDoubleQuotedNameless) {
   ParsedCookie pc("\"BLA\\\"HHH\"; path=/; secure;");
   EXPECT_TRUE(pc.IsValid());
   EXPECT_TRUE(pc.IsSecure());
-  EXPECT_TRUE(pc.HasPath());
   EXPECT_EQ("/", pc.Path());
   EXPECT_EQ("", pc.Name());
   EXPECT_EQ("\"BLA\\\"HHH\"", pc.Value());
@@ -282,7 +281,6 @@ TEST(ParsedCookieTest, MissingValue) {
   EXPECT_TRUE(pc.IsValid());
   EXPECT_EQ("ABC", pc.Name());
   EXPECT_EQ("", pc.Value());
-  EXPECT_TRUE(pc.HasPath());
   EXPECT_EQ("/wee", pc.Path());
   EXPECT_EQ(COOKIE_PRIORITY_DEFAULT, pc.Priority());
   EXPECT_EQ(1U, pc.NumberOfAttributes());
@@ -297,8 +295,8 @@ TEST(ParsedCookieTest, Whitespace) {
   EXPECT_TRUE(pc.IsValid());
   EXPECT_EQ("A", pc.Name());
   EXPECT_EQ("BC", pc.Value());
-  EXPECT_FALSE(pc.HasPath());
-  EXPECT_FALSE(pc.HasDomain());
+  EXPECT_FALSE(pc.Path());
+  EXPECT_FALSE(pc.Domain());
   EXPECT_TRUE(pc.IsSecure());
   EXPECT_FALSE(pc.IsHttpOnly());
   EXPECT_EQ(CookieSameSite::LAX_MODE, pc.SameSite());
@@ -312,8 +310,8 @@ TEST(ParsedCookieTest, MultipleEquals) {
   EXPECT_TRUE(pc.IsValid());
   EXPECT_EQ("A", pc.Name());
   EXPECT_EQ("== BC", pc.Value());
-  EXPECT_FALSE(pc.HasPath());
-  EXPECT_FALSE(pc.HasDomain());
+  EXPECT_FALSE(pc.Path());
+  EXPECT_FALSE(pc.Domain());
   EXPECT_TRUE(pc.IsSecure());
   EXPECT_TRUE(pc.IsHttpOnly());
   EXPECT_EQ(CookieSameSite::UNSPECIFIED, pc.SameSite());
@@ -330,8 +328,7 @@ TEST(ParsedCookieTest, QuotedTrailingWhitespace) {
   EXPECT_EQ("ANCUUID", pc.Name());
   // Stripping whitespace after the quotes matches all other major browsers.
   EXPECT_EQ("\"zohNumRKgI0oxyhSsV3Z7D\"", pc.Value());
-  EXPECT_TRUE(pc.HasExpires());
-  EXPECT_TRUE(pc.HasPath());
+  EXPECT_TRUE(pc.Expires());
   EXPECT_EQ("/", pc.Path());
   EXPECT_EQ(COOKIE_PRIORITY_DEFAULT, pc.Priority());
   EXPECT_EQ(2U, pc.NumberOfAttributes());
@@ -345,8 +342,7 @@ TEST(ParsedCookieTest, TrailingWhitespace) {
   EXPECT_TRUE(pc.IsValid());
   EXPECT_EQ("ANCUUID", pc.Name());
   EXPECT_EQ("zohNumRKgI0oxyhSsV3Z7D", pc.Value());
-  EXPECT_TRUE(pc.HasExpires());
-  EXPECT_TRUE(pc.HasPath());
+  EXPECT_TRUE(pc.Expires());
   EXPECT_EQ("/", pc.Path());
   EXPECT_EQ(COOKIE_PRIORITY_DEFAULT, pc.Priority());
   EXPECT_EQ(2U, pc.NumberOfAttributes());
@@ -444,14 +440,14 @@ TEST(ParsedCookieTest, EnforceSizeConstraints) {
 
   ParsedCookie pc20("name=value; path=" + max_path);
   EXPECT_TRUE(pc20.IsValid());
-  EXPECT_TRUE(pc20.HasPath());
   EXPECT_EQ("/" + almost_max_path, pc20.Path());
 
   ParsedCookie pc21("name=value; path=" + too_long_path, &status);
   EXPECT_TRUE(pc21.IsValid());
-  EXPECT_FALSE(pc21.HasPath());
-  EXPECT_TRUE(status.HasWarningReason(
-      CookieInclusionStatus::WARN_ATTRIBUTE_VALUE_EXCEEDS_MAX_SIZE));
+  EXPECT_FALSE(pc21.Path());
+  EXPECT_TRUE(
+      status.HasWarningReason(CookieInclusionStatus::WarningReason::
+                                  WARN_ATTRIBUTE_VALUE_EXCEEDS_MAX_SIZE));
 
   // NOTE: max_domain is based on the max attribute value as defined in
   // RFC6525bis, but this is larger than what is recommended by RFC1123.
@@ -463,14 +459,14 @@ TEST(ParsedCookieTest, EnforceSizeConstraints) {
 
   ParsedCookie pc30("name=value; domain=" + max_domain);
   EXPECT_TRUE(pc30.IsValid());
-  EXPECT_TRUE(pc30.HasDomain());
   EXPECT_EQ(max_domain, pc30.Domain());
 
   ParsedCookie pc31("name=value; domain=" + too_long_domain);
   EXPECT_TRUE(pc31.IsValid());
-  EXPECT_FALSE(pc31.HasDomain());
-  EXPECT_TRUE(status.HasWarningReason(
-      CookieInclusionStatus::WARN_ATTRIBUTE_VALUE_EXCEEDS_MAX_SIZE));
+  EXPECT_FALSE(pc31.Domain());
+  EXPECT_TRUE(
+      status.HasWarningReason(CookieInclusionStatus::WarningReason::
+                                  WARN_ATTRIBUTE_VALUE_EXCEEDS_MAX_SIZE));
 
   std::string pc40_suffix = "; domain=example.com";
 
@@ -715,13 +711,13 @@ TEST(ParsedCookieTest, SetAttributes) {
 
   // Clear an unset attribute.
   EXPECT_TRUE(pc.SetDomain(std::string()));
-  EXPECT_FALSE(pc.HasDomain());
+  EXPECT_FALSE(pc.Domain());
   EXPECT_EQ("name=value", pc.ToCookieLine());
   EXPECT_TRUE(pc.IsValid());
 
   // Set a string containing an invalid character
   EXPECT_FALSE(pc.SetDomain("foo;bar"));
-  EXPECT_FALSE(pc.HasDomain());
+  EXPECT_FALSE(pc.Domain());
   EXPECT_EQ("name=value", pc.ToCookieLine());
   EXPECT_TRUE(pc.IsValid());
 
@@ -741,10 +737,10 @@ TEST(ParsedCookieTest, SetAttributes) {
       "expires=Sun, 18-Apr-2027 21:06:29 GMT; max-age=12345; secure; "
       "httponly; samesite=LAX; priority=HIGH; partitioned",
       pc.ToCookieLine());
-  EXPECT_TRUE(pc.HasDomain());
-  EXPECT_TRUE(pc.HasPath());
-  EXPECT_TRUE(pc.HasExpires());
-  EXPECT_TRUE(pc.HasMaxAge());
+  EXPECT_TRUE(pc.Domain());
+  EXPECT_TRUE(pc.Path());
+  EXPECT_TRUE(pc.Expires());
+  EXPECT_TRUE(pc.MaxAge());
   EXPECT_TRUE(pc.IsSecure());
   EXPECT_TRUE(pc.IsHttpOnly());
   EXPECT_EQ(CookieSameSite::LAX_MODE, pc.SameSite());
@@ -752,10 +748,9 @@ TEST(ParsedCookieTest, SetAttributes) {
 
   // Modify one attribute in the middle.
   EXPECT_TRUE(pc.SetPath("/foo"));
-  EXPECT_TRUE(pc.HasDomain());
-  EXPECT_TRUE(pc.HasPath());
+  EXPECT_TRUE(pc.Domain());
   EXPECT_EQ("/foo", pc.Path());
-  EXPECT_TRUE(pc.HasExpires());
+  EXPECT_TRUE(pc.Expires());
   EXPECT_TRUE(pc.IsSecure());
   EXPECT_TRUE(pc.IsHttpOnly());
   EXPECT_EQ(
@@ -793,10 +788,10 @@ TEST(ParsedCookieTest, SetAttributes) {
   EXPECT_TRUE(pc.SetName("name2"));
   EXPECT_TRUE(pc.SetValue("value2"));
   EXPECT_TRUE(pc.SetPriority(std::string()));
-  EXPECT_FALSE(pc.HasDomain());
-  EXPECT_FALSE(pc.HasPath());
-  EXPECT_FALSE(pc.HasExpires());
-  EXPECT_FALSE(pc.HasMaxAge());
+  EXPECT_FALSE(pc.Domain());
+  EXPECT_FALSE(pc.Path());
+  EXPECT_FALSE(pc.Expires());
+  EXPECT_FALSE(pc.MaxAge());
   EXPECT_FALSE(pc.IsSecure());
   EXPECT_FALSE(pc.IsHttpOnly());
   EXPECT_EQ(CookieSameSite::UNSPECIFIED, pc.SameSite());
@@ -1067,7 +1062,7 @@ TEST(ParsedCookieTest, SameSiteValues) {
 
 TEST(ParsedCookieTest, InvalidNonAlphanumericChars) {
   // clang-format off
-  const char* cases[] = {
+  auto cases = std::to_array<const char *>({
       "name=\x05",
       "name=foo\x1c" "bar",
       "name=foobar\x11",
@@ -1083,7 +1078,7 @@ TEST(ParsedCookieTest, InvalidNonAlphanumericChars) {
       "foo=ba,ba\x7F" "z=bo",
       "fo\x7F" "o=ba,z=bo",
       "foo=bar\x7F" ";z=bo",
-  };
+  });
   // clang-format on
 
   for (size_t i = 0; i < std::size(cases); i++) {
@@ -1169,8 +1164,6 @@ TEST(ParsedCookieTest, ValidNonAlphanumericChars) {
 }
 
 TEST(ParsedCookieTest, PreviouslyTruncatingCharInCookieLine) {
-  using std::string_literals::operator""s;
-
   // Test scenarios where a control char may appear at start, middle and end of
   // a cookie line. Control char array with NULL (\x0), CR (\xD), LF (xA),
   // HT (\x9) and BS (\x1B).
@@ -1187,7 +1180,8 @@ TEST(ParsedCookieTest, PreviouslyTruncatingCharInCookieLine) {
     SCOPED_TRACE(testing::Message() << "Using test.ctlChar == "
                                     << base::NumberToString(test.ctlChar));
     std::string ctl_string(1, test.ctlChar);
-    std::string ctl_at_start_cookie_string = ctl_string + "foo=bar"s;
+    std::string ctl_at_start_cookie_string =
+        base::StrCat({ctl_string, "foo=bar"});
     ParsedCookie ctl_at_start_cookie(ctl_at_start_cookie_string);
     // Lots of factors determine whether IsValid() is true here:
     //
@@ -1202,14 +1196,14 @@ TEST(ParsedCookieTest, PreviouslyTruncatingCharInCookieLine) {
     EXPECT_EQ(ctl_at_start_cookie.IsValid(), test.ctlChar == '\x9');
 
     std::string ctl_at_middle_cookie_string =
-        "foo=bar;"s + ctl_string + "secure"s;
+        base::StrCat({"foo=bar;", ctl_string, "secure"});
     ParsedCookie ctl_at_middle_cookie(ctl_at_middle_cookie_string);
     if (test.invalid_character) {
       EXPECT_EQ(ctl_at_middle_cookie.IsValid(), false);
     }
 
     std::string ctl_at_end_cookie_string =
-        "foo=bar;"s + "secure;"s + ctl_string;
+        base::StrCat({"foo=bar;", "secure;", ctl_string});
     ParsedCookie ctl_at_end_cookie(ctl_at_end_cookie_string);
     if (test.invalid_character) {
       EXPECT_EQ(ctl_at_end_cookie.IsValid(), false);
@@ -1217,7 +1211,7 @@ TEST(ParsedCookieTest, PreviouslyTruncatingCharInCookieLine) {
   }
 
   // Test if there are multiple control characters that terminate.
-  std::string ctls_cookie_string = "foo=bar;\xA\xD"s;
+  std::string ctls_cookie_string = "foo=bar;\xA\xD";
   ParsedCookie ctls_cookie(ctls_cookie_string);
   EXPECT_EQ(ctls_cookie.IsValid(), false);
 }

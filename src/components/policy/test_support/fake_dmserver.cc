@@ -13,6 +13,7 @@
 #include "base/logging.h"
 #include "base/notreached.h"
 #include "base/scoped_observation.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/bind_post_task.h"
 #include "base/time/time.h"
@@ -651,8 +652,7 @@ bool FakeDMServer::WriteURLToPipe(base::ScopedFD&& startup_pipe) {
                          server_url.host().c_str(), server_url.port().c_str());
 
   base::File pipe_writer(startup_pipe.release());
-  if (!pipe_writer.WriteAtCurrentPosAndCheck(
-          base::as_bytes(base::make_span(server_data)))) {
+  if (!pipe_writer.WriteAtCurrentPosAndCheck(base::as_byte_span(server_data))) {
     LOG(ERROR) << "Failed to write the server url data to the pipe, data: "
                << server_data;
     return false;
@@ -867,7 +867,7 @@ bool FakeDMServer::FindKey(const base::Value::Dict& dict,
       return true;
     }
     default: {
-      NOTREACHED_NORETURN() << "Unsupported type for client file key";
+      NOTREACHED() << "Unsupported type for client file key";
     }
   }
 }

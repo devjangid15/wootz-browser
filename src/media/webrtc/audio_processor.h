@@ -84,9 +84,9 @@ class COMPONENT_EXPORT(MEDIA_WEBRTC) AudioProcessor {
       LogCallback log_callback,
       const media::AudioParameters& input_format,
       const media::AudioParameters& output_format,
-      rtc::scoped_refptr<webrtc::AudioProcessing> webrtc_audio_processing,
-      bool stereo_mirroring,
-      bool needs_playout_reference);
+      webrtc::scoped_refptr<webrtc::AudioProcessing> webrtc_audio_processing,
+      bool needs_playout_reference,
+      base::TimeDelta added_aec_delay);
 
   ~AudioProcessor();
 
@@ -108,8 +108,7 @@ class COMPONENT_EXPORT(MEDIA_WEBRTC) AudioProcessor {
   void ProcessCapturedAudio(const media::AudioBus& audio_source,
                             base::TimeTicks audio_capture_time,
                             int num_preferred_channels,
-                            double volume,
-                            bool key_pressed);
+                            double volume);
 
   // Analyzes playout audio for e.g. echo cancellation.
   // Must be called on the playout thread.
@@ -186,7 +185,6 @@ class COMPONENT_EXPORT(MEDIA_WEBRTC) AudioProcessor {
                                     int process_frames,
                                     base::TimeDelta capture_delay,
                                     double volume,
-                                    bool key_pressed,
                                     int num_preferred_channels,
                                     float* const* output_ptrs);
 
@@ -201,11 +199,7 @@ class COMPONENT_EXPORT(MEDIA_WEBRTC) AudioProcessor {
 
   // The WebRTC audio processing module (APM). Performs the bulk of the audio
   // processing and resampling algorithms.
-  const rtc::scoped_refptr<webrtc::AudioProcessing> webrtc_audio_processing_;
-
-  // If true, then the audio processor should swap the left and right channel of
-  // captured stereo audio.
-  const bool stereo_mirroring_;
+  const webrtc::scoped_refptr<webrtc::AudioProcessing> webrtc_audio_processing_;
 
   // If true, `OnPlayoutData()` should be called.
   const bool needs_playout_reference_;
@@ -220,6 +214,12 @@ class COMPONENT_EXPORT(MEDIA_WEBRTC) AudioProcessor {
   // any aecdump recording in |webrtc_audio_processing_|.
   std::unique_ptr<webrtc::TaskQueueBase, webrtc::TaskQueueDeleter> worker_queue_
       GUARDED_BY_CONTEXT(owning_sequence_);
+
+  // Cached value for an extra delay which is added if system loopback AEC is
+  // utilized. Each audio capture timestamp for processed audio frames is
+  // reduced by this value to ensure that delay stats are correct. Stored on the
+  // owning sequence during construction and read on the capture thread.
+  const base::TimeDelta added_aec_delay_;
 
   // Cached value for the playout delay latency. Updated on the playout thread
   // and read on the capture thread.

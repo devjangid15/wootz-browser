@@ -13,21 +13,25 @@ import android.view.View.AccessibilityDelegate;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 
-import android.util.Log;
+import androidx.annotation.IdRes;
 
 import org.chromium.base.metrics.RecordUserAction;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 
 /**
- * A helper class for a menu button to decide when to show the app menu.
+ * A helper class for a menu button to decide when to show the app menu and forward touch
+ * events.
  *
  * Simply construct this class and pass the class instance to a menu button as TouchListener.
  * Then this class will handle everything regarding showing app menu for you.
  */
+@NullMarked
 class AppMenuButtonHelperImpl extends AccessibilityDelegate implements AppMenuButtonHelper {
     private final AppMenuHandlerImpl mMenuHandler;
-    private Runnable mOnAppMenuShownListener;
+    private @Nullable Runnable mOnAppMenuShownListener;
     private boolean mIsTouchEventsBeingProcessed;
-    private Runnable mOnClickRunnable;
+    private @Nullable Runnable mOnClickRunnable;
 
     /**
      * @param menuHandler MenuHandler implementation that can show and get the app menu.
@@ -50,7 +54,12 @@ class AppMenuButtonHelperImpl extends AccessibilityDelegate implements AppMenuBu
 
     @Override
     public boolean onEnterKeyPress(View view) {
-        return showAppMenu(view);
+        return showAppMenu(view, false);
+    }
+
+    @Override
+    public void highlightMenuItemOnShow(@IdRes int menuItemId) {
+        mMenuHandler.setMenuHighlight(menuItemId);
     }
 
     @Override
@@ -70,32 +79,39 @@ class AppMenuButtonHelperImpl extends AccessibilityDelegate implements AppMenuBu
 
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
-                isTouchEventConsumed = true;
+                isTouchEventConsumed |= true;
                 updateTouchEvent(view, true);
+                if (mOnClickRunnable != null) mOnClickRunnable.run();
+                showAppMenu(view, true);
                 break;
             case MotionEvent.ACTION_UP:
-                isTouchEventConsumed = true;
+                isTouchEventConsumed |= true;
                 updateTouchEvent(view, false);
-                if (mOnClickRunnable != null) mOnClickRunnable.run();
-                showAppMenu(view);
                 break;
             case MotionEvent.ACTION_CANCEL:
-                isTouchEventConsumed = true;
+                isTouchEventConsumed |= true;
                 updateTouchEvent(view, false);
                 break;
             default:
         }
 
+        // If user starts to drag on this menu button, ACTION_DOWN and all the subsequent touch
+        // events are received here. We need to forward this event to the app menu to handle
+        // dragging correctly.
+        AppMenuDragHelper dragHelper = mMenuHandler.getAppMenuDragHelper();
+        if (dragHelper != null) {
+            isTouchEventConsumed |= dragHelper.handleDragging(event, view);
+        }
         return isTouchEventConsumed;
     }
 
     // AccessibilityDelegate overrides
 
     @Override
-    public boolean performAccessibilityAction(View host, int action, Bundle args) {
+    public boolean performAccessibilityAction(View host, int action, @Nullable Bundle args) {
         if (action == AccessibilityNodeInfo.ACTION_CLICK) {
             if (!mMenuHandler.isAppMenuShowing()) {
-                showAppMenu(host);
+                showAppMenu(host, false);
             } else {
                 mMenuHandler.hideAppMenu();
             }
@@ -109,16 +125,19 @@ class AppMenuButtonHelperImpl extends AccessibilityDelegate implements AppMenuBu
     /**
      * Shows the app menu if it is not already shown.
      * @param view View that initiated showing this menu. Normally it is a menu button.
+     * @param startDragging Whether dragging is started.
      * @return Whether or not if the app menu is successfully shown.
      */
-    private boolean showAppMenu(View view) {
-        if (!mMenuHandler.isAppMenuShowing() && mMenuHandler.showAppMenu(view, false)) {
-            RecordUserAction.record("MobileUsingMenuBySwButtonTap");
+    private boolean showAppMenu(View view, boolean startDragging) {
+        if (!mMenuHandler.isAppMenuShowing() && mMenuHandler.showAppMenu(view, startDragging)) {
+            // Initial start dragging can be canceled in case if it was just single tap.
+            // So we only record non-dragging here, and will deal with those dragging cases in
+            // AppMenuDragHelper class.
+            if (!startDragging) RecordUserAction.record("MobileUsingMenuBySwButtonTap");
 
             if (mOnAppMenuShownListener != null) {
                 mOnAppMenuShownListener.run();
             }
-            Log.d("touched", "From AppMenuButtonHelperImpl, If you get this that means it will always be called.");
             return true;
         }
         return false;

@@ -209,10 +209,10 @@ class EnterpriseReportingPrivateGetCertificateFunction
 
   // Callback invoked when |client_cert_fetcher_| is done fetching and selecting
   // the client certificate.
-//   void OnClientCertFetched(std::unique_ptr<net::ClientCertIdentity> cert);
+  void OnClientCertFetched(std::unique_ptr<net::ClientCertIdentity> cert);
 
-//   std::unique_ptr<enterprise_signals::ClientCertificateFetcher>
-//       client_cert_fetcher_;
+  std::unique_ptr<enterprise_signals::ClientCertificateFetcher>
+      client_cert_fetcher_;
 };
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -379,6 +379,26 @@ class EnterpriseReportingPrivateGetHotfixesFunction : public ExtensionFunction {
 };
 
 #endif  // BUILDFLAG(IS_WIN)
+
+class EnterpriseReportingPrivateReportDataMaskingEventFunction
+    : public ExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION(
+      "enterprise.reportingPrivate.reportDataMaskingEvent",
+      ENTERPRISEREPORTINGPRIVATE_REPORTDATAMASKINGEVENT)
+
+  EnterpriseReportingPrivateReportDataMaskingEventFunction();
+  EnterpriseReportingPrivateReportDataMaskingEventFunction(
+      const EnterpriseReportingPrivateReportDataMaskingEventFunction&) = delete;
+  EnterpriseReportingPrivateReportDataMaskingEventFunction& operator=(
+      const EnterpriseReportingPrivateReportDataMaskingEventFunction&) = delete;
+
+ private:
+  ~EnterpriseReportingPrivateReportDataMaskingEventFunction() override;
+
+  // ExtensionFunction:
+  ExtensionFunction::ResponseAction Run() override;
+};
 
 }  // namespace extensions
 

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "gpu/command_buffer/client/test_gpu_memory_buffer_manager.h"
 
 #include <stddef.h>
@@ -19,15 +24,13 @@ namespace {
 
 class GpuMemoryBufferImpl : public gfx::GpuMemoryBuffer {
  public:
-  GpuMemoryBufferImpl(TestGpuMemoryBufferManager* manager,
-                      int id,
+  GpuMemoryBufferImpl(int id,
                       const gfx::Size& size,
                       gfx::BufferFormat format,
                       base::UnsafeSharedMemoryRegion shared_memory_region,
                       size_t offset,
                       size_t stride)
-      : manager_(manager),
-        id_(id),
+      : id_(id),
         size_(size),
         format_(format),
         region_(std::move(shared_memory_region)),
@@ -35,7 +38,7 @@ class GpuMemoryBufferImpl : public gfx::GpuMemoryBuffer {
         stride_(stride),
         mapped_(false) {}
 
-  ~GpuMemoryBufferImpl() override { manager_->OnGpuMemoryBufferDestroyed(id_); }
+  ~GpuMemoryBufferImpl() override = default;
 
   // Overridden from gfx::GpuMemoryBuffer:
   bool Map() override {
@@ -69,23 +72,14 @@ class GpuMemoryBufferImpl : public gfx::GpuMemoryBuffer {
   gfx::GpuMemoryBufferType GetType() const override {
     return gfx::SHARED_MEMORY_BUFFER;
   }
-  gfx::GpuMemoryBufferId GetId() const override { return id_; }
   gfx::GpuMemoryBufferHandle CloneHandle() const override {
-    gfx::GpuMemoryBufferHandle handle;
-    handle.type = gfx::SHARED_MEMORY_BUFFER;
-    handle.region = region_.Duplicate();
+    gfx::GpuMemoryBufferHandle handle(region_.Duplicate());
     handle.offset = base::checked_cast<uint32_t>(offset_);
     handle.stride = base::checked_cast<uint32_t>(stride_);
     return handle;
   }
-  void OnMemoryDump(
-      base::trace_event::ProcessMemoryDump* pmd,
-      const base::trace_event::MemoryAllocatorDumpGuid& buffer_dump_guid,
-      uint64_t tracing_process_id,
-      int importance) const override {}
 
  private:
-  raw_ptr<TestGpuMemoryBufferManager> manager_;
   gfx::GpuMemoryBufferId id_;
   const gfx::Size size_;
   gfx::BufferFormat format_;
@@ -98,14 +92,10 @@ class GpuMemoryBufferImpl : public gfx::GpuMemoryBuffer {
 
 class GpuMemoryBufferFromClient : public gfx::GpuMemoryBuffer {
  public:
-  GpuMemoryBufferFromClient(TestGpuMemoryBufferManager* manager,
-                            int id,
-                            gfx::GpuMemoryBuffer* client_buffer)
-      : manager_(manager), id_(id), client_buffer_(client_buffer) {}
+  GpuMemoryBufferFromClient(int id, gfx::GpuMemoryBuffer* client_buffer)
+      : id_(id), client_buffer_(client_buffer) {}
 
-  ~GpuMemoryBufferFromClient() override {
-    manager_->OnGpuMemoryBufferDestroyed(id_);
-  }
+  ~GpuMemoryBufferFromClient() override = default;
 
   bool Map() override { return client_buffer_->Map(); }
   void* memory(size_t plane) override { return client_buffer_->memory(plane); }
@@ -117,21 +107,14 @@ class GpuMemoryBufferFromClient : public gfx::GpuMemoryBuffer {
   int stride(size_t plane) const override {
     return client_buffer_->stride(plane);
   }
-  gfx::GpuMemoryBufferId GetId() const override { return id_; }
   gfx::GpuMemoryBufferType GetType() const override {
     return client_buffer_->GetType();
   }
   gfx::GpuMemoryBufferHandle CloneHandle() const override {
     return client_buffer_->CloneHandle();
   }
-  void OnMemoryDump(
-      base::trace_event::ProcessMemoryDump* pmd,
-      const base::trace_event::MemoryAllocatorDumpGuid& buffer_dump_guid,
-      uint64_t tracing_process_id,
-      int importance) const override {}
 
  private:
-  raw_ptr<TestGpuMemoryBufferManager> manager_;
   gfx::GpuMemoryBufferId id_;
   raw_ptr<gfx::GpuMemoryBuffer> client_buffer_;
 };
@@ -142,7 +125,6 @@ TestGpuMemoryBufferManager::TestGpuMemoryBufferManager() {}
 
 TestGpuMemoryBufferManager::~TestGpuMemoryBufferManager() {
   base::AutoLock hold(lock_);
-  DCHECK(buffers_.empty());
   DCHECK(clients_.empty());
   if (parent_gpu_memory_buffer_manager_)
     parent_gpu_memory_buffer_manager_->clients_.erase(client_id_);
@@ -186,25 +168,12 @@ TestGpuMemoryBufferManager::CreateGpuMemoryBuffer(
 
   last_gpu_memory_buffer_id_ += 1;
   std::unique_ptr<gfx::GpuMemoryBuffer> result(new GpuMemoryBufferImpl(
-      this, last_gpu_memory_buffer_id_, size, format,
-      std::move(shared_memory_region), 0,
+      last_gpu_memory_buffer_id_, size, format, std::move(shared_memory_region),
+      0,
       base::checked_cast<int>(
           gfx::RowSizeForBufferFormat(size.width(), format, 0))));
   buffers_[last_gpu_memory_buffer_id_] = result.get();
   return result;
-}
-
-void TestGpuMemoryBufferManager::CopyGpuMemoryBufferAsync(
-    gfx::GpuMemoryBufferHandle buffer_handle,
-    base::UnsafeSharedMemoryRegion memory_region,
-    base::OnceCallback<void(bool)> callback) {
-  std::move(callback).Run(false);
-}
-
-bool TestGpuMemoryBufferManager::CopyGpuMemoryBufferSync(
-    gfx::GpuMemoryBufferHandle buffer_handle,
-    base::UnsafeSharedMemoryRegion memory_region) {
-  return false;
 }
 
 }  // namespace gpu

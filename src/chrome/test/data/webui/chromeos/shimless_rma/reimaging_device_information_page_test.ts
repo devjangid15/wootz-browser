@@ -15,7 +15,8 @@ import {fakeDeviceCustomLabels, fakeDeviceRegions, fakeDeviceSkuDescriptions, fa
 import {FakeShimlessRmaService} from 'chrome://shimless-rma/fake_shimless_rma_service.js';
 import {setShimlessRmaServiceForTesting} from 'chrome://shimless-rma/mojo_interface_provider.js';
 import {BooleanOrDefaultOptions, ReimagingDeviceInformationPage} from 'chrome://shimless-rma/reimaging_device_information_page.js';
-import {FeatureLevel, StateResult} from 'chrome://shimless-rma/shimless_rma.mojom-webui.js';
+import type {StateResult} from 'chrome://shimless-rma/shimless_rma.mojom-webui.js';
+import {FeatureLevel} from 'chrome://shimless-rma/shimless_rma.mojom-webui.js';
 import {assertEquals, assertFalse, assertTrue} from 'chrome://webui-test/chromeos/chai_assert.js';
 import {flushTasks, waitAfterNextRender} from 'chrome://webui-test/polymer_test_util.js';
 import {eventToPromise, isVisible} from 'chrome://webui-test/test_util.js';
@@ -94,6 +95,12 @@ suite('reimagingDeviceInformationPageTest', function() {
 
   const service: FakeShimlessRmaService = new FakeShimlessRmaService();
 
+  suiteSetup(() => {
+    loadTimeData.overrideValues({
+      'dynamicDeviceInfoInputsEnabled': true,
+    });
+  });
+
   setup(() => {
     document.body.innerHTML = window.trustedTypes!.emptyHTML;
     setShimlessRmaServiceForTesting(service);
@@ -145,6 +152,22 @@ suite('reimagingDeviceInformationPageTest', function() {
     await waitAfterNextRender(component);
     return flushTasks();
   }
+
+  // Helper function to set all modifiability for device info inputs.
+  const setAllInputModifiable = (isModifiable: boolean) => {
+    service.setGetStatePropertiesResult({
+      property: {
+        updateDeviceInfoStateProperty: {
+          serialNumberModifiable: isModifiable,
+          regionModifiable: isModifiable,
+          skuModifiable: isModifiable,
+          customLabelModifiable: isModifiable,
+          dramPartNumberModifiable: isModifiable,
+          featureLevelModifiable: isModifiable,
+        },
+      },
+    });
+  };
 
   // Verify the page initializes with the expected components.
   test('PageInitializes', async () => {
@@ -348,6 +371,80 @@ suite('reimagingDeviceInformationPageTest', function() {
     assertTrue(dramPartNumberSelect.disabled);
   });
 
+  // Test case: All inputs enabled when all are modifiable
+  test('AllInputsEnabled_WhenAllModifiable', async () => {
+    setAllInputModifiable(true);
+
+    await initializeReimagingDeviceInformationPage();
+    assert(component);
+
+    const serialNumberSelect =
+        strictQuery(serialNumberSelector, component.shadowRoot, CrInputElement);
+    const regionSelect = strictQuery(
+        regionSelectSelector, component.shadowRoot, HTMLSelectElement);
+    const customLabelSelect = strictQuery(
+        customLabelSelectSelector, component.shadowRoot, HTMLSelectElement);
+    const skuSelect =
+        strictQuery(skuSelectSelector, component.shadowRoot, HTMLSelectElement);
+    const dramPartNumberSelect = strictQuery(
+        dramPartNumberSelector, component.shadowRoot, CrInputElement);
+    const hwComplianceVersionElement = strictQuery(
+        meetRequirementsSelector, component.shadowRoot, HTMLSelectElement);
+    const isChassisBrandedElement = strictQuery(
+        chassisBrandedSelector, component.shadowRoot, HTMLSelectElement);
+
+    assertFalse(
+        serialNumberSelect.disabled, 'Serial Number should be enabled.');
+    assertFalse(regionSelect.disabled, 'Region should be enabled.');
+    assertFalse(customLabelSelect.disabled, 'Custom Label should be enabled.');
+    assertFalse(skuSelect.disabled, 'SKU should be enabled.');
+    assertFalse(
+        dramPartNumberSelect.disabled, 'DRAM Part Number should be enabled.');
+    assertFalse(
+        hwComplianceVersionElement.disabled,
+        'HW Compliance Version should be enabled.');
+    assertFalse(
+        isChassisBrandedElement.disabled,
+        'Is Chassis Branded should be enabled.');
+  });
+
+  // Test case: All inputs disabled when none are modifiable
+  test('AllInputsDisabled_WhenNonModifiable', async () => {
+    setAllInputModifiable(false);
+
+    await initializeReimagingDeviceInformationPage();
+    assert(component);
+
+    const serialNumberSelect =
+        strictQuery(serialNumberSelector, component.shadowRoot, CrInputElement);
+    const regionSelect = strictQuery(
+        regionSelectSelector, component.shadowRoot, HTMLSelectElement);
+    const customLabelSelect = strictQuery(
+        customLabelSelectSelector, component.shadowRoot, HTMLSelectElement);
+    const skuSelect =
+        strictQuery(skuSelectSelector, component.shadowRoot, HTMLSelectElement);
+    const dramPartNumberSelect = strictQuery(
+        dramPartNumberSelector, component.shadowRoot, CrInputElement);
+    const hwComplianceVersionElement = strictQuery(
+        meetRequirementsSelector, component.shadowRoot, HTMLSelectElement);
+    const isChassisBrandedElement = strictQuery(
+        chassisBrandedSelector, component.shadowRoot, HTMLSelectElement);
+
+    assertTrue(
+        serialNumberSelect.disabled, 'Serial Number should be disabled.');
+    assertTrue(regionSelect.disabled, 'Region should be disabled.');
+    assertTrue(customLabelSelect.disabled, 'Custom Label should be disabled.');
+    assertTrue(skuSelect.disabled, 'SKU should be disabled.');
+    assertTrue(
+        dramPartNumberSelect.disabled, 'DRAM Part Number should be disabled.');
+    assertTrue(
+        hwComplianceVersionElement.disabled,
+        'HW Compliance Version should be disabled.');
+    assertTrue(
+        isChassisBrandedElement.disabled,
+        'Is Chassis Branded should be disabled.');
+  });
+
   // Verify the next button gets disabled when the inputs has invalid values.
   test('InvalidValueDisablesTheNextButton', async () => {
     await initializeReimagingDeviceInformationPage();
@@ -419,10 +516,6 @@ suite('reimagingDeviceInformationPageTest', function() {
   // Verify the next button gets disabled when the compliance questions are set
   // to their default options.
   test('NextButtonDisabledDefaultCompliance', async () => {
-    // Set the compliance check flag so that the additional questions show
-    // up.
-    loadTimeData.overrideValues({complianceCheckEnabled: true});
-
     await initializeReimagingDeviceInformationPage();
     // Set the feature level so that the additional questions show up.
     await setFeatureLevelAndReinitialize(FeatureLevel.kRmadFeatureLevelUnknown);
@@ -474,10 +567,6 @@ suite('reimagingDeviceInformationPageTest', function() {
   // Verify the correct info is sent based on the current compliance questions
   // values.
   test('ResultsForComplianceCheckQuestions', async () => {
-    // Set the compliance check flag so that the additional questions show
-    // up.
-    loadTimeData.overrideValues({complianceCheckEnabled: true});
-
     await initializeReimagingDeviceInformationPage();
     // Set the feature level so that the additional questions show up.
     await setFeatureLevelAndReinitialize(FeatureLevel.kRmadFeatureLevelUnknown);
@@ -529,8 +618,6 @@ suite('reimagingDeviceInformationPageTest', function() {
   // Verify the correct warnings and text are displayed based on the current
   // feature level.
   test('WarningsByFeatureLevel', async () => {
-    loadTimeData.overrideValues({complianceCheckEnabled: true});
-
     await initializeReimagingDeviceInformationPage();
     // Set the feature level so no compliance info shows.
     await setFeatureLevelAndReinitialize(

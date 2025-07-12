@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "components/exo/wayland/zcr_notification_shell.h"
 
 #include <notification-shell-unstable-v1-server-protocol.h>
@@ -14,6 +19,7 @@
 #include "base/atomic_sequence_num.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
+#include "base/notimplemented.h"
 #include "base/strings/stringprintf.h"
 #include "components/exo/notification.h"
 #include "components/exo/notification_surface.h"

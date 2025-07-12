@@ -9,6 +9,7 @@ import static org.chromium.chrome.browser.touch_to_fill.password_generation.Touc
 import static org.chromium.chrome.browser.touch_to_fill.password_generation.TouchToFillPasswordGenerationProperties.PASSWORD_ACCEPTED_CALLBACK;
 import static org.chromium.chrome.browser.touch_to_fill.password_generation.TouchToFillPasswordGenerationProperties.PASSWORD_REJECTED_CALLBACK;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
 
@@ -16,6 +17,7 @@ import org.chromium.ui.modelutil.PropertyModel;
  * Maps the {@link TouchToFillPasswordGenerationProperties} model properties to the {@link
  * TouchToFillPasswordGenerationView}.
  */
+@NullMarked
 class TouchToFillPasswordGenerationViewBinder {
     /**
      * Called whenever a property in the given model changes. It updates the given view accordingly.
@@ -28,6 +30,7 @@ class TouchToFillPasswordGenerationViewBinder {
         if (propertyKey == ACCOUNT_EMAIL) {
             view.setSheetSubtitle(model.get(ACCOUNT_EMAIL));
         } else if (propertyKey == GENERATED_PASSWORD) {
+            view.setSheetTitle(model.get(GENERATED_PASSWORD));
             view.setGeneratedPassword(model.get(GENERATED_PASSWORD));
         } else if (propertyKey == PASSWORD_ACCEPTED_CALLBACK) {
             view.setPasswordAcceptedCallback(model.get(PASSWORD_ACCEPTED_CALLBACK));

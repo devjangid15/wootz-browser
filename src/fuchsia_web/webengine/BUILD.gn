@@ -84,20 +84,6 @@ _disallowed_pdf_deps = [
   "//pdf/*",
 ]
 
-# Ppapi code should not be included as enable_ppapi is false.
-# Exclude everything except "//ppapi/buildflags/*", which is allowed.
-_disallowed_ppapi_deps = [
-  "//ppapi:*",
-  "//ppapi/c/*",
-  "//ppapi/cpp/*",
-  "//ppapi/host/*",
-  "//ppapi/lib/*",
-  "//ppapi/native_client/*",
-  "//ppapi/proxy/*",
-  "//ppapi/shared_impl/*",
-  "//ppapi/thunk/*",
-]
-
 # Although `enable_printing` is true on Fuchsia, no code should be linked.
 # "//printing:metafile" is used by //third_party/blink/renderer/core and
 # uses "//printing/common/*".
@@ -112,7 +98,7 @@ _disallowed_printing_deps = [
 # that depends on those targets once this is correctly supported.
 _disallowed_deps =
     _disallowed_cast_deps + _disallowed_extensions_deps + _disallowed_pdf_deps +
-    _disallowed_ppapi_deps + _disallowed_printing_deps +
+    _disallowed_printing_deps +
     [
       # Ensure WebEngine is not communicating with the Finch service until it
       # is explicitly supported. See crbug.com/1155712.
@@ -166,17 +152,21 @@ foreach(locale, locales_with_pseudolocales) {
     # 1. Locale settings (e.g. default encoding, accept-languages per locale).
     # 2. Blink strings for UI elements, e.g. drop-down lists.
     # 3. //ui strings used to configure e.g. preferred font family.
+    # 4. //ui/strings/ax_strings are used for accessibility-related strings, of
+    # which fuchsia only uses a subset.
 
     sources = [
       "$root_gen_dir/components/strings/components_locale_settings_${locale}.pak",
       "$root_gen_dir/third_party/blink/public/strings/blink_strings_${locale}.pak",
       "$root_gen_dir/ui/strings/app_locale_settings_${locale}.pak",
+      "$root_gen_dir/ui/strings/ax_strings_${locale}.pak",
     ]
 
     deps = [
       "//components/strings:components_locale_settings",
       "//third_party/blink/public/strings",
       "//ui/strings:app_locale_settings",
+      "//ui/strings:ax_strings",
     ]
 
     output = "$root_gen_dir/locales/${locale}.pak"
@@ -195,7 +185,7 @@ component("web_engine_core") {
     "//components/cdm/renderer",
     "//components/client_hints/browser:in_memory",
     "//components/embedder_support",
-    "//components/embedder_support:browser_util",
+    "//components/embedder_support:user_agent",
     "//components/embedder_support/origin_trials",
     "//components/favicon/content",
     "//components/favicon/core",
@@ -210,6 +200,7 @@ component("web_engine_core") {
     "//components/permissions",
     "//components/policy/content:safe_sites_navigation_throttle",
     "//components/profile_metrics",
+    "//components/reduce_accept_language/browser:in_memory",
     "//components/site_isolation",
     "//components/strings:components_locale_settings",
     "//components/url_rewrite/browser",
@@ -433,8 +424,8 @@ executable("web_engine_exe") {
 }
 
 source_set("webui_resources") {
-  data = [ "$root_gen_dir/ui/resources/webui_resources.pak" ]
-  deps = [ "//ui/resources" ]
+  data = [ "$root_gen_dir/ui/webui/resources/webui_resources.pak" ]
+  deps = [ "//ui/webui/resources:resources_grit" ]
 }
 
 _web_engine_excluded_files = [

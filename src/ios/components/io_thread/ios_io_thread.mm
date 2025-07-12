@@ -11,6 +11,7 @@
 
 #import "base/check_op.h"
 #import "base/command_line.h"
+#import "base/containers/flat_set.h"
 #import "base/environment.h"
 #import "base/functional/bind.h"
 #import "base/functional/callback_helpers.h"
@@ -73,7 +74,11 @@ namespace io_thread {
 
 namespace {
 
-const char kSupportedAuthSchemes[] = "basic,digest,ntlm";
+constexpr auto kSupportedAuthSchemes = std::to_array<std::string_view>({
+    net::kBasicAuthScheme,
+    net::kDigestAuthScheme,
+    net::kNtlmAuthScheme,
+});
 
 }  // namespace
 
@@ -121,8 +126,9 @@ SystemURLRequestContextGetter::~SystemURLRequestContextGetter() {}
 
 net::URLRequestContext* SystemURLRequestContextGetter::GetURLRequestContext() {
   DCHECK_CURRENTLY_ON(web::WebThread::IO);
-  if (!io_thread_)
+  if (!io_thread_) {
     return nullptr;
+  }
   DCHECK(io_thread_->globals()->system_request_context.get());
 
   return io_thread_->globals()->system_request_context.get();
@@ -147,8 +153,9 @@ IOSIOThread::Globals::SystemRequestContextLeakChecker::
 
 IOSIOThread::Globals::SystemRequestContextLeakChecker::
     ~SystemRequestContextLeakChecker() {
-  if (globals_->system_request_context.get())
+  if (globals_->system_request_context.get()) {
     globals_->system_request_context->AssertNoURLRequests();
+  }
 }
 
 IOSIOThread::Globals::Globals() : system_request_context_leak_checker(this) {}
@@ -210,8 +217,9 @@ net::URLRequestContextGetter* IOSIOThread::system_url_request_context_getter() {
   DCHECK_CURRENTLY_ON(web::WebThread::UI);
   if (!system_url_request_context_getter_.get()) {
     // If we're in unit_tests, IOSIOThread may not be run.
-    if (!web::WebThread::IsThreadInitialized(web::WebThread::IO))
+    if (!web::WebThread::IsThreadInitialized(web::WebThread::IO)) {
       return nullptr;
+    }
     system_url_request_context_getter_ =
         new SystemURLRequestContextGetter(this);
   }
@@ -263,13 +271,11 @@ void IOSIOThread::CleanUp() {
 }
 
 void IOSIOThread::CreateDefaultAuthPreferences() {
-  std::vector<std::string> supported_schemes =
-      base::SplitString(kSupportedAuthSchemes, ",", base::TRIM_WHITESPACE,
-                        base::SPLIT_WANT_NONEMPTY);
   globals_->http_auth_preferences =
       std::make_unique<net::HttpAuthPreferences>();
-  globals_->http_auth_preferences->set_allowed_schemes(std::set<std::string>(
-      supported_schemes.begin(), supported_schemes.end()));
+  globals_->http_auth_preferences->set_allowed_schemes(
+      base::flat_set<std::string>(kSupportedAuthSchemes.begin(),
+                                  kSupportedAuthSchemes.end()));
 }
 
 void IOSIOThread::ClearHostCache() {
@@ -277,8 +283,9 @@ void IOSIOThread::ClearHostCache() {
 
   net::HostCache* host_cache =
       globals_->system_request_context->host_resolver()->GetHostCache();
-  if (host_cache)
+  if (host_cache) {
     host_cache->clear();
+  }
 }
 
 const net::HttpNetworkSessionParams& IOSIOThread::NetworkSessionParams() const {

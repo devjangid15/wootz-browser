@@ -2,10 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "mojo/public/cpp/bindings/sync_handle_registry.h"
 
-#include <algorithm>
-#include <map>
 #include <utility>
 
 #include "base/auto_reset.h"
@@ -148,7 +151,7 @@ bool SyncHandleRegistry::Wait(const bool* should_stop[], size_t count) {
 
     if (ready_event) {
       const auto iter = events_.find(ready_event);
-      DCHECK(iter != events_.end());
+      CHECK(iter != events_.end());
 
       {
         base::AutoReset<bool> in_nested_wait(&in_nested_wait_, true);

@@ -30,12 +30,13 @@ import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 
-import org.chromium.base.FeatureList;
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.BaseActivityTestRule;
 import org.chromium.base.test.BaseJUnit4ClassRunner;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.blink.mojom.ContactIconBlob;
 import org.chromium.components.browser_ui.contacts_picker.test.R;
 import org.chromium.components.browser_ui.widget.RecyclerViewTestUtils;
@@ -46,31 +47,25 @@ import org.chromium.content_public.browser.ContactsPicker;
 import org.chromium.content_public.browser.ContactsPickerListener;
 import org.chromium.content_public.browser.Visibility;
 import org.chromium.content_public.browser.WebContents;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.content_public.browser.test.util.TestTouchUtils;
 import org.chromium.payments.mojom.PaymentAddress;
 import org.chromium.ui.base.ActivityWindowAndroid;
 import org.chromium.ui.base.IntentRequestTracker;
 import org.chromium.ui.base.WindowAndroid;
+import org.chromium.ui.insets.InsetObserver;
 import org.chromium.ui.test.util.BlankUiTestActivity;
-import org.chromium.ui.test.util.DisableAnimationsTestRule;
 import org.chromium.ui.test.util.RenderTestRule;
 
-import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
 
 /** Tests for the ContactsPickerDialog class. */
 @RunWith(BaseJUnit4ClassRunner.class)
 @Batch(Batch.PER_CLASS)
+@EnableFeatures(ContactsPickerFeatureList.CONTACTS_PICKER_SELECT_ALL)
 public class ContactsPickerDialogTest
         implements ContactsPickerListener, SelectionObserver<ContactDetails> {
-    @ClassRule
-    public static DisableAnimationsTestRule mDisableAnimationsTestRule =
-            new DisableAnimationsTestRule();
-
     @ClassRule
     public static BaseActivityTestRule<BlankUiTestActivity> activityTestRule =
             new BaseActivityTestRule<>(BlankUiTestActivity.class);
@@ -79,6 +74,7 @@ public class ContactsPickerDialogTest
     private WindowAndroid mWindowAndroid;
 
     @Mock private WebContents mWebContents;
+    @Mock private InsetObserver mInsetObserver;
 
     @Rule
     public RenderTestRule mRenderTestRule =
@@ -141,22 +137,21 @@ public class ContactsPickerDialogTest
     @Before
     public void setupTest() throws Exception {
         mWindowAndroid =
-                TestThreadUtils.runOnUiThreadBlocking(
+                ThreadUtils.runOnUiThreadBlocking(
                         () -> {
                             mActivity = activityTestRule.getActivity();
                             return new ActivityWindowAndroid(
                                     mActivity,
                                     /* listenToActivityState= */ true,
-                                    IntentRequestTracker.createFromActivity(mActivity));
+                                    IntentRequestTracker.createFromActivity(mActivity),
+                                    mInsetObserver,
+                                    /* trackOcclusion= */ true);
                         });
         mWebContents = Mockito.mock(WebContents.class);
         when(mWebContents.getTopLevelNativeWindow()).thenReturn(mWindowAndroid);
         when(mWebContents.isDestroyed()).thenReturn(false);
         when(mWebContents.getVisibility()).thenReturn(Visibility.VISIBLE);
 
-        FeatureList.setTestFeatures(
-                Collections.singletonMap(
-                        ContactsPickerFeatureList.CONTACTS_PICKER_SELECT_ALL, true));
         mIcon = Bitmap.createBitmap(100, 100, Bitmap.Config.ARGB_8888);
         Canvas canvas = new Canvas(mIcon);
         canvas.drawColor(Color.BLUE);
@@ -168,7 +163,7 @@ public class ContactsPickerDialogTest
     @After
     public void tearDown() throws Exception {
         if (!mClosing && mDialog != null) dismissDialog();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mWindowAndroid.destroy();
                 });
@@ -200,7 +195,7 @@ public class ContactsPickerDialogTest
     }
 
     private RecyclerView getRecyclerView() {
-        return (RecyclerView) mDialog.findViewById(R.id.selectable_list_recycler_view);
+        return mDialog.findViewById(R.id.selectable_list_recycler_view);
     }
 
     /**
@@ -227,7 +222,7 @@ public class ContactsPickerDialogTest
             throws Exception {
         mClosing = false;
 
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     ContactsPicker.setContactsPickerDelegate(
                             (WebContents webContents,
@@ -259,7 +254,9 @@ public class ContactsPickerDialogTest
                                                 tels,
                                                 addresses,
                                                 icons,
-                                                formattedOrigin);
+                                                formattedOrigin,
+                                                /* shouldPadForContent= */ false);
+
                                 mDialog.show();
                                 return true;
                             });
@@ -336,9 +333,8 @@ public class ContactsPickerDialogTest
 
         mLastActionRecorded = ContactsPickerAction.NUM_ENTRIES;
 
-        ContactsPickerToolbar toolbar =
-                (ContactsPickerToolbar) mDialog.findViewById(R.id.action_bar);
-        Button done = (Button) toolbar.findViewById(R.id.done);
+        ContactsPickerToolbar toolbar = mDialog.findViewById(R.id.action_bar);
+        Button done = toolbar.findViewById(R.id.done);
         int callCount = onActionCallback.getCallCount();
         TestTouchUtils.performClickOnMainSync(InstrumentationRegistry.getInstrumentation(), done);
         onActionCallback.waitForCallback(callCount, 1);
@@ -386,18 +382,17 @@ public class ContactsPickerDialogTest
         RecyclerView recyclerView = getRecyclerView();
         RecyclerViewTestUtils.waitForView(recyclerView, 0);
 
-        TestThreadUtils.runOnUiThreadBlocking(() -> notifyChipToggled(filter));
+        ThreadUtils.runOnUiThreadBlocking(() -> notifyChipToggled(filter));
     }
 
     private void clickSearchButton() {
-        ContactsPickerToolbar toolbar =
-                (ContactsPickerToolbar) mDialog.findViewById(R.id.action_bar);
+        ContactsPickerToolbar toolbar = mDialog.findViewById(R.id.action_bar);
         View search = toolbar.findViewById(R.id.search);
         TestTouchUtils.performClickOnMainSync(InstrumentationRegistry.getInstrumentation(), search);
     }
 
     private void setSearchString(String query, int expectedMatches) {
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> mDialog.getCategoryViewForTesting().onSearchTextChanged(query));
         Assert.assertEquals(expectedMatches, getRecyclerView().getAdapter().getItemCount());
     }
@@ -407,7 +402,7 @@ public class ContactsPickerDialogTest
         mClosing = true;
 
         int callCount = onActionCallback.getCallCount();
-        TestThreadUtils.runOnUiThreadBlocking(() -> mDialog.cancel());
+        ThreadUtils.runOnUiThreadBlocking(() -> mDialog.cancel());
         onActionCallback.waitForCallback(callCount, 1);
     }
 
@@ -427,7 +422,7 @@ public class ContactsPickerDialogTest
      * @param ownerEmail If not null, includes a few contact entries representing owners.
      */
     private void setTestContacts(String ownerEmail) {
-        mTestContacts = new ArrayList<ContactDetails>();
+        mTestContacts = new ArrayList<>();
         PaymentAddress address = new PaymentAddress();
         address.city = "city";
         address.country = "country";
@@ -521,11 +516,11 @@ public class ContactsPickerDialogTest
         TopView topView = getTopView();
         Assert.assertNotNull(topView);
 
-        TextView explanation = (TextView) topView.findViewById(R.id.explanation);
+        TextView explanation = topView.findViewById(R.id.explanation);
         Assert.assertNotNull(explanation);
         Assert.assertEquals(
-                explanation.getText().toString(),
-                "The contacts you select will be shared with example.com.");
+                "The contacts you select will be shared with example.com.",
+                explanation.getText().toString());
 
         dismissDialog();
     }
@@ -559,11 +554,11 @@ public class ContactsPickerDialogTest
 
         // Per configuration given in the createDialog() call, the names and telephone filters
         // should be visible, but the e-mail and address filter should be gone.
-        Assert.assertEquals(namesFilter.getVisibility(), View.VISIBLE);
-        Assert.assertEquals(emailFilter.getVisibility(), View.GONE);
-        Assert.assertEquals(telFilter.getVisibility(), View.VISIBLE);
-        Assert.assertEquals(addrFilter.getVisibility(), View.GONE);
-        Assert.assertEquals(iconFilter.getVisibility(), View.VISIBLE);
+        Assert.assertEquals(View.VISIBLE, namesFilter.getVisibility());
+        Assert.assertEquals(View.GONE, emailFilter.getVisibility());
+        Assert.assertEquals(View.VISIBLE, telFilter.getVisibility());
+        Assert.assertEquals(View.GONE, addrFilter.getVisibility());
+        Assert.assertEquals(View.VISIBLE, iconFilter.getVisibility());
     }
 
     @Test
@@ -595,11 +590,11 @@ public class ContactsPickerDialogTest
 
         // Per configuration given in the createDialog() call, the names and telephone filters
         // should be hidden, but the e-mail and address filter should be visible.
-        Assert.assertEquals(namesFilter.getVisibility(), View.GONE);
-        Assert.assertEquals(emailFilter.getVisibility(), View.VISIBLE);
-        Assert.assertEquals(telFilter.getVisibility(), View.GONE);
-        Assert.assertEquals(addrFilter.getVisibility(), View.VISIBLE);
-        Assert.assertEquals(iconFilter.getVisibility(), View.GONE);
+        Assert.assertEquals(View.GONE, namesFilter.getVisibility());
+        Assert.assertEquals(View.VISIBLE, emailFilter.getVisibility());
+        Assert.assertEquals(View.GONE, telFilter.getVisibility());
+        Assert.assertEquals(View.VISIBLE, addrFilter.getVisibility());
+        Assert.assertEquals(View.GONE, iconFilter.getVisibility());
     }
 
     @Test
@@ -703,7 +698,7 @@ public class ContactsPickerDialogTest
 
         Assert.assertEquals(ContactsPickerAction.CONTACTS_SELECTED, mLastActionRecorded);
         Assert.assertEquals(1, mLastSelectedContacts.size());
-        Assert.assertEquals(new ArrayList<String>(), mLastSelectedContacts.get(0).names);
+        Assert.assertEquals(new ArrayList<>(), mLastSelectedContacts.get(0).names);
         Assert.assertEquals(
                 mTestContacts.get(0).getEmails().get(0),
                 mLastSelectedContacts.get(0).emails.get(0));
@@ -742,7 +737,7 @@ public class ContactsPickerDialogTest
         Assert.assertEquals(1, mLastSelectedContacts.size());
         Assert.assertEquals(
                 mTestContacts.get(0).getDisplayName(), mLastSelectedContacts.get(0).names.get(0));
-        Assert.assertEquals(new ArrayList<String>(), mLastSelectedContacts.get(0).emails);
+        Assert.assertEquals(new ArrayList<>(), mLastSelectedContacts.get(0).emails);
         Assert.assertEquals(16, mLastPercentageShared);
         Assert.assertEquals(31, mLastPropertiesRequested);
         Assert.assertEquals(ContactsPickerProperties.PROPERTIES_EMAILS, mLastPropertiesRejected);
@@ -765,7 +760,7 @@ public class ContactsPickerDialogTest
         Assert.assertEquals(1, mLastSelectedContacts.size());
         Assert.assertEquals(
                 mTestContacts.get(0).getDisplayName(), mLastSelectedContacts.get(0).names.get(0));
-        Assert.assertEquals(new ArrayList<String>(), mLastSelectedContacts.get(0).tel);
+        Assert.assertEquals(new ArrayList<>(), mLastSelectedContacts.get(0).tel);
         Assert.assertEquals(16, mLastPercentageShared);
         Assert.assertEquals(31, mLastPropertiesRequested);
         Assert.assertEquals(ContactsPickerProperties.PROPERTIES_TELS, mLastPropertiesRejected);
@@ -788,8 +783,7 @@ public class ContactsPickerDialogTest
         Assert.assertEquals(1, mLastSelectedContacts.size());
         Assert.assertEquals(
                 mTestContacts.get(0).getDisplayName(), mLastSelectedContacts.get(0).names.get(0));
-        Assert.assertEquals(
-                new ArrayList<ByteBuffer>(), mLastSelectedContacts.get(0).serializedAddresses);
+        Assert.assertEquals(new ArrayList<>(), mLastSelectedContacts.get(0).serializedAddresses);
         Assert.assertEquals(16, mLastPercentageShared);
         Assert.assertEquals(31, mLastPropertiesRequested);
         Assert.assertEquals(ContactsPickerProperties.PROPERTIES_ADDRESSES, mLastPropertiesRejected);
@@ -812,8 +806,7 @@ public class ContactsPickerDialogTest
         Assert.assertEquals(1, mLastSelectedContacts.size());
         Assert.assertEquals(
                 mTestContacts.get(0).getDisplayName(), mLastSelectedContacts.get(0).names.get(0));
-        Assert.assertEquals(
-                new ArrayList<ByteBuffer>(), mLastSelectedContacts.get(0).serializedIcons);
+        Assert.assertEquals(new ArrayList<>(), mLastSelectedContacts.get(0).serializedIcons);
         Assert.assertEquals(16, mLastPercentageShared);
         Assert.assertEquals(31, mLastPropertiesRequested);
         Assert.assertEquals(ContactsPickerProperties.PROPERTIES_ICONS, mLastPropertiesRejected);
@@ -975,7 +968,7 @@ public class ContactsPickerDialogTest
     @Test
     @LargeTest
     public void testEmptyContactListCrash() throws Throwable {
-        PickerAdapter.setTestContactsAndOwner(new ArrayList<ContactDetails>(), null);
+        PickerAdapter.setTestContactsAndOwner(new ArrayList<>(), null);
 
         createDialog(/* multiselect= */ true);
         Assert.assertTrue(mDialog.isShowing());
@@ -1015,7 +1008,7 @@ public class ContactsPickerDialogTest
 
         // The test disables animations, which can cause the tickmark not to show after the checkbox
         // is checked, unless this is called directly thereafter.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mDialog.getCategoryViewForTesting().jumpDrawablesToCurrentState();
                 });

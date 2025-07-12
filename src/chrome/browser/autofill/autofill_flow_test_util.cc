@@ -15,6 +15,8 @@
 #include "base/time/time.h"
 #include "chrome/browser/autofill/autofill_uitest.h"
 #include "chrome/browser/translate/translate_test_utils.h"
+#include "chrome/browser/ui/autofill/autofill_popup_controller_impl.h"
+#include "chrome/browser/ui/autofill/autofill_popup_controller_impl_test_api.h"
 #include "chrome/browser/ui/autofill/autofill_suggestion_controller.h"
 #include "chrome/browser/ui/autofill/chrome_autofill_client.h"
 #include "chrome/browser/ui/translate/translate_bubble_model.h"
@@ -22,6 +24,7 @@
 #include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/autofill/core/common/autofill_util.h"
+#include "content/public/browser/browser_accessibility_state.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/render_widget_host_view.h"
@@ -132,23 +135,18 @@ struct ShowAutofillSuggestionsParams {
     ShowAutofillSuggestionsParams p) {
   constexpr auto kSuggest = ObservedUiEvents::kSuggestionsShown;
   constexpr auto kPreview = ObservedUiEvents::kPreviewFormData;
+  constexpr auto kHide = ObservedUiEvents::kSuggestionsHidden;
 
   content::ToRenderFrameHost execution_target =
       p.execution_target.value_or(test->GetWebContents());
   content::RenderFrameHost* rfh = execution_target.render_frame_host();
   content::RenderWidgetHostView* view = rfh->GetView();
-  content::RenderWidgetHost* widget = view->GetRenderWidgetHost();
 
   auto ArrowDown = [&](std::list<ObservedUiEvents> exp) {
-    constexpr auto kDown = ui::DomKey::ARROW_DOWN;
-    if (base::Contains(exp, ObservedUiEvents::kSuggestionsShown)) {
-      return test->SendKeyToPageAndWait(kDown, std::move(exp), p.timeout);
-    } else {
-      return test->SendKeyToPopupAndWait(kDown, std::move(exp), widget,
-                                         p.timeout);
-    }
+    return test->SendKeyToPageAndWait(ui::DomKey::ARROW_DOWN, std::move(exp),
+                                      p.timeout);
   };
-  auto Backspace = [&]() {
+  auto Backspace = [&] {
     return test->SendKeyToPageAndWait(ui::DomKey::BACKSPACE, {}, p.timeout);
   };
   auto Char = [&](const std::string& code, std::list<ObservedUiEvents> exp) {
@@ -162,11 +160,15 @@ struct ShowAutofillSuggestionsParams {
   };
   auto Click = [&](std::list<ObservedUiEvents> exp) {
     gfx::Point point = view->TransformPointToRootCoordSpace(GetCenter(e, rfh));
-    test->test_delegate()->SetExpectations(
-        {ObservedUiEvents::kSuggestionsShown}, p.timeout);
+    test->test_delegate()->SetExpectations(std::move(exp), p.timeout);
     content::SimulateMouseClickAt(test->GetWebContents(), 0,
                                   blink::WebMouseEvent::Button::kLeft, point);
     return test->test_delegate()->Wait();
+  };
+
+  auto Escape = [&](std::list<ObservedUiEvents> exp) {
+    return test->SendKeyToPopupAndWait(ui::DomKey::ESCAPE, std::move(exp),
+                                       view->GetRenderWidgetHost(), p.timeout);
   };
 
   // It seems that due to race conditions with Blink's layouting
@@ -202,6 +204,26 @@ struct ShowAutofillSuggestionsParams {
       }
     }
 
+    // AutofillAgent throttles AskForValuesToFill() calls at 1 per 100 ms.
+    // The FocusField() call above may have already called AskForValuesToFill()
+    // -- namely when a screen reader is enabled. We therefore wait the throttle
+    // period out.
+    test->DoNothingAndWaitAndIgnoreEvents(base::Milliseconds(200));
+
+    // `AutofillAgent::HandleFocusChangeComplete` shows the suggestions
+    // immediately after the field is focused if a screen reader is enabled
+    // or --force-renderer-accessibility is set. This breaks the logic that
+    // follows, which expects the popup to not yet be showing.
+    if (content::BrowserAccessibilityState::GetInstance()
+            ->GetAccessibilityMode()
+            .has_mode(ui::AXMode::kScreenReader)) {
+      if (Escape({kHide})) {
+        m << "Closed existing Autofill popup. ";
+      } else {
+        m << "No existing Autofill popup to close. ";
+      }
+    }
+
     bool has_preview = 0 < p.num_profile_suggestions;
     if (p.show_method.arrow) {
       // Press arrow down to open the popup and select first suggestion.
@@ -210,22 +232,9 @@ struct ShowAutofillSuggestionsParams {
         return AssertionFailure()
                << m << "Field " << *e << " must be focused. ";
       }
-      if (!ShouldAutoselectFirstSuggestionOnArrowDown()) {
-        if (AssertionResult b = ArrowDown({kSuggest}); !b) {
-          m << "Cannot trigger suggestions by first arrow: " << b.message();
-          continue;
-        }
-        if (AssertionResult b =
-                has_preview ? ArrowDown({kPreview}) : ArrowDown({});
-            !b) {
-          m << "Cannot select first suggestion by second arrow: "
-            << b.message();
-          continue;
-        }
-      } else if (AssertionResult b = has_preview
-                                         ? ArrowDown({kPreview, kSuggest})
-                                         : ArrowDown({kSuggest});
-                 !b) {
+      if (AssertionResult b = has_preview ? ArrowDown({kPreview, kSuggest})
+                                          : ArrowDown({kSuggest});
+          !b) {
         m << "Cannot trigger and select first suggestion by arrow: "
           << b.message();
         continue;
@@ -266,6 +275,7 @@ struct AutofillSuggestionParams {
   int num_profile_suggestions = 1;
   int current_index = 0;
   int target_index = 0;
+  bool expect_previews = true;
   base::TimeDelta timeout = kAutofillFlowDefaultTimeout;
   std::optional<content::ToRenderFrameHost> execution_target = {};
 };
@@ -290,7 +300,7 @@ struct AutofillSuggestionParams {
   };
 
   for (int i = p.current_index + 1; i <= p.target_index; ++i) {
-    bool has_preview = i < p.num_profile_suggestions;
+    bool has_preview = i < p.num_profile_suggestions && p.expect_previews;
     if (!(has_preview ? ArrowDown({kPreview}) : ArrowDown({}))) {
       return AssertionFailure()
              << __func__ << "(): Couldn't go to " << i << "th suggestion with"
@@ -319,7 +329,8 @@ struct AutofillSuggestionParams {
           ChromeAutofillClient::FromWebContentsForTesting(
               test->GetWebContents())
               ->suggestion_controller_for_testing()) {
-    controller->DisableThresholdForTesting(true);
+    test_api(static_cast<AutofillPopupControllerImpl&>(*controller))
+        .DisableThreshold(true);
   }
 
   constexpr auto kSuggestionsHidden = ObservedUiEvents::kSuggestionsHidden;
@@ -397,6 +408,7 @@ struct AutofillSuggestionParams {
         {.num_profile_suggestions = p.num_profile_suggestions,
          .current_index = p.show_method.selects_first_suggestion() ? 0 : -1,
          .target_index = p.target_index,
+         .expect_previews = p.expect_previews,
          .timeout = p.timeout,
          .execution_target = execution_target});
     if (!a) {
@@ -413,6 +425,7 @@ struct AutofillSuggestionParams {
         {.num_profile_suggestions = p.num_profile_suggestions,
          .current_index = p.target_index,
          .target_index = p.target_index,
+         .expect_previews = p.expect_previews,
          .timeout = p.timeout,
          .execution_target = execution_target});
     if (!a) {

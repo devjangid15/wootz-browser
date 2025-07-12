@@ -7,8 +7,8 @@
 #import <string>
 
 #import "base/files/file_path.h"
+#import "components/optimization_guide/core/delivery/optimization_guide_model_provider.h"
 #import "components/optimization_guide/core/optimization_guide_logger.h"
-#import "components/optimization_guide/core/optimization_guide_model_provider.h"
 #import "components/optimization_guide/proto/models.pb.h"
 #import "ios/chrome/browser/optimization_guide/model/optimization_guide_service.h"
 
@@ -19,6 +19,8 @@ TextClassifierModelService::TextClassifierModelService(
   opt_guide_service_->AddObserverForOptimizationTargetModel(
       optimization_guide::proto::OPTIMIZATION_TARGET_TEXT_CLASSIFIER,
       /*model_metadata=*/std::nullopt, this);
+  opt_guide_service_->RegisterOptimizationTypes(
+      {optimization_guide::proto::TEXT_CLASSIFIER_ENTITY_DETECTION});
 }
 
 TextClassifierModelService::~TextClassifierModelService() {

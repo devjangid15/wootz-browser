@@ -5,14 +5,14 @@
 #import "ios/web/content/js_messaging/ios_web_message_host_factory.h"
 
 #import <string>
+#import <variant>
 
-#import "base/functional/overloaded.h"
 #import "base/json/json_reader.h"
 #import "base/strings/utf_string_conversions.h"
 #import "components/js_injection/browser/js_communication_host.h"
 #import "components/js_injection/browser/web_message.h"
 #import "components/js_injection/browser/web_message_host.h"
-#import "third_party/abseil-cpp/absl/types/variant.h"
+#import "third_party/abseil-cpp/absl/functional/overload.h"
 
 namespace web {
 namespace {
@@ -34,8 +34,8 @@ class IOSWebMessageHost : public js_injection::WebMessageHost {
   void OnPostMessage(
       std::unique_ptr<js_injection::WebMessage> web_message) override {
     std::optional<std::u16string> received_message;
-    absl::visit(
-        base::Overloaded{
+    std::visit(
+        absl::Overload{
             [&received_message](const std::u16string& str) {
               received_message = str;
             },

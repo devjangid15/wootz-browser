@@ -30,7 +30,6 @@
 #include "content/shell/browser/shell_browser_context.h"
 #include "content/shell/browser/shell_content_browser_client.h"
 #include "testing/gmock/include/gmock/gmock.h"
-#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
 
 namespace content {
@@ -126,7 +125,13 @@ IN_PROC_BROWSER_TEST_F(DOMStorageBrowserTest, MAYBE_DataPersists) {
   SimpleTest(GetTestUrl("dom_storage", "verify_data.html"), kNotIncognito);
 }
 
-IN_PROC_BROWSER_TEST_F(DOMStorageBrowserTest, DeletePhysicalStorageKey) {
+// TODO(crbug/361107780): Fix flakiness on android-bfcache-rel and re-enable.
+#if BUILDFLAG(IS_ANDROID)
+#define MAYBE_DeletePhysicalStorageKey DISABLED_DeletePhysicalStorageKey
+#else
+#define MAYBE_DeletePhysicalStorageKey DeletePhysicalStorageKey
+#endif
+IN_PROC_BROWSER_TEST_F(DOMStorageBrowserTest, MAYBE_DeletePhysicalStorageKey) {
   EXPECT_EQ(0U, GetUsage().size());
   SimpleTest(GetTestUrl("dom_storage", "store_data.html"), kNotIncognito);
   std::vector<StorageUsageInfo> usage = GetUsage();

@@ -14,11 +14,12 @@
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/path_service.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/thread_pool.h"
-#include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
+#include "components/omnibox/browser/autocomplete_enums.h"
 #include "components/omnibox/browser/autocomplete_provider_listener.h"
 #include "components/omnibox/browser/base_search_provider.h"
 #include "components/omnibox/browser/omnibox_field_trial.h"
@@ -85,9 +86,6 @@ struct OnDeviceHeadProvider::OnDeviceHeadProviderParams {
   // Indicates whether this request failed or not.
   bool failed = false;
 
-  // The time when this request is created.
-  base::TimeTicks creation_time;
-
   OnDeviceHeadProviderParams(size_t request_id, const AutocompleteInput& input)
       : request_id(request_id), input(input) {}
 
@@ -118,7 +116,7 @@ OnDeviceHeadProvider::OnDeviceHeadProvider(
   AddListener(listener);
 }
 
-OnDeviceHeadProvider::~OnDeviceHeadProvider() {}
+OnDeviceHeadProvider::~OnDeviceHeadProvider() = default;
 
 bool OnDeviceHeadProvider::IsOnDeviceHeadProviderAllowed(
     const AutocompleteInput& input) {
@@ -156,7 +154,8 @@ void OnDeviceHeadProvider::Start(const AutocompleteInput& input,
   TRACE_EVENT0("omnibox", "OnDeviceHeadProvider::Start");
 
   // Cancel any in-progress request.
-  Stop(!minimal_changes, false);
+  Stop(minimal_changes ? AutocompleteStopReason::kInteraction
+                       : AutocompleteStopReason::kClobbered);
 
   if (!IsOnDeviceHeadProviderAllowed(input)) {
     matches_.clear();
@@ -184,10 +183,8 @@ void OnDeviceHeadProvider::Start(const AutocompleteInput& input,
                      weak_ptr_factory_.GetWeakPtr(), std::move(params)));
 }
 
-void OnDeviceHeadProvider::Stop(bool clear_cached_results,
-                                bool due_to_user_inactivity) {
-  AutocompleteProvider::Stop(clear_cached_results, due_to_user_inactivity);
-
+void OnDeviceHeadProvider::Stop(AutocompleteStopReason stop_reason) {
+  AutocompleteProvider::Stop(stop_reason);
   // Increase the request_id so that any in-progress requests will become
   // obsolete.
   on_device_search_request_id_ =
@@ -208,7 +205,6 @@ OnDeviceHeadProvider::GetSuggestionsFromHeadModel(
     return params;
   }
 
-  params->creation_time = base::TimeTicks::Now();
   std::string sanitized_input = SanitizeInput(params->input.text());
 
   auto results = OnDeviceHeadModel::GetSuggestionsForPrefix(
@@ -251,13 +247,8 @@ void OnDeviceHeadProvider::HeadModelSearchDone(
     std::unique_ptr<OnDeviceHeadProviderParams> params) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(main_sequence_checker_);
 #if BUILDFLAG(BUILD_WITH_TFLITE_LIB)
-  if (!OmniboxFieldTrial::IsOnDeviceTailSuggestEnabled() ||
+  if (!ShouldFetchTailSuggestions(*params, client()->GetApplicationLocale()) ||
       client()->GetOnDeviceTailModelService() == nullptr) {
-    AllSearchDone(std::move(params));
-    return;
-  }
-
-  if (!ShouldFetchTailSuggestions(*params)) {
     AllSearchDone(std::move(params));
     return;
   }
@@ -269,14 +260,11 @@ void OnDeviceHeadProvider::HeadModelSearchDone(
       net::GetValueForKeyInQuery(current_url, "q", &query_str)) {
     previous_query = query_str;
   }
-  float probability_threshold = base::GetFieldTrialParamByFeatureAsDouble(
-      omnibox::kOnDeviceTailModel, "ProbabilityThreshold", 0.01);
 
   OnDeviceTailModelExecutor::ModelInput input(
       /*prefix=*/SanitizeInput(params->input.text()),
       /*previous_query=*/previous_query,
-      /*max_num_suggestions=*/provider_max_matches_, /*max_rnn_steps=*/20,
-      /*probability_threshold=*/probability_threshold);
+      /*max_num_suggestions=*/provider_max_matches_);
 
   client()->GetOnDeviceTailModelService()->GetPredictionsForInput(
       input, base::BindOnce(&OnDeviceHeadProvider::TailModelSearchDone,
@@ -317,8 +305,6 @@ void OnDeviceHeadProvider::AllSearchDone(
       client()->GetTemplateURLService();
 
   if (search::DefaultSearchProviderIsGoogle(template_url_service)) {
-    UMA_HISTOGRAM_CUSTOM_COUNTS("Omnibox.OnDeviceHeadSuggest.ResultCount",
-                                params->suggestions.size(), 1, 5, 6);
     matches_.clear();
 
     int head_relevance = params->input.type() == metrics::OmniboxInputType::URL
@@ -354,8 +340,6 @@ void OnDeviceHeadProvider::AllSearchDone(
         tail_relevance--;
       }
     }
-    UMA_HISTOGRAM_TIMES("Omnibox.OnDeviceHeadSuggest.AsyncQueryTime",
-                        base::TimeTicks::Now() - params->creation_time);
   }
 
   done_ = true;
@@ -374,7 +358,12 @@ std::string OnDeviceHeadProvider::GetOnDeviceHeadModelFilename() const {
 
 // static
 bool OnDeviceHeadProvider::ShouldFetchTailSuggestions(
-    const OnDeviceHeadProviderParams& params) {
+    const OnDeviceHeadProviderParams& params,
+    const std::string& locale) {
+  if (!OmniboxFieldTrial::IsOnDeviceTailSuggestEnabled(locale)) {
+    return false;
+  }
+
   if (!base::GetFieldTrialParamByFeatureAsBool(
           omnibox::kOnDeviceTailModel, "EnableForSingleWordPrefix", false)) {
     std::string sanitized_input = SanitizeInput(params.input.text());

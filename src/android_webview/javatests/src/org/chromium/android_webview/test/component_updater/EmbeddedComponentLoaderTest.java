@@ -4,12 +4,15 @@
 
 package org.chromium.android_webview.test.component_updater;
 
+import static org.chromium.android_webview.test.OnlyRunIn.ProcessMode.EITHER_PROCESS;
+
 import android.content.Intent;
 
 import androidx.test.filters.MediumTest;
 
 import org.jni_zero.CalledByNative;
 import org.jni_zero.JNINamespace;
+import org.jni_zero.JniType;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -25,10 +28,13 @@ import org.chromium.android_webview.test.AwActivityTestRule;
 import org.chromium.android_webview.test.AwJUnit4ClassRunnerWithParameters;
 import org.chromium.android_webview.test.AwParameterizedTest;
 import org.chromium.android_webview.test.AwSettingsMutation;
+import org.chromium.android_webview.test.OnlyRunIn;
 import org.chromium.android_webview.test.util.EmbeddedComponentLoaderFactory;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.FileUtils;
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CallbackHelper;
+import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.components.component_updater.EmbeddedComponentLoader;
 
 import java.io.ByteArrayInputStream;
@@ -41,23 +47,26 @@ import java.util.concurrent.TimeUnit;
  * Test for {@link EmbeddedComponentLoader}. It's an integeration-like test where it uses mock
  * native loaders and connect to {@link MockComponentProviderService}.
  *
- * Some test assertion are made in test/browser/embedded_component_loader_test_helper.cc
+ * <p>Some test assertion are made in test/browser/embedded_component_loader_test_helper.cc
  */
 @RunWith(Parameterized.class)
 @UseParametersRunnerFactory(AwJUnit4ClassRunnerWithParameters.Factory.class)
+@OnlyRunIn(EITHER_PROCESS) // These tests don't use the renderer process
 @JNINamespace("component_updater")
 public class EmbeddedComponentLoaderTest extends AwParameterizedTest {
-    private static CallbackHelper sOnComponentLoadedHelper = new CallbackHelper();
-    private static CallbackHelper sOnComponentLoadFailedHelper = new CallbackHelper();
+    private static final CallbackHelper sOnComponentLoadedHelper = new CallbackHelper();
+    private static final CallbackHelper sOnComponentLoadFailedHelper = new CallbackHelper();
     private static List<String> sNativeErrors;
 
     private static final String TEST_COMPONENT_ID = "jebgalgnebhfojomionfpkfelancnnkf";
     private static final String MANIFEST_JSON_STRING =
-            "{"
-                    + "\n\"manifest_version\": 2,"
-                    + "\n\"name\": \"jebgalgnebhfojomionfpkfelancnnkf\","
-                    + "\n\"version\": \"123.456.789\""
-                    + "\n}";
+            """
+        {
+          "manifest_version": 2,
+          "name": "jebgalgnebhfojomionfpkfelancnnkf",
+          "version": "123.456.789"
+        }
+        """;
 
     // Use AwActivityTestRule to start a browser process and init native library.
     @Rule public AwActivityTestRule mActivityTestRule;
@@ -95,16 +104,22 @@ public class EmbeddedComponentLoaderTest extends AwParameterizedTest {
     @Test
     @MediumTest
     public void testLoadComponentsFromMockComponentsProviderService() throws Exception {
-        loadComponents(MockComponentsProviderService.class);
+        loadComponents(MockComponentsProviderService.class, false);
     }
 
     @Test
     @MediumTest
     public void testLoadComponents() throws Exception {
-        loadComponents(ComponentsProviderService.class);
+        loadComponents(ComponentsProviderService.class, false);
     }
 
-    private void loadComponents(Class serviceClass) throws Exception {
+    @Test
+    @MediumTest
+    public void testLoadComponentsBackground() throws Exception {
+        loadComponents(ComponentsProviderService.class, true);
+    }
+
+    private void loadComponents(Class serviceClass, boolean background) throws Exception {
         int onComponentLoadedCallCount = sOnComponentLoadedHelper.getCallCount();
         int onComponentLoadFailedCallCount = sOnComponentLoadFailedHelper.getCallCount();
 
@@ -120,11 +135,18 @@ public class EmbeddedComponentLoaderTest extends AwParameterizedTest {
                 TEST_COMPONENT_ID,
                 new String[] {file.getAbsolutePath(), manifestFile.getAbsolutePath()});
 
-        mActivityTestRule.runOnUiThread(
+        HistogramWatcher histogramWatcher =
+                HistogramWatcher.newBuilder()
+                        .expectAnyRecord("Android.WebView.ComponentUpdater.BindServiceTime.Success")
+                        .expectAnyRecord("Android.WebView.ComponentUpdater.ProviderConnectUiTime")
+                        .expectAnyRecord("Android.WebView.ComponentUpdater.ResultsReceived")
+                        .build();
+
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     EmbeddedComponentLoader mLoader =
                             EmbeddedComponentLoaderFactory.makeEmbeddedComponentLoader();
-                    mLoader.connect(intent);
+                    mLoader.connect(intent, background);
                 });
 
         // Should be called once for AvailableComponentLoaderPolicy.
@@ -141,6 +163,8 @@ public class EmbeddedComponentLoaderTest extends AwParameterizedTest {
                 1,
                 AwActivityTestRule.WAIT_TIMEOUT_MS,
                 TimeUnit.MILLISECONDS);
+
+        histogramWatcher.assertExpected();
     }
 
     @CalledByNative
@@ -154,7 +178,7 @@ public class EmbeddedComponentLoaderTest extends AwParameterizedTest {
     }
 
     @CalledByNative
-    private static void fail(String error) {
+    private static void fail(@JniType("std::string") String error) {
         sNativeErrors.add(error);
     }
 

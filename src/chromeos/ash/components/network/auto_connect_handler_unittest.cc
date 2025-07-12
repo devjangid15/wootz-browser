@@ -16,6 +16,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "chromeos/ash/components/network/client_cert_resolver.h"
 #include "chromeos/ash/components/network/managed_network_configuration_handler_impl.h"
@@ -298,7 +299,8 @@ class AutoConnectHandlerTest : public testing::Test {
   NetworkStateTestHelper& helper() { return helper_; }
 
   base::test::TaskEnvironment task_environment_;
-  NetworkStateTestHelper helper_{false /* use_default_devices_and_services */};
+  base::test::ScopedFeatureList scoped_feature_list_;
+  NetworkStateTestHelper helper_{/*use_default_devices_and_services=*/false};
   std::unique_ptr<AutoConnectHandler> auto_connect_handler_;
   std::unique_ptr<ClientCertResolver> client_cert_resolver_;
   std::unique_ptr<NetworkConfigurationHandler> network_config_handler_;
@@ -713,6 +715,8 @@ TEST_F(AutoConnectHandlerTest, ManualConnectAbortsReconnectAfterLogin) {
 
 TEST_F(AutoConnectHandlerTest,
        DisableCellularAutoConnectOnAllowOnlyPolicyNetworksAutoconnect) {
+  scoped_feature_list_.InitAndDisableFeature(
+      ash::features::kAllowApnModificationPolicy);
   base::HistogramTester histogram_tester;
   std::string cellular1_service_path =
       ConfigureService(kConfigureCellular1UnmanagedConnected);
@@ -762,6 +766,8 @@ TEST_F(AutoConnectHandlerTest,
 
 TEST_F(AutoConnectHandlerTest,
        DisconnectCellularOnPolicyLoadingAllowOnlyPolicyCellularNetworks) {
+  scoped_feature_list_.InitAndDisableFeature(
+      ash::features::kAllowApnModificationPolicy);
   base::HistogramTester histogram_tester;
   std::string cellular1_service_path =
       ConfigureService(kConfigureCellular1UnmanagedConnected);
@@ -833,6 +839,54 @@ TEST_F(AutoConnectHandlerTest, DisconnectFromBlockedNetwork) {
   SetupUserPolicy(/*network_configs_json=*/std::string());
   EXPECT_EQ(shill::kStateIdle, GetServiceState(wifi0_service_path));
   EXPECT_EQ(shill::kStateIdle, GetServiceState(wifi1_service_path));
+  EXPECT_FALSE(helper().profile_test()->HasService(wifi0_service_path));
+
+  EXPECT_EQ(0, test_observer_->num_auto_connect_events());
+}
+
+// This test verifies that when `AllowOnlyPolicyWiFiToConnectIfAvailable` is
+// enabled, explicitly blocked networks are removed. Preserved configurations
+// for non-blocked networks are verified in
+// AutoConnectHandlerTest.AllowOnlyPolicyWiFiToConnectIfAvailable.
+TEST_F(AutoConnectHandlerTest,
+       DisconnectFromBlockedNetworkAllowOnlyPolicyWiFiToConnectIfAvailable) {
+  std::string wifi0_service_path =
+      ConfigureService(kConfigWifi0UnmanagedSharedConnected);
+  ASSERT_FALSE(wifi0_service_path.empty());
+  std::string wifi1_service_path =
+      ConfigureService(kConfigWifi1ManagedSharedConnectable);
+  ASSERT_FALSE(wifi1_service_path.empty());
+
+  LoginToRegularUser();
+  StartNetworkCertLoader();
+  EXPECT_EQ(shill::kStateOnline, GetServiceState(wifi0_service_path));
+  EXPECT_EQ(shill::kStateIdle, GetServiceState(wifi1_service_path));
+  EXPECT_TRUE(helper().profile_test()->HasService(wifi0_service_path));
+
+  // Apply a device policy, which blocks wifi0. No disconnects should occur
+  // since we wait for both device & user policy before possibly disconnecting.
+  auto global_config = base::Value::Dict()
+                           .Set(::onc::global_network_config::kBlockedHexSSIDs,
+                                base::Value::List().Append(
+                                    "7769666930")  // hex(wifi0) = 7769666930
+                                )
+                           .Set(::onc::global_network_config::
+                                    kAllowOnlyPolicyWiFiToConnectIfAvailable,
+                                base::Value(true));
+  SetupDevicePolicy(kPolicy, global_config);
+
+  SetupDevicePolicy(std::string(), global_config);
+  EXPECT_EQ(shill::kStateOnline, GetServiceState(wifi0_service_path));
+  EXPECT_EQ(shill::kStateIdle, GetServiceState(wifi1_service_path));
+  EXPECT_TRUE(helper().profile_test()->HasService(wifi0_service_path));
+
+  // Apply an empty user policy (no allow list for wifi0). Connection to wifi0
+  // should be disconnected due to being blocked.
+  SetupUserPolicy(/*network_configs_json=*/std::string());
+
+  // Although AllowOnlyPolicyWiFiToConnectIfAvailable is enabled, the wifi0
+  // network configuration should be removed because this network is explicitly
+  // blocked by policy.
   EXPECT_FALSE(helper().profile_test()->HasService(wifi0_service_path));
 
   EXPECT_EQ(0, test_observer_->num_auto_connect_events());

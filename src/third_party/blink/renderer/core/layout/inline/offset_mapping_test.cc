@@ -10,7 +10,7 @@
 #include "third_party/blink/renderer/core/editing/ephemeral_range.h"
 #include "third_party/blink/renderer/core/editing/position.h"
 #include "third_party/blink/renderer/core/layout/inline/inline_node.h"
-#include "third_party/blink/renderer/core/layout/layout_ng_block_flow.h"
+#include "third_party/blink/renderer/core/layout/layout_block_flow.h"
 #include "third_party/blink/renderer/core/layout/layout_text_fragment.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
@@ -46,29 +46,12 @@ bool operator!=(const OffsetMappingUnit& unit, const OffsetMappingUnit& other) {
 }
 
 void PrintTo(const OffsetMappingUnit& unit, std::ostream* ostream) {
-  static const char* kTypeNames[] = {"Identity", "Collapsed", "Expanded"};
+  static const std::array<const char*, 3> kTypeNames = {"Identity", "Collapsed",
+                                                        "Expanded"};
   *ostream << "{" << kTypeNames[static_cast<unsigned>(unit.GetType())] << " "
            << unit.GetLayoutObject() << " dom=" << unit.DOMStart() << "-"
            << unit.DOMEnd() << " tc=" << unit.TextContentStart() << "-"
            << unit.TextContentEnd() << "}";
-}
-
-bool operator==(const HeapVector<OffsetMappingUnit>& units1,
-                const HeapVector<OffsetMappingUnit>& units2) {
-  if (units1.size() != units2.size())
-    return false;
-  auto* it2 = units2.begin();
-  for (const auto& unit1 : units1) {
-    if (unit1 != *it2)
-      return false;
-    ++it2;
-  }
-  return true;
-}
-
-bool operator==(const HeapVector<OffsetMappingUnit>& units,
-                const base::span<const OffsetMappingUnit>& range) {
-  return units == ToVector(range);
 }
 
 void PrintTo(const HeapVector<OffsetMappingUnit>& units,
@@ -120,7 +103,7 @@ class OffsetMappingTest : public RenderingTest {
       Vector<unsigned> collapsed_indexes;
       for (const auto& unit : mapping.GetMappingUnitsForDOMRange(
                EphemeralRange::RangeOfContents(node))) {
-        if (unit.GetType() != OffsetMappingUnitType::kCollapsed) {
+        if (!unit.IsCollapsed()) {
           continue;
         }
         for (unsigned i = unit.DOMStart(); i < unit.DOMEnd(); ++i)
@@ -953,8 +936,13 @@ TEST_F(OffsetMappingTest, FirstLetterInDifferentBlock) {
 
   const OffsetMapping& remaining_text_result = *mapping1;
   ASSERT_EQ(1u, remaining_text_result.GetUnits().size());
-  TEST_UNIT(remaining_text_result.GetUnits()[0],
-            OffsetMappingUnitType::kIdentity, text_node, 1u, 3u, 1u, 3u);
+  if (RuntimeEnabledFeatures::LineBreakOofNoOrcEnabled()) {
+    TEST_UNIT(remaining_text_result.GetUnits()[0],
+              OffsetMappingUnitType::kIdentity, text_node, 1u, 3u, 0u, 2u);
+  } else {
+    TEST_UNIT(remaining_text_result.GetUnits()[0],
+              OffsetMappingUnitType::kIdentity, text_node, 1u, 3u, 1u, 3u);
+  }
   ASSERT_EQ(1u, remaining_text_result.GetRanges().size());
   TEST_RANGE(remaining_text_result.GetRanges(), text_node, 0u, 1u);
 
@@ -973,17 +961,34 @@ TEST_F(OffsetMappingTest, FirstLetterInDifferentBlock) {
 
   EXPECT_EQ(0u,
             *first_letter_result.GetTextContentOffset(Position(text_node, 0)));
-  EXPECT_EQ(
-      1u, *remaining_text_result.GetTextContentOffset(Position(text_node, 1)));
-  EXPECT_EQ(
-      2u, *remaining_text_result.GetTextContentOffset(Position(text_node, 2)));
-  EXPECT_EQ(
-      3u, *remaining_text_result.GetTextContentOffset(Position(text_node, 3)));
+
+  if (RuntimeEnabledFeatures::LineBreakOofNoOrcEnabled()) {
+    EXPECT_EQ(0u, *remaining_text_result.GetTextContentOffset(
+                      Position(text_node, 1)));
+    EXPECT_EQ(1u, *remaining_text_result.GetTextContentOffset(
+                      Position(text_node, 2)));
+    EXPECT_EQ(2u, *remaining_text_result.GetTextContentOffset(
+                      Position(text_node, 3)));
+  } else {
+    EXPECT_EQ(1u, *remaining_text_result.GetTextContentOffset(
+                      Position(text_node, 1)));
+    EXPECT_EQ(2u, *remaining_text_result.GetTextContentOffset(
+                      Position(text_node, 2)));
+    EXPECT_EQ(3u, *remaining_text_result.GetTextContentOffset(
+                      Position(text_node, 3)));
+  }
 
   EXPECT_EQ(Position(text_node, 1), first_letter_result.GetFirstPosition(1));
   EXPECT_EQ(Position(text_node, 1), first_letter_result.GetLastPosition(1));
-  EXPECT_EQ(Position(text_node, 1), remaining_text_result.GetFirstPosition(1));
-  EXPECT_EQ(Position(text_node, 1), remaining_text_result.GetLastPosition(1));
+  if (RuntimeEnabledFeatures::LineBreakOofNoOrcEnabled()) {
+    EXPECT_EQ(Position(text_node, 1),
+              remaining_text_result.GetFirstPosition(0));
+    EXPECT_EQ(Position(text_node, 1), remaining_text_result.GetLastPosition(0));
+  } else {
+    EXPECT_EQ(Position(text_node, 1),
+              remaining_text_result.GetFirstPosition(1));
+    EXPECT_EQ(Position(text_node, 1), remaining_text_result.GetLastPosition(1));
+  }
 }
 
 TEST_F(OffsetMappingTest, WhiteSpaceTextNodeWithoutLayoutText) {

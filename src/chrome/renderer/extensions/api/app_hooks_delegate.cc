@@ -45,7 +45,8 @@ void AppHooksDelegate::IsInstalledGetterCallback(
     v8::Local<v8::Name> property,
     const v8::PropertyCallbackInfo<v8::Value>& info) {
   v8::HandleScope handle_scope(info.GetIsolate());
-  v8::Local<v8::Context> context = info.Holder()->GetCreationContextChecked();
+  v8::Local<v8::Context> context =
+      info.HolderV2()->GetCreationContextChecked(info.GetIsolate());
   ScriptContext* script_context =
       ScriptContextSet::GetContextByV8Context(context);
 
@@ -87,7 +88,7 @@ APIBindingHooks::RequestResult AppHooksDelegate::HandleRequest(
     const APITypeReferenceMap& refs) {
   using RequestResult = APIBindingHooks::RequestResult;
 
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   v8::TryCatch try_catch(isolate);
   APISignature::V8ParseResult parse_result =
       signature->ParseArgumentsToV8(context, *arguments, refs);
@@ -123,7 +124,7 @@ APIBindingHooks::RequestResult AppHooksDelegate::HandleRequest(
             binding::ResultModifierFunction());
     GetInstallState(script_context, request_details.request_id);
   } else {
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
 
   return result;

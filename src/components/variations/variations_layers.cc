@@ -6,9 +6,11 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <set>
 #include <type_traits>
 
 #include "base/check_op.h"
@@ -16,6 +18,7 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/numerics/checked_math.h"
 #include "components/variations/entropy_provider.h"
+#include "components/variations/proto/layer.pb.h"
 
 namespace variations {
 
@@ -135,7 +138,7 @@ NormalizedMurmurHashEntropyProvider ComputeRemainderEntropy(
 // provider doesn't exist so that this function can never select that provider.
 const base::FieldTrial::EntropyProvider& SelectEntropyProviderForSlot(
     const EntropyProviders& entropy_providers,
-    const Layer::EntropyMode& entropy_mode) {
+    Layer::EntropyMode entropy_mode) {
   if (entropy_mode == Layer::LIMITED) {
     return entropy_providers.limited_entropy();
   } else if (entropy_mode == Layer::LOW) {
@@ -145,11 +148,22 @@ const base::FieldTrial::EntropyProvider& SelectEntropyProviderForSlot(
   }
 }
 
+bool AreLayerMemberIDsUnique(const Layer& layer_proto) {
+  std::set<uint32_t> member_ids;
+  for (const auto& member : layer_proto.members()) {
+    if (member_ids.contains(member.id())) {
+      return false;
+    }
+    member_ids.insert(member.id());
+  }
+  return true;
+}
+
 }  // namespace
 
 VariationsLayers::VariationsLayers(const VariationsSeed& seed,
                                    const EntropyProviders& entropy_providers)
-    : nil_entropy({0, 1}) {
+    : nil_entropy_({0, 1}) {
   // Don't activate any layer-constrained studies in benchmarking mode to
   // maintain deterministic behavior.
   if (entropy_providers.benchmarking_enabled()) {
@@ -159,6 +173,9 @@ VariationsLayers::VariationsLayers(const VariationsSeed& seed,
   std::map<uint32_t, int> counts_by_id;
   for (const Layer& layer_proto : seed.layers()) {
     ++counts_by_id[layer_proto.id()];
+    if (layer_proto.entropy_mode() == Layer::LIMITED) {
+      seed_has_limited_layer_ = true;
+    }
     // Avoid multiple logs if one ID is used multiple times.
     if (counts_by_id[layer_proto.id()] == 2) {
       LogInvalidLayerReason(InvalidLayerReason::LayerIDNotUnique);
@@ -179,7 +196,7 @@ VariationsLayers::VariationsLayers(const VariationsSeed& seed,
   }
 }
 
-VariationsLayers::VariationsLayers() : nil_entropy({0, 1}) {}
+VariationsLayers::VariationsLayers() : nil_entropy_({0, 1}) {}
 
 VariationsLayers::~VariationsLayers() = default;
 
@@ -224,26 +241,45 @@ bool VariationsLayers::AllowsHighEntropy(const Study& study) {
   // code: go/chrome-variations-layer-validation
   for (const auto& experiment : study.experiment()) {
     if (experiment.has_google_web_experiment_id() ||
-        experiment.has_google_web_trigger_experiment_id() ||
-        experiment.has_chrome_sync_experiment_id()) {
+        experiment.has_google_web_trigger_experiment_id()) {
       return false;
     }
   }
   return true;
 }
 
+// static
+bool VariationsLayers::IsReferencingLayerMemberId(
+    const LayerMemberReference& layer_member_reference,
+    uint32_t layer_member_id) {
+  for (const uint32_t& selected_id :
+       layer_member_reference.layer_member_ids()) {
+    if (selected_id == layer_member_id) {
+      return true;
+    }
+  }
+  // New protos should only use `layer_member_ids` (plural), and the legacy
+  // `layer_member_id` (singular) field should NOT be given. However, for
+  // correctness, the legacy field is still checked in case the client needs to
+  // process a proto with the legacy field.
+  // TODO(crbug/TBA): remove check of the legacy field after it's fully
+  // deprecated.
+  return layer_member_id == layer_member_reference.layer_member_id();
+}
+
 bool VariationsLayers::IsLayerActive(uint32_t layer_id) const {
   return FindActiveLayer(layer_id) != nullptr;
 }
 
-bool VariationsLayers::IsLayerMemberActive(uint32_t layer_id,
-                                           uint32_t member_id) const {
-  const auto* layer_info = FindActiveLayer(layer_id);
+bool VariationsLayers::IsLayerMemberActive(
+    const LayerMemberReference& layer_member_reference) const {
+  const auto* layer_info = FindActiveLayer(layer_member_reference.layer_id());
   if (layer_info == nullptr) {
     return false;
   }
   return layer_info->active_member_id &&
-         member_id == layer_info->active_member_id;
+         IsReferencingLayerMemberId(layer_member_reference,
+                                    layer_info->active_member_id);
 }
 
 bool VariationsLayers::ActiveLayerMemberDependsOnHighEntropy(
@@ -331,10 +367,7 @@ void VariationsLayers::ConstructLayer(const EntropyProviders& entropy_providers,
 
   // There must be a limited entropy provider when processing a limited layer. A
   // limited entropy provider does not exist for an ineligible platform (e.g.
-  // WebView), or if the client is not in the enabled group of the limited
-  // entropy synthetic trial.
-  // TODO(crbug.com/40948861): clean up the synthetic trial after it has
-  // completed.
+  // Android WebView).
   if (layer_proto.entropy_mode() == Layer::LIMITED &&
       !entropy_providers.has_limited_entropy()) {
     LogInvalidLayerReason(InvalidLayerReason::kLimitedLayerDropped);
@@ -349,6 +382,11 @@ void VariationsLayers::ConstructLayer(const EntropyProviders& entropy_providers,
     // doesn't divide the low entropy range, so don't support them at all.
     LogInvalidLayerReason(
         InvalidLayerReason::kSlotsDoNotDivideLowEntropyDomain);
+    return;
+  }
+
+  if (!AreLayerMemberIDsUnique(layer_proto)) {
+    LogInvalidLayerReason(InvalidLayerReason::kDuplicatedLayerMemberID);
     return;
   }
 
@@ -398,7 +436,7 @@ const base::FieldTrial::EntropyProvider& VariationsLayers::GetRemainderEntropy(
     // TODO(crbug.com/41492242): Remove CreateTrialsForStudy fuzzer, then
     // uncomment this.
     // NOTREACHED();
-    return nil_entropy;
+    return nil_entropy_;
   }
   return layer_info->remainder_entropy;
 }

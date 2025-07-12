@@ -29,9 +29,12 @@
 #include <memory>
 #include <optional>
 
+#include "base/containers/to_vector.h"
+#include "base/feature_list.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/trace_event/trace_event.h"
 #include "mojo/public/cpp/base/big_buffer_mojom_traits.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/mojom/blob/blob.mojom-blink.h"
 #include "third_party/blink/public/mojom/messaging/transferable_message.mojom-blink.h"
 #include "third_party/blink/public/platform/task_type.h"
@@ -66,7 +69,13 @@ MessagePort::MessagePort(ExecutionContext& execution_context)
                                             : &execution_context),
       // Ports in a destroyed context start out in a closed state.
       closed_(execution_context.IsContextDestroyed()),
-      task_runner_(execution_context.GetTaskRunner(TaskType::kPostedMessage)),
+      accept_message_task_runner_(
+          base::FeatureList::IsEnabled(features::kBFCacheWithSharedWorker)
+              ? execution_context.GetTaskRunner(
+                    TaskType::kBackForwardCachePostedMessage)
+              : execution_context.GetTaskRunner(TaskType::kPostedMessage)),
+      dispatch_event_task_runner_(
+          execution_context.GetTaskRunner(TaskType::kPostedMessage)),
       post_message_task_container_(
           MakeGarbageCollected<PostMessageTaskContainer>()) {}
 
@@ -81,11 +90,11 @@ void MessagePort::Dispose() {
 
 void MessagePort::postMessage(ScriptState* script_state,
                               const ScriptValue& message,
-                              HeapVector<ScriptValue>& transfer,
+                              HeapVector<ScriptObject> transfer,
                               ExceptionState& exception_state) {
   PostMessageOptions* options = PostMessageOptions::Create();
   if (!transfer.empty())
-    options->setTransfer(transfer);
+    options->setTransfer(std::move(transfer));
   postMessage(script_state, message, options, exception_state);
 }
 
@@ -134,22 +143,23 @@ void MessagePort::postMessage(ScriptState* script_state,
   msg.sender_agent_cluster_id = GetExecutionContext()->GetAgentClusterID();
   msg.locked_to_sender_agent_cluster = msg.message->IsLockedToAgentCluster();
 
-  // Only pass the parent task ID if we're in the main world, as isolated world
-  // task tracking is not yet supported. Also, only pass the parent task if the
+  // Only pass the task state ID if we're in the main world, as isolated world
+  // task tracking is not yet supported. Also, only pass the task state if the
   // port is still entangled to its initially entangled port.
   if (auto* tracker =
           scheduler::TaskAttributionTracker::From(script_state->GetIsolate());
       initially_entangled_port_ && tracker &&
       script_state->World().IsMainWorld()) {
-    if (scheduler::TaskAttributionInfo* task = tracker->RunningTask()) {
+    if (scheduler::TaskAttributionInfo* task_state =
+            tracker->CurrentTaskState()) {
       // Since `initially_entangled_port_` is not nullptr, neither should be
       // `post_message_task_container_`.
       CHECK(post_message_task_container_);
-      post_message_task_container_->AddPostMessageTask(task);
-      msg.parent_task_id =
-          std::optional<scheduler::TaskAttributionId>(task->Id());
+      post_message_task_container_->AddPostMessageTask(task_state);
+      msg.task_state_id =
+          std::optional<scheduler::TaskAttributionId>(task_state->Id());
     } else {
-      msg.parent_task_id = std::nullopt;
+      msg.task_state_id = std::nullopt;
     }
   }
 
@@ -181,7 +191,7 @@ void MessagePort::start() {
     return;
 
   started_ = true;
-  connector_->StartReceiving(task_runner_);
+  connector_->StartReceiving(accept_message_task_runner_);
 }
 
 void MessagePort::close() {
@@ -300,20 +310,20 @@ Vector<MessagePortChannel> MessagePort::DisentanglePorts(
   return channels;
 }
 
-MessagePortArray* MessagePort::EntanglePorts(
+GCedMessagePortArray* MessagePort::EntanglePorts(
     ExecutionContext& context,
     Vector<MessagePortChannel> channels) {
-  return EntanglePorts(context,
-                       WebVector<MessagePortChannel>(std::move(channels)));
+  return EntanglePorts(context, base::ToVector(std::move(channels)));
 }
 
-MessagePortArray* MessagePort::EntanglePorts(
+GCedMessagePortArray* MessagePort::EntanglePorts(
     ExecutionContext& context,
-    WebVector<MessagePortChannel> channels) {
+    std::vector<MessagePortChannel> channels) {
   // https://html.spec.whatwg.org/C/#message-ports
   // |ports| should be an empty array, not null even when there is no ports.
   wtf_size_t count = base::checked_cast<wtf_size_t>(channels.size());
-  MessagePortArray* port_array = MakeGarbageCollected<MessagePortArray>(count);
+  GCedMessagePortArray* port_array =
+      MakeGarbageCollected<GCedMessagePortArray>(count);
   for (wtf_size_t i = 0; i < count; ++i) {
     auto* port = MakeGarbageCollected<MessagePort>(context);
     port->Entangle(std::move(channels[i]));
@@ -343,11 +353,40 @@ bool MessagePort::Accept(mojo::Message* mojo_message) {
   }
 
   ExecutionContext* context = GetExecutionContext();
+  if (base::FeatureList::IsEnabled(features::kBFCacheWithSharedWorker) &&
+      context->is_in_back_forward_cache()) {
+    if (IsSharedWorkerPort()) {
+      // Evict the page on a message to the default SharedWorker port. This
+      // handles both incoming messages and those queued right before caching.
+      // See crbug.com/426454597 for the task-ordering investigation.
+      auto* dom_window = DomWindow();
+      CHECK(dom_window);
+      dom_window->GetFrame()->EvictFromBackForwardCache(
+          mojom::blink::RendererEvictionReason::kSharedWorkerMessage,
+          /*source_location=*/nullptr);
+      // If the page is in back/forward cache, it should be evicted. So no need
+      // to dispatch the message.
+      return true;
+    }
+    // Re-post task as kPostedMessage.
+    // TODO(crbug.com/426454597): Investigate task-ordering impact of re-queuing
+    // BFCache tasks.
+    dispatch_event_task_runner_->PostTask(
+        FROM_HERE, WTF::BindOnce(&MessagePort::DispatchMessageEvent,
+                                 WrapPersistent(this), std::move(message)));
+  } else {
+    MessagePort::DispatchMessageEvent(std::move(message));
+  }
+  return true;
+}
+
+void MessagePort::DispatchMessageEvent(BlinkTransferableMessage message) {
+  ExecutionContext* context = GetExecutionContext();
   // WorkerGlobalScope::close() in Worker onmessage handler should prevent
   // the next message from dispatching.
   if (auto* scope = DynamicTo<WorkerGlobalScope>(context)) {
     if (scope->IsClosing())
-      return true;
+      return;
   }
 
   Event* evt = CreateMessageEvent(message);
@@ -379,11 +418,11 @@ bool MessagePort::Accept(mojo::Message* mojo_message) {
         // Since `initially_entangled_port_` is not nullptr, neither should be
         // its `post_message_task_container_`.
         CHECK(entangled_port->post_message_task_container_);
-        scheduler::TaskAttributionInfo* parent_task =
+        scheduler::TaskAttributionInfo* task_state =
             entangled_port->post_message_task_container_
-                ->GetAndDecrementPostMessageTask(message.parent_task_id);
+                ->GetAndDecrementPostMessageTask(message.task_state_id);
         task_attribution_scope = tracker->CreateTaskScope(
-            script_state, parent_task,
+            script_state, task_state,
             scheduler::TaskAttributionTracker::TaskScopeType::kPostMessage);
       }
     }
@@ -396,7 +435,6 @@ bool MessagePort::Accept(mojo::Message* mojo_message) {
   DispatchEvent(*evt);
   if (debugger)
     debugger->ExternalAsyncTaskFinished(message.sender_stack_trace_id);
-  return true;
 }
 
 Event* MessagePort::CreateMessageEvent(BlinkTransferableMessage& message) {
@@ -433,7 +471,7 @@ Event* MessagePort::CreateMessageEvent(BlinkTransferableMessage& message) {
   if (!message.message->CanDeserializeIn(context))
     return MessageEvent::CreateError();
 
-  MessagePortArray* ports = MessagePort::EntanglePorts(
+  GCedMessagePortArray* ports = MessagePort::EntanglePorts(
       *GetExecutionContext(), std::move(message.ports));
   UserActivation* user_activation = nullptr;
   if (message.user_activation) {

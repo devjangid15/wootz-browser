@@ -36,7 +36,7 @@
 namespace blink {
 
 LayoutSVGBlock::LayoutSVGBlock(ContainerNode* node)
-    : LayoutNGBlockFlow(node),
+    : LayoutBlockFlow(node),
       needs_transform_update_(true),
       transform_uses_reference_box_(false) {
   DCHECK(IsA<SVGElement>(node));
@@ -50,17 +50,12 @@ SVGElement* LayoutSVGBlock::GetElement() const {
 void LayoutSVGBlock::WillBeDestroyed() {
   NOT_DESTROYED();
   SVGResources::ClearEffects(*this);
-  LayoutNGBlockFlow::WillBeDestroyed();
+  LayoutBlockFlow::WillBeDestroyed();
 }
 
 void LayoutSVGBlock::InsertedIntoTree() {
   NOT_DESTROYED();
-  LayoutNGBlockFlow::InsertedIntoTree();
-  // Ensure that the viewport dependency flag gets set on the ancestor chain.
-  if (SVGSelfOrDescendantHasViewportDependency()) {
-    ClearSVGSelfOrDescendantHasViewportDependency();
-    SetSVGSelfOrDescendantHasViewportDependency();
-  }
+  LayoutBlockFlow::InsertedIntoTree();
   LayoutSVGResourceContainer::MarkForLayoutAndParentResourceInvalidation(*this,
                                                                          false);
   if (StyleRef().HasSVGEffect())
@@ -73,13 +68,7 @@ void LayoutSVGBlock::WillBeRemovedFromTree() {
                                                                          false);
   if (StyleRef().HasSVGEffect())
     SetNeedsPaintPropertyUpdate();
-  LayoutNGBlockFlow::WillBeRemovedFromTree();
-}
-
-void LayoutSVGBlock::UpdateFromStyle() {
-  NOT_DESTROYED();
-  LayoutNGBlockFlow::UpdateFromStyle();
-  SetFloating(false);
+  LayoutBlockFlow::WillBeRemovedFromTree();
 }
 
 bool LayoutSVGBlock::CheckForImplicitTransformChange(
@@ -97,8 +86,7 @@ bool LayoutSVGBlock::CheckForImplicitTransformChange(
     case ETransformBox::kBorderBox:
       return bbox_changed;
   }
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 }
 
 void LayoutSVGBlock::UpdateTransformBeforeLayout() {
@@ -133,16 +121,17 @@ bool LayoutSVGBlock::UpdateTransformAfterLayout(
 void LayoutSVGBlock::StyleDidChange(StyleDifference diff,
                                     const ComputedStyle* old_style) {
   NOT_DESTROYED();
-  LayoutNGBlockFlow::StyleDidChange(diff, old_style);
+  LayoutBlockFlow::StyleDidChange(diff, old_style);
+
+  const ComputedStyle& style = StyleRef();
 
   // |HasTransformRelatedProperty| is used for compositing so ensure it was
   // correctly set by the call to |StyleDidChange|.
   DCHECK_EQ(HasTransformRelatedProperty(),
-            StyleRef().HasTransformRelatedPropertyForSVG());
+            style.HasTransformRelatedPropertyForSVG());
 
   TransformHelper::UpdateOffsetPath(*GetElement(), old_style);
-  transform_uses_reference_box_ =
-      TransformHelper::UpdateReferenceBoxDependency(*this);
+  transform_uses_reference_box_ = TransformHelper::DependsOnReferenceBox(style);
 
   if (diff.NeedsFullLayout()) {
     if (diff.TransformChanged())
@@ -157,13 +146,17 @@ void LayoutSVGBlock::StyleDidChange(StyleDifference diff,
   if (diff.BlendModeChanged()) {
     DCHECK(IsBlendingAllowed());
     Parent()->DescendantIsolationRequirementsChanged(
-        StyleRef().HasBlendMode() ? kDescendantIsolationRequired
-                                  : kDescendantIsolationNeedsUpdate);
+        style.HasBlendMode() ? kDescendantIsolationRequired
+                             : kDescendantIsolationNeedsUpdate);
   }
 
-  if (StyleRef().HasCurrentTransformRelatedAnimation() &&
-      !old_style->HasCurrentTransformRelatedAnimation()) {
-    Parent()->SetSVGDescendantMayHaveTransformRelatedAnimation();
+  if ((style.HasCurrentTransformRelatedAnimation() &&
+       !old_style->HasCurrentTransformRelatedAnimation()) ||
+      (RuntimeEnabledFeatures::
+           SvgAvoidCullingElementsWithTransformOperationsEnabled() &&
+       style.HasNonIdentityTransformOperation() &&
+       !old_style->HasNonIdentityTransformOperation())) {
+    Parent()->SetSVGDescendantMayHaveTransformRelatedOperations();
   }
 
   if (diff.HasDifference())
@@ -194,11 +187,6 @@ void LayoutSVGBlock::MapAncestorToLocal(const LayoutBoxModelObject* ancestor,
   SVGLayoutSupport::MapAncestorToLocal(*this, ancestor, transform_state, flags);
   // Convert from local SVG coordinates to local HTML coordinates.
   transform_state.Move(PhysicalLocation());
-}
-
-PhysicalRect LayoutSVGBlock::VisualRectInDocument(VisualRectFlags flags) const {
-  NOT_DESTROYED();
-  return SVGLayoutSupport::VisualRectInAncestorSpace(*this, *View(), flags);
 }
 
 bool LayoutSVGBlock::MapToVisualRectInAncestorSpaceInternal(

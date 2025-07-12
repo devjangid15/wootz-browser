@@ -19,6 +19,8 @@
 #include "components/content_settings/core/common/content_settings_constraints.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/permissions/constants.h"
+#include "components/permissions/permission_decision.h"
+#include "components/permissions/permission_request_data.h"
 #include "components/permissions/permission_request_id.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
@@ -28,6 +30,7 @@
 #include "net/first_party_sets/first_party_set_entry.h"
 #include "net/first_party_sets/first_party_set_metadata.h"
 #include "services/network/public/mojom/cookie_manager.mojom.h"
+#include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom-shared.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/features_generated.h"
 #include "third_party/blink/public/mojom/devtools/console_message.mojom-shared.h"
@@ -43,26 +46,26 @@ void RecordOutcomeSample(TopLevelStorageAccessRequestOutcome outcome) {
 
 TopLevelStorageAccessPermissionContext::TopLevelStorageAccessPermissionContext(
     content::BrowserContext* browser_context)
-    : PermissionContextBase(
+    : ContentSettingPermissionContextBase(
           browser_context,
           ContentSettingsType::TOP_LEVEL_STORAGE_ACCESS,
-          blink::mojom::PermissionsPolicyFeature::kStorageAccessAPI) {}
+          network::mojom::PermissionsPolicyFeature::kStorageAccessAPI) {}
 
 TopLevelStorageAccessPermissionContext::
     ~TopLevelStorageAccessPermissionContext() = default;
 
 void TopLevelStorageAccessPermissionContext::DecidePermissionForTesting(
-    permissions::PermissionRequestData request_data,
+    std::unique_ptr<permissions::PermissionRequestData> request_data,
     permissions::BrowserPermissionCallback callback) {
   DecidePermission(std::move(request_data), std::move(callback));
 }
 
 void TopLevelStorageAccessPermissionContext::DecidePermission(
-    permissions::PermissionRequestData request_data,
+    std::unique_ptr<permissions::PermissionRequestData> request_data,
     permissions::BrowserPermissionCallback callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   content::RenderFrameHost* rfh = content::RenderFrameHost::FromID(
-      request_data.id.global_render_frame_host_id());
+      request_data->id.global_render_frame_host_id());
   CHECK(rfh);
   if (!rfh->IsInPrimaryMainFrame()) {
     rfh->AddMessageToConsole(blink::mojom::ConsoleMessageLevel::kError,
@@ -70,26 +73,26 @@ void TopLevelStorageAccessPermissionContext::DecidePermission(
                              "primary top-level browsing contexts.");
     RecordOutcomeSample(
         TopLevelStorageAccessRequestOutcome::kDeniedByPrerequisites);
-    std::move(callback).Run(CONTENT_SETTING_BLOCK);
+    std::move(callback).Run(blink::mojom::PermissionStatus::DENIED);
     return;
   }
 
-  if (!request_data.user_gesture ||
-      !request_data.requesting_origin.is_valid() ||
-      !request_data.embedding_origin.is_valid()) {
-    if (!request_data.user_gesture) {
+  if (!request_data->user_gesture ||
+      !request_data->requesting_origin.is_valid() ||
+      !request_data->embedding_origin.is_valid()) {
+    if (!request_data->user_gesture) {
       rfh->AddMessageToConsole(
           blink::mojom::ConsoleMessageLevel::kError,
           "requestStorageAccessFor: Must be handling a user gesture to use.");
     }
     RecordOutcomeSample(
         TopLevelStorageAccessRequestOutcome::kDeniedByPrerequisites);
-    std::move(callback).Run(CONTENT_SETTING_BLOCK);
+    std::move(callback).Run(blink::mojom::PermissionStatus::DENIED);
     return;
   }
 
-  net::SchemefulSite embedding_site(request_data.embedding_origin);
-  net::SchemefulSite requesting_site(request_data.requesting_origin);
+  net::SchemefulSite embedding_site(request_data->embedding_origin);
+  net::SchemefulSite requesting_site(request_data->requesting_origin);
 
   first_party_sets::FirstPartySetsPolicyServiceFactory::GetForBrowserContext(
       browser_context())
@@ -102,7 +105,7 @@ void TopLevelStorageAccessPermissionContext::DecidePermission(
 }
 
 void TopLevelStorageAccessPermissionContext::CheckForAutoGrantOrAutoDenial(
-    permissions::PermissionRequestData request_data,
+    std::unique_ptr<permissions::PermissionRequestData> request_data,
     permissions::BrowserPermissionCallback callback,
     net::FirstPartySetMetadata metadata) {
   if (metadata.AreSitesInSameFirstPartySet()) {
@@ -110,35 +113,45 @@ void TopLevelStorageAccessPermissionContext::CheckForAutoGrantOrAutoDenial(
     // of other domains, even in the same First-Party Set.
     if (metadata.top_frame_entry()->site_type() == net::SiteType::kService) {
       NotifyPermissionSetInternal(
-          request_data.id, request_data.requesting_origin,
-          request_data.embedding_origin, std::move(callback),
-          /*persist=*/true, CONTENT_SETTING_BLOCK,
+          *request_data, std::move(callback),
+          /*persist=*/false, PermissionDecision::kDeny,
           TopLevelStorageAccessRequestOutcome::kDeniedByPrerequisites);
+      return;
+    }
+    // Determine if user specifically denied cookie access in this context.
+    HostContentSettingsMap* settings_map =
+        HostContentSettingsMapFactory::GetForProfile(browser_context());
+    ContentSetting cookie_setting = settings_map->GetContentSetting(
+        request_data->requesting_origin, request_data->embedding_origin,
+        ContentSettingsType::COOKIES);
+    if (cookie_setting == CONTENT_SETTING_BLOCK) {
+      NotifyPermissionSetInternal(
+          *request_data, std::move(callback),
+          /*persist=*/false, PermissionDecision::kDeny,
+          TopLevelStorageAccessRequestOutcome::kDeniedByCookieSettings);
       return;
     }
     // Since the sites are in the same First-Party Set, risk of abuse due to
     // allowing access is considered to be low.
     NotifyPermissionSetInternal(
-        request_data.id, request_data.requesting_origin,
-        request_data.embedding_origin, std::move(callback),
-        /*persist=*/true, CONTENT_SETTING_ALLOW,
+        *request_data, std::move(callback),
+        /*persist=*/true, PermissionDecision::kAllow,
         TopLevelStorageAccessRequestOutcome::kGrantedByFirstPartySet);
     return;
   }
   NotifyPermissionSetInternal(
-      request_data.id, request_data.requesting_origin,
-      request_data.embedding_origin, std::move(callback),
-      /*persist=*/true, CONTENT_SETTING_BLOCK,
+      *request_data, std::move(callback),
+      /*persist=*/false, PermissionDecision::kDeny,
       TopLevelStorageAccessRequestOutcome::kDeniedByFirstPartySet);
 }
 
 ContentSetting
-TopLevelStorageAccessPermissionContext::GetPermissionStatusInternal(
+TopLevelStorageAccessPermissionContext::GetContentSettingStatusInternal(
     content::RenderFrameHost* render_frame_host,
     const GURL& requesting_origin,
     const GURL& embedding_origin) const {
   if (render_frame_host && !render_frame_host->IsInPrimaryMainFrame()) {
-    // Note that portal and other main but non-outermost frames are
+    // Note that fenced frames and other main but non-outermost frames are
     // currently disallowed from queries by the PermissionService. This check
     // ensures that we do not assume that behavior, however.
     net::SchemefulSite top_level_site(
@@ -150,8 +163,9 @@ TopLevelStorageAccessPermissionContext::GetPermissionStatusInternal(
     }
   }
 
-  ContentSetting setting = PermissionContextBase::GetPermissionStatusInternal(
-      render_frame_host, requesting_origin, embedding_origin);
+  ContentSetting setting =
+      ContentSettingPermissionContextBase::GetContentSettingStatusInternal(
+          render_frame_host, requesting_origin, embedding_origin);
 
   // Although the current implementation does not persist rejected permissions,
   // the spec calls for avoiding exposure of rejections to prevent any attempt
@@ -163,46 +177,48 @@ TopLevelStorageAccessPermissionContext::GetPermissionStatusInternal(
 }
 
 void TopLevelStorageAccessPermissionContext::NotifyPermissionSet(
-    const permissions::PermissionRequestID& id,
-    const GURL& requesting_origin,
-    const GURL& embedding_origin,
+    const permissions::PermissionRequestData& request_data,
     permissions::BrowserPermissionCallback callback,
     bool persist,
-    ContentSetting content_setting,
-    bool is_one_time,
+    PermissionDecision decision,
     bool is_final_decision) {
-  CHECK(!is_one_time);
+  CHECK(decision != PermissionDecision::kAllowThisTime);
   CHECK(is_final_decision);
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+
+  if (decision == PermissionDecision::kDeny) {
+    CHECK(!persist);
+  }
+
   NotifyPermissionSetInternal(
-      id, requesting_origin, embedding_origin, std::move(callback), persist,
-      content_setting,
-      content_setting == CONTENT_SETTING_ALLOW
+      request_data, std::move(callback), persist, decision,
+      decision == PermissionDecision::kAllow
           ? TopLevelStorageAccessRequestOutcome::kGrantedByFirstPartySet
           : TopLevelStorageAccessRequestOutcome::kDeniedByFirstPartySet);
 }
 
 void TopLevelStorageAccessPermissionContext::NotifyPermissionSetInternal(
-    const permissions::PermissionRequestID& id,
-    const GURL& requesting_origin,
-    const GURL& embedding_origin,
+    const permissions::PermissionRequestData& request_data,
     permissions::BrowserPermissionCallback callback,
     bool persist,
-    ContentSetting content_setting,
+    PermissionDecision decision,
     TopLevelStorageAccessRequestOutcome outcome) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   RecordOutcomeSample(outcome);
 
-  const bool permission_allowed = (content_setting == CONTENT_SETTING_ALLOW);
-  UpdateTabContext(id, requesting_origin, permission_allowed);
+  UpdateTabContext(request_data.id, request_data.requesting_origin,
+                   decision == PermissionDecision::kAllow);
 
-  if (!permission_allowed || !persist) {
-    if (content_setting == CONTENT_SETTING_DEFAULT) {
-      content_setting = CONTENT_SETTING_ASK;
+  if (!persist) {
+    auto status = blink::mojom::PermissionStatus::ASK;
+    if (decision == PermissionDecision::kAllow ||
+        decision == PermissionDecision::kDeny) {
+      status = decision == PermissionDecision::kAllow
+                   ? blink::mojom::PermissionStatus::GRANTED
+                   : blink::mojom::PermissionStatus::DENIED;
     }
-
-    std::move(callback).Run(content_setting);
+    std::move(callback).Run(status);
     return;
   }
 
@@ -210,35 +226,27 @@ void TopLevelStorageAccessPermissionContext::NotifyPermissionSetInternal(
       HostContentSettingsMapFactory::GetForProfile(browser_context());
   CHECK(settings_map);
   CHECK(persist);
-
-  // This permission was allowed, so store it. Because this is a superset of the
-  // regular storage access permission, we also store that one.
-  const net::SchemefulSite embedding_site(embedding_origin);
-  const GURL embedding_site_as_url = embedding_site.GetURL();
-  ContentSettingsPattern secondary_site_pattern =
-      ContentSettingsPattern::CreateBuilder()
-          ->WithScheme(embedding_site_as_url.scheme())
-          ->WithDomainWildcard()
-          ->WithHost(embedding_site_as_url.host())
-          ->WithPathWildcard()
-          ->WithPortWildcard()
-          ->Build();
+  // This permission type doesn't support user prompts, so any denials are
+  // user-agent-generated. Machine-generated denials are not persisted.
+  CHECK_EQ(decision, PermissionDecision::kAllow);
 
   content_settings::ContentSettingConstraints constraints;
   constraints.set_lifetime(
       permissions::kStorageAccessAPIRelatedWebsiteSetsLifetime);
-  constraints.set_session_model(
-      content_settings::mojom::SessionModel::NON_RESTORABLE_USER_SESSION);
+  constraints.set_decided_by_related_website_sets(true);
 
-  settings_map->SetContentSettingCustomScope(
-      ContentSettingsPattern::FromURLNoWildcard(requesting_origin),
-      secondary_site_pattern, ContentSettingsType::TOP_LEVEL_STORAGE_ACCESS,
-      content_setting, constraints);
+  settings_map->SetContentSettingDefaultScope(
+      request_data.requesting_origin, request_data.embedding_origin,
+      ContentSettingsType::TOP_LEVEL_STORAGE_ACCESS, CONTENT_SETTING_ALLOW,
+      constraints);
 
+  // Because this is a superset of the regular storage access permission, we
+  // also store that one.
   settings_map->SetContentSettingCustomScope(
-      ContentSettingsPattern::FromURLNoWildcard(requesting_origin),
-      secondary_site_pattern, ContentSettingsType::STORAGE_ACCESS,
-      content_setting, constraints);
+      ContentSettingsPattern::FromURLNoWildcard(request_data.requesting_origin),
+      ContentSettingsPattern::FromURLToSchemefulSitePattern(
+          request_data.embedding_origin),
+      ContentSettingsType::STORAGE_ACCESS, CONTENT_SETTING_ALLOW, constraints);
 
   ContentSettingsForOneType top_level_grants =
       settings_map->GetSettingsForOneType(
@@ -258,7 +266,8 @@ void TopLevelStorageAccessPermissionContext::NotifyPermissionSetInternal(
                              ->GetDefaultStoragePartition()
                              ->GetCookieManagerForBrowserProcess();
   auto barrier = base::BarrierClosure(
-      2, base::BindOnce(std::move(callback), content_setting));
+      2, base::BindOnce(std::move(callback),
+                        blink::mojom::PermissionStatus::GRANTED));
   cookie_manager->SetContentSettings(ContentSettingsType::STORAGE_ACCESS,
                                      storage_access_grants, barrier);
   cookie_manager->SetContentSettings(
@@ -266,13 +275,12 @@ void TopLevelStorageAccessPermissionContext::NotifyPermissionSetInternal(
 }
 
 void TopLevelStorageAccessPermissionContext::UpdateContentSetting(
-    const GURL& requesting_origin,
-    const GURL& embedding_origin,
+    const permissions::PermissionRequestData& request_data,
     ContentSetting content_setting,
     bool is_one_time) {
   CHECK(!is_one_time);
   // We need to notify the network service of content setting updates before we
   // run our callback. As a result we do our updates when we're notified of a
   // permission being set and should not be called here.
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }

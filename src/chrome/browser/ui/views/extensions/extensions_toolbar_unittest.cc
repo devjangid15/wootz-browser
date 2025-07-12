@@ -4,13 +4,13 @@
 
 #include "chrome/browser/ui/views/extensions/extensions_toolbar_unittest.h"
 
+#include <algorithm>
+
 #include "base/command_line.h"
 #include "base/containers/to_vector.h"
-#include "base/ranges/algorithm.h"
 #include "base/run_loop.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/extensions/permissions/scripting_permissions_modifier.h"
 #include "chrome/browser/extensions/permissions/site_permissions_helper.h"
@@ -18,34 +18,33 @@
 #include "chrome/browser/ui/toolbar/toolbar_action_view_controller.h"
 #include "components/crx_file/id_util.h"
 #include "content/public/test/test_utils.h"
+#include "extensions/browser/disable_reason.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
+#include "extensions/common/extension_features.h"
 #include "extensions/common/mojom/manifest.mojom-shared.h"
 #include "extensions/test/permissions_manager_waiter.h"
 #include "ui/events/base_event_utils.h"
 #include "ui/views/layout/animating_layout_manager_test_util.h"
 #include "ui/views/view_utils.h"
 
-namespace {
-
 using PermissionsManager = extensions::PermissionsManager;
 using SitePermissionsHelper = extensions::SitePermissionsHelper;
 
-base::Value::List ToListValue(const std::vector<std::string>& permissions) {
-  base::Value::List builder;
-  for (const std::string& permission : permissions) {
-    builder.Append(permission);
-  }
-  return builder;
+ExtensionsToolbarUnitTest::ExtensionsToolbarUnitTest() {
+  // Allow unpacked extensions without developer mode for testing.
+  scoped_feature_list_.InitAndDisableFeature(
+      extensions_features::kExtensionDisableUnsupportedDeveloper);
 }
-
-}  // namespace
-
-ExtensionsToolbarUnitTest::ExtensionsToolbarUnitTest() = default;
 
 ExtensionsToolbarUnitTest::ExtensionsToolbarUnitTest(
     base::test::TaskEnvironment::TimeSource time_source)
-    : TestWithBrowserView(time_source) {}
+    : TestWithBrowserView(time_source) {
+  // Allow unpacked extensions without developer mode for testing.
+  scoped_feature_list_.InitAndDisableFeature(
+      extensions_features::kExtensionDisableUnsupportedDeveloper);
+}
 
 ExtensionsToolbarUnitTest::~ExtensionsToolbarUnitTest() = default;
 
@@ -57,9 +56,6 @@ void ExtensionsToolbarUnitTest::SetUp() {
           extensions::ExtensionSystem::Get(profile()));
   extension_system->CreateExtensionService(
       base::CommandLine::ForCurrentProcess(), base::FilePath(), false);
-
-  extension_service_ =
-      extensions::ExtensionSystem::Get(profile())->extension_service();
 
   permissions_manager_ = PermissionsManager::Get(profile());
   permissions_helper_ = std::make_unique<SitePermissionsHelper>(profile());
@@ -112,11 +108,11 @@ ExtensionsToolbarUnitTest::InstallExtension(
       extensions::ExtensionBuilder(name)
           .SetManifestVersion(3)
           .SetLocation(location)
-          .AddPermissions(permissions)
-          .SetManifestKey("host_permissions", ToListValue(host_permissions))
+          .AddAPIPermissions(permissions)
+          .AddHostPermissions(host_permissions)
           .SetID(crx_file::id_util::GenerateId(name))
           .Build();
-  extension_service()->AddExtension(extension.get());
+  extension_registrar()->AddExtension(extension);
 
   // Force the container to re-layout, since a new extension was added.
   LayoutContainerIfNecessary();
@@ -126,7 +122,7 @@ ExtensionsToolbarUnitTest::InstallExtension(
 
 void ExtensionsToolbarUnitTest::ReloadExtension(
     const extensions::ExtensionId& extension_id) {
-  extension_service()->ReloadExtension(extension_id);
+  extension_registrar()->ReloadExtension(extension_id);
 }
 
 void ExtensionsToolbarUnitTest::UninstallExtension(
@@ -139,7 +135,7 @@ void ExtensionsToolbarUnitTest::UninstallExtension(
   // race with a bunch of things, and extension uninstall is just one of them.
   // See crbug.com/1191455.
   base::RunLoop run_loop;
-  extension_service()->UninstallExtension(
+  extension_registrar()->UninstallExtension(
       extension_id, extensions::UninstallReason::UNINSTALL_REASON_FOR_TESTING,
       nullptr, run_loop.QuitClosure());
   run_loop.Run();
@@ -147,13 +143,13 @@ void ExtensionsToolbarUnitTest::UninstallExtension(
 
 void ExtensionsToolbarUnitTest::EnableExtension(
     const extensions::ExtensionId& extension_id) {
-  extension_service()->EnableExtension(extension_id);
+  extension_registrar()->EnableExtension(extension_id);
 }
 
 void ExtensionsToolbarUnitTest::DisableExtension(
     const extensions::ExtensionId& extension_id) {
-  extension_service()->DisableExtension(
-      extension_id, extensions::disable_reason::DISABLE_USER_ACTION);
+  extension_registrar()->DisableExtension(
+      extension_id, {extensions::disable_reason::DISABLE_USER_ACTION});
 }
 
 void ExtensionsToolbarUnitTest::WithholdHostPermissions(
@@ -165,11 +161,11 @@ void ExtensionsToolbarUnitTest::WithholdHostPermissions(
 }
 
 void ExtensionsToolbarUnitTest::ClickButton(views::Button* button) const {
-  ui::MouseEvent press_event(ui::ET_MOUSE_PRESSED, gfx::Point(), gfx::Point(),
-                             ui::EventTimeForNow(), ui::EF_LEFT_MOUSE_BUTTON,
-                             0);
+  ui::MouseEvent press_event(ui::EventType::kMousePressed, gfx::Point(),
+                             gfx::Point(), ui::EventTimeForNow(),
+                             ui::EF_LEFT_MOUSE_BUTTON, 0);
   button->OnMousePressed(press_event);
-  ui::MouseEvent release_event(ui::ET_MOUSE_RELEASED, gfx::Point(),
+  ui::MouseEvent release_event(ui::EventType::kMouseReleased, gfx::Point(),
                                gfx::Point(), ui::EventTimeForNow(),
                                ui::EF_LEFT_MOUSE_BUTTON, 0);
   button->OnMouseReleased(release_event);
@@ -194,18 +190,20 @@ void ExtensionsToolbarUnitTest::UpdateUserSiteSetting(
   waiter.WaitForUserPermissionsSettingsChange();
 }
 
-void ExtensionsToolbarUnitTest::AddSiteAccessRequest(
+void ExtensionsToolbarUnitTest::AddHostAccessRequest(
     const extensions::Extension& extension,
-    content::WebContents* web_contents) {
+    content::WebContents* web_contents,
+    const std::optional<URLPattern>& filter) {
   int tab_id = extensions::ExtensionTabUtil::GetTabId(web_contents);
-  permissions_manager_->AddSiteAccessRequest(web_contents, tab_id, extension);
+  permissions_manager_->AddHostAccessRequest(web_contents, tab_id, extension,
+                                             filter);
 }
 
-void ExtensionsToolbarUnitTest::RemoveSiteAccessRequest(
+void ExtensionsToolbarUnitTest::RemoveHostAccessRequest(
     const extensions::Extension& extension,
     content::WebContents* web_contents) {
   int tab_id = extensions::ExtensionTabUtil::GetTabId(web_contents);
-  permissions_manager_->RemoveSiteAccessRequest(tab_id, extension.id());
+  permissions_manager_->RemoveHostAccessRequest(tab_id, extension.id());
 }
 
 PermissionsManager::UserSiteSetting
@@ -242,8 +240,9 @@ ExtensionsToolbarUnitTest::GetPinnedExtensionViews() {
 #else
       const bool is_visible = action->GetVisible();
 #endif
-      if (is_visible)
+      if (is_visible) {
         result.push_back(action);
+      }
     }
   }
   return result;

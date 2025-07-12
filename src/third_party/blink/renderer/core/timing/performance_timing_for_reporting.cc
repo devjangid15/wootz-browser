@@ -19,6 +19,7 @@
 #include "third_party/blink/renderer/core/paint/timing/paint_timing.h"
 #include "third_party/blink/renderer/core/paint/timing/paint_timing_detector.h"
 #include "third_party/blink/renderer/core/timing/performance.h"
+#include "third_party/blink/renderer/core/timing/soft_navigation_heuristics.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_load_timing.h"
 
 namespace blink {
@@ -89,8 +90,6 @@ LargestContentfulPaintDetailsForReporting PerformanceTimingForReporting::
           timing.largest_contentful_paint_time,
 
           timing.largest_contentful_paint_image_request_priority,
-          timing.is_loaded_from_memory_cache,
-          timing.is_preloaded_with_early_hints,
           merged_unclamped_paint_time};
 }
 
@@ -180,15 +179,12 @@ uint64_t PerformanceTimingForReporting::FirstImagePaint() const {
   return MonotonicTimeToIntegerMilliseconds(timing->FirstImagePaint());
 }
 
-uint64_t
-PerformanceTimingForReporting::FirstContentfulPaintIgnoringSoftNavigations()
-    const {
+uint64_t PerformanceTimingForReporting::FirstContentfulPaint() const {
   const PaintTiming* timing = GetPaintTiming();
   if (!timing)
     return 0;
 
-  return MonotonicTimeToIntegerMilliseconds(
-      timing->FirstContentfulPaintIgnoringSoftNavigations());
+  return MonotonicTimeToIntegerMilliseconds(timing->FirstContentfulPaint());
 }
 
 base::TimeTicks PerformanceTimingForReporting::
@@ -207,7 +203,7 @@ PerformanceTimingForReporting::FirstContentfulPaintAsMonotonicTimeForMetrics()
   if (!timing)
     return base::TimeTicks();
 
-  return timing->FirstContentfulPaintIgnoringSoftNavigations();
+  return timing->FirstContentfulPaint();
 }
 
 uint64_t PerformanceTimingForReporting::FirstMeaningfulPaint() const {
@@ -242,13 +238,13 @@ PerformanceTimingForReporting::LargestContentfulPaintDetailsForMetrics() const {
 
 LargestContentfulPaintDetailsForReporting PerformanceTimingForReporting::
     SoftNavigationLargestContentfulPaintDetailsForMetrics() const {
-  PaintTimingDetector* paint_timing_detector = GetPaintTimingDetector();
-  if (!paint_timing_detector) {
+  SoftNavigationHeuristics* heuristics = GetSoftNavigationHeuristics();
+  if (!heuristics) {
     return {};
   }
 
-  auto timing = paint_timing_detector
-                    ->SoftNavigationLargestContentfulPaintDetailsForMetrics();
+  auto timing =
+      heuristics->SoftNavigationLargestContentfulPaintDetailsForMetrics();
 
   return PopulateLargestContentfulPaintDetailsForReporting(timing);
 }
@@ -377,15 +373,6 @@ uint64_t PerformanceTimingForReporting::
       cross_origin_isolated_capability_);
 }
 
-std::optional<base::TimeTicks>
-PerformanceTimingForReporting::LastPortalActivatedPaint() const {
-  const PaintTiming* timing = GetPaintTiming();
-  if (!timing)
-    return std::nullopt;
-
-  return timing->LastPortalActivatedPaint();
-}
-
 std::optional<base::TimeDelta>
 PerformanceTimingForReporting::PrerenderActivationStart() const {
   DocumentLoadTiming* timing = GetDocumentLoadTiming();
@@ -453,6 +440,16 @@ PerformanceTimingForReporting::UserTimingMarkInteractive() const {
   return timing->UserTimingMarkInteractive();
 }
 
+std::optional<std::tuple<AtomicString, base::TimeDelta>>
+PerformanceTimingForReporting::CustomUserTimingMark() const {
+  DocumentLoadTiming* timing = GetDocumentLoadTiming();
+  if (!timing) {
+    return std::nullopt;
+  }
+
+  return timing->CustomUserTimingMark();
+}
+
 DocumentLoader* PerformanceTimingForReporting::GetDocumentLoader() const {
   return DomWindow() ? DomWindow()->GetFrame()->Loader().GetDocumentLoader()
                      : nullptr;
@@ -498,6 +495,14 @@ PaintTimingDetector* PerformanceTimingForReporting::GetPaintTimingDetector()
   if (!DomWindow())
     return nullptr;
   return &DomWindow()->GetFrame()->View()->GetPaintTimingDetector();
+}
+
+SoftNavigationHeuristics*
+PerformanceTimingForReporting::GetSoftNavigationHeuristics() const {
+  if (!DomWindow()) {
+    return nullptr;
+  }
+  return DomWindow()->GetSoftNavigationHeuristics();
 }
 
 std::optional<base::TimeDelta>

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ios/web/common/referrer_util.h"
 
 #include "ios/web/public/navigation/referrer.h"
@@ -70,10 +75,11 @@ TEST_F(ReferrerUtilTest, DefaultPolicy) {
 
       // All but secure->insecure should have a full referrer.
       if (source_url.SchemeIsCryptographic() &&
-          !dest_url.SchemeIsCryptographic())
+          !dest_url.SchemeIsCryptographic()) {
         EXPECT_EQ("", value);
-      else
+      } else {
         EXPECT_EQ(source_url.GetAsReferrer().spec(), value);
+      }
 
       // Default should match NoReferrerWhenDowngrade in all cases.
       referrer.policy = ReferrerPolicyNoReferrerWhenDowngrade;
@@ -124,10 +130,11 @@ TEST_F(ReferrerUtilTest, OriginWhenCrossOriginPolicy) {
       // Full URL for the same origin, and origin for all other cases (even
       // secure->insecure).
       if (source_url.DeprecatedGetOriginAsURL() ==
-          dest_url.DeprecatedGetOriginAsURL())
+          dest_url.DeprecatedGetOriginAsURL()) {
         EXPECT_EQ(source_url.GetAsReferrer().spec(), value);
-      else
+      } else {
         EXPECT_EQ(source_url.DeprecatedGetOriginAsURL().spec(), value);
+      }
     }
   }
 }
@@ -143,10 +150,11 @@ TEST_F(ReferrerUtilTest, SameOriginPolicy) {
 
       // Full URL for the same origin, and nothing for all other cases.
       if (source_url.DeprecatedGetOriginAsURL() ==
-          dest_url.DeprecatedGetOriginAsURL())
+          dest_url.DeprecatedGetOriginAsURL()) {
         EXPECT_EQ(source_url.GetAsReferrer().spec(), value);
-      else
+      } else {
         EXPECT_EQ(std::string(), value);
+      }
     }
   }
 }
@@ -162,10 +170,11 @@ TEST_F(ReferrerUtilTest, StrictOriginPolicy) {
 
       // No referrer when downgrading, and origin otherwise.
       if (source_url.SchemeIsCryptographic() &&
-          !dest_url.SchemeIsCryptographic())
+          !dest_url.SchemeIsCryptographic()) {
         EXPECT_EQ("", value);
-      else
+      } else {
         EXPECT_EQ(source_url.DeprecatedGetOriginAsURL().spec(), value);
+      }
     }
   }
 }
@@ -182,13 +191,14 @@ TEST_F(ReferrerUtilTest, StrictOriginWhenCrossOriginPolicy) {
       // No referrer when downgrading, origin when cross-origin but not
       // downgrading, and full referrer otherwise.
       if (source_url.SchemeIsCryptographic() &&
-          !dest_url.SchemeIsCryptographic())
+          !dest_url.SchemeIsCryptographic()) {
         EXPECT_EQ("", value);
-      else if (source_url.DeprecatedGetOriginAsURL() ==
-               dest_url.DeprecatedGetOriginAsURL())
+      } else if (source_url.DeprecatedGetOriginAsURL() ==
+                 dest_url.DeprecatedGetOriginAsURL()) {
         EXPECT_EQ(source_url.GetAsReferrer().spec(), value);
-      else
+      } else {
         EXPECT_EQ(source_url.DeprecatedGetOriginAsURL().spec(), value);
+      }
     }
   }
 }
@@ -257,8 +267,9 @@ TEST_F(ReferrerUtilTest, PolicyFromString) {
   };
   // Test that all the values are supported.
   for (int i = 0; i < ReferrerPolicyLast; ++i) {
-    if (!kPolicyStrings[i])
+    if (!kPolicyStrings[i]) {
       continue;
+    }
     EXPECT_EQ(i, ReferrerPolicyFromString(kPolicyStrings[i]));
   }
 

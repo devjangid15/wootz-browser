@@ -14,7 +14,7 @@
 #include <vector>
 
 #include "base/containers/flat_map.h"
-#include "chrome/services/cups_proxy/public/cpp/type_conversions.h"
+#include "base/strings/string_view_util.h"
 #include "chrome/services/ipp_parser/public/cpp/ipp_converter.h"
 #include "net/http/http_util.h"
 
@@ -56,7 +56,7 @@ int LocateStartOfHeaders(std::string_view request) {
 
 // Returns the starting index of the end-of-headers-delimiter, -1 on failure.
 int LocateEndOfHeaders(std::string_view request) {
-  auto idx = net::HttpUtil::LocateEndOfHeaders(request.data(), request.size());
+  auto idx = net::HttpUtil::LocateEndOfHeaders(base::as_byte_span(request));
   if (idx < 0) {
     return -1;
   }
@@ -69,9 +69,7 @@ int LocateEndOfHeaders(std::string_view request) {
 
 // Returns the starting index of the IPP metadata, -1 on failure.
 int LocateStartOfIppMetadata(base::span<const uint8_t> request) {
-  std::vector<char> char_buffer = ipp_converter::ConvertToCharBuffer(request);
-  return net::HttpUtil::LocateEndOfHeaders(char_buffer.data(),
-                                           char_buffer.size());
+  return net::HttpUtil::LocateEndOfHeaders(request);
 }
 
 bool SplitRequestMetadata(base::span<const uint8_t> request,
@@ -83,7 +81,7 @@ bool SplitRequestMetadata(base::span<const uint8_t> request,
   }
 
   *http_metadata =
-      ipp_converter::ConvertToString(request.first(start_of_ipp_metadata));
+      std::string(base::as_string_view(request.first(start_of_ipp_metadata)));
   *ipp_metadata = request.subspan(start_of_ipp_metadata);
   return true;
 }

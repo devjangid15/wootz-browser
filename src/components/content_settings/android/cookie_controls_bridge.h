@@ -7,10 +7,12 @@
 
 #include <optional>
 
+#include "base/android/jni_android.h"
 #include "base/android/jni_weak_ref.h"
 #include "base/scoped_observation.h"
 #include "components/content_settings/browser/ui/cookie_controls_controller.h"
 #include "components/content_settings/browser/ui/cookie_controls_view.h"
+#include "components/content_settings/core/common/cookie_controls_state.h"
 
 namespace content_settings {
 
@@ -25,7 +27,8 @@ class CookieControlsBridge : public CookieControlsObserver {
       const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jobject>& jweb_contents_android,
       const base::android::JavaParamRef<jobject>&
-          joriginal_browser_context_handle);
+          joriginal_browser_context_handle,
+      bool is_incognito_branded);
 
   CookieControlsBridge(const CookieControlsBridge&) = delete;
   CookieControlsBridge& operator=(const CookieControlsBridge&) = delete;
@@ -36,35 +39,39 @@ class CookieControlsBridge : public CookieControlsObserver {
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& jweb_contents_android,
       const base::android::JavaParamRef<jobject>&
-          joriginal_browser_context_handle);
+          joriginal_browser_context_handle,
+      bool is_incognito_branded);
 
   // Destroys the CookieControlsBridge object. This needs to be called on the
   // java side when the object is not in use anymore.
-  void Destroy(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
+  void Destroy(JNIEnv* env);
 
   void SetThirdPartyCookieBlockingEnabledForSite(JNIEnv* env,
                                                  bool block_cookies);
+
+  void OnTrackingProtectionsChangedForSite(JNIEnv* env);
 
   void OnUiClosing(JNIEnv* env);
 
   void OnEntryPointAnimated(JNIEnv* env);
 
   // CookieControlsObserver:
-  void OnStatusChanged(bool controls_visible,
-                       bool protections_on,
+  void OnStatusChanged(CookieControlsState controls_state,
                        CookieControlsEnforcement enforcement,
                        CookieBlocking3pcdStatus blocking_status,
                        base::Time expiration) override;
+
   void OnCookieControlsIconStatusChanged(
       bool icon_visible,
-      bool protections_on,
+      CookieControlsState controls_state,
       CookieBlocking3pcdStatus blocking_status,
       bool should_highlight) override;
 
+  void OnReloadThresholdExceeded() override;
+
  private:
   base::android::ScopedJavaGlobalRef<jobject> jobject_;
-  bool controls_visible_ = false;
-  bool protections_on_ = false;
+  CookieControlsState controls_state_ = CookieControlsState::kHidden;
   CookieControlsEnforcement enforcement_ =
       CookieControlsEnforcement::kNoEnforcement;
   std::optional<base::Time> expiration_;

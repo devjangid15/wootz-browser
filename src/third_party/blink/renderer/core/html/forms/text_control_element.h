@@ -80,6 +80,7 @@ class CORE_EXPORT TextControlElement : public HTMLFormControlElementWithState {
   HTMLElement* PlaceholderElement() const;
   void UpdatePlaceholderVisibility();
   void UpdatePlaceholderShadowPseudoId(HTMLElement& placeholder);
+  virtual String GetPlaceholderValue() const = 0;
 
   VisiblePosition VisiblePositionForIndex(int) const;
   unsigned selectionStart() const;
@@ -144,8 +145,23 @@ class CORE_EXPORT TextControlElement : public HTMLFormControlElementWithState {
   bool LastChangeWasUserEdit() const;
 
   virtual void SetInnerEditorValue(const String&);
-  String InnerEditorValue() const;
+  static void AppendTextOrBr(const String& value, ContainerNode& container);
+  // Returns the user-visible editing text.
+  // This cost should be O(1), and may be faster than
+  // SerializeInnerEdtitorValue().
+  virtual String InnerEditorValue() const;
+  // Serialize the user-visible editing text.
+  // This cost might be O(N) where N is the number of InnerEditor children.
+  String SerializeInnerEditorValue() const;
+  // Returns the length of the user-visible editing text, and its is_8bit flag
+  // without serializing the text. `offset_map` can be nullptr.
+  std::pair<wtf_size_t, bool> AnalyzeInnerEditorValue(
+      HeapHashMap<Member<const Text>, unsigned>* offset_map) const;
+
   Node* CreatePlaceholderBreakElement() const;
+  // Returns true if the specified node was created by
+  // CreatePlaceholderBreakElement().
+  static bool IsPlaceholderBreakElement(const Node* node);
 
   String DirectionForFormData() const;
   // https://html.spec.whatwg.org/#auto-directionality-form-associated-elements
@@ -163,6 +179,13 @@ class CORE_EXPORT TextControlElement : public HTMLFormControlElementWithState {
   virtual void SetSuggestedValue(const String& value);
   const String& SuggestedValue() const;
 
+  void ScheduleSelectionchangeEvent();
+
+  void ResetEventQueueStatus(const AtomicString& event_type) override {
+    if (event_type == event_type_names::kSelectionchange)
+      has_scheduled_selectionchange_event_ = false;
+  }
+
   void Trace(Visitor*) const override;
 
   ETextOverflow ValueForTextOverflow() const;
@@ -170,7 +193,6 @@ class CORE_EXPORT TextControlElement : public HTMLFormControlElementWithState {
  protected:
   TextControlElement(const QualifiedName&, Document&);
   virtual HTMLElement* UpdatePlaceholderText() = 0;
-  virtual String GetPlaceholderValue() const = 0;
 
   // Creates the editor if necessary. Implementations that support an editor
   // should callback to CreateInnerEditorElement().
@@ -184,12 +206,16 @@ class CORE_EXPORT TextControlElement : public HTMLFormControlElementWithState {
   virtual void SubtreeHasChanged() = 0;
 
   void SetLastChangeWasNotUserEdit() { last_change_was_user_edit_ = false; }
-  void AddPlaceholderBreakElementIfNecessary();
+  void AdjustPlaceholderBreakElement();
   String ValueWithHardLineBreaks() const;
 
   void CloneNonAttributePropertiesFrom(const Element&,
                                        NodeCloningData&) override;
 
+  // Returns the value string. `length` and `is_8bit` must be computed by
+  // AnalyzeInnerEditorValue().
+  String SerializeInnerEditorValueInternal(wtf_size_t length,
+                                           bool is_8bit) const;
   // Returns true if the inner-editor value is empty. This may be cheaper
   // than calling InnerEditorValue(), and InnerEditorValue() returns
   // the wrong thing if the editor hasn't been created yet.
@@ -234,7 +260,7 @@ class CORE_EXPORT TextControlElement : public HTMLFormControlElementWithState {
                          mojom::blink::FocusType,
                          InputDeviceCapabilities* source_capabilities) final;
   void ScheduleSelectEvent();
-  void ScheduleSelectionchangeEvent();
+  void ScheduleSelectionchangeEventOnThisOrDocument();
   void DisabledOrReadonlyAttributeChanged(const QualifiedName&);
 
   // Called in dispatchFocusEvent(), after placeholder process, before calling
@@ -267,6 +293,9 @@ class CORE_EXPORT TextControlElement : public HTMLFormControlElementWithState {
 
   String suggested_value_;
   String value_before_set_suggested_value_;
+
+  // Indicate whether there is one scheduled selectionchange event.
+  bool has_scheduled_selectionchange_event_ = false;
 
   FRIEND_TEST_ALL_PREFIXES(TextControlElementTest, IndexForPosition);
   FRIEND_TEST_ALL_PREFIXES(HTMLTextAreaElementTest, ValueWithHardLineBreaks);

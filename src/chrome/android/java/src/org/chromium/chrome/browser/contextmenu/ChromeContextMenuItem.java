@@ -4,15 +4,18 @@
 
 package org.chromium.chrome.browser.contextmenu;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.Context;
 import android.text.style.ForegroundColorSpan;
 import android.text.style.RelativeSizeSpan;
 import android.text.style.SuperscriptSpan;
 
 import androidx.annotation.IntDef;
-import androidx.annotation.Nullable;
 import androidx.annotation.StringRes;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.DefaultBrowserInfo;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
@@ -20,6 +23,7 @@ import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.search_engines.TemplateUrlServiceFactory;
 import org.chromium.components.browser_ui.styles.SemanticColorUtils;
+import org.chromium.components.search_engines.TemplateUrl;
 import org.chromium.ui.text.SpanApplier;
 import org.chromium.ui.text.SpanApplier.SpanInfo;
 
@@ -27,6 +31,7 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 
 /** List of all predefined Context Menu Items available in Chrome. */
+@NullMarked
 class ChromeContextMenuItem {
     @IntDef({
         Item.OPEN_IN_NEW_CHROME_TAB,
@@ -36,6 +41,7 @@ class ChromeContextMenuItem {
         Item.OPEN_IN_INCOGNITO_TAB,
         Item.OPEN_IN_OTHER_WINDOW,
         Item.OPEN_IN_NEW_WINDOW,
+        Item.SHOW_INTEREST_IN_ELEMENT,
         Item.OPEN_IN_EPHEMERAL_TAB,
         Item.COPY_LINK_ADDRESS,
         Item.COPY_LINK_TEXT,
@@ -63,7 +69,11 @@ class ChromeContextMenuItem {
         Item.OPEN_IN_NEW_TAB_IN_GROUP,
         Item.SHARE_HIGHLIGHT,
         Item.REMOVE_HIGHLIGHT,
-        Item.LEARN_MORE
+        Item.LEARN_MORE,
+        Item.SAVE_PAGE,
+        Item.SHARE_PAGE,
+        Item.PRINT_PAGE,
+        Item.INSPECT_ELEMENT,
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface Item {
@@ -79,40 +89,47 @@ class ChromeContextMenuItem {
         int OPEN_IN_INCOGNITO_TAB = 5;
         int OPEN_IN_OTHER_WINDOW = 6;
         int OPEN_IN_NEW_WINDOW = 7;
-        int OPEN_IN_EPHEMERAL_TAB = 8;
-        int COPY_LINK_ADDRESS = 9;
-        int COPY_LINK_TEXT = 10;
-        int SAVE_LINK_AS = 11;
-        int SHARE_LINK = 12;
-        int DIRECT_SHARE_LINK = 13;
-        int READ_LATER = 14;
+        int SHOW_INTEREST_IN_ELEMENT = 8;
+        int OPEN_IN_EPHEMERAL_TAB = 9;
+        int COPY_LINK_ADDRESS = 10;
+        int COPY_LINK_TEXT = 11;
+        int SAVE_LINK_AS = 12;
+        int SHARE_LINK = 13;
+        int DIRECT_SHARE_LINK = 14;
+        int READ_LATER = 15;
         // Image Group
-        int LOAD_ORIGINAL_IMAGE = 15;
-        int SAVE_IMAGE = 16;
-        int OPEN_IMAGE = 17;
-        int OPEN_IMAGE_IN_NEW_TAB = 18;
-        int OPEN_IMAGE_IN_EPHEMERAL_TAB = 19;
-        int COPY_IMAGE = 20;
-        int SEARCH_BY_IMAGE = 21;
-        int SEARCH_WITH_GOOGLE_LENS = 22;
-        int SHOP_IMAGE_WITH_GOOGLE_LENS = 23;
-        int SHARE_IMAGE = 24;
-        int DIRECT_SHARE_IMAGE = 25;
+        int LOAD_ORIGINAL_IMAGE = 16;
+        int SAVE_IMAGE = 17;
+        int OPEN_IMAGE = 18;
+        int OPEN_IMAGE_IN_NEW_TAB = 19;
+        int OPEN_IMAGE_IN_EPHEMERAL_TAB = 20;
+        int COPY_IMAGE = 21;
+        int SEARCH_BY_IMAGE = 22;
+        int SEARCH_WITH_GOOGLE_LENS = 23;
+        int SHOP_IMAGE_WITH_GOOGLE_LENS = 24;
+        int SHARE_IMAGE = 25;
+        int DIRECT_SHARE_IMAGE = 26;
         // Message Group
-        int CALL = 26;
-        int SEND_MESSAGE = 27;
-        int ADD_TO_CONTACTS = 28;
-        int COPY = 29;
+        int CALL = 27;
+        int SEND_MESSAGE = 28;
+        int ADD_TO_CONTACTS = 29;
+        int COPY = 30;
         // Video Group
-        int SAVE_VIDEO = 30;
+        int SAVE_VIDEO = 31;
         // Other
-        int OPEN_IN_CHROME = 31;
+        int OPEN_IN_CHROME = 32;
         // Shared Highlighting options
-        int SHARE_HIGHLIGHT = 32;
-        int REMOVE_HIGHLIGHT = 33;
-        int LEARN_MORE = 34;
+        int SHARE_HIGHLIGHT = 33;
+        int REMOVE_HIGHLIGHT = 34;
+        int LEARN_MORE = 35;
+        // Page Group
+        int SAVE_PAGE = 36;
+        int SHARE_PAGE = 37;
+        int PRINT_PAGE = 38;
+        // Developer Group
+        int INSPECT_ELEMENT = 39;
         // ALWAYS UPDATE!
-        int NUM_ENTRIES = 35;
+        int NUM_ENTRIES = 40;
     }
 
     /** Mapping from {@link Item} to the ID found in the ids.xml. */
@@ -125,6 +142,7 @@ class ChromeContextMenuItem {
         R.id.contextmenu_open_in_incognito_tab, // Item.OPEN_IN_INCOGNITO_TAB
         R.id.contextmenu_open_in_other_window, // Item.OPEN_IN_OTHER_WINDOW
         R.id.contextmenu_open_in_new_window, // Item.OPEN_IN_NEW_WINDOW
+        R.id.contextmenu_show_interest_in_element, // Item.SHOW_INTEREST_IN_ELEMENT
         R.id.contextmenu_open_in_ephemeral_tab, // Item.OPEN_IN_EPHEMERAL_TAB
         R.id.contextmenu_copy_link_address, // Item.COPY_LINK_ADDRESS
         R.id.contextmenu_copy_link_text, // Item.COPY_LINK_TEXT
@@ -152,6 +170,10 @@ class ChromeContextMenuItem {
         R.id.contextmenu_share_highlight, // Item.SHARE_HIGHLIGHT
         R.id.contextmenu_remove_highlight, // Item.REMOVE_HIGHLIGHT
         R.id.contextmenu_learn_more, // Item.LEARN_MORE
+        R.id.contextmenu_save_page, // Item.SAVE_PAGE
+        R.id.contextmenu_share_page, // Item.SHARE_PAGE
+        R.id.contextmenu_print_page, // Item.PRINT_PAGE
+        R.id.contextmenu_inspect_element, // Item.INSPECT_ELEMENT
     };
 
     /** Mapping from {@link Item} to the ID of the string that describes the action of the item. */
@@ -164,6 +186,7 @@ class ChromeContextMenuItem {
         R.string.contextmenu_open_in_incognito_tab, // Item.OPEN_IN_INCOGNITO_TAB:
         R.string.contextmenu_open_in_other_window, // Item.OPEN_IN_OTHER_WINDOW:
         R.string.contextmenu_open_in_new_window, // Item.OPEN_IN_NEW_WINDOW:
+        R.string.contextmenu_show_interest_in_element, // Item.SHOW_INTEREST_IN_ELEMENT
         R.string.contextmenu_open_in_ephemeral_tab, // Item.OPEN_IN_EPHEMERAL_TAB:
         R.string.contextmenu_copy_link_address, // Item.COPY_LINK_ADDRESS:
         R.string.contextmenu_copy_link_text, // Item.COPY_LINK_TEXT:
@@ -191,6 +214,10 @@ class ChromeContextMenuItem {
         R.string.contextmenu_share_highlight, // Item.SHARE_HIGHLIGHT
         R.string.contextmenu_remove_highlight, // Item.REMOVE_HIGHLIGHT
         R.string.contextmenu_learn_more, // Item.LEARN_MORE
+        R.string.contextmenu_save_page, // Item.SAVE_PAGE
+        R.string.contextmenu_share_page, // Item.SHARE_PAGE
+        R.string.contextmenu_print_page, // Item.PRINT_PAGE
+        R.string.contextmenu_inspect_element, // Item.INSPECT_ELEMENT
     };
 
     /**
@@ -205,11 +232,11 @@ class ChromeContextMenuItem {
 
     /**
      * Get string ID from the ID of the item.
-     * @param context The activity context.
+     *
      * @param item #Item Item ID.
      * @return Returns the string that describes the action of the item.
      */
-    private static @StringRes int getStringId(Context context, @Item int item) {
+    private static @StringRes int getStringId(@Item int item) {
         assert STRING_IDS.length == Item.NUM_ENTRIES;
 
         return STRING_IDS[item];
@@ -231,11 +258,11 @@ class ChromeContextMenuItem {
             case Item.OPEN_IN_BROWSER_ID:
                 return DefaultBrowserInfo.getTitleOpenInDefaultBrowser(false);
             case Item.SEARCH_BY_IMAGE:
-                return context.getString(
-                        getStringId(context, item),
+                TemplateUrl templateUrl =
                         TemplateUrlServiceFactory.getForProfile(profile)
-                                .getDefaultSearchEngineTemplateUrl()
-                                .getShortName());
+                                .getDefaultSearchEngineTemplateUrl();
+                assumeNonNull(templateUrl);
+                return context.getString(getStringId(item), templateUrl.getShortName());
             case Item.READ_LATER:
                 return addOrRemoveNewLabel(context, item, null, showInProductHelp);
             case Item.OPEN_IN_EPHEMERAL_TAB:
@@ -263,17 +290,17 @@ class ChromeContextMenuItem {
                         ChromePreferenceKeys.CONTEXT_MENU_SHOP_IMAGE_WITH_GOOGLE_LENS_CLICKED,
                         showInProductHelp);
             default:
-                return context.getString(getStringId(context, item));
+                return context.getString(getStringId(item));
         }
     }
 
     /**
-     * Modify the menu title by applying span attributes or removing the 'New' label if the menu
-     * has already been selected before.
+     * Modify the menu title by applying span attributes or removing the 'New' label if the menu has
+     * already been selected before.
      */
     private static CharSequence addOrRemoveNewLabel(
             Context context, @Item int item, @Nullable String prefKey, boolean showNewLabel) {
-        String menuTitle = context.getString(getStringId(context, item));
+        String menuTitle = context.getString(getStringId(item));
         if (!showNewLabel
                 || (prefKey != null
                         && ChromeSharedPreferences.getInstance().readBoolean(prefKey, false))) {

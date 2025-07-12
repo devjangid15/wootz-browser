@@ -7,15 +7,16 @@
 
 #include <memory>
 
-#include "ash/test/ash_test_base.h"
 #include "base/files/file_path.h"
 #include "base/time/time.h"
 #include "chrome/browser/ash/app_list/arc/arc_app_test.h"
+#include "chrome/test/base/chrome_ash_test_base.h"
 #include "third_party/icu/source/i18n/unicode/timezone.h"
 
 class TestingProfile;
 
 namespace exo {
+class Surface;
 class WMHelper;
 }  // namespace exo
 
@@ -23,14 +24,14 @@ namespace arc {
 
 class OverviewTracingTestHandler;
 
-constexpr inline char kBasicSystrace[] =
+inline constexpr char kBasicSystrace[] =
     "{\"traceEvents\":[],\"systemTraceEvents\":\""
     // clang-format off
     "          <idle>-0     [003] d..0 44442.000001: cpu_idle: state=0 cpu_id=3\n"
     // clang-format on
     "\"}";
 
-class OverviewTracingTestBase : public ash::AshTestBase {
+class OverviewTracingTestBase : public ChromeAshTestBase {
  public:
   OverviewTracingTestBase();
 
@@ -39,13 +40,20 @@ class OverviewTracingTestBase : public ash::AshTestBase {
   OverviewTracingTestBase(const OverviewTracingTestBase&) = delete;
   OverviewTracingTestBase& operator=(const OverviewTracingTestBase&) = delete;
 
-  // ash::AshTestBase:
+  // ChromeAshTestBase:
   void SetUp() override;
   void TearDown() override;
 
   // Sets the timezone given its ICU name. The original timezone will be
   // restored in the TearDown method.
   static void SetTimeZone(const char* name);
+
+  // Runs commit and present events for `count` frames on `surface`, each
+  // separated by `delta`.
+  void CommitAndPresentFrames(arc::OverviewTracingTestHandler* handler,
+                              exo::Surface* surface,
+                              int count,
+                              base::TimeDelta delta);
 
  protected:
   void FastForwardClockAndTaskQueue(arc::OverviewTracingTestHandler* handler,
@@ -63,4 +71,4 @@ class OverviewTracingTestBase : public ash::AshTestBase {
 
 }  // namespace arc
 
-#endif  // CHROME_BROWSER_ASH_ARC_TRACING_TEST_OVERVIEW_TRACING_TEST_HANDLER_H_
+#endif  // CHROME_BROWSER_ASH_ARC_TRACING_TEST_OVERVIEW_TRACING_TEST_BASE_H_

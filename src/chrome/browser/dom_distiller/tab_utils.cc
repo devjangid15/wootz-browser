@@ -6,6 +6,8 @@
 
 #include <utility>
 
+#include "base/functional/bind.h"
+#include "base/functional/callback_forward.h"
 #include "base/location.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
@@ -13,10 +15,12 @@
 #include "chrome/browser/android/tab_android.h"
 #include "chrome/browser/dom_distiller/dom_distiller_service_factory.h"
 #include "chrome/browser/ui/tab_contents/core_tab_helper.h"
+#include "chrome/common/chrome_isolated_world_ids.h"
 #include "components/back_forward_cache/back_forward_cache_disable.h"
 #include "components/dom_distiller/content/browser/distiller_page_web_contents.h"
 #include "components/dom_distiller/core/distiller_page.h"
 #include "components/dom_distiller/core/dom_distiller_service.h"
+#include "components/dom_distiller/core/extraction_utils.h"
 #include "components/dom_distiller/core/task_tracker.h"
 #include "components/dom_distiller/core/url_constants.h"
 #include "components/dom_distiller/core/url_utils.h"
@@ -90,7 +94,7 @@ SelfDeletingRequestDelegate::SelfDeletingRequestDelegate(
     content::WebContents* web_contents)
     : WebContentsObserver(web_contents) {}
 
-SelfDeletingRequestDelegate::~SelfDeletingRequestDelegate() {}
+SelfDeletingRequestDelegate::~SelfDeletingRequestDelegate() = default;
 
 void SelfDeletingRequestDelegate::OnArticleReady(
     const DistilledArticleProto* article_proto) {}
@@ -144,6 +148,11 @@ void MaybeStartDistillation(
   std::unique_ptr<ViewerHandle> viewer_handle = dom_distiller_service->ViewUrl(
       view_request_delegate, std::move(distiller_page), last_committed_url);
   view_request_delegate->TakeViewerHandle(std::move(viewer_handle));
+}
+
+void OnReadabilityHeuristicResult(base::OnceCallback<void(bool)> callback,
+                                  base::Value value) {
+  std::move(callback).Run(value.GetIfBool().value_or(false));
 }
 
 }  // namespace
@@ -215,4 +224,14 @@ void DistillAndView(content::WebContents* source_web_contents,
 
   StartNavigationToDistillerViewer(destination_web_contents,
                                    source_web_contents->GetLastCommittedURL());
+}
+
+void RunReadabilityHeuristicsOnWebContents(
+    content::WebContents* web_contents,
+    base::OnceCallback<void(bool)> callback) {
+  std::string script = dom_distiller::GetReadabilityTriggeringScript();
+  web_contents->GetPrimaryMainFrame()->ExecuteJavaScriptInIsolatedWorld(
+      base::UTF8ToUTF16(script),
+      base::BindOnce(OnReadabilityHeuristicResult, std::move(callback)),
+      ISOLATED_WORLD_ID_CHROME_INTERNAL);
 }

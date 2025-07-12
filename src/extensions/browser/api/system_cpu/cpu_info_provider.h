@@ -38,8 +38,8 @@ class CpuInfoProvider : public SystemInfoProvider {
 
   // Platform specific implementation for querying the CPU time information
   // for each processor.
-  // virtual bool QueryCpuTimePerProcessor(
-  //     std::vector<api::system_cpu::ProcessorInfo>* infos);
+  virtual bool QueryCpuTimePerProcessor(
+      std::vector<api::system_cpu::ProcessorInfo>* infos);
 
   // Overriden from SystemInfoProvider.
   bool QueryInfo() override;
@@ -51,8 +51,8 @@ class CpuInfoProvider : public SystemInfoProvider {
   // threads, but the whole class is being guarded by SystemInfoProvider base
   // class.
   //
-  // |info_| is accessed on the UI thread while |is_waiting_for_completion_| is
-  // false and on the sequenced worker pool while |is_waiting_for_completion_|
+  // `info_` is accessed on the UI thread while `is_waiting_for_completion_` is
+  // false and on the sequenced worker pool while `is_waiting_for_completion_`
   // is true.
   api::system_cpu::CpuInfo info_;
 

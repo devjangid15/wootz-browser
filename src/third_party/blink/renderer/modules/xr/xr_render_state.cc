@@ -41,9 +41,9 @@ void XRRenderState::Update(const XRRenderStateInit* init) {
   }
   if (init->hasLayers()) {
     base_layer_ = nullptr;
-    layers_ = init->layers()
-                  ? MakeGarbageCollected<FrozenArray<XRLayer>>(*init->layers())
-                  : MakeGarbageCollected<FrozenArray<XRLayer>>();
+    layers_ = init->layers() ? MakeGarbageCollected<FrozenArray<XRLayer>>(
+                                   HeapVector<Member<XRLayer>>(*init->layers()))
+                             : MakeGarbageCollected<FrozenArray<XRLayer>>();
   }
   if (init->hasInlineVerticalFieldOfView()) {
     double fov = init->inlineVerticalFieldOfView();
@@ -53,6 +53,16 @@ void XRRenderState::Update(const XRRenderStateInit* init) {
     fov = std::min(kMaxFieldOfView, fov);
     inline_vertical_fov_ = fov;
   }
+}
+
+XRLayer* XRRenderState::GetFirstLayer() const {
+  if (base_layer_) {
+    return base_layer_.Get();
+  }
+  if (layers_->size()) {
+    return layers_->at(0);
+  }
+  return nullptr;
 }
 
 HTMLCanvasElement* XRRenderState::output_canvas() const {

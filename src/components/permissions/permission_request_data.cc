@@ -2,39 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-
-
-#include <optional>
-
-#include "components/permissions/permission_context_base.h"
 #include "components/permissions/permission_request_data.h"
 
-// Jai - starts
-namespace permissions {
-
-std::optional<RequestType> ContentSettingsTypeToRequestTypeIfExists_WootzImpl(
-    ContentSettingsType content_settings_type) {
-  switch (content_settings_type) {
-    case ContentSettingsType::WOOTZ_ETHEREUM:
-      return RequestType::kWootzEthereum;
-    case ContentSettingsType::WOOTZ_SOLANA:
-      return RequestType::kWootzSolana;
-    default:
-      return ContentSettingsTypeToRequestTypeIfExists(content_settings_type);
-  }
-}
-
-}  // namespace permissions
-
-#define PermissionContextBase PermissionContextBase_ChromiumImpl
-
-#define ContentSettingsTypeToRequestTypeIfExists \
-  ContentSettingsTypeToRequestTypeIfExists_WootzImpl
-
-//  Jai - Ends
-
-#include "components/permissions/permission_request_data.h"
-#include "components/permissions/permission_context_base.h"
+#include "components/permissions/content_setting_permission_context_base.h"
+#include "components/permissions/permission_util.h"
+#include "content/public/browser/permission_descriptor_util.h"
 #include "content/public/browser/permission_request_description.h"
 
 namespace permissions {
@@ -43,7 +15,9 @@ PermissionRequestData::PermissionRequestData(
     PermissionContextBase* context,
     const PermissionRequestID& id,
     const content::PermissionRequestDescription& request_description,
-    const GURL& canonical_requesting_origin)
+    const GURL& canonical_requesting_origin,
+    const GURL& canonical_embedding_origin,
+    int request_description_permission_index)
     : request_type(ContentSettingsTypeToRequestTypeIfExists(
           context->content_settings_type())),
       id(id),
@@ -51,11 +25,15 @@ PermissionRequestData::PermissionRequestData(
       embedded_permission_element_initiated(
           request_description.embedded_permission_element_initiated),
       requesting_origin(canonical_requesting_origin),
+      embedding_origin(canonical_embedding_origin),
       anchor_element_position(request_description.anchor_element_position),
       requested_audio_capture_device_ids(
           request_description.requested_audio_capture_device_ids),
       requested_video_capture_device_ids(
-          request_description.requested_video_capture_device_ids) {}
+          request_description.requested_video_capture_device_ids) {
+  resolver = context->CreatePermissionResolver(
+      request_description.permissions[request_description_permission_index]);
+}
 
 PermissionRequestData::PermissionRequestData(PermissionContextBase* context,
                                              const PermissionRequestID& id,
@@ -68,13 +46,17 @@ PermissionRequestData::PermissionRequestData(PermissionContextBase* context,
       user_gesture(user_gesture),
       embedded_permission_element_initiated(false),
       requesting_origin(requesting_origin),
-      embedding_origin(embedding_origin) {}
+      embedding_origin(embedding_origin) {
+  resolver = context->CreateRequestIndependentPermissionResolver();
+}
 
-PermissionRequestData::PermissionRequestData(RequestType request_type,
-                                             bool user_gesture,
-                                             const GURL& requesting_origin,
-                                             const GURL& embedding_origin)
-    : request_type(request_type),
+PermissionRequestData::PermissionRequestData(
+    std::unique_ptr<permissions::PermissionResolver> resolver,
+    bool user_gesture,
+    const GURL& requesting_origin,
+    const GURL& embedding_origin)
+    : request_type(resolver->GetRequestType()),
+      resolver(std::move(resolver)),
       id(PermissionRequestID(
           content::GlobalRenderFrameHostId(0, 0),
           permissions::PermissionRequestID::RequestLocalId())),
@@ -90,9 +72,3 @@ PermissionRequestData::PermissionRequestData(PermissionRequestData&&) = default;
 PermissionRequestData::~PermissionRequestData() = default;
 
 }  // namespace permissions
-
-
-
-// Jai
-#undef ContentSettingsTypeToRequestTypeIfExists
-#undef PermissionContextBase

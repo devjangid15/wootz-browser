@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/views/infobars/confirm_infobar.h"
 
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include "base/functional/bind.h"
@@ -27,13 +28,13 @@ ConfirmInfoBar::ConfirmInfoBar(std::unique_ptr<ConfirmInfoBarDelegate> delegate)
     : InfoBarView(std::move(delegate)) {
   SetProperty(views::kElementIdentifierKey, kInfoBarElementId);
   auto* delegate_ptr = GetDelegate();
-  label_ = AddChildView(CreateLabel(delegate_ptr->GetMessageText()));
+  label_ = AddContentChildView(CreateLabel(delegate_ptr->GetMessageText()));
   label_->SetElideBehavior(delegate_ptr->GetMessageElideBehavior());
 
   const int buttons = delegate_ptr->GetButtons();
   const auto create_button = [&](ConfirmInfoBarDelegate::InfoBarButton type,
                                  void (ConfirmInfoBar::*click_function)()) {
-    auto* button = AddChildView(std::make_unique<views::MdTextButton>(
+    auto* button = AddContentChildView(std::make_unique<views::MdTextButton>(
         base::BindRepeating(click_function, base::Unretained(this)),
         GetDelegate()->GetButtonLabel(type)));
     button->SetProperty(
@@ -66,9 +67,8 @@ ConfirmInfoBar::ConfirmInfoBar(std::unique_ptr<ConfirmInfoBarDelegate> delegate)
                                 kCancelButtonElementId);
   }
 
-  // TODO(josephjoopark): It seems like link_ isn't always needed, but it's
-  // added regardless. See about only adding when necessary.
-  link_ = AddChildView(CreateLink(delegate_ptr->GetLinkText()));
+  link_ = AddContentChildView(CreateLink(
+      delegate_ptr->GetLinkText(), delegate_ptr->GetLinkAccessibleText()));
 }
 
 ConfirmInfoBar::~ConfirmInfoBar() = default;
@@ -110,8 +110,8 @@ void ConfirmInfoBar::Layout(PassKey) {
     order_of_buttons.push_back(cancel_button_);
   }
 
-  if (!views::PlatformStyle::kIsOkButtonLeading) {
-    base::ranges::reverse(order_of_buttons);
+  if constexpr (!views::PlatformStyle::kIsOkButtonLeading) {
+    std::ranges::reverse(order_of_buttons);
   }
 
   for (views::MdTextButton* button : order_of_buttons) {
@@ -125,17 +125,21 @@ void ConfirmInfoBar::Layout(PassKey) {
 }
 
 void ConfirmInfoBar::OkButtonPressed() {
-  if (!owner())
+  if (!owner()) {
     return;  // We're closing; don't call anything, it might access the owner.
-  if (GetDelegate()->Accept())
+  }
+  if (GetDelegate()->Accept()) {
     RemoveSelf();
+  }
 }
 
 void ConfirmInfoBar::CancelButtonPressed() {
-  if (!owner())
+  if (!owner()) {
     return;  // We're closing; don't call anything, it might access the owner.
-  if (GetDelegate()->Cancel())
+  }
+  if (GetDelegate()->Cancel()) {
     RemoveSelf();
+  }
 }
 
 ConfirmInfoBarDelegate* ConfirmInfoBar::GetDelegate() {

@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_ANDROID_WEBAPK_WEBAPK_RESTORE_TASK_H_
 
 #include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/types/pass_key.h"
 #include "components/webapps/browser/android/add_to_homescreen_data_fetcher.h"
@@ -13,7 +14,7 @@
 #include "components/webapps/common/web_app_id.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 
-class Profile;
+class WebApkInstallService;
 
 namespace webapps {
 enum class InstallableStatusCode;
@@ -50,7 +51,7 @@ class WebApkRestoreTask : public webapps::AddToHomescreenDataFetcher::Observer {
  public:
   explicit WebApkRestoreTask(
       base::PassKey<WebApkRestoreManager>,
-      Profile* profile,
+      WebApkInstallService* web_apk_install_service,
       WebApkRestoreWebContentsManager* web_contents_manager,
       std::unique_ptr<webapps::ShortcutInfo> fallback_info,
       base::Time last_used_time);
@@ -108,7 +109,7 @@ class WebApkRestoreTask : public webapps::AddToHomescreenDataFetcher::Observer {
                FallbackReason fallback_reason);
   void OnFinishedInstall(bool is_fallback, webapps::WebApkInstallResult result);
 
-  raw_ptr<Profile> profile_;
+  raw_ptr<WebApkInstallService> web_apk_install_service_;
   base::WeakPtr<WebApkRestoreWebContentsManager> web_contents_manager_;
 
   CompleteCallback complete_callback_;

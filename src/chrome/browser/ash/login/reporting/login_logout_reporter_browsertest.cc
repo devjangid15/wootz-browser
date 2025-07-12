@@ -18,23 +18,21 @@
 #include "chrome/browser/ash/app_mode/fake_cws.h"
 #include "chrome/browser/ash/app_mode/kiosk_controller.h"
 #include "chrome/browser/ash/app_mode/kiosk_profile_load_failed_observer.h"
-#include "chrome/browser/ash/login/app_mode/kiosk_launch_controller.h"
+#include "chrome/browser/ash/app_mode/kiosk_test_helper.h"
 #include "chrome/browser/ash/login/app_mode/test/kiosk_apps_mixin.h"
 #include "chrome/browser/ash/login/session/user_session_manager_test_api.h"
 #include "chrome/browser/ash/login/test/embedded_test_server_setup_mixin.h"
 #include "chrome/browser/ash/login/test/login_manager_mixin.h"
 #include "chrome/browser/ash/login/test/oobe_screens_utils.h"
 #include "chrome/browser/ash/login/test/session_manager_state_waiter.h"
-#include "chrome/browser/ash/login/ui/login_display_host.h"
 #include "chrome/browser/ash/policy/core/browser_policy_connector_ash.h"
-#include "chrome/browser/ash/policy/core/device_local_account.h"
 #include "chrome/browser/ash/policy/core/device_local_account_policy_service.h"
 #include "chrome/browser/ash/policy/core/device_policy_cros_browser_test.h"
-#include "chrome/browser/ash/settings/scoped_testing_cros_settings.h"
-#include "chrome/browser/ash/settings/stub_cros_settings_provider.h"
+#include "chrome/browser/ash/policy/core/device_policy_cros_test_helper.h"
 #include "chrome/browser/extensions/browsertest_util.h"
 #include "chrome/browser/policy/messaging_layer/proto/synced/login_logout_event.pb.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/ui/ash/login/login_display_host.h"
 #include "chrome/test/base/fake_gaia_mixin.h"
 #include "chrome/test/base/mixin_based_in_process_browser_test.h"
 #include "chrome/test/base/testing_browser_process.h"
@@ -45,6 +43,7 @@
 #include "chromeos/ash/components/login/auth/public/user_context.h"
 #include "chromeos/ash/components/login/auth/stub_authenticator_builder.h"
 #include "chromeos/ash/components/login/login_state/login_state.h"
+#include "chromeos/ash/components/policy/device_local_account/device_local_account_type.h"
 #include "chromeos/ash/components/settings/cros_settings_names.h"
 #include "chromeos/dbus/missive/missive_client.h"
 #include "chromeos/dbus/missive/missive_client_test_observer.h"
@@ -60,6 +59,7 @@
 #include "extensions/browser/app_window/app_window.h"
 #include "extensions/browser/app_window/app_window_registry.h"
 #include "extensions/browser/app_window/native_app_window.h"
+#include "google_apis/gaia/gaia_id.h"
 #include "net/dns/mock_host_resolver.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -173,11 +173,21 @@ class LoginLogoutReporterBrowserTest
  protected:
   LoginLogoutReporterBrowserTest() {
     login_manager_.set_session_restore_enabled();
-    scoped_testing_cros_settings_.device_settings()->SetBoolean(
-        kReportDeviceLoginLogout, true);
+    SetAllowFeaturesSwitches(/*allow=*/true);
   }
 
   ~LoginLogoutReporterBrowserTest() override = default;
+
+  void SetUpLocalStatePrefService(PrefService* local_state) override {
+    policy::DevicePolicyCrosBrowserTest::SetUpLocalStatePrefService(
+        local_state);
+
+    policy_helper_.device_policy()
+        ->payload()
+        .mutable_device_reporting()
+        ->set_report_login_logout(true);
+    policy_helper_.RefreshDevicePolicy();
+  }
 
   void SetUpOnMainThread() override {
     login_manager_.SetShouldLaunchBrowser(true);
@@ -209,8 +219,7 @@ class LoginLogoutReporterBrowserTest
                                      FakeGaiaMixin::kFakeUserGaiaId)};
 
   LoginManagerMixin login_manager_{&mixin_host_, {test_user_}};
-
-  ScopedTestingCrosSettings scoped_testing_cros_settings_;
+  policy::DevicePolicyCrosTestHelper policy_helper_;
 };
 
 IN_PROC_BROWSER_TEST_F(LoginLogoutReporterBrowserTest,
@@ -382,7 +391,7 @@ class LoginLogoutReporterPublicSessionBrowserTest
   const AccountId public_session_account_id_ =
       AccountId::FromUserEmail(policy::GenerateDeviceLocalAccountUserId(
           kPublicSessionUserEmail,
-          policy::DeviceLocalAccount::TYPE_PUBLIC_SESSION));
+          policy::DeviceLocalAccountType::kPublicSession));
 
   LoginManagerMixin login_manager_{&mixin_host_, {}};
 };
@@ -417,6 +426,13 @@ IN_PROC_BROWSER_TEST_F(LoginLogoutReporterPublicSessionBrowserTest,
 class LoginLogoutReporterKioskBrowserTest
     : public MixinBasedInProcessBrowserTest {
  protected:
+  LoginLogoutReporterKioskBrowserTest() {
+    // Force allow Chrome Apps in Kiosk, since they are default disabled since
+    // M138.
+    scoped_feature_list_.InitFromCommandLine("AllowChromeAppsInKioskSessions",
+                                             "");
+  }
+
   void SetUp() override {
     login_manager_.set_session_restore_enabled();
 
@@ -446,19 +462,20 @@ class LoginLogoutReporterKioskBrowserTest
     extensions::browsertest_util::CreateAndInitializeLocalCache();
   }
 
-  std::string GetTestAppId() const { return KioskAppsMixin::kKioskAppId; }
+  std::string GetTestAppId() const { return KioskAppsMixin::kTestChromeAppId; }
 
  private:
   FakeCWS fake_cws_;
   policy::DevicePolicyCrosTestHelper policy_helper_;
   base::AutoReset<bool> skip_splash_wait_override_ =
-      KioskLaunchController::SkipSplashScreenWaitForTesting();
+      KioskTestHelper::SkipSplashScreenWait();
   EmbeddedTestServerSetupMixin embedded_test_server_{&mixin_host_,
                                                      embedded_test_server()};
 
   DeviceStateMixin device_state_{
       &mixin_host_, DeviceStateMixin::State::OOBE_COMPLETED_CLOUD_ENROLLED};
   LoginManagerMixin login_manager_{&mixin_host_, {}};
+  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 IN_PROC_BROWSER_TEST_F(LoginLogoutReporterKioskBrowserTest,

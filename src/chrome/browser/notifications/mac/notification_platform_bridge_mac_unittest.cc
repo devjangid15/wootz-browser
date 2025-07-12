@@ -17,7 +17,7 @@
 #include "chrome/browser/notifications/mac/notification_utils.h"
 #include "chrome/browser/notifications/mac/stub_notification_dispatcher_mac.h"
 #include "chrome/browser/notifications/notification_test_util.h"
-#include "chrome/browser/web_applications/app_shim_registry_mac.h"
+#include "chrome/browser/web_applications/os_integration/mac/app_shim_registry.h"
 #include "chrome/browser/web_applications/test/web_app_install_test_utils.h"
 #include "chrome/common/buildflags.h"
 #include "chrome/common/chrome_features.h"
@@ -561,6 +561,13 @@ TEST_F(NotificationPlatformBridgeMacTest, TestDisplayETLDPlusOne) {
 class NotificationPlatformBridgeMacTestWithNotificationAttribution
     : public NotificationPlatformBridgeMacTest {
  public:
+  NotificationPlatformBridgeMacTestWithNotificationAttribution() {
+    scoped_feature_list_.InitWithFeatures(
+        /*enabled_features=*/{features::kAppShimNotificationAttribution,
+                              features::kUseAdHocSigningForWebAppShims},
+        /*disabled_features=*/{});
+  }
+
   void SetUp() override {
     NotificationPlatformBridgeMacTest::SetUp();
     web_app::test::AwaitStartWebAppProviderAndSubsystems(profile());
@@ -576,8 +583,7 @@ class NotificationPlatformBridgeMacTestWithNotificationAttribution
   webapps::AppId installed_app_id_;
 
  private:
-  base::test::ScopedFeatureList scoped_feature_list_{
-      features::kAppShimNotificationAttribution};
+  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 TEST_F(NotificationPlatformBridgeMacTestWithNotificationAttribution,

@@ -10,10 +10,7 @@ import android.graphics.Bitmap;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Icon;
 import android.net.Uri;
-import android.os.Build;
 import android.text.TextUtils;
-
-import androidx.annotation.RequiresApi;
 
 import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
@@ -21,37 +18,38 @@ import org.jni_zero.NativeMethods;
 import org.chromium.base.Callback;
 import org.chromium.base.ContextUtils;
 import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.components.browser_ui.notifications.BaseNotificationManagerProxy;
+import org.chromium.components.browser_ui.notifications.BaseNotificationManagerProxyFactory;
 import org.chromium.components.browser_ui.notifications.NotificationManagerProxy;
-import org.chromium.components.browser_ui.notifications.NotificationManagerProxyImpl;
 import org.chromium.components.browser_ui.notifications.NotificationMetadata;
 import org.chromium.components.browser_ui.notifications.NotificationWrapper;
 import org.chromium.components.embedder_support.util.UrlConstants;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
-import java.util.stream.Collectors;
 
 /**
  * Class that suspends and revives notifications.
  *
- * All calls must be made on the UI thread, and the full browser must be started before using this
- * class.
+ * <p>All calls must be made on the UI thread, and the full browser must be started before using
+ * this class.
  */
 public class NotificationSuspender {
     private final Profile mProfile;
     private final Context mContext;
-    private final NotificationManagerProxy mNotificationManager;
+    private final BaseNotificationManagerProxy mNotificationManager;
 
     public NotificationSuspender(Profile profile) {
         this(
                 profile,
                 ContextUtils.getApplicationContext(),
-                new NotificationManagerProxyImpl(ContextUtils.getApplicationContext()));
+                BaseNotificationManagerProxyFactory.create());
     }
 
     public NotificationSuspender(
-            Profile profile, Context context, NotificationManagerProxy notificationManager) {
+            Profile profile, Context context, BaseNotificationManagerProxy notificationManager) {
         mProfile = profile;
         mContext = context;
         mNotificationManager = notificationManager;
@@ -79,7 +77,6 @@ public class NotificationSuspender {
      *
      * <p>This allows re-displaying these notification later.
      *
-     * @param notifications The origins for which all notification resources to store.
      * @param callback The origins for which all notification resources to store.
      */
     public void storeNotificationResourcesFromOrigins(
@@ -97,7 +94,7 @@ public class NotificationSuspender {
      */
     public List<String> storeNotificationResources(List<NotificationWrapper> notifications) {
         if (notifications.isEmpty()) {
-            return new ArrayList<String>();
+            return new ArrayList<>();
         }
 
         String[] notificationIds = new String[notifications.size()];
@@ -117,7 +114,7 @@ public class NotificationSuspender {
 
         NotificationSuspenderJni.get()
                 .storeNotificationResources(mProfile, notificationIds, origins, resources);
-        return new ArrayList<String>(Arrays.asList(notificationIds));
+        return new ArrayList<>(Arrays.asList(notificationIds));
     }
 
     /**
@@ -131,23 +128,18 @@ public class NotificationSuspender {
         unsuspendNotificationsFromOrigins(getOriginsForDomains(fqdns));
     }
 
-    /**
-     * Unsuspends notifications from the given origins.
-     *
-     * @param fqdns The list of domain strings to unsuspend notifications from.
-     */
+    /** Unsuspends notifications from the given origins. */
     public void unsuspendNotificationsFromOrigins(List<Uri> origins) {
         if (origins.isEmpty()) {
             return;
         }
+        int size = origins.size();
+        String[] originStrs = new String[size];
+        for (int i = 0; i < size; ++i) {
+            originStrs[i] = origins.get(i).toString();
+        }
 
-        NotificationSuspenderJni.get()
-                .reDisplayNotifications(
-                        mProfile,
-                        origins.stream()
-                                .map((origin) -> origin.toString())
-                                .collect(Collectors.toList())
-                                .toArray(new String[0]));
+        NotificationSuspenderJni.get().reDisplayNotifications(mProfile, originStrs);
     }
 
     /**
@@ -168,7 +160,7 @@ public class NotificationSuspender {
      *
      * @param notificationIds The IDs of notifications to cancel.
      */
-    public void cancelNotificationsWithIds(List<String> notificationIds) {
+    public void cancelNotificationsWithIds(Collection<String> notificationIds) {
         for (String notificationId : notificationIds) {
             mNotificationManager.cancel(
                     /* tag= */ notificationId, NotificationPlatformBridge.PLATFORM_ID);
@@ -177,7 +169,7 @@ public class NotificationSuspender {
 
     private List<Uri> getOriginsForDomains(List<String> fqdns) {
         final String[] notificationSchemes = {UrlConstants.HTTPS_SCHEME, UrlConstants.HTTP_SCHEME};
-        ArrayList<Uri> origins = new ArrayList<Uri>();
+        ArrayList<Uri> origins = new ArrayList<>();
         for (String fqdn : fqdns) {
             for (String scheme : notificationSchemes) {
                 origins.add(new Uri.Builder().scheme(scheme).authority(fqdn).build());
@@ -186,7 +178,7 @@ public class NotificationSuspender {
         return origins;
     }
 
-    private void getActiveNotificationsForOrigins(
+    public void getActiveNotificationsForOrigins(
             List<Uri> origins, Callback<List<NotificationWrapper>> callback) {
         List<NotificationWrapper> notifications = new ArrayList<>();
 
@@ -218,7 +210,6 @@ public class NotificationSuspender {
                 });
     }
 
-    @RequiresApi(Build.VERSION_CODES.P)
     private Bitmap getBitmapFromIcon(Icon icon) {
         if (icon == null || icon.getType() != Icon.TYPE_BITMAP) return null;
         return ((BitmapDrawable) icon.loadDrawable(mContext)).getBitmap();
@@ -249,6 +240,8 @@ public class NotificationSuspender {
                 Bitmap[] resources);
 
         // Displays all suspended notifications for the given |origins|.
-        void reDisplayNotifications(@JniType("Profile*") Profile profile, String[] origins);
+        void reDisplayNotifications(
+                @JniType("Profile*") Profile profile,
+                @JniType("std::vector<std::string>") String[] origins);
     }
 }

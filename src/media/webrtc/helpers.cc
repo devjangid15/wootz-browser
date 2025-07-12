@@ -12,9 +12,14 @@
 #include "base/metrics/field_trial_params.h"
 #include "build/build_config.h"
 #include "build/chromecast_buildflags.h"
+#include "media/base/media_switches.h"
 #include "media/webrtc/webrtc_features.h"
+#include "third_party/webrtc/api/audio/audio_processing.h"
+#include "third_party/webrtc/api/audio/builtin_audio_processing_builder.h"
+#include "third_party/webrtc/api/audio/echo_canceller3_config.h"
+#include "third_party/webrtc/api/audio/echo_canceller3_factory.h"
 #include "third_party/webrtc/modules/audio_processing/aec_dump/aec_dump_factory.h"
-#include "third_party/webrtc/modules/audio_processing/include/audio_processing.h"
+#include "third_party/webrtc_overrides/environment.h"
 
 namespace media {
 namespace {
@@ -126,12 +131,10 @@ void StopEchoCancellationDump(webrtc::AudioProcessing* audio_processing) {
   audio_processing->DetachAecDump();
 }
 
-rtc::scoped_refptr<webrtc::AudioProcessing> CreateWebRtcAudioProcessingModule(
-    const AudioProcessingSettings& settings) {
+std::pair<webrtc::scoped_refptr<webrtc::AudioProcessing>, base::TimeDelta>
+CreateWebRtcAudioProcessingModule(const AudioProcessingSettings& settings) {
   if (!settings.NeedWebrtcAudioProcessing())
-    return nullptr;
-
-  webrtc::AudioProcessingBuilder ap_builder;
+    return {nullptr, base::TimeDelta()};
 
   webrtc::AudioProcessing::Config apm_config;
   apm_config.pipeline.multi_channel_render = true;
@@ -139,17 +142,38 @@ rtc::scoped_refptr<webrtc::AudioProcessing> CreateWebRtcAudioProcessingModule(
       settings.multi_channel_capture_processing;
   apm_config.pipeline.capture_downmix_method =
       kWebRtcApmDownmixMethodParam.Get();
-  apm_config.high_pass_filter.enabled = settings.high_pass_filter;
   apm_config.noise_suppression.enabled = settings.noise_suppression;
   apm_config.noise_suppression.level =
       webrtc::AudioProcessing::Config::NoiseSuppression::Level::kHigh;
   apm_config.echo_canceller.enabled = settings.echo_cancellation;
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
-  apm_config.echo_canceller.mobile_mode = true;
-#else
-  apm_config.echo_canceller.mobile_mode = false;
-#endif
   ConfigAutomaticGainControl(settings, apm_config);
-  return ap_builder.SetConfig(apm_config).Create();
+
+  webrtc::BuiltinAudioProcessingBuilder apm_builder(apm_config);
+
+  base::TimeDelta added_delay;
+#if BUILDFLAG(SYSTEM_LOOPBACK_AS_AEC_REFERENCE)
+  if (settings.use_loopback_aec_reference) {
+    added_delay = media::GetAecAddedDelay();
+    int num_filters = media::GetAecDelayNumFilters();
+    webrtc::EchoCanceller3Config config;
+    webrtc::EchoCanceller3Config multichannel_config =
+        webrtc::EchoCanceller3Config::CreateDefaultMultichannelConfig();
+    // If we are using system loopback as AEC reference, we delay the capture
+    // signal so that the reference signal arrives before the capture signal.
+    // AEC considers the delay to be provided at 16 kHz sample rate.
+    config.delay.fixed_capture_delay_samples =
+        added_delay.InMilliseconds() * 16;
+    config.delay.num_filters = num_filters;
+    multichannel_config.delay.fixed_capture_delay_samples =
+        config.delay.fixed_capture_delay_samples;
+    multichannel_config.delay.num_filters = config.delay.num_filters;
+    std::unique_ptr<webrtc::EchoControlFactory> aec3_factory =
+        std::make_unique<webrtc::EchoCanceller3Factory>(config,
+                                                        multichannel_config);
+    apm_builder.SetEchoControlFactory(std::move(aec3_factory));
+  }
+#endif  // BUILDFLAG(SYSTEM_LOOPBACK_AS_AEC_REFERENCE)
+
+  return {apm_builder.Build(WebRtcEnvironment()), added_delay};
 }
 }  // namespace media

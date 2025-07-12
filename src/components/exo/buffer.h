@@ -23,7 +23,7 @@
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/gpu_fence.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 
 namespace exo {
 
@@ -78,14 +78,15 @@ class Buffer {
   // are no longer required.
   using PerCommitExplicitReleaseCallback =
       base::OnceCallback<void(gfx::GpuFenceHandle)>;
-  virtual bool ProduceTransferableResource(
+  virtual std::optional<viz::TransferableResource> ProduceTransferableResource(
       FrameSinkResourceManager* resource_manager,
       std::unique_ptr<gfx::GpuFence> acquire_fence,
       bool secure_output_only,
-      viz::TransferableResource* resource,
       gfx::ColorSpace color_space,
       ProtectedNativePixmapQueryDelegate* protected_native_pixmap_query,
-      PerCommitExplicitReleaseCallback per_commit_explicit_release_callback);
+      PerCommitExplicitReleaseCallback per_commit_explicit_release_callback,
+      gpu::SyncToken prev_sync_token,
+      viz::TransferableResource::SynchronizationType prev_synchronization_type);
 
   // This should be called when the buffer is attached to a Surface.
   void OnAttach();
@@ -97,7 +98,7 @@ class Buffer {
   virtual gfx::Size GetSize() const;
 
   // Returns the format of the buffer.
-  gfx::BufferFormat GetFormat() const;
+  viz::SharedImageFormat GetFormat() const;
 
   // Returns the |gpu_memory_buffer_| pointer to be used as id. It can also be
   // used as a bool to identify if |gpu_memory_buffer_| is null or not.
@@ -126,7 +127,7 @@ class Buffer {
 
  protected:
   // Currently only derived class access this constructor.
-  explicit Buffer(std::unique_ptr<gfx::GpuMemoryBuffer> gpu_memory_buffer);
+  Buffer();
 
  private:
   // TODO(vikassoni): Once MappableSI is fully landed, these clients do not need
@@ -137,13 +138,8 @@ class Buffer {
 
   class Texture;
 
-  Buffer(std::unique_ptr<gfx::GpuMemoryBuffer> gpu_memory_buffer,
-         unsigned query_type,
-         bool use_zero_copy,
-         bool is_overlay_candidate,
-         bool y_invert);
   Buffer(gfx::GpuMemoryBufferHandle gpu_memory_buffer_handle,
-         gfx::BufferFormat buffer_format,
+         viz::SharedImageFormat buffer_format,
          gfx::Size size,
          gfx::BufferUsage buffer_usage,
          unsigned query_type,
@@ -209,13 +205,10 @@ class Buffer {
   void OnIsProtectedNativePixmapHandle(bool is_protected);
 #endif  // BUILDFLAG(USE_ARC_PROTECTED_MEDIA)
 
-  // The GPU memory buffer that contains the contents of this buffer.
-  std::unique_ptr<gfx::GpuMemoryBuffer> gpu_memory_buffer_;
-
   // Contains the content of this buffer instead of |gpu_memory_buffer_| when
   // MappableSI is enabled.
   gfx::GpuMemoryBufferHandle gpu_memory_buffer_handle_;
-  const gfx::BufferFormat buffer_format_;
+  const viz::SharedImageFormat format_;
   const gfx::Size size_;
   gfx::BufferUsage buffer_usage_;
 
@@ -272,8 +265,6 @@ class Buffer {
   ProtectedBufferState protected_buffer_state_ = ProtectedBufferState::UNKNOWN;
 #endif  // BUILDFLAG(USE_ARC_PROTECTED_MEDIA)
 
-  const bool is_mappable_si_enabled_;
-
   base::WeakPtrFactory<Buffer> weak_ptr_factory_{this};
 };
 
@@ -286,14 +277,15 @@ class SolidColorBuffer : public Buffer {
 
   SkColor4f GetColor() const override;
   gfx::Size GetSize() const override;
-  bool ProduceTransferableResource(
+  std::optional<viz::TransferableResource> ProduceTransferableResource(
       FrameSinkResourceManager* resource_manager,
       std::unique_ptr<gfx::GpuFence> acquire_fence,
       bool secure_output_only,
-      viz::TransferableResource* resource,
       gfx::ColorSpace color_space,
       ProtectedNativePixmapQueryDelegate* protected_native_pixmap_query,
-      PerCommitExplicitReleaseCallback per_commit_explicit_release_callback)
+      PerCommitExplicitReleaseCallback per_commit_explicit_release_callback,
+      gpu::SyncToken prev_sync_token,
+      viz::TransferableResource::SynchronizationType prev_synchronization_type)
       override;
 
   base::WeakPtr<Buffer> AsWeakPtr() override;

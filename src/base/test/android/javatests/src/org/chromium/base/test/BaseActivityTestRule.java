@@ -25,13 +25,13 @@ import com.google.android.apps.common.testing.accessibility.framework.checks.Spe
 import com.google.android.apps.common.testing.accessibility.framework.checks.TouchTargetSizeCheck;
 
 import org.junit.Assert;
-import org.junit.rules.TestRule;
-import org.junit.runner.Description;
-import org.junit.runners.model.Statement;
+import org.junit.rules.ExternalResource;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.test.util.ApplicationTestUtils;
+
+import java.util.EnumSet;
 
 /**
  * A replacement for ActivityTestRule, designed for use in Chromium. This implementation supports
@@ -39,7 +39,7 @@ import org.chromium.base.test.util.ApplicationTestUtils;
  *
  * @param <T> The type of Activity this Rule will use.
  */
-public class BaseActivityTestRule<T extends Activity> implements TestRule {
+public class BaseActivityTestRule<T extends Activity> extends ExternalResource {
     private static final String TAG = "BaseActivityTestRule";
 
     private final Class<T> mActivityClass;
@@ -100,19 +100,10 @@ public class BaseActivityTestRule<T extends Activity> implements TestRule {
 
     @Override
     @CallSuper
-    public Statement apply(final Statement base, final Description desc) {
-        return new Statement() {
-            @Override
-            public void evaluate() throws Throwable {
-                try {
-                    base.evaluate();
-                } finally {
-                    if (mFinishActivity && mActivity != null) {
-                        ApplicationTestUtils.finishActivity(mActivity);
-                    }
-                }
-            }
-        };
+    protected void after() {
+        if (mFinishActivity && mActivity != null) {
+            finishActivity();
+        }
     }
 
     /**
@@ -143,8 +134,10 @@ public class BaseActivityTestRule<T extends Activity> implements TestRule {
     /**
      * Launches the Activity under test using the provided intent. If the provided intent is null,
      * an explicit intent targeting the Activity is created and used.
+     *
+     * @return The activity launched as a result of this method.
      */
-    public void launchActivity(@Nullable Intent startIntent) {
+    public T launchActivity(@Nullable Intent startIntent) {
         if (startIntent == null) {
             startIntent = getActivityIntent();
         } else {
@@ -162,16 +155,32 @@ public class BaseActivityTestRule<T extends Activity> implements TestRule {
         Log.d(TAG, String.format("Launching activity %s", mActivityClass.getName()));
 
         final Intent intent = startIntent;
+        // Android system pauses the activity on delivering an intent to an existing activity.
+        // https://developer.android.com/reference/android/app/Activity#onNewIntent(android.content.Intent)
+        EnumSet<Stage> targetStages =
+                (startIntent.getFlags() & Intent.FLAG_ACTIVITY_SINGLE_TOP) != 0
+                        ? EnumSet.of(Stage.PAUSED, Stage.CREATED)
+                        : EnumSet.of(Stage.CREATED);
         mActivity =
                 ApplicationTestUtils.waitForActivityWithClass(
                         mActivityClass,
-                        Stage.CREATED,
+                        targetStages,
                         () -> ContextUtils.getApplicationContext().startActivity(intent));
+        return mActivity;
     }
 
     /**
-     * Recreates the Activity, blocking until finished.
-     * After calling this, getActivity() returns the new Activity.
+     * Finishes the Activity, blocking until finished. After calling this, getActivity() returns
+     * null.
+     */
+    public void finishActivity() {
+        ApplicationTestUtils.finishActivity(getActivity());
+        setActivity(null);
+    }
+
+    /**
+     * Recreates the Activity, blocking until finished. After calling this, getActivity() returns
+     * the new Activity.
      */
     public void recreateActivity() {
         setActivity(ApplicationTestUtils.recreateActivity(getActivity()));

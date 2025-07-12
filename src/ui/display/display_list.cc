@@ -24,12 +24,12 @@ void DisplayList::RemoveObserver(DisplayObserver* observer) {
 
 DisplayList::Displays::const_iterator DisplayList::FindDisplayById(
     int64_t id) const {
-  return base::ranges::find(displays_, id, &Display::id);
+  return std::ranges::find(displays_, id, &Display::id);
 }
 
 DisplayList::Displays::const_iterator DisplayList::GetPrimaryDisplayIterator()
     const {
-  return base::ranges::find(displays_, primary_id_, &Display::id);
+  return std::ranges::find(displays_, primary_id_, &Display::id);
 }
 
 void DisplayList::AddOrUpdateDisplay(const Display& display, Type type) {
@@ -47,7 +47,7 @@ uint32_t DisplayList::UpdateDisplay(const Display& display) {
 
 uint32_t DisplayList::UpdateDisplay(const Display& display, Type type) {
   auto iter = FindDisplayByIdInternal(display.id());
-  DCHECK(iter != displays_.end());
+  CHECK(iter != displays_.end());
 
   Display* local_display = &(*iter);
   uint32_t changed_values = 0;
@@ -123,7 +123,7 @@ void DisplayList::AddDisplay(const Display& display, Type type) {
 
 void DisplayList::RemoveDisplay(int64_t id) {
   auto iter = FindDisplayByIdInternal(id);
-  DCHECK(displays_.end() != iter);
+  CHECK(displays_.end() != iter);
   if (id == primary_id_) {
     // The primary display can only be removed if it is the last display.
     // Users must choose a new primary before removing an old primary display.
@@ -169,7 +169,7 @@ bool DisplayList::IsValid() const {
 
 DisplayList::Displays::iterator DisplayList::FindDisplayByIdInternal(
     int64_t id) {
-  return base::ranges::find(displays_, id, &Display::id);
+  return std::ranges::find(displays_, id, &Display::id);
 }
 
 }  // namespace display

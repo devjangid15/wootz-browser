@@ -829,8 +829,7 @@ WebcamPrivateAPI::GetFactoryInstance() {
 template <>
 void BrowserContextKeyedAPIFactory<WebcamPrivateAPI>
     ::DeclareFactoryDependencies() {
-  if (extensions::ExtensionsBrowserClient::Get())
-    DependsOn(ExtensionsBrowserClient::Get()->GetExtensionSystemFactory());
+  DependsOn(ExtensionsBrowserClient::Get()->GetExtensionSystemFactory());
   DependsOn(ProcessManagerFactory::GetInstance());
 }
 

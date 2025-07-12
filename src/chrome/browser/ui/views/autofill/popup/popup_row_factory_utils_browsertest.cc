@@ -4,45 +4,100 @@
 
 #include "chrome/browser/ui/views/autofill/popup/popup_row_factory_utils.h"
 
+#include <algorithm>
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/cancelable_task_tracker.h"
+#include "build/branding_buildflags.h"
 #include "chrome/browser/ui/autofill/autofill_popup_controller.h"
 #include "chrome/browser/ui/autofill/mock_autofill_popup_controller.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/test/test_browser_ui.h"
 #include "chrome/browser/ui/views/autofill/popup/mock_accessibility_selection_delegate.h"
 #include "chrome/browser/ui/views/autofill/popup/mock_selection_delegate.h"
+#include "chrome/browser/ui/views/autofill/popup/password_favicon_loader.h"
 #include "chrome/browser/ui/views/autofill/popup/popup_row_view.h"
-#include "components/autofill/core/browser/ui/suggestion.h"
-#include "components/autofill/core/browser/ui/suggestion_type.h"
-#include "components/user_education/common/new_badge_controller.h"
+#include "components/autofill/core/browser/suggestions/suggestion.h"
+#include "components/autofill/core/browser/suggestions/suggestion_type.h"
+#include "components/compose/core/browser/compose_features.h"
+#include "components/user_education/common/new_badge/new_badge_controller.h"
+#include "components/user_education/common/user_education_features.h"
 #include "content/public/test/browser_test.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/gfx/geometry/size.h"
 #include "ui/gfx/range/range.h"
+#include "ui/resources/grit/ui_resources.h"
+#include "ui/views/layout/layout_types.h"
 #include "ui/views/test/widget_test.h"
 #include "ui/views/widget/widget.h"
 
 namespace autofill {
+namespace {
 
 using ::testing::NiceMock;
 using ::testing::Return;
 
-namespace {
+std::vector<std::string> minor_texts = {"Minor text"};
 
 Suggestion CreatePasswordSuggestion(const std::u16string& main_text) {
   Suggestion suggestion(main_text, SuggestionType::kPasswordEntry);
   suggestion.icon = Suggestion::Icon::kKey;
-  suggestion.additional_label = u"****";
+  suggestion.labels = {{Suggestion::Text(u"****")}};
+  return suggestion;
+}
+
+Suggestion CreateTryThisRecoverySuggestion(const std::u16string& main_text) {
+  Suggestion suggestion(main_text, SuggestionType::kBackupPasswordEntry);
+  suggestion.icon = Suggestion::Icon::kRecoveryPassword;
+  suggestion.additional_label = u"******";
+  suggestion.additional_label_alignment_right = true;
+  return suggestion;
+}
+
+Suggestion CreateTroubleSigninInSuggestion(const std::u16string& main_text) {
+  Suggestion suggestion(main_text, SuggestionType::kBackupPasswordEntry);
+  suggestion.icon = Suggestion::Icon::kQuestionMark;
+  suggestion.main_text.is_primary = Suggestion::Text::IsPrimary(false);
+  return suggestion;
+}
+
+Suggestion CreateBackupPasswordSuggestion(const std::u16string& main_text) {
+  Suggestion suggestion(main_text, SuggestionType::kBackupPasswordEntry);
+  suggestion.icon = Suggestion::Icon::kRecoveryPassword;
+  suggestion.labels = {{Suggestion::Text(u"*****")}};
+  suggestion.additional_label = u"Recovery";
+  return suggestion;
+}
+
+Suggestion CreateFreeformFooter() {
+  const std::u16string kMainText =
+      u"You recently changed a password found in a public data breach. In case "
+      "of trouble, Google Password Manager can help you sign in.";
+  Suggestion suggestion(kMainText, SuggestionType::kFreeformFooter);
+  suggestion.acceptability =
+      Suggestion::Acceptability::kUnacceptableWithDeactivatedStyle;
   return suggestion;
 }
 
 Suggestion CreateSuggestionWithChildren(const std::u16string& main_text,
+                                        SuggestionType type,
                                         std::vector<Suggestion> children) {
-  Suggestion suggestion(main_text, SuggestionType::kAddressEntry);
+  Suggestion suggestion(main_text, type);
   suggestion.children = std::move(children);
+  return suggestion;
+}
+
+Suggestion CreateAllLoyaltyCardsEntry() {
+  Suggestion suggestion = CreateSuggestionWithChildren(
+      u"All_loyalty_cards_entry", SuggestionType::kAllLoyaltyCardsEntry,
+      {Suggestion(u"CVS", SuggestionType::kLoyaltyCardEntry)});
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+  suggestion.icon = Suggestion::Icon::kGoogleWalletMonochrome;
+#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
   return suggestion;
 }
 
@@ -50,52 +105,58 @@ Suggestion CreateSuggestionWithChildren(const std::u16string& main_text,
 // screenshot names, avoid special symbols and keep them unique.
 const Suggestion kSuggestions[] = {
     Suggestion("Address_entry",
-               "Minor text",
+               minor_texts,
                "label",
                Suggestion::Icon::kLocation,
                SuggestionType::kAddressEntry),
-    Suggestion("Fill_Full_Email_entry",
-               "Minor text",
-               "label",
-               Suggestion::Icon::kNoIcon,
-               SuggestionType::kFillFullEmail),
     CreatePasswordSuggestion(u"Password_entry"),
+    CreateTryThisRecoverySuggestion(u"Try_this_recovery_password"),
+    CreateTroubleSigninInSuggestion(u"Trouble_signing_in_entry"),
+    CreateBackupPasswordSuggestion(u"Backup_password_entry"),
     Suggestion("Autofill_options",
-               "Minor text",
+               minor_texts,
                "label",
                Suggestion::Icon::kSettings,
-               SuggestionType::kAutofillOptions),
+               SuggestionType::kManageAddress),
     Suggestion(u"Autocomplete", SuggestionType::kAutocompleteEntry),
     Suggestion("Compose",
-               "Minor text",
+               minor_texts,
                "label",
                Suggestion::Icon::kMagic,
                SuggestionType::kComposeResumeNudge),
-    Suggestion("Edit_address",
-               "label",
-               Suggestion::Icon::kEdit,
-               SuggestionType::kEditAddressProfile),
     Suggestion("Promo_code",
                "label",
                Suggestion::Icon::kGlobe,
-               SuggestionType::kSeePromoCodeDetails),
-};
-const Suggestion kExpandableSuggestions[] = {CreateSuggestionWithChildren(
-    u"Address_entry",
-    {Suggestion(u"Username", SuggestionType::kPasswordEntry)})};
+               SuggestionType::kSeePromoCodeDetails)};
 
-}  // namespace
+const Suggestion kExpandableSuggestions[] = {
+    CreateSuggestionWithChildren(
+        u"Address_entry",
+        SuggestionType::kAddressEntry,
+        {Suggestion(u"Username", SuggestionType::kPasswordEntry)}),
+    CreateAllLoyaltyCardsEntry()};
+
+class MockPasswordFaviconLoader : public PasswordFaviconLoader {
+ public:
+  MOCK_METHOD(void,
+              Load,
+              (const Suggestion::FaviconDetails&,
+               base::CancelableTaskTracker*,
+               OnLoadSuccess,
+               OnLoadFail),
+              (override));
+};
 
 // TODO(crbug.com/40285052): Add tests for RTL and dark mode.
 using TestParams =
     std::tuple<Suggestion, std::optional<PopupRowView::CellType>>;
 
-class CreatePopupRowViewTest
+class BaseCreatePopupRowViewTest
     : public UiBrowserTest,
       public ::testing::WithParamInterface<TestParams> {
  public:
-  CreatePopupRowViewTest() = default;
-  ~CreatePopupRowViewTest() override = default;
+  BaseCreatePopupRowViewTest() = default;
+  ~BaseCreatePopupRowViewTest() override = default;
 
   static std::string GetTestName(
       const testing::TestParamInfo<TestParams>& info) {
@@ -112,6 +173,7 @@ class CreatePopupRowViewTest
 
  protected:
   MockAutofillPopupController& controller() { return controller_; }
+  MockPasswordFaviconLoader& favicon_loader() { return favicon_loader_; }
 
   // BrowserTestBase:
   void SetUpOnMainThread() override {
@@ -137,10 +199,16 @@ class CreatePopupRowViewTest
           filter_match = std::nullopt) {
     controller().set_suggestions({std::move(suggestion)});
 
-    auto view = CreatePopupRowView(
-        controller_.GetWeakPtr(), mock_a11y_selection_delegate_,
-        mock_selection_delegate_, /*line_number=*/0, std::move(filter_match));
+    auto view = CreatePopupRowView(controller_.GetWeakPtr(),
+                                   mock_a11y_selection_delegate_,
+                                   mock_selection_delegate_, /*line_number=*/0,
+                                   std::move(filter_match), &favicon_loader());
     view->SetSelectedCell(selected_cell);
+
+    // Row view size depends on the parent view it's embedded into, 220px width
+    // is close to the actually used row size so that the screenshot is also
+    // close to what is rendered in the popup.
+    widget_->SetSize(view->GetPreferredSize(views::SizeBounds(420, 1024)));
 
     widget_->SetContentsView(std::move(view));
   }
@@ -163,14 +231,9 @@ class CreatePopupRowViewTest
  private:
   std::unique_ptr<views::Widget> CreateWidget() {
     auto widget = std::make_unique<views::Widget>();
-    views::Widget::InitParams params;
-    // Row view size depends on the parent view it's embedded into, 220x52 is
-    // close to the actually used row size so that the screenshot is also close
-    // to what is rendered in the popup.
-    params.bounds = gfx::Rect(220, 52);
-    params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
-    params.type = views::Widget::InitParams::TYPE_WINDOW_FRAMELESS;
-    widget->Init(std::move(params));
+    widget->Init(views::Widget::InitParams(
+        views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET,
+        views::Widget::InitParams::TYPE_WINDOW_FRAMELESS));
     return widget;
   }
 
@@ -178,6 +241,15 @@ class CreatePopupRowViewTest
   NiceMock<MockAutofillPopupController> controller_;
   NiceMock<MockAccessibilitySelectionDelegate> mock_a11y_selection_delegate_;
   NiceMock<MockSelectionDelegate> mock_selection_delegate_;
+  NiceMock<MockPasswordFaviconLoader> favicon_loader_;
+};
+
+class CreatePopupRowViewTest : public BaseCreatePopupRowViewTest {
+ public:
+  CreatePopupRowViewTest() = default;
+  ~CreatePopupRowViewTest() override = default;
+
+ private:
   user_education::NewBadgeController::TestLock disable_new_badges_ =
       user_education::NewBadgeController::DisableNewBadgesForTesting();
 };
@@ -211,12 +283,74 @@ INSTANTIATE_TEST_SUITE_P(
 
 IN_PROC_BROWSER_TEST_F(CreatePopupRowViewTest, FilterMatchHighlighting) {
   CreateRowView(
-      Suggestion("Address_entry", "Minor text", "label",
+      Suggestion("Address_entry", minor_texts, "label",
                  Suggestion::Icon::kLocation, SuggestionType::kAddressEntry),
-      std::nullopt,
+      /*selected_cell=*/std::nullopt,
       AutofillPopupController::SuggestionFilterMatch{.main_text_match =
                                                          gfx::Range(1, 5)});
   ShowAndVerifyUi();
 }
 
+IN_PROC_BROWSER_TEST_F(CreatePopupRowViewTest, FreeformFooter) {
+  CreateRowView(CreateFreeformFooter(),
+                /*selected_cell=*/std::nullopt,
+                /*filter_match=*/std::nullopt);
+  ShowAndVerifyUi();
+}
+
+IN_PROC_BROWSER_TEST_F(CreatePopupRowViewTest, PasswordWithFaviconPlaceholder) {
+  Suggestion suggestion = CreatePasswordSuggestion(u"Password_entry");
+  suggestion.custom_icon =
+      Suggestion::FaviconDetails(/*domain_url=*/GURL("https://google.com"));
+  CreateRowView(std::move(suggestion), /*selected_cell=*/std::nullopt,
+                /*filter_match=*/std::nullopt);
+  ShowAndVerifyUi();
+}
+
+IN_PROC_BROWSER_TEST_F(CreatePopupRowViewTest, PasswordCustomIconLoader) {
+  ON_CALL(favicon_loader(), Load)
+      .WillByDefault([](const Suggestion::FaviconDetails&,
+                        base::CancelableTaskTracker* task_tracker,
+                        PasswordFaviconLoader::OnLoadSuccess on_success,
+                        PasswordFaviconLoader::OnLoadFail on_fail) {
+        std::move(on_success)
+            .Run(ui::ResourceBundle::GetSharedInstance().GetImageNamed(
+                IDR_DISABLE));
+      });
+
+  Suggestion suggestion("Password_entry", minor_texts, "label",
+                        Suggestion::Icon::kKey, SuggestionType::kPasswordEntry);
+  suggestion.custom_icon =
+      Suggestion::FaviconDetails(/*domain_url=*/GURL("https://google.com"));
+  CreateRowView(std::move(suggestion),
+                /*selected_cell=*/std::nullopt, /*filter_match=*/std::nullopt);
+  ShowAndVerifyUi();
+}
+
+class CreatePopupRowViewWithNoUserEducationRateLimitTest
+    : public BaseCreatePopupRowViewTest {
+ public:
+  CreatePopupRowViewWithNoUserEducationRateLimitTest() = default;
+  ~CreatePopupRowViewWithNoUserEducationRateLimitTest() override = default;
+
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    command_line->AppendSwitch(
+        user_education::features::kDisableRateLimitingCommandLine);
+  }
+};
+
+IN_PROC_BROWSER_TEST_F(CreatePopupRowViewWithNoUserEducationRateLimitTest,
+                       ComposeWithNewBadge) {
+  Suggestion suggestion("Compose with a badge", minor_texts, "label",
+                        Suggestion::Icon::kMagic,
+                        SuggestionType::kComposeProactiveNudge);
+  suggestion.feature_for_new_badge =
+      &compose::features::kEnableComposeProactiveNudge;
+
+  CreateRowView(std::move(suggestion), /*selected_cell=*/std::nullopt,
+                /*filter_match=*/std::nullopt);
+  ShowAndVerifyUi();
+}
+
+}  // namespace
 }  // namespace autofill

@@ -16,7 +16,6 @@
 #include "net/spdy/spdy_buffer.h"
 #include "net/spdy/spdy_http_utils.h"
 #include "net/spdy/spdy_stream.h"
-#include "net/third_party/quiche/src/quiche/spdy/core/http2_header_block.h"
 
 namespace net {
 
@@ -76,7 +75,7 @@ void BidirectionalStreamSpdyImpl::Start(
 
 void BidirectionalStreamSpdyImpl::SendRequestHeaders() {
   // Request headers will be sent automatically.
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 int BidirectionalStreamSpdyImpl::ReadData(IOBuffer* buf, int buf_len) {
@@ -89,7 +88,7 @@ int BidirectionalStreamSpdyImpl::ReadData(IOBuffer* buf, int buf_len) {
 
   // If there is data buffered, complete the IO immediately.
   if (!read_data_queue_.IsEmpty()) {
-    return read_data_queue_.Dequeue(buf->data(), buf_len);
+    return read_data_queue_.Dequeue(buf->first(buf_len));
   } else if (stream_closed_) {
     return closed_stream_status_;
   }
@@ -131,12 +130,11 @@ void BidirectionalStreamSpdyImpl::SendvData(
   } else {
     pending_combined_buffer_ =
         base::MakeRefCounted<net::IOBufferWithSize>(total_len);
-    int len = 0;
+    auto out_span = pending_combined_buffer_->span();
     // TODO(xunjieli): Get rid of extra copy. Coalesce headers and data frames.
     for (size_t i = 0; i < buffers.size(); ++i) {
-      memcpy(pending_combined_buffer_->data() + len, buffers[i]->data(),
-             lengths[i]);
-      len += lengths[i];
+      size_t sz_len = lengths[i];
+      out_span.take_first(sz_len).copy_from(buffers[i]->first(sz_len));
     }
   }
   stream_->SendData(pending_combined_buffer_.get(), total_len,
@@ -190,19 +188,19 @@ void BidirectionalStreamSpdyImpl::PopulateNetErrorDetails(
 void BidirectionalStreamSpdyImpl::OnHeadersSent() {
   DCHECK(stream_);
 
-  negotiated_protocol_ = kProtoHTTP2;
+  negotiated_protocol_ = NextProto::kProtoHTTP2;
   if (delegate_)
     delegate_->OnStreamReady(/*request_headers_sent=*/true);
 }
 
 void BidirectionalStreamSpdyImpl::OnEarlyHintsReceived(
-    const spdy::Http2HeaderBlock& headers) {
+    const quiche::HttpHeaderBlock& headers) {
   DCHECK(stream_);
   // TODO(crbug.com/40496584): Plumb Early Hints to `delegate_` if needed.
 }
 
 void BidirectionalStreamSpdyImpl::OnHeadersReceived(
-    const spdy::Http2HeaderBlock& response_headers) {
+    const quiche::HttpHeaderBlock& response_headers) {
   DCHECK(stream_);
 
   if (delegate_)
@@ -240,7 +238,7 @@ void BidirectionalStreamSpdyImpl::OnDataSent() {
 }
 
 void BidirectionalStreamSpdyImpl::OnTrailers(
-    const spdy::Http2HeaderBlock& trailers) {
+    const quiche::HttpHeaderBlock& trailers) {
   DCHECK(stream_);
   DCHECK(!stream_closed_);
 
@@ -285,7 +283,7 @@ NetLogSource BidirectionalStreamSpdyImpl::source_dependency() const {
 }
 
 int BidirectionalStreamSpdyImpl::SendRequestHeadersHelper() {
-  spdy::Http2HeaderBlock headers;
+  quiche::HttpHeaderBlock headers;
   HttpRequestInfo http_request_info;
   http_request_info.url = request_info_->url;
   http_request_info.method = request_info_->method;

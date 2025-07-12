@@ -8,6 +8,7 @@
 #include "base/files/file_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/path_service.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -67,7 +68,7 @@ class PdfFindRequestManagerTest : public InProcessBrowserTest {
             blink::mojom::FindOptionsPtr options) {
     delegate()->UpdateLastRequest(++last_request_id_);
     contents()->Find(last_request_id_, base::UTF8ToUTF16(search_text),
-                     std::move(options));
+                     std::move(options), /*skip_delay=*/false);
   }
 
   WebContents* contents() const {

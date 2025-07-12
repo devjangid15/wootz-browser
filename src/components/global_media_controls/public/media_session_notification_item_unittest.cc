@@ -45,7 +45,8 @@ class MediaSessionNotificationItemTest : public testing::Test {
     session_info->is_controllable = true;
     item_ = std::make_unique<MediaSessionNotificationItem>(
         &delegate_, kRequestId, std::string(), source_id_,
-        controller_.CreateMediaControllerRemote(), std::move(session_info));
+        controller_.CreateMediaControllerRemote(), std::move(session_info),
+        /*always_hidden=*/false);
     item_->SetView(&view_);
   }
 
@@ -482,7 +483,12 @@ TEST_F(MediaSessionNotificationItemTest, GetSessionMetadata) {
   EXPECT_EQ(u"source_title", item().GetSessionMetadata().source_title);
 
   base::test::ScopedFeatureList feature_list;
+#if BUILDFLAG(IS_CHROMEOS)
   feature_list.InitAndEnableFeature(media::kMediaRemotingWithoutFullscreen);
+#else
+  feature_list.InitWithFeatures({media::kMediaRemotingWithoutFullscreen},
+                                {media::kGlobalMediaControlsUpdatedUI});
+#endif
 
   auto session_info = media_session::mojom::MediaSessionInfo::New();
   auto remote_playback_metadata =
@@ -496,6 +502,19 @@ TEST_F(MediaSessionNotificationItemTest, GetSessionMetadata) {
   EXPECT_EQ(u"source_title \xB7 device_friendly_name",
             item().GetSessionMetadata().source_title);
 }
+
+#if !BUILDFLAG(IS_CHROMEOS)
+TEST_F(MediaSessionNotificationItemTest, GetSessionMetadataForUpdatedUI) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(media::kGlobalMediaControlsUpdatedUI);
+
+  media_session::MediaMetadata metadata;
+  metadata.source_title = u"source_title";
+  item().MediaSessionMetadataChanged(metadata);
+  item().UpdateDeviceName("device_friendly_name");
+  EXPECT_EQ(u"source_title", item().GetSessionMetadata().source_title);
+}
+#endif
 
 TEST_F(MediaSessionNotificationItemTest, GetRemotePlaybackMetadata) {
   auto session_info = media_session::mojom::MediaSessionInfo::New();
@@ -569,6 +588,18 @@ TEST_F(MediaSessionNotificationItemTest, ShouldShowNotification) {
           /* is_encrypted_media */ false);
   item().MediaSessionInfoChanged(mojo::Clone(session_info));
   EXPECT_TRUE(item().ShouldShowNotification());
+
+  // Check always hidden item.
+  media_session::test::TestMediaController controller2;
+  auto session_info2 = media_session::mojom::MediaSessionInfo::New();
+  session_info2->is_controllable = true;
+  auto item2 = std::make_unique<MediaSessionNotificationItem>(
+      &delegate(), kRequestId, std::string(),
+      /*source_id=*/base::UnguessableToken::Create(),
+      controller2.CreateMediaControllerRemote(), std::move(session_info2),
+      /*always_hidden=*/true);
+  item2->SetView(&view());
+  EXPECT_FALSE(item2->ShouldShowNotification());
 }
 
 }  // namespace global_media_controls

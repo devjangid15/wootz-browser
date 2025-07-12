@@ -9,7 +9,6 @@
 #include "base/functional/bind.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/permissions/android/bluetooth_chooser_android_delegate.h"
-#include "components/permissions/android/jni_headers/BluetoothChooserDialog_jni.h"
 #include "components/permissions/constants.h"
 #include "components/permissions/permission_util.h"
 #include "components/url_formatter/elide_url.h"
@@ -17,6 +16,9 @@
 #include "ui/android/window_android.h"
 #include "url/gurl.h"
 #include "url/origin.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "components/permissions/android/jni_headers/BluetoothChooserDialog_jni.h"
 
 using base::android::AttachCurrentThread;
 using base::android::JavaParamRef;
@@ -87,10 +89,18 @@ bool BluetoothChooserAndroid::CanAskForScanningPermission() {
 
 void BluetoothChooserAndroid::SetAdapterPresence(AdapterPresence presence) {
   JNIEnv* env = AttachCurrentThread();
-  if (presence != AdapterPresence::POWERED_ON) {
-    Java_BluetoothChooserDialog_notifyAdapterTurnedOff(env, java_dialog_);
-  } else {
-    Java_BluetoothChooserDialog_notifyAdapterTurnedOn(env, java_dialog_);
+  switch (presence) {
+    case AdapterPresence::POWERED_OFF:
+      Java_BluetoothChooserDialog_notifyAdapterTurnedOff(env, java_dialog_);
+      break;
+    case AdapterPresence::POWERED_ON:
+      Java_BluetoothChooserDialog_notifyAdapterTurnedOn(env, java_dialog_);
+      break;
+    case AdapterPresence::UNAUTHORIZED:
+      Java_BluetoothChooserDialog_notifyAdapterUnauthorized(env, java_dialog_);
+      break;
+    default:
+      NOTREACHED();
   }
 }
 
@@ -147,7 +157,7 @@ void BluetoothChooserAndroid::OnDialogFinished(
           base::android::ConvertJavaStringToUTF8(env, device_id));
       return;
   }
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void BluetoothChooserAndroid::RestartSearch() {

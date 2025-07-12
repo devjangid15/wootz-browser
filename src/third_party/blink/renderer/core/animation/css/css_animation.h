@@ -12,6 +12,8 @@
 
 namespace blink {
 
+class AnimationTrigger;
+
 class CORE_EXPORT CSSAnimation : public Animation {
   DEFINE_WRAPPERTYPEINFO();
 
@@ -45,7 +47,7 @@ class CORE_EXPORT CSSAnimation : public Animation {
   // processed any such pending changes to computed values.  Notably, changes
   // to animation-play-state and display:none must update the play state.
   // https://drafts.csswg.org/css-animations-2/#requirements-on-pending-style-changes
-  String playState() const override;
+  V8AnimationPlayState playState() const override;
   bool pending() const override;
 
   // Explicit calls to the web-animation API that update the play state are
@@ -71,23 +73,27 @@ class CORE_EXPORT CSSAnimation : public Animation {
   // <property>.
   // https://drafts.csswg.org/css-animations-2/#interaction-between-animation-play-state-and-web-animations-API
   bool GetIgnoreCSSPlayState() { return ignore_css_play_state_; }
+  void SetIgnoreCSSPlayState(bool ignore) { ignore_css_play_state_ = ignore; }
   void ResetIgnoreCSSPlayState() { ignore_css_play_state_ = false; }
   bool GetIgnoreCSSTimeline() const { return ignore_css_timeline_; }
+  void SetIgnoreCSSTimeline(bool ignore) { ignore_css_timeline_ = ignore; }
   void ResetIgnoreCSSTimeline() { ignore_css_timeline_ = false; }
   bool GetIgnoreCSSRangeStart() { return ignore_css_range_start_; }
+  void SetIgnoreCSSRangeStart(bool ignore) { ignore_css_range_start_ = ignore; }
   void ResetIgnoreCSSRangeStart() { ignore_css_range_start_ = false; }
   bool GetIgnoreCSSRangeEnd() { return ignore_css_range_end_; }
+  void SetIgnoreCSSRangeEnd(bool ignore) { ignore_css_range_end_ = ignore; }
   void ResetIgnoreCSSRangeEnd() { ignore_css_range_end_ = false; }
 
-  void Trace(blink::Visitor* visitor) const override {
-    Animation::Trace(visitor);
-    visitor->Trace(owning_element_);
-  }
+  void Trace(blink::Visitor* visitor) const override;
 
   // Force pending animation properties to be applied, as these may alter the
   // animation. This step is required before any web animation API calls that
   // depends on computed values.
   void FlushPendingUpdates() const override { FlushStyles(); }
+
+  AnimationTrigger* GetTrigger() const { return css_trigger_.Get(); }
+  void SetTrigger(AnimationTrigger* trigger) { css_trigger_ = trigger; }
 
  protected:
   AnimationEffect::EventDelegate* CreateEventDelegate(
@@ -124,6 +130,8 @@ class CORE_EXPORT CSSAnimation : public Animation {
   bool ignore_css_range_start_ = false;
   bool ignore_css_range_end_ = false;
 
+  // The trigger corresponding to the animation-trigger property.
+  Member<AnimationTrigger> css_trigger_;
   // The owning element of an animation refers to the element or pseudo-element
   // whose animation-name property was applied that generated the animation
   // The spec: https://drafts.csswg.org/css-animations-2/#owning-element-section

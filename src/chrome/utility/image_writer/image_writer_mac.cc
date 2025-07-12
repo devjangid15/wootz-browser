@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include <CoreFoundation/CoreFoundation.h>
 #include <IOKit/IOBSD.h>
 #include <IOKit/IOKitLib.h>
@@ -45,7 +50,7 @@ bool ImageWriter::IsValidDevice() {
   // IOServiceGetMatchingService consumes a reference to the matching dictionary
   // passed to it.
   base::mac::ScopedIOObject<io_service_t> disk_obj(
-      IOServiceGetMatchingService(kIOMasterPortDefault, matching.release()));
+      IOServiceGetMatchingService(kIOMainPortDefault, matching.release()));
   if (!disk_obj)
     return false;
 

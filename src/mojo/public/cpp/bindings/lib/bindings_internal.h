@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #ifndef MOJO_PUBLIC_CPP_BINDINGS_LIB_BINDINGS_INTERNAL_H_
 #define MOJO_PUBLIC_CPP_BINDINGS_LIB_BINDINGS_INTERNAL_H_
 
@@ -12,10 +17,8 @@
 #include <type_traits>
 #include <utility>
 
-#include "base/logging.h"
+#include "base/check.h"
 #include "mojo/public/cpp/bindings/enum_traits.h"
-#include "mojo/public/cpp/bindings/interface_id.h"
-#include "mojo/public/cpp/bindings/lib/template_util.h"
 #include "mojo/public/cpp/platform/platform_handle.h"
 #include "mojo/public/cpp/system/handle.h"
 

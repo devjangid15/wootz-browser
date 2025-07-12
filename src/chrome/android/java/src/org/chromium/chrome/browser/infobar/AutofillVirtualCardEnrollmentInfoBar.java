@@ -17,38 +17,42 @@ import android.text.style.TextAppearanceSpan;
 import org.jni_zero.CalledByNative;
 import org.jni_zero.NativeMethods;
 
+import org.chromium.build.annotations.Initializer;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeStringConstants;
-import org.chromium.chrome.browser.autofill.AutofillUiUtils;
+import org.chromium.chrome.browser.autofill.AutofillUiUtils.IconSpecs;
+import org.chromium.components.autofill.ImageSize;
+import org.chromium.components.autofill.ImageType;
 import org.chromium.components.autofill.VirtualCardEnrollmentLinkType;
 import org.chromium.components.autofill.payments.LegalMessageLine;
 import org.chromium.components.infobars.ConfirmInfoBar;
 import org.chromium.components.infobars.InfoBarControlLayout;
 import org.chromium.components.infobars.InfoBarLayout;
 import org.chromium.ui.UiUtils;
-import org.chromium.ui.text.NoUnderlineClickableSpan;
+import org.chromium.ui.text.ChromeClickableSpan;
 
 import java.util.LinkedList;
 
 /** An infobar for virtual card enrollment information. */
+@NullMarked
 public class AutofillVirtualCardEnrollmentInfoBar extends ConfirmInfoBar {
     private final long mNativeAutofillVirtualCardEnrollmentInfoBar;
     private Bitmap mIssuerIcon;
     private String mCardLabel;
     private int mIconDrawableId = -1;
-    private String mTitleText;
-    private String mDescriptionText;
-    private String mLearnMoreLinkText;
-    private final LinkedList<LegalMessageLine> mGoogleLegalMessageLines =
-            new LinkedList<LegalMessageLine>();
-    private final LinkedList<LegalMessageLine> mIssuerLegalMessageLines =
-            new LinkedList<LegalMessageLine>();
+    private final String mTitleText;
+    private @Nullable String mDescriptionText;
+    private @Nullable String mLearnMoreLinkText;
+    private final LinkedList<LegalMessageLine> mGoogleLegalMessageLines = new LinkedList<>();
+    private final LinkedList<LegalMessageLine> mIssuerLegalMessageLines = new LinkedList<>();
 
     /**
      * Creates a new instance of the infobar.
      *
      * @param nativeAutofillVirtualCardEnrollmentInfoBar The pointer to the native object for
-     *         callbacks.
+     *     callbacks.
      * @param iconId ID corresponding to the icon that will be shown for the InfoBar.
      * @param iconBitmap Bitmap to use if there is no equivalent Java resource for iconId.
      * @param message Title of the infobar to display along the icon.
@@ -109,6 +113,7 @@ public class AutofillVirtualCardEnrollmentInfoBar extends ConfirmInfoBar {
      * @param issuerIcon Bitmap image of the icon that will be shown for this credit card.
      * @param label The credit card label, for example "***1234".
      */
+    @Initializer
     @CalledByNative
     private void addCardDetail(Bitmap issuerIcon, String label) {
         mIssuerIcon = issuerIcon;
@@ -213,7 +218,7 @@ public class AutofillVirtualCardEnrollmentInfoBar extends ConfirmInfoBar {
             SpannableString text = new SpannableString(mDescriptionText);
             int offset = mDescriptionText.length() - mLearnMoreLinkText.length();
             text.setSpan(
-                    new NoUnderlineClickableSpan(
+                    new ChromeClickableSpan(
                             layout.getContext(),
                             (unused) -> {
                                 AutofillVirtualCardEnrollmentInfoBarJni.get()
@@ -252,12 +257,15 @@ public class AutofillVirtualCardEnrollmentInfoBar extends ConfirmInfoBar {
                 Spanned.SPAN_INCLUSIVE_EXCLUSIVE);
 
         // Get and resize the issuer icon.
-        AutofillUiUtils.CardIconSpecs cardIconSpecs =
-                AutofillUiUtils.CardIconSpecs.create(
-                        layout.getContext(), AutofillUiUtils.CardIconSize.LARGE);
+        IconSpecs iconSpecs =
+                IconSpecs.create(
+                        layout.getContext(), ImageType.CREDIT_CARD_ART_IMAGE, ImageSize.LARGE);
         Bitmap scaledIssuerIcon =
                 Bitmap.createScaledBitmap(
-                        mIssuerIcon, cardIconSpecs.getWidth(), cardIconSpecs.getHeight(), true);
+                        mIssuerIcon,
+                        iconSpecs.getWidth(),
+                        iconSpecs.getHeight(),
+                        /* filter= */ true);
 
         // Add the issuer icon and the card container text.
         control.addIcon(

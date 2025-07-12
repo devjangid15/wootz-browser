@@ -11,9 +11,15 @@
 #include "ash/public/cpp/app_list/app_list_controller.h"
 #include "ash/public/cpp/app_list/app_list_types.h"
 #include "base/functional/bind.h"
+#include "base/notimplemented.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
-#include "ui/base/models/simple_menu_model.h"
+#include "chromeos/ash/services/assistant/public/cpp/features.h"
+#include "chromeos/ui/vector_icons/vector_icons.h"
+#include "ui/base/themed_vector_icon.h"
+#include "ui/gfx/color_palette.h"
+#include "ui/gfx/image/image.h"
+#include "ui/menus/simple_menu_model.h"
 
 namespace ash {
 
@@ -136,6 +142,7 @@ void TestAppListClient::OnZeroStateSearchDone(base::OnceClosure on_done) {
   zero_state_search_done_count_++;
   std::move(on_done).Run();
 }
+
 std::optional<bool> TestAppListClient::IsNewUser(
     const AccountId& account_id) const {
   return is_new_user_;
@@ -147,6 +154,16 @@ void TestAppListClient::RecordAppsDefaultVisibility(
     bool is_apps_collections_page) {
   items_above_the_fold_count_ = apps_above_the_fold.size();
   items_below_the_fold_count_ = apps_below_the_fold.size();
+}
+
+bool TestAppListClient::HasReordered() {
+  return false;
+}
+
+gfx::Image TestAppListClient::GetGeminiIcon() {
+  // Use `kMahiSparkIcon` as a placeholder.
+  return gfx::Image(ui::ThemedVectorIcon(&chromeos::kMahiSparkIcon)
+                        .GetImageSkia(gfx::kPlaceholderColor));
 }
 
 }  // namespace ash

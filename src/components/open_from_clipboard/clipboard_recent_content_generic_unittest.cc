@@ -2,8 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 #include "components/open_from_clipboard/clipboard_recent_content_generic.h"
 
+#include <array>
 #include <memory>
 #include <string>
 #include <utility>
@@ -67,7 +69,7 @@ class HasDataCallbackWaiter {
 
 }  // namespace
 
-const char kChromeUIScheme[] = "wootzapp";
+const char kChromeUIScheme[] = "chrome";
 
 class ClipboardRecentContentGenericTest : public testing::Test {
  protected:
@@ -90,10 +92,11 @@ class ClipboardRecentContentGenericTest : public testing::Test {
 };
 
 TEST_F(ClipboardRecentContentGenericTest, RecognizesURLs) {
-  struct {
+  struct TestData {
     std::string clipboard;
     const bool expected_get_recent_url_value;
-  } test_data[] = {
+  };
+  auto test_data = std::to_array<TestData>({
       {"www", false},
       {"query string", false},
       {"www.example.com", false},
@@ -103,7 +106,7 @@ TEST_F(ClipboardRecentContentGenericTest, RecognizesURLs) {
       {"https://another-example.com/", true},
       {"http://example.com/with-path/", true},
       {"about:version", true},
-      {"wootzapp://urls", true},
+      {"chrome://urls", true},
       {"data:,Hello%2C%20World!", true},
       // Certain schemes are not eligible to be suggested.
       {"ftp://example.com/", true},
@@ -120,7 +123,7 @@ TEST_F(ClipboardRecentContentGenericTest, RecognizesURLs) {
       {"http://點看/path", true},
       {"  http://點看/path ", true},
       {" http://點看/path extra word", false},
-  };
+  });
 
   ClipboardRecentContentGeneric recent_content;
   base::Time now = base::Time::Now();

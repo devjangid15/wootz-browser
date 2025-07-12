@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #import "ios/web/public/session/crw_session_certificate_policy_cache_storage.h"
 
 #import <string_view>
@@ -40,7 +45,7 @@ NSData* CertificateToNSData(net::X509Certificate* certificate) {
 // Converts serialized NSData to a certificate.
 scoped_refptr<net::X509Certificate> NSDataToCertificate(NSData* data) {
   return net::X509Certificate::CreateFromBytes(
-      base::make_span(static_cast<const uint8_t*>(data.bytes), data.length));
+      base::span(static_cast<const uint8_t*>(data.bytes), size_t{data.length}));
 }
 
 }  // namespace
@@ -174,15 +179,17 @@ size_t GetCertPolicyBytesEncoded() {
                       certStatus:(NSNumber*)certStatus {
   scoped_refptr<net::X509Certificate> cert = NSDataToCertificate(certData);
   std::string host = base::SysNSStringToUTF8(hostName);
-  if (!cert || !host.length() || !certStatus)
+  if (!cert || !host.length() || !certStatus) {
     return nil;
+  }
   net::CertStatus status = certStatus.unsignedIntegerValue;
   return [self initWithCertificate:cert host:host status:status];
 }
 
 - (instancetype)initWithDeprecatedSerialization:(NSArray*)serialization {
-  if (serialization.count != DeprecatedSerializationIndexCount)
+  if (serialization.count != DeprecatedSerializationIndexCount) {
     return nil;
+  }
   return [self initWithCertData:serialization[CertificateDataIndex]
                        hostName:serialization[HostStringIndex]
                      certStatus:serialization[StatusIndex]];
@@ -258,8 +265,9 @@ size_t GetCertPolicyBytesEncoded() {
         CRWSessionCertificateStorage* certificatePolicyStorage =
             [[CRWSessionCertificateStorage alloc]
                 initWithDeprecatedSerialization:serialiazation];
-        if (certificatePolicyStorage)
+        if (certificatePolicyStorage) {
           [certificateStorages addObject:certificatePolicyStorage];
+        }
       }
       _certificateStorages = certificateStorages;
     }

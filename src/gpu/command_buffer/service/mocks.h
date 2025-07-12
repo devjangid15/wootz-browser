@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 // This file contains definitions for mock objects, used for testing.
 
 // TODO(apatrick): This file "manually" defines some mock objects. Using gMock
@@ -109,10 +114,10 @@ class MockDecoderClient : public DecoderClient {
   MOCK_METHOD(void, OnFenceSyncRelease, (uint64_t release));
   MOCK_METHOD(void, OnDescheduleUntilFinished, ());
   MOCK_METHOD(void, OnRescheduleAfterFinished, ());
-  MOCK_METHOD(void, OnSwapBuffers, (uint64_t swap_id, uint32_t flags));
   MOCK_METHOD(void, ScheduleGrContextCleanup, ());
   MOCK_METHOD(void, SetActiveURL, (GURL url));
   MOCK_METHOD(void, HandleReturnData, (base::span<const uint8_t> data));
+  MOCK_METHOD(bool, ShouldYield, ());
 };
 
 class MockIsolationKeyProvider : public IsolationKeyProvider {
@@ -190,13 +195,15 @@ class MockProgramCache : public ProgramCache {
 class MockMemoryTracker : public MemoryTracker {
  public:
   MockMemoryTracker();
-  ~MockMemoryTracker() override;
 
   MOCK_METHOD1(TrackMemoryAllocatedChange, void(int64_t delta));
   uint64_t GetSize() const override { return 0; }
   MOCK_CONST_METHOD0(ClientTracingId, uint64_t());
   MOCK_CONST_METHOD0(ClientId, int());
   MOCK_CONST_METHOD0(ContextGroupTracingId, uint64_t());
+
+ protected:
+  ~MockMemoryTracker() override;
 };
 
 }  // namespace gles2

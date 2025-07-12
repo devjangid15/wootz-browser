@@ -15,8 +15,10 @@ namespace mojo {
 // TypeConverter to translate from shape_detection::mojom::blink::LandmarkType
 // to String.
 template <>
-struct TypeConverter<String, shape_detection::mojom::blink::LandmarkType> {
-  static String Convert(shape_detection::mojom::blink::LandmarkType input) {
+struct TypeConverter<blink::String,
+                     shape_detection::mojom::blink::LandmarkType> {
+  static blink::String Convert(
+      shape_detection::mojom::blink::LandmarkType input) {
     switch (input) {
       case shape_detection::mojom::blink::LandmarkType::EYE:
         return "eye";
@@ -26,8 +28,7 @@ struct TypeConverter<String, shape_detection::mojom::blink::LandmarkType> {
         return "nose";
     }
 
-    NOTREACHED_IN_MIGRATION();
-    return "";
+    NOTREACHED();
   }
 };
 

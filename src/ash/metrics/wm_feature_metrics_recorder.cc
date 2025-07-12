@@ -4,6 +4,8 @@
 
 #include "ash/metrics/wm_feature_metrics_recorder.h"
 
+#include <array>
+
 #include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
 #include "ash/wm/mru_window_tracker.h"
@@ -22,8 +24,8 @@ namespace {
 constexpr char kWMFeatureMetricPrefix[] = "Ash.Wm.";
 
 // Pre-defined Window size ranges.
-constexpr int kWidthRange[] = {0, 800, 1024, 1400};
-constexpr int kHeightRange[] = {0, 600, 728, 900};
+constexpr std::array<int, 4> kWidthRange = {0, 800, 1024, 1400};
+constexpr std::array<int, 4> kHeightRange = {0, 600, 728, 900};
 
 WMFeatureMetricsRecorder::WindowSizeRange GetWindowSizeRange(
     const gfx::Size& window_size) {
@@ -126,7 +128,7 @@ std::string WMFeatureMetricsRecorder::GetFeatureMetricsPrefix(
     const WMFeatureType& wm_feature_type) {
   switch (wm_feature_type) {
     case WMFeatureType::kWindowLayoutState:
-      return base::StrCat({kWMFeatureMetricPrefix, "WindowLayoutState"});
+      return base::StrCat({kWMFeatureMetricPrefix, "WindowLayoutState."});
   }
 }
 

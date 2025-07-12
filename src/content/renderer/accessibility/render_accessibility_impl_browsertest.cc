@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/containers/adapters.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "content/public/renderer/plugin_ax_tree_action_target_adapter.h"
@@ -21,8 +22,10 @@
 #include "third_party/blink/public/web/web_testing_support.h"
 #include "third_party/blink/public/web/web_view.h"
 #include "ui/accessibility/ax_action_target.h"
+#include "ui/accessibility/ax_location_and_scroll_updates.h"
+#include "ui/accessibility/ax_tree.h"
 #include "ui/accessibility/null_ax_action_target.h"
-#include "ui/native_theme/native_theme_features.h"
+#include "ui/native_theme/features/native_theme_features.h"
 
 namespace content {
 
@@ -214,9 +217,8 @@ TEST_F(RenderAccessibilityImplTest, TestBoundsForFixedNodeAfterScroll) {
   const std::vector<ui::AXTreeUpdate>& updates = GetHandledAccUpdates();
   for (const auto& update : base::Reversed(updates)) {
     for (const ui::AXNodeData& node : update.nodes) {
-      std::string name;
-      if (node.GetStringAttribute(ax::mojom::StringAttribute::kName, &name) &&
-          name == "first") {
+      if (node.GetStringAttribute(ax::mojom::StringAttribute::kName) ==
+          "first") {
         expected_id = node.id;
         expected_bounds = node.relative_bounds;
         expected_bounds.bounds.set_y(expected_bounds.bounds.y() +
@@ -250,10 +252,10 @@ TEST_F(RenderAccessibilityImplTest, TestBoundsForFixedNodeAfterScroll) {
   EXPECT_EQ(root_obj.AxID(), update.nodes[0].id);
 
   // Make sure that a location change is sent for the fixed-positioned node.
-  std::vector<blink::mojom::LocationChangesPtr>& changes = GetLocationChanges();
+  std::vector<ui::AXLocationChange>& changes = GetLocationChanges();
   EXPECT_EQ(changes.size(), 1u);
-  EXPECT_EQ(changes[0]->id, expected_id);
-  EXPECT_EQ(changes[0]->new_location, expected_bounds);
+  EXPECT_EQ(changes[0].id, expected_id);
+  EXPECT_EQ(changes[0].new_location, expected_bounds);
 }
 
 // Tests if the bounds are updated when it has multiple fixed nodes.
@@ -283,8 +285,8 @@ TEST_F(RenderAccessibilityImplTest, TestBoundsForMultipleFixedNodeAfterScroll) {
   const std::vector<ui::AXTreeUpdate>& updates = GetHandledAccUpdates();
   for (const ui::AXTreeUpdate& update : updates) {
     for (const ui::AXNodeData& node : update.nodes) {
-      std::string name;
-      node.GetStringAttribute(ax::mojom::StringAttribute::kName, &name);
+      const std::string& name =
+          node.GetStringAttribute(ax::mojom::StringAttribute::kName);
       if (name == "first" || name == "second") {
         ui::AXRelativeBounds ax_bounds = node.relative_bounds;
         ax_bounds.bounds.set_y(ax_bounds.bounds.y() + scroll_offset_y);
@@ -314,12 +316,12 @@ TEST_F(RenderAccessibilityImplTest, TestBoundsForMultipleFixedNodeAfterScroll) {
   EXPECT_EQ(root_obj.AxID(), update.nodes[0].id);
 
   // Make sure that a location change is sent for the fixed-positioned node.
-  std::vector<blink::mojom::LocationChangesPtr>& changes = GetLocationChanges();
+  std::vector<ui::AXLocationChange>& changes = GetLocationChanges();
   EXPECT_EQ(changes.size(), 2u);
   for (auto& change : changes) {
-    auto search = expected.find(change->id);
+    auto search = expected.find(change.id);
     EXPECT_NE(search, expected.end());
-    EXPECT_EQ(search->second, change->new_location);
+    EXPECT_EQ(search->second, change.new_location);
   }
 }
 
@@ -386,9 +388,8 @@ TEST_F(RenderAccessibilityImplTest, TestFocusConsistency) {
   EXPECT_TRUE(found_button_update);
 }
 
-// Web popups don't exist on Android, so this test doesn't have to be run on
-// this platform.
-#if !BUILDFLAG(IS_ANDROID)
+// Web popups don't exist on some platforms.
+#if !BUILDFLAG(USE_EXTERNAL_POPUP_MENU)
 TEST_F(RenderAccessibilityImplTest, TestHitTestPopupDoesNotCrash) {
   constexpr char html[] = R"HTML(
       <body>
@@ -437,7 +438,7 @@ TEST_F(RenderAccessibilityImplTest, TestHitTestPopupDoesNotCrash) {
           [](mojo::StructPtr<blink::mojom::HitTestResponse>) { return; }));
   SendPendingAccessibilityEvents();
 }
-#endif  // #if !BUILDFLAG(IS_ANDROID)
+#endif  // #if !BUILDFLAG(USE_EXTERNAL_POPUP_MENU)
 
 TEST_F(RenderAccessibilityImplTest, TestExpandCollapseTreeItem) {
   constexpr char html[] = R"HTML(
@@ -668,6 +669,8 @@ TEST_F(RenderAccessibilityImplTest, SendPendingAccessibilityEventsPostLoad) {
   // A load started event pauses logging.
   WebDocument document = GetMainFrame()->GetDocument();
   WebAXObject root_obj = WebAXObject::FromWebDocument(document);
+  GetRenderAccessibilityImpl()->DidCommitProvisionalLoad(
+      ui::PAGE_TRANSITION_LINK);
   GetRenderAccessibilityImpl()->HandleAXEvent(
       ui::AXEvent(root_obj.AxID(), ax::mojom::Event::kLoadStart));
   SendPendingAccessibilityEvents();

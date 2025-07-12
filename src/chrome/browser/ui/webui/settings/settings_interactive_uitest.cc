@@ -106,15 +106,10 @@ IN_PROC_BROWSER_TEST_F(SettingsInteractiveUiTest,
   UNCALLED_MOCK_CALLBACK(ui::InteractionSequence::CompletedCallback, completed);
   UNCALLED_MOCK_CALLBACK(ui::InteractionSequence::AbortedCallback, aborted);
 
-  bool is_3pcd = base::FeatureList::IsEnabled(
-      content_settings::features::kTrackingProtection3pcd);
-  const std::string cookie_row_selector =
-      is_3pcd ? "cr-link-row#trackingProtectionLinkRow"
-              : "cr-link-row#thirdPartyCookiesLinkRow";
-  const GURL cookie_setting_url("wootzapp://settings/privacy");
+  const GURL cookie_setting_url("chrome://settings/privacy");
   const WebContentsInteractionTestUtil::DeepQuery cookies_link_row = {
       "settings-ui", "settings-main", "settings-basic-page",
-      "settings-privacy-page", cookie_row_selector};
+      "settings-privacy-page", "cr-link-row#thirdPartyCookiesLinkRow"};
   const WebContentsInteractionTestUtil::DeepQuery
       cookies_setting_page_help_icon = {
           "settings-ui",
@@ -152,14 +147,8 @@ IN_PROC_BROWSER_TEST_F(SettingsInteractiveUiTest,
                         auto* util =
                             element->AsA<TrackedElementWebContents>()->owner();
                         auto* const contents = util->web_contents();
-                        if (is_3pcd) {
-                          EXPECT_EQ(
-                              contents->GetURL(),
-                              GURL(chrome::kTrackingProtectionHelpCenterURL));
-                        } else {
-                          EXPECT_EQ(contents->GetURL(),
-                                    chrome::kCookiesSettingsHelpCenterURL);
-                        }
+                        EXPECT_EQ(contents->GetURL(),
+                                  chrome::kCookiesSettingsHelpCenterURL);
                       }))
                   .Build())
           .Build();
@@ -180,7 +169,7 @@ IN_PROC_BROWSER_TEST_F(ThemeSettingsInteractiveUiTest,
   UNCALLED_MOCK_CALLBACK(ui::InteractionSequence::CompletedCallback, completed);
   UNCALLED_MOCK_CALLBACK(ui::InteractionSequence::AbortedCallback, aborted);
 
-  const GURL appearance_setting_url("wootzapp://settings/appearance");
+  const GURL appearance_setting_url("chrome://settings/appearance");
   const WebContentsInteractionTestUtil::DeepQuery reset_to_default_btn = {
       "settings-ui", "settings-main", "settings-basic-page",
       "settings-appearance-page", "cr-button#useDefault"};

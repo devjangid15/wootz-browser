@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "device/bluetooth/bluez/bluetooth_device_bluez.h"
 
 #include <stdio.h>
@@ -14,6 +19,7 @@
 #include "base/functional/callback_helpers.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/notimplemented.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/task/sequenced_task_runner.h"
@@ -240,8 +246,7 @@ device::BluetoothTransport BluetoothDeviceBlueZ::GetType() const {
     return device::BLUETOOTH_TRANSPORT_DUAL;
   }
 
-  NOTREACHED_IN_MIGRATION();
-  return device::BLUETOOTH_TRANSPORT_INVALID;
+  NOTREACHED();
 }
 
 void BluetoothDeviceBlueZ::CreateGattConnectionImpl(
@@ -568,8 +573,7 @@ void BluetoothDeviceBlueZ::SetConnectionLatency(
       max_connection_interval = MAX_CONNECTION_INTERVAL_HIGH;
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
 
   BLUETOOTH_LOG(EVENT) << "Setting LE connection parameters: min="

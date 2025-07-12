@@ -7,41 +7,46 @@
 #include <utility>
 
 #include "base/location.h"
+#include "components/sync/protocol/data_type_state.pb.h"
 #include "components/sync/protocol/entity_metadata.pb.h"
-#include "components/sync/protocol/model_type_state.pb.h"
 
 namespace syncer {
 
 SyncMetadataStoreChangeList::SyncMetadataStoreChangeList(
     SyncMetadataStore* store,
-    syncer::ModelType type,
+    syncer::DataType type,
     ErrorCallback error_callback)
     : store_(store), type_(type), error_callback_(std::move(error_callback)) {
   if (!store_) {
-    SetError(ModelError(FROM_HERE, "Invalid SyncMetadataStore"));
+    SetError(ModelError(
+        FROM_HERE, ModelError::Type::kSyncMetadataStoreChangeListInvalidStore));
   }
 }
 
 SyncMetadataStoreChangeList::~SyncMetadataStoreChangeList() = default;
 
-void SyncMetadataStoreChangeList::UpdateModelTypeState(
-    const sync_pb::ModelTypeState& model_type_state) {
+void SyncMetadataStoreChangeList::UpdateDataTypeState(
+    const sync_pb::DataTypeState& data_type_state) {
   if (error_encountered_) {
     return;
   }
 
-  if (!store_->UpdateModelTypeState(type_, model_type_state)) {
-    SetError(ModelError(FROM_HERE, "Failed to update ModelTypeState."));
+  if (!store_->UpdateDataTypeState(type_, data_type_state)) {
+    SetError(ModelError(
+        FROM_HERE,
+        ModelError::Type::kSyncMetadataStoreUpdateDataTypeStateFailed));
   }
 }
 
-void SyncMetadataStoreChangeList::ClearModelTypeState() {
+void SyncMetadataStoreChangeList::ClearDataTypeState() {
   if (error_encountered_) {
     return;
   }
 
-  if (!store_->ClearModelTypeState(type_)) {
-    SetError(ModelError(FROM_HERE, "Failed to clear ModelTypeState."));
+  if (!store_->ClearDataTypeState(type_)) {
+    SetError(ModelError(
+        FROM_HERE,
+        ModelError::Type::kSyncMetadataStoreClearDataTypeStateFailed));
   }
 }
 
@@ -53,7 +58,9 @@ void SyncMetadataStoreChangeList::UpdateMetadata(
   }
 
   if (!store_->UpdateEntityMetadata(type_, storage_key, metadata)) {
-    SetError(ModelError(FROM_HERE, "Failed to update entity metadata."));
+    SetError(ModelError(
+        FROM_HERE,
+        ModelError::Type::kSyncMetadataStoreUpdateEntityMetadataFailed));
   }
 }
 
@@ -64,7 +71,9 @@ void SyncMetadataStoreChangeList::ClearMetadata(
   }
 
   if (!store_->ClearEntityMetadata(type_, storage_key)) {
-    SetError(ModelError(FROM_HERE, "Failed to clear entity metadata."));
+    SetError(ModelError(
+        FROM_HERE,
+        ModelError::Type::kSyncMetadataStoreClearEntityMetadataFailed));
   }
 }
 

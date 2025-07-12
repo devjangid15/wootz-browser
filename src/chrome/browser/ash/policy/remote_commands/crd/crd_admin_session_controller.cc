@@ -13,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+#include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
 #include "base/check.h"
 #include "base/check_deref.h"
@@ -31,13 +32,19 @@
 #include "chrome/browser/ash/policy/remote_commands/crd/crd_remote_command_utils.h"
 #include "chrome/browser/ash/policy/remote_commands/crd/crd_session_observer.h"
 #include "chrome/browser/ash/policy/remote_commands/crd/crd_support_host_observer_proxy.h"
+#include "chrome/browser/ash/policy/remote_commands/crd/public/crd_session_result_codes.h"
 #include "chrome/browser/ash/policy/remote_commands/crd/remote_activity_notification_controller.h"
 #include "chrome/browser/device_identity/device_oauth2_token_service_factory.h"
 #include "chrome/common/pref_names.h"
+#include "chromeos/ash/components/dbus/userdataauth/userdataauth_client.h"
+#include "chromeos/ash/components/login/auth/auth_factor_editor.h"
+#include "chromeos/ash/components/login/auth/public/authentication_error.h"
+#include "chromeos/ash/components/login/auth/public/user_context.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
+#include "components/user_manager/user_manager.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
-#include "remoting/host/chromeos/features.h"
+#include "remoting/host/chromeos/chromeos_enterprise_params.h"
 #include "remoting/host/chromeos/remote_support_host_ash.h"
 #include "remoting/host/chromeos/remoting_service.h"
 #include "remoting/host/chromeos/session_id.h"
@@ -50,7 +57,6 @@ using AccessCodeCallback = StartCrdSessionJobDelegate::AccessCodeCallback;
 using ErrorCallback = StartCrdSessionJobDelegate::ErrorCallback;
 using SessionEndCallback = StartCrdSessionJobDelegate::SessionEndCallback;
 using SessionParameters = StartCrdSessionJobDelegate::SessionParameters;
-using remoting::features::kEnableCrdAdminRemoteAccessV2;
 
 namespace {
 
@@ -167,6 +173,8 @@ std::ostream& operator<<(std::ostream& os,
             << ", allow_troubleshooting_tools "
             << parameters.allow_troubleshooting_tools
             << ", allow_reconnections " << parameters.allow_reconnections
+            << ", allow_remote_input " << parameters.allow_remote_input
+            << ", allow_clipboard_sync " << parameters.allow_clipboard_sync
             << "}";
 }
 
@@ -288,6 +296,49 @@ class IdleHostTtlChecker : public CrdSessionObserver {
   std::optional<base::OneShotTimer> terminate_timer_;
 };
 
+// Prevents the remote admin from triggering the Cryptohome account recovery.
+// Otherwise a malicious admin could use this to gain access to the
+// files of a local user's account, even without knowing the password.
+class CryptohomeAccountRecoveryDisabler : public CrdSessionObserver {
+ public:
+  explicit CryptohomeAccountRecoveryDisabler(
+      base::OnceClosure terminate_session_callback)
+      : terminate_session_callback_(std::move(terminate_session_callback)) {}
+
+  CryptohomeAccountRecoveryDisabler(const CryptohomeAccountRecoveryDisabler&) =
+      delete;
+  CryptohomeAccountRecoveryDisabler& operator=(
+      const CryptohomeAccountRecoveryDisabler&) = delete;
+  ~CryptohomeAccountRecoveryDisabler() override = default;
+
+  // `CrdSessionObserver` implementation:
+  void OnClientConnected() override { LockAccountRecoveryForRemoteAccess(); }
+
+ private:
+  void LockAccountRecoveryForRemoteAccess() {
+    auth_factor_editor_.LockCryptohomeRecoveryUntilReboot(base::BindOnce(
+        &CryptohomeAccountRecoveryDisabler::OnCryptohomeRecoveryLocked,
+        weak_factory_.GetWeakPtr()));
+  }
+
+  void OnCryptohomeRecoveryLocked(
+      std::optional<ash::AuthenticationError> error) {
+    // Normally, this error shouldn't occur, hence, the error handling is not
+    // done gracefully.
+    if (error.has_value()) {
+      LOG(ERROR) << "Terminating the CRD session because locking Cryptohome "
+                    "recovery failed due to error: "
+                 << error->get_resolved_failure();
+      std::move(terminate_session_callback_).Run();
+    }
+  }
+
+  ash::AuthFactorEditor auth_factor_editor_{ash::UserDataAuthClient::Get()};
+  base::OnceClosure terminate_session_callback_;
+
+  base::WeakPtrFactory<CryptohomeAccountRecoveryDisabler> weak_factory_{this};
+};
+
 remoting::mojom::SupportSessionParamsPtr GetSessionParameters(
     const SessionParameters& parameters,
     std::string_view oauth_token) {
@@ -301,16 +352,26 @@ remoting::mojom::SupportSessionParamsPtr GetSessionParameters(
 
 remoting::ChromeOsEnterpriseParams GetEnterpriseParameters(
     const SessionParameters& parameters) {
-  return remoting::ChromeOsEnterpriseParams{
-      .suppress_user_dialogs = !parameters.show_confirmation_dialog,
-      .suppress_notifications = !parameters.show_confirmation_dialog,
-      .terminate_upon_input = parameters.terminate_upon_input,
-      .curtain_local_user_session = parameters.curtain_local_user_session,
-      .show_troubleshooting_tools = parameters.show_troubleshooting_tools,
-      .allow_troubleshooting_tools = parameters.allow_troubleshooting_tools,
-      .allow_reconnections = parameters.allow_reconnections,
-      .allow_file_transfer = parameters.allow_file_transfer,
-  };
+  remoting::ChromeOsEnterpriseParams params;
+  params.suppress_user_dialogs = !parameters.show_confirmation_dialog;
+  params.suppress_notifications = !parameters.show_confirmation_dialog;
+  params.terminate_upon_input = parameters.terminate_upon_input;
+  params.curtain_local_user_session = parameters.curtain_local_user_session;
+  params.show_troubleshooting_tools = parameters.show_troubleshooting_tools;
+  params.allow_troubleshooting_tools = parameters.allow_troubleshooting_tools;
+  params.allow_reconnections = parameters.allow_reconnections;
+  params.allow_file_transfer = parameters.allow_file_transfer;
+  params.connection_dialog_required = parameters.show_confirmation_dialog;
+  params.request_origin =
+      ConvertToChromeOsEnterpriseRequestOrigin(parameters.request_origin);
+  params.connection_auto_accept_timeout =
+      parameters.connection_auto_accept_timeout.value_or(base::TimeDelta());
+  params.maximum_session_duration =
+      parameters.maximum_session_duration.value_or(base::TimeDelta());
+  params.allow_remote_input = parameters.allow_remote_input;
+  params.allow_clipboard_sync = parameters.allow_clipboard_sync;
+
+  return params;
 }
 
 DeviceOAuth2TokenService* GetOAuthService() {
@@ -606,19 +667,15 @@ void CrdAdminSessionController::Init(
     base::OnceClosure done_callback) {
   curtain_controller_ = &curtain_controller;
 
-  if (base::FeatureList::IsEnabled(kEnableCrdAdminRemoteAccessV2)) {
-    CHECK(!notification_controller_);
-    notification_controller_ =
-        std::make_unique<RemoteActivityNotificationController>(
-            CHECK_DEREF(local_state),
-            base::BindRepeating(
-                &CrdAdminSessionController::IsCurrentSessionCurtained,
-                base::Unretained(this)));
+  CHECK(!notification_controller_);
+  notification_controller_ =
+      std::make_unique<RemoteActivityNotificationController>(
+          CHECK_DEREF(local_state),
+          base::BindRepeating(
+              &CrdAdminSessionController::IsCurrentSessionCurtained,
+              base::Unretained(this)));
 
-    TryToReconnect(std::move(done_callback));
-  } else {
-    std::move(done_callback).Run();
-  }
+  TryToReconnect(std::move(done_callback));
 }
 
 void CrdAdminSessionController::Shutdown() {
@@ -703,12 +760,13 @@ CrdAdminSessionController::CreateCrdHostSession() {
 
   result->AddOwnedObserver(std::make_unique<IdleHostTtlChecker>(base::BindOnce(
       &CrdAdminSessionController::TerminateSession, base::Unretained(this))));
+  result->AddOwnedObserver(std::make_unique<CryptohomeAccountRecoveryDisabler>(
+      base::BindOnce(&CrdAdminSessionController::TerminateSession,
+                     base::Unretained(this))));
   result->AddObserver(this);
 
-  if (base::FeatureList::IsEnabled(kEnableCrdAdminRemoteAccessV2)) {
-    CHECK(notification_controller_);
-    result->AddObserver(notification_controller_.get());
-  }
+  CHECK(notification_controller_);
+  result->AddObserver(notification_controller_.get());
 
   return result;
 }
@@ -723,6 +781,8 @@ void CrdAdminSessionController::RegisterLocalStatePrefs(
   registry->RegisterBooleanPref(prefs::kRemoteAdminWasPresent, false);
   registry->RegisterBooleanPref(
       prefs::kRemoteAccessHostAllowEnterpriseRemoteSupportConnections, true);
+  registry->RegisterBooleanPref(
+      prefs::kDeviceAllowEnterpriseRemoteAccessConnections, true);
 }
 
 }  // namespace policy

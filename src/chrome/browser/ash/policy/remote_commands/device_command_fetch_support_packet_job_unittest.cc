@@ -22,7 +22,8 @@
 #include "base/time/time.h"
 #include "base/values.h"
 #include "chrome/browser/ash/app_mode/kiosk_chrome_app_manager.h"
-#include "chrome/browser/ash/app_mode/web_app/web_kiosk_app_manager.h"
+#include "chrome/browser/ash/app_mode/web_app/kiosk_web_app_manager.h"
+#include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/ash/policy/remote_commands/device_command_fetch_support_packet_job_test_util.h"
 #include "chrome/browser/ash/policy/remote_commands/user_session_type_test_util.h"
 #include "chrome/browser/ash/settings/device_settings_test_helper.h"
@@ -41,6 +42,7 @@
 #include "components/reporting/storage/storage_module_interface.h"
 #include "components/reporting/storage/test_storage_module.h"
 #include "components/reporting/util/status.h"
+#include "components/user_manager/scoped_user_manager.h"
 #include "record.pb.h"
 #include "record_constants.pb.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -98,7 +100,7 @@ class DeviceCommandFetchSupportPacketTest : public ash::DeviceSettingsTestBase {
     ash::system::StatisticsProvider::SetTestProvider(&statistics_provider_);
     cros_settings_helper_.ReplaceDeviceSettingsProviderWithStub();
 
-    web_kiosk_app_manager_ = std::make_unique<ash::WebKioskAppManager>();
+    kiosk_web_app_manager_ = std::make_unique<ash::KioskWebAppManager>();
     kiosk_chrome_app_manager_ = std::make_unique<ash::KioskChromeAppManager>();
 
     {
@@ -114,7 +116,7 @@ class DeviceCommandFetchSupportPacketTest : public ash::DeviceSettingsTestBase {
     DeviceCommandFetchSupportPacketJob::SetTargetDirForTesting(nullptr);
 
     kiosk_chrome_app_manager_.reset();
-    web_kiosk_app_manager_.reset();
+    kiosk_web_app_manager_.reset();
 
     ash::DebugDaemonClient::Shutdown();
     DeviceSettingsTestBase::TearDown();
@@ -143,7 +145,7 @@ class DeviceCommandFetchSupportPacketTest : public ash::DeviceSettingsTestBase {
 
  protected:
   // App manager instances for testing kiosk sessions.
-  std::unique_ptr<ash::WebKioskAppManager> web_kiosk_app_manager_;
+  std::unique_ptr<ash::KioskWebAppManager> kiosk_web_app_manager_;
   std::unique_ptr<ash::KioskChromeAppManager> kiosk_chrome_app_manager_;
 
   scoped_refptr<reporting::test::TestStorageModule> reporting_test_storage_;
@@ -152,6 +154,8 @@ class DeviceCommandFetchSupportPacketTest : public ash::DeviceSettingsTestBase {
 
   ash::system::FakeStatisticsProvider statistics_provider_;
   ash::ScopedCrosSettingsTestHelper cros_settings_helper_;
+  user_manager::TypedScopedUserManager<ash::FakeChromeUserManager>
+      user_manager_{std::make_unique<ash::FakeChromeUserManager>()};
   base::HistogramTester histogram_tester_;
   TestingProfileManager profile_manager_{TestingBrowserProcess::GetGlobal()};
   base::FilePath target_dir_;
@@ -258,9 +262,9 @@ TEST_P(DeviceCommandFetchSupportPacketTestParameterized,
 
   {
     base::ScopedAllowBlockingForTesting allow_blocking_for_test;
-    int64_t file_size;
-    ASSERT_TRUE(base::GetFileSize(exported_file, &file_size));
-    EXPECT_GT(file_size, 0);
+    std::optional<int64_t> file_size = base::GetFileSize(exported_file);
+    ASSERT_TRUE(file_size.has_value());
+    EXPECT_GT(file_size.value(), 0);
   }
 
   histogram_tester_.ExpectUniqueSample(
@@ -326,9 +330,9 @@ TEST_P(DeviceCommandFetchSupportPacketTestParameterized,
 
   {
     base::ScopedAllowBlockingForTesting allow_blocking_for_test;
-    int64_t file_size;
-    ASSERT_TRUE(base::GetFileSize(exported_file, &file_size));
-    EXPECT_GT(file_size, 0);
+    std::optional<int64_t> file_size = base::GetFileSize(exported_file);
+    ASSERT_TRUE(file_size.has_value());
+    EXPECT_GT(file_size.value(), 0);
   }
 
   histogram_tester_.ExpectUniqueSample(

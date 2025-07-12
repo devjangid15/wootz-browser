@@ -178,12 +178,16 @@ base::TimeDelta MediaFoundationRendererClient::GetMediaTime() {
   return mojo_renderer_->GetMediaTime();
 }
 
-void MediaFoundationRendererClient::OnSelectedVideoTracksChanged(
-    const std::vector<DemuxerStream*>& enabled_tracks,
+void MediaFoundationRendererClient::OnTracksChanged(
+    DemuxerStream::Type track_type,
+    DemuxerStream* enabled_track,
     base::OnceClosure change_completed_cb) {
-  bool video_track_selected = (enabled_tracks.size() > 0);
-  DVLOG_FUNC(1) << "video_track_selected=" << video_track_selected;
-  renderer_extension_->SetVideoStreamEnabled(video_track_selected);
+  if (track_type != DemuxerStream::VIDEO) {
+    DLOG(WARNING) << "Audio track changes are not supported.";
+    std::move(change_completed_cb).Run();
+    return;
+  }
+  renderer_extension_->SetVideoStreamEnabled(enabled_track != nullptr);
   std::move(change_completed_cb).Run();
 }
 
@@ -545,6 +549,15 @@ void MediaFoundationRendererClient::OnDCOMPSurfaceHandleSet(bool success) {
     MEDIA_LOG(ERROR, media_log_) << "Failed to set DCOMP surface handle";
     REPORT_ERROR_REASON(kOnDCompSurfaceHandleSetError);
     OnError(PIPELINE_ERROR_COULD_NOT_RENDER);
+    return;
+  }
+
+  // Ensure `SwapChainPresenter::PresentDCOMPSurface()` is invoked to add video
+  // into DCOMP visual tree since `DCOMPTexture::SetDCOMPSurfaceHandle()`
+  // has just succeeded.
+  if (dcomp_video_frame_ && !IsFrameServerMode()) {
+    sink_->PaintSingleFrame(dcomp_video_frame_,
+                            /*repaint_duplicate_frame=*/true);
   }
 }
 

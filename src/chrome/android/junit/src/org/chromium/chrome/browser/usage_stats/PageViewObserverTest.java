@@ -20,13 +20,15 @@ import static org.mockito.Mockito.when;
 import android.app.Activity;
 
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.ArgumentMatcher;
 import org.mockito.Captor;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.Robolectric;
 import org.robolectric.annotation.Config;
 
@@ -61,6 +63,7 @@ public final class PageViewObserverTest {
     private static final String STARTING_FQDN = "www.one.com";
     private static final String DIFFERENT_FQDN = "www.two.com";
 
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     @Mock private Activity mActivity;
     @Mock private ObservableSupplier<Tab> mTabSupplier;
     @Mock private Tab mTab;
@@ -78,7 +81,7 @@ public final class PageViewObserverTest {
     private UserDataHost mDestroyedUserDataHost;
     private WeakReference<Activity> mActivityRef;
 
-    private class MockTabViewManager implements TabViewManager {
+    private static class MockTabViewManager implements TabViewManager {
         private TabViewProvider mTabViewProvider;
 
         @Override
@@ -99,7 +102,6 @@ public final class PageViewObserverTest {
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
 
         mUserDataHost = new UserDataHost();
         mUserDataHostTab2 = new UserDataHost();
@@ -260,7 +262,7 @@ public final class PageViewObserverTest {
 
     @Test
     public void tabAdded_startReported() {
-        PageViewObserver observer = createPageViewObserver();
+        createPageViewObserver();
         doReturn(STARTING_URL).when(mTab2).getUrl();
         doReturn(mTab2).when(mTabSupplier).get();
         changeTab(mTab2);
@@ -270,7 +272,7 @@ public final class PageViewObserverTest {
 
     @Test
     public void tabAdded_notSelected_startNotReported() {
-        PageViewObserver observer = createPageViewObserver();
+        createPageViewObserver();
         doReturn(STARTING_URL).when(mTab).getUrl();
         doReturn(null).when(mTabSupplier).get();
         changeTab(mTab);
@@ -280,13 +282,13 @@ public final class PageViewObserverTest {
 
     @Test
     public void tabAdded_suspendedDomain() {
-        PageViewObserver observer = createPageViewObserver();
+        createPageViewObserver();
         doReturn(STARTING_URL).when(mTab2).getUrl();
         doReturn(mTab2).when(mTabSupplier).get();
         doReturn(true).when(mSuspensionTracker).isWebsiteSuspended(STARTING_FQDN);
         changeTab(mTab2);
 
-        assertEquals(SuspendedTab.from(mTab2, mTabContentManagerSupplier).getFqdn(), STARTING_FQDN);
+        assertEquals(STARTING_FQDN, SuspendedTab.from(mTab2, mTabContentManagerSupplier).getFqdn());
     }
 
     // TODO(pnoland): add test for platform reporting once the System API is available in Q.
@@ -313,7 +315,7 @@ public final class PageViewObserverTest {
         updateUrl(mTab, DIFFERENT_URL, observer);
 
         SuspendedTab suspendedTab = SuspendedTab.from(mTab, mTabContentManagerSupplier);
-        assertEquals(suspendedTab.getFqdn(), DIFFERENT_FQDN);
+        assertEquals(DIFFERENT_FQDN, suspendedTab.getFqdn());
     }
 
     @Test
@@ -443,7 +445,7 @@ public final class PageViewObserverTest {
     public void customTab_startReportedUponConstruction() {
         doReturn(STARTING_URL).when(mTab).getUrl();
         doReturn(false).when(mTab).isHidden();
-        PageViewObserver observer = createPageViewObserver();
+        createPageViewObserver();
         verify(mEventTracker, times(1)).addWebsiteEvent(argThat(isStartEvent(STARTING_FQDN)));
 
         doReturn(DIFFERENT_URL).when(mTab2).getUrl();
@@ -455,7 +457,7 @@ public final class PageViewObserverTest {
     @Test
     public void construction_nullInitialTab() {
         doReturn(null).when(mTabSupplier).get();
-        PageViewObserver observer = createPageViewObserver();
+        createPageViewObserver();
 
         doReturn(mTab).when(mTabSupplier).get();
         doReturn(STARTING_URL).when(mTab).getUrl();
@@ -528,7 +530,7 @@ public final class PageViewObserverTest {
     }
 
     private ArgumentMatcher<WebsiteEvent> isStartEvent(String fqdn) {
-        return new ArgumentMatcher<WebsiteEvent>() {
+        return new ArgumentMatcher<>() {
             @Override
             public boolean matches(WebsiteEvent event) {
                 return event.getType() == WebsiteEvent.EventType.START
@@ -543,7 +545,7 @@ public final class PageViewObserverTest {
     }
 
     private ArgumentMatcher<WebsiteEvent> isStopEvent(String fqdn) {
-        return new ArgumentMatcher<WebsiteEvent>() {
+        return new ArgumentMatcher<>() {
             @Override
             public boolean matches(WebsiteEvent event) {
                 return event.getType() == WebsiteEvent.EventType.STOP

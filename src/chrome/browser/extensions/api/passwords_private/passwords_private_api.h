@@ -267,27 +267,42 @@ class PasswordsPrivateRequestExportProgressStatusFunction
   ResponseAction Run() override;
 };
 
-class PasswordsPrivateIsOptedInForAccountStorageFunction
+class PasswordsPrivateIsAccountStorageEnabledFunction
     : public ExtensionFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION("passwordsPrivate.isOptedInForAccountStorage",
-                             PASSWORDSPRIVATE_ISOPTEDINFORACCOUNTSTORAGE)
+  DECLARE_EXTENSION_FUNCTION("passwordsPrivate.isAccountStorageEnabled",
+                             PASSWORDSPRIVATE_ISACCOUNTSTORAGEENABLED)
 
  protected:
-  ~PasswordsPrivateIsOptedInForAccountStorageFunction() override = default;
+  ~PasswordsPrivateIsAccountStorageEnabledFunction() override = default;
 
   // ExtensionFunction overrides.
   ResponseAction Run() override;
 };
 
-class PasswordsPrivateOptInForAccountStorageFunction
+class PasswordsPrivateSetAccountStorageEnabledFunction
     : public ExtensionFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION("passwordsPrivate.optInForAccountStorage",
-                             PASSWORDSPRIVATE_OPTINFORACCOUNTSTORAGE)
+  DECLARE_EXTENSION_FUNCTION("passwordsPrivate.setAccountStorageEnabled",
+                             PASSWORDSPRIVATE_SETACCOUNTSTORAGEENABLED)
 
  protected:
-  ~PasswordsPrivateOptInForAccountStorageFunction() override = default;
+  ~PasswordsPrivateSetAccountStorageEnabledFunction() override = default;
+
+  // ExtensionFunction overrides.
+  ResponseAction Run() override;
+};
+
+class PasswordsPrivateShouldShowAccountStorageSettingToggleFunction
+    : public ExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION(
+      "passwordsPrivate.shouldShowAccountStorageSettingToggle",
+      PASSWORDSPRIVATE_SHOULDSHOWACCOUNTSTORAGESETTINGTOGGLE)
+
+ protected:
+  ~PasswordsPrivateShouldShowAccountStorageSettingToggleFunction() override =
+      default;
 
   // ExtensionFunction overrides.
   ResponseAction Run() override;
@@ -374,18 +389,6 @@ class PasswordsPrivateGetPasswordCheckStatusFunction
   ResponseAction Run() override;
 };
 
-class PasswordsPrivateIsAccountStoreDefaultFunction : public ExtensionFunction {
- public:
-  DECLARE_EXTENSION_FUNCTION("passwordsPrivate.isAccountStoreDefault",
-                             PASSWORDSPRIVATE_ISACCOUNTSTOREDEFAULT)
-
- protected:
-  ~PasswordsPrivateIsAccountStoreDefaultFunction() override = default;
-
-  // ExtensionFunction overrides.
-  ResponseAction Run() override;
-};
-
 class PasswordsPrivateGetUrlCollectionFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("passwordsPrivate.getUrlCollection",
@@ -435,6 +438,9 @@ class PasswordsPrivateSwitchBiometricAuthBeforeFillingStateFunction
 
   // ExtensionFunction overrides.
   ResponseAction Run() override;
+
+ private:
+  void OnAuthenticationComplete(bool result);
 };
 
 class PasswordsPrivateShowAddShortcutDialogFunction : public ExtensionFunction {
@@ -489,6 +495,9 @@ class PasswordsPrivateIsPasswordManagerPinAvailableFunction
 
   // ExtensionFunction overrides.
   ResponseAction Run() override;
+
+ private:
+  void OnPasswordManagerPinAvailabilityReceived(bool is_available);
 };
 
 class PasswordsPrivateDisconnectCloudAuthenticatorFunction
@@ -518,6 +527,22 @@ class PasswordsPrivateIsConnectedToCloudAuthenticatorFunction
 
   // ExtensionFunction overrides.
   ResponseAction Run() override;
+};
+
+class PasswordsPrivateDeleteAllPasswordManagerDataFunction
+    : public ExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("passwordsPrivate.deleteAllPasswordManagerData",
+                             PASSWORDSPRIVATE_DELETEALLPASSWORDMANAGERDATA)
+
+ protected:
+  ~PasswordsPrivateDeleteAllPasswordManagerDataFunction() override = default;
+
+  // ExtensionFunction overrides.
+  ResponseAction Run() override;
+
+ private:
+  void OnDeletionCompleted(bool success);
 };
 
 }  // namespace extensions

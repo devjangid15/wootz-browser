@@ -51,7 +51,7 @@ struct CONTENT_EXPORT OpenURLParams {
                 bool started_from_context_menu);
   OpenURLParams(const GURL& url,
                 const Referrer& referrer,
-                int frame_tree_node_id,
+                FrameTreeNodeId frame_tree_node_id,
                 WindowOpenDisposition disposition,
                 ui::PageTransition transition,
                 bool is_renderer_initiated);
@@ -108,9 +108,9 @@ struct CONTENT_EXPORT OpenURLParams {
   // is terminated by \r\n.  May be empty if no extra headers are needed.
   std::string extra_headers;
 
-  // The browser-global FrameTreeNode ID or RenderFrameHost::kNoFrameTreeNodeId
-  // to indicate the main frame.
-  int frame_tree_node_id = RenderFrameHost::kNoFrameTreeNodeId;
+  // The browser-global FrameTreeNode ID for the frame to navigate, or the
+  // default-constructed invalid value to indicate the main frame.
+  FrameTreeNodeId frame_tree_node_id;
 
   // Routing id of the source RenderFrameHost.
   int source_render_frame_id = MSG_ROUTING_NONE;
@@ -146,9 +146,9 @@ struct CONTENT_EXPORT OpenURLParams {
   // Optional URLLoaderFactory to facilitate navigation to a blob URL.
   scoped_refptr<network::SharedURLLoaderFactory> blob_url_loader_factory;
 
-  // Indicates that the navigation should happen in an app window if
-  // possible, i.e. if an app for the URL is installed.
-  bool open_app_window_if_possible = false;
+  // Indicates that this is a service worker openWindow() call targeting a new
+  // window.
+  bool is_service_worker_open_window = false;
 
   // If this navigation was initiated from a link that specified the
   // hrefTranslate attribute, this contains the attribute's value (a BCP47
@@ -165,11 +165,15 @@ struct CONTENT_EXPORT OpenURLParams {
 
   // Indicates that this navigation is for PDF content in a renderer.
   bool is_pdf = false;
+
+  // True if the initiator explicitly asked for opener relationships to be
+  // preserved, via rel="opener".
+  bool has_rel_opener = false;
 };
 
 class PageNavigator {
  public:
-  virtual ~PageNavigator() {}
+  virtual ~PageNavigator() = default;
 
   // Opens a URL using parameters from `params`.
   // Returns:

@@ -60,10 +60,14 @@ struct IsTraceable<KeyValuePair<K, V>>
     : std::integral_constant<bool,
                              IsTraceable<K>::value || IsTraceable<V>::value> {};
 
+}  // namespace WTF
+
+namespace blink {
+
 template <typename KeyTraitsArg,
           typename ValueTraitsArg,
-          typename P = KeyValuePair<typename KeyTraitsArg::TraitType,
-                                    typename ValueTraitsArg::TraitType>>
+          typename P = WTF::KeyValuePair<typename KeyTraitsArg::TraitType,
+                                         typename ValueTraitsArg::TraitType>>
 struct KeyValuePairHashTraits
     : TwoFieldsHashTraits<P, &P::key, &P::value, KeyTraitsArg, ValueTraitsArg> {
   using TraitType = P;
@@ -76,13 +80,18 @@ struct KeyValuePairHashTraits
   static constexpr bool kCanTraceConcurrently =
       KeyTraits::kCanTraceConcurrently &&
       (ValueTraits::kCanTraceConcurrently ||
-       !IsTraceable<typename ValueTraits::TraitType>::value);
+       !WTF::IsTraceable<typename ValueTraits::TraitType>::value);
+  static constexpr bool kSupportsCompaction =
+      KeyTraits::kSupportsCompaction && ValueTraits::kSupportsCompaction;
 };
 
 template <typename Key, typename Value>
-struct HashTraits<KeyValuePair<Key, Value>>
+struct HashTraits<WTF::KeyValuePair<Key, Value>>
     : public KeyValuePairHashTraits<HashTraits<Key>, HashTraits<Value>> {};
 
+}  // namespace blink
+
+namespace WTF {
 namespace internal {
 
 template <typename T, bool NeedsStackCheck = IsTraceable<T>::value>
@@ -237,6 +246,8 @@ struct HashTableConstKeysIterator<HashTableType, KeyType, MappedType>
   using pointer = const KeyType*;
   using reference = const KeyType&;
 
+  constexpr HashTableConstKeysIterator() = default;
+
   HashTableConstKeysIterator(const ConstIterator& impl) : impl_(impl) {}
 
   const KeyType* Get() const { return &(impl_.Get()->key); }
@@ -280,6 +291,8 @@ struct HashTableConstValuesIterator<HashTableType, KeyType, MappedType>
   using difference_type = typename ConstIterator::difference_type;
   using pointer = const MappedType*;
   using reference = const MappedType&;
+
+  constexpr HashTableConstValuesIterator() = default;
 
   HashTableConstValuesIterator(const ConstIterator& impl) : impl_(impl) {}
 
@@ -327,6 +340,8 @@ struct HashTableKeysIterator<HashTableType, KeyType, MappedType>
   using difference_type = typename Iterator::difference_type;
   using pointer = KeyType*;
   using reference = KeyType&;
+
+  constexpr HashTableKeysIterator() = default;
 
   HashTableKeysIterator(const Iterator& impl) : impl_(impl) {}
 

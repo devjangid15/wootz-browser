@@ -91,7 +91,7 @@ void JSBasedEventListener::Invoke(
   if (!script_state_of_listener->ContextIsValid())
     return;  // Silently fail.
 
-  probe::InvokeEventHandler probe_scope(script_state_of_listener, event, this);
+  probe::InvokeEventHandler probe_scope(*script_state_of_listener, event, this);
   ScriptState::Scope listener_script_state_scope(script_state_of_listener);
 
   // https://dom.spec.whatwg.org/#firing-events
@@ -169,8 +169,7 @@ void JSBasedEventListener::Invoke(
     window->SetCurrentEvent(current_event);
 }
 
-std::unique_ptr<SourceLocation> JSBasedEventListener::GetSourceLocation(
-    EventTarget& target) {
+SourceLocation* JSBasedEventListener::GetSourceLocation(EventTarget& target) {
   v8::HandleScope handle_scope(GetIsolate());
   v8::Local<v8::Value> effective_function = GetEffectiveFunction(target);
   if (effective_function->IsFunction()) {

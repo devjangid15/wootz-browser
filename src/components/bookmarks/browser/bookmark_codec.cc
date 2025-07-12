@@ -269,17 +269,15 @@ bool BookmarkCodec::DecodeChildren(const base::Value::List& child_value_list,
 bool BookmarkCodec::DecodeNode(const base::Value::Dict& value,
                                BookmarkNode* parent,
                                BookmarkNode* node) {
-  // If no |node| is specified, we'll create one and add it to the |parent|.
-  // Therefore, in that case, |parent| must be non-NULL.
+  // If no `node` is specified, we'll create one and add it to the `parent`.
+  // Therefore, in that case, `parent` must be non-NULL.
   if (!node && !parent) {
-    NOTREACHED_IN_MIGRATION();
-    return false;
+    NOTREACHED();
   }
 
   // It's not valid to have both a node and a specified parent.
   if (node && parent) {
-    NOTREACHED_IN_MIGRATION();
-    return false;
+    NOTREACHED();
   }
 
   std::string id_string;
@@ -304,7 +302,7 @@ bool BookmarkCodec::DecodeNode(const base::Value::Dict& value,
     title = base::UTF8ToUTF16(*string_value);
 
   base::Uuid uuid;
-  // |node| is only passed in for bookmarks of type BookmarkPermanentNode, in
+  // `node` is only passed in for bookmarks of type BookmarkPermanentNode, in
   // which case we do not need to check for UUID validity as their UUIDs are
   // hard-coded and not read from the persisted file.
   if (!node) {
@@ -497,13 +495,12 @@ void BookmarkCodec::ReassignIDsHelper(BookmarkNode* node) {
 }
 
 void BookmarkCodec::UpdateChecksum(const std::string& str) {
-  base::MD5Update(&md5_context_, str);
+  md5_hasher_.Update(str);
 }
 
 void BookmarkCodec::UpdateChecksum(const std::u16string& str) {
-  base::MD5Update(&md5_context_,
-                  std::string_view(reinterpret_cast<const char*>(str.data()),
-                                   str.length() * sizeof(str[0])));
+  md5_hasher_.Update(std::string_view(reinterpret_cast<const char*>(str.data()),
+                                      str.length() * sizeof(str[0])));
 }
 
 void BookmarkCodec::UpdateChecksumWithUrlNode(const std::string& id,
@@ -524,13 +521,12 @@ void BookmarkCodec::UpdateChecksumWithFolderNode(const std::string& id,
 }
 
 void BookmarkCodec::InitializeChecksum() {
-  base::MD5Init(&md5_context_);
+  md5_hasher_ = crypto::obsolete::Md5();
 }
 
 void BookmarkCodec::FinalizeChecksum() {
-  base::MD5Digest digest;
-  base::MD5Final(&digest, &md5_context_);
-  computed_checksum_ = base::MD5DigestToBase16(digest);
+  computed_checksum_ =
+      base::ToLowerASCII(base::HexEncode(md5_hasher_.Finish()));
 }
 
 }  // namespace bookmarks

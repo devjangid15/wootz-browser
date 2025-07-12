@@ -13,6 +13,7 @@
 #include "ash/screen_util.h"
 #include "ash/shell.h"
 #include "ash/wm/pip/pip_controller.h"
+#include "ash/wm/snap_group/snap_group_controller.h"
 #include "ash/wm/system_modal_container_layout_manager.h"
 #include "ash/wm/window_properties.h"
 #include "ash/wm/window_restore/window_restore_controller.h"
@@ -164,8 +165,7 @@ gfx::Rect GetSnappedWindowBounds(const gfx::Rect& work_area,
       break;
     default:
       snap_region = SnapRegion::kInvalid;
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
 
   // Compute size of the side of the window bound that should be proportional
@@ -221,8 +221,7 @@ gfx::Rect GetSnappedWindowBounds(const gfx::Rect& work_area,
       snap_bounds.set_y(work_area.bottom() - axis_length);
       break;
     case SnapRegion::kInvalid:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
   return snap_bounds;
 }
@@ -271,6 +270,12 @@ void SetBoundsInScreen(aura::Window* window,
     }
 
     if (dst_container && window->parent() != dst_container) {
+      if (auto* snap_group =
+              SnapGroupController::Get()->GetSnapGroupForGivenWindow(window)) {
+        SnapGroupController::Get()->RemoveSnapGroup(
+            snap_group, SnapGroupExitPoint::kDragWindowOut);
+      }
+
       aura::Window* focused = window_util::GetFocusedWindow();
       aura::Window* active = window_util::GetActiveWindow();
 

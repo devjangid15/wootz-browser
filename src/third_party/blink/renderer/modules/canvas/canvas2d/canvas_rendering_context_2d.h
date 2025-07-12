@@ -27,41 +27,74 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_CANVAS_CANVAS2D_CANVAS_RENDERING_CONTEXT_2D_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_CANVAS_CANVAS2D_CANVAS_RENDERING_CONTEXT_2D_H_
 
-#include "third_party/blink/renderer/bindings/modules/v8/v8_canvas_rendering_context_2d_settings.h"
+#include <stddef.h>
+
+#include <memory>
+#include <optional>
+
+#include "base/check.h"
+#include "base/memory/scoped_refptr.h"
+#include "cc/paint/paint_record.h"
+#include "third_party/blink/public/common/privacy_budget/identifiable_token.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_canvas_element_hit_test_region.h"
+#include "third_party/blink/renderer/core/canvas_interventions/canvas_interventions_enums.h"
 #include "third_party/blink/renderer/core/html/canvas/canvas_context_creation_attributes_core.h"
+#include "third_party/blink/renderer/core/html/canvas/canvas_performance_monitor.h"
 #include "third_party/blink/renderer/core/html/canvas/canvas_rendering_context.h"
 #include "third_party/blink/renderer/core/html/canvas/canvas_rendering_context_factory.h"
+#include "third_party/blink/renderer/core/html/canvas/canvas_rendering_context_host.h"
 #include "third_party/blink/renderer/core/html/canvas/html_canvas_element.h"
-#include "third_party/blink/renderer/core/html/canvas/image_data.h"
 #include "third_party/blink/renderer/core/style/filter_operations.h"
 #include "third_party/blink/renderer/core/svg/svg_resource_client.h"
 #include "third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.h"
-#include "third_party/blink/renderer/modules/canvas/canvas2d/canvas_rendering_context_2d_state.h"
 #include "third_party/blink/renderer/modules/canvas/canvas2d/identifiability_study_helper.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
-#include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
-#include "third_party/blink/renderer/platform/graphics/graphics_types.h"
-#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
-#include "third_party/blink/renderer/platform/privacy_budget/identifiability_digest_helpers.h"
-#include "third_party/blink/renderer/platform/scheduler/public/thread.h"
+#include "third_party/blink/renderer/platform/fonts/font_description.h"
+#include "third_party/blink/renderer/platform/geometry/path.h"
+#include "third_party/blink/renderer/platform/graphics/color.h"
+#include "third_party/blink/renderer/platform/graphics/image_orientation.h"
+#include "third_party/blink/renderer/platform/graphics/paint/paint_filter.h"
+#include "third_party/blink/renderer/platform/graphics/static_bitmap_image.h"
+#include "third_party/blink/renderer/platform/heap/forward.h"  // IWYU pragma: keep (blink::Visitor)
+#include "third_party/blink/renderer/platform/wtf/hash_map.h"
 #include "third_party/blink/renderer/platform/wtf/linked_hash_set.h"
+#include "third_party/blink/renderer/platform/wtf/text/string_hash.h"  // IWYU pragma: keep (https://github.com/clangd/clangd/issues/2050)
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
+#include "third_party/skia/include/core/SkImageInfo.h"
+#include "third_party/skia/include/core/SkRefCnt.h"
+
+// IWYU pragma: no_include "third_party/blink/renderer/platform/heap/visitor.h"
+
+struct SkIRect;
+
+namespace base {
+struct PendingTask;
+}  // namespace base
 
 namespace cc {
 class Layer;
-}
+class PaintCanvas;
+}  // namespace cc
 
 namespace blink {
 
-class FormattedText;
+class Canvas2DDrawElementOption;
 class CanvasImageSource;
+class ComputedStyle;
 class Element;
 class ExceptionState;
+class ExecutionContext;
+class ImageData;
+class ImageDataSettings;
+class MemoryManagedPaintRecorder;
 class Path2D;
+class SVGResource;
+enum class FlushReason;
+enum class PredefinedColorSpace;
 
 class MODULES_EXPORT CanvasRenderingContext2D final
-    : public CanvasRenderingContext,
+    : public ScriptWrappable,
       public BaseRenderingContext2D,
       public SVGResourceClient {
   DEFINE_WRAPPERTYPEINFO();
@@ -96,45 +129,22 @@ class MODULES_EXPORT CanvasRenderingContext2D final
   }
   V8RenderingContext* AsV8RenderingContext() final;
 
-  bool isContextLost() const final {
-    return context_lost_mode_ != kNotLostContext;
-  }
-
-  bool ShouldAntialias() const override;
-  void SetShouldAntialias(bool) override;
-
-  void scrollPathIntoView();
-  void scrollPathIntoView(Path2D*);
-
-  void clearRect(double x, double y, double width, double height);
-  void ClearRect(double x, double y, double width, double height) override {
-    clearRect(x, y, width, height);
-  }
-
-  void Reset() override;
+  bool ShouldAntialias() const;
+  void SetShouldAntialias(bool);
 
   void setFontForTesting(const String& new_font) override;
-
-  void drawFormattedText(FormattedText* formatted_text,
-                         double x,
-                         double y,
-                         ExceptionState&);
-
-  CanvasRenderingContext2DSettings* getContextAttributes() const;
 
   void drawFocusIfNeeded(Element*);
   void drawFocusIfNeeded(Path2D*, Element*);
 
   void LoseContext(LostContextMode) override;
-  void DidSetSurfaceSize() override;
-
-  void RestoreCanvasMatrixClipStack(cc::PaintCanvas*) const override;
 
   // TaskObserver implementation
   void DidProcessTask(const base::PendingTask&) final;
 
   void StyleDidChange(const ComputedStyle* old_style,
                       const ComputedStyle& new_style) override;
+  void LangAttributeChanged() override;
 
   // SVGResourceClient implementation
   void ResourceContentChanged(SVGResource*) override;
@@ -148,10 +158,32 @@ class MODULES_EXPORT CanvasRenderingContext2D final
   void DisableAcceleration() override;
   bool ShouldDisableAccelerationBecauseOfReadback() const override;
 
+  // CanvasRenderingContext implementation
+  bool IsCanvas2DResourceValid() override;
+  int AllocatedBufferCountPerPixel() override {
+    if (!Host()) {
+      return 0;
+    }
+
+    int buffer_count = 0;
+    auto* provider = canvas()->GetResourceProviderForCanvas2D();
+    if (provider) {
+      buffer_count = 1;
+      if (provider->IsAccelerated()) {
+        // The number of internal GPU buffers vary between one (stable
+        // non-displayed state) and three (triple-buffered animations).
+        // Adding 2 is a pessimistic but relevant estimate.
+        // Note: These buffers might be allocated in GPU memory.
+        buffer_count += 2;
+      }
+    }
+    return buffer_count;
+  }
+
   int Width() const final;
   int Height() const final;
 
-  bool CanCreateCanvas2dResourceProvider() const final;
+  bool CanCreateCanvas2dResourceProvider() final;
 
   RespectImageOrientationEnum RespectImageOrientation() const final;
 
@@ -165,23 +197,34 @@ class MODULES_EXPORT CanvasRenderingContext2D final
   void WillDraw(const SkIRect& dirty_rect,
                 CanvasPerformanceMonitor::DrawType) final;
 
-  SkColorInfo CanvasRenderingContextSkColorInfo() const override {
-    return color_params_.GetSkColorInfo();
-  }
   scoped_refptr<StaticBitmapImage> GetImage(FlushReason) final;
 
   sk_sp<PaintFilter> StateGetFilter() final;
 
   void FinalizeFrame(FlushReason) override;
 
+  void drawElement(Element* element,
+                   double x,
+                   double y,
+                   Canvas2DDrawElementOption* options,
+                   ExceptionState& exception_state);
+  void drawElement(Element* element,
+                   double x,
+                   double y,
+                   double dwidth,
+                   double dheight,
+                   Canvas2DDrawElementOption* options,
+                   ExceptionState& exception_state);
+  void setHitTestRegions(VectorOf<CanvasElementHitTestRegion> hit_test_regions,
+                         ExceptionState& exception_state);
+
   CanvasRenderingContextHost* GetCanvasRenderingContextHost() const override;
   ExecutionContext* GetTopExecutionContext() const override;
 
-  bool IsPaintable() const final {
-    return canvas() && canvas()->GetCanvas2DLayerBridge();
-  }
+  bool IsPaintable() const final;
 
-  void WillDrawImage(CanvasImageSource*) const final;
+  void WillDrawImage(CanvasImageSource*,
+                     bool image_is_texture_backed) const final;
 
   std::optional<cc::PaintRecord> FlushCanvas(FlushReason) override;
 
@@ -212,21 +255,25 @@ class MODULES_EXPORT CanvasRenderingContext2D final
     return identifiability_study_helper_.encountered_partially_digested_image();
   }
 
-  int LayerCount() const override;
+  bool ShouldTriggerIntervention() const override {
+    return HasTriggerForIntervention();
+  }
+
+  CanvasOperationType GetCanvasTriggerOperations() const override {
+    return GetTriggersForIntervention();
+  }
+
+  CanvasResourceProvider* GetOrCreateCanvas2DResourceProvider() override;
 
  protected:
   HTMLCanvasElement* HostAsHTMLCanvasElement() const final;
-  FontSelector* GetFontSelector() const final;
+  UniqueFontSelector* GetFontSelector() const final;
 
-  PredefinedColorSpace GetDefaultImageDataColorSpace() const final {
-    return color_params_.ColorSpace();
-  }
   bool WritePixels(const SkImageInfo& orig_info,
                    const void* pixels,
                    size_t row_bytes,
                    int x,
                    int y) override;
-  void TryRestoreContextEvent(TimerBase*) override;
 
   bool WillSetFont() const final;
   bool CurrentFontResolvedAndUpToDate() const final;
@@ -234,6 +281,19 @@ class MODULES_EXPORT CanvasRenderingContext2D final
 
  private:
   friend class CanvasRenderingContext2DAutoRestoreSkCanvas;
+  friend class CanvasRenderingContext2DTestBase;
+  FRIEND_TEST_ALL_PREFIXES(CanvasRenderingContext2DTestAccelerated,
+                           PrepareMailboxWhenContextIsLostWithFailedRestore);
+
+  void EnableAccelerationIfPossible() override;
+
+  void DrawElementInternal(Element* element,
+                           double x,
+                           double y,
+                           std::optional<double> dwidth,
+                           std::optional<double> dheight,
+                           Canvas2DDrawElementOption* options,
+                           ExceptionState& exception_state);
 
   void PruneLocalFontCache(size_t target_size);
 
@@ -248,7 +308,6 @@ class MODULES_EXPORT CanvasRenderingContext2D final
   void UpdateElementAccessibility(const Path&, Element*);
 
   bool IsComposited() const override;
-  bool IsOriginTopLeft() const override;
   bool HasAlpha() const override { return CreationAttributes().alpha; }
   bool IsDesynchronized() const override {
     return CreationAttributes().desynchronized;
@@ -257,16 +316,18 @@ class MODULES_EXPORT CanvasRenderingContext2D final
   void Stop() final;
 
   cc::Layer* CcLayer() const override;
-  bool IsCanvas2DBufferValid() const override;
+  bool IsCanvas2DBufferValid() override;
 
   void ColorSchemeMayHaveChanged() override;
+
+  CanvasResourceProvider* GetResourceProviderForCanvas2D() const override;
+  std::unique_ptr<CanvasResourceProvider> ReplaceResourceProviderForCanvas2D(
+      std::unique_ptr<CanvasResourceProvider>) override;
 
   FilterOperations filter_operations_;
   HashMap<String, FontDescription> fonts_resolved_using_current_style_;
   bool should_prune_local_font_cache_;
   LinkedHashSet<String> font_lru_list_;
-
-  CanvasColorParams color_params_;
 
   // For privacy reasons we need to delay contextLost events until the page is
   // visible. In order to do this we will hold on to a bool here

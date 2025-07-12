@@ -16,6 +16,7 @@
 #include "third_party/blink/renderer/platform/audio/reverb.h"
 #include "third_party/blink/renderer/platform/bindings/exception_messages.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 
 namespace blink {
 
@@ -36,13 +37,13 @@ constexpr unsigned kDefaultNumberOfOutputChannels = 1;
 }  // namespace
 
 ConvolverHandler::ConvolverHandler(AudioNode& node, float sample_rate)
-    : AudioHandler(kNodeTypeConvolver, node, sample_rate) {
+    : AudioHandler(NodeType::kNodeTypeConvolver, node, sample_rate) {
   AddInput();
   AddOutput(kDefaultNumberOfOutputChannels);
 
   // Node-specific default mixing rules.
   channel_count_ = kDefaultNumberOfInputChannels;
-  SetInternalChannelCountMode(kClampedMax);
+  SetInternalChannelCountMode(V8ChannelCountMode::Enum::kClampedMax);
   SetInternalChannelInterpretation(AudioBus::kSpeakers);
 
   Initialize();
@@ -105,9 +106,10 @@ void ConvolverHandler::SetBuffer(AudioBuffer* buffer,
   if (buffer->sampleRate() != Context()->sampleRate()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kNotSupportedError,
-        "The buffer sample rate of " + String::Number(buffer->sampleRate()) +
-            " does not match the context rate of " +
-            String::Number(Context()->sampleRate()) + " Hz.");
+        StrCat({"The buffer sample rate of ",
+                String::Number(buffer->sampleRate()),
+                " does not match the context rate of ",
+                String::Number(Context()->sampleRate()), " Hz."}));
     return;
   }
 
@@ -124,8 +126,8 @@ void ConvolverHandler::SetBuffer(AudioBuffer* buffer,
   if (!is_channel_count_good) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kNotSupportedError,
-        "The buffer must have 1, 2, or 4 channels, not " +
-            String::Number(number_of_channels));
+        StrCat({"The buffer must have 1, 2, or 4 channels, not ",
+                String::Number(number_of_channels)}));
     return;
   }
 
@@ -252,28 +254,27 @@ void ConvolverHandler::SetChannelCount(unsigned channel_count,
   }
 }
 
-void ConvolverHandler::SetChannelCountMode(const String& mode,
+void ConvolverHandler::SetChannelCountMode(V8ChannelCountMode::Enum mode,
                                            ExceptionState& exception_state) {
   DCHECK(IsMainThread());
   DeferredTaskHandler::GraphAutoLocker locker(Context());
 
-  ChannelCountMode old_mode = InternalChannelCountMode();
+  V8ChannelCountMode::Enum old_mode = InternalChannelCountMode();
 
   // The channelCountMode cannot be "max".  For a convolver node, the
   // number of input channels must be 1 or 2 (see
   // https://webaudio.github.io/web-audio-api/#audionode-channelcount-constraints)
   // and "max" would be incompatible with that.
-  if (mode == "max") {
+  if (mode == V8ChannelCountMode::Enum::kMax) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kNotSupportedError,
         "ConvolverNode: channelCountMode cannot be changed to 'max'");
     new_channel_count_mode_ = old_mode;
-  } else if (mode == "explicit") {
-    new_channel_count_mode_ = kExplicit;
-  } else if (mode == "clamped-max") {
-    new_channel_count_mode_ = kClampedMax;
+  } else if (mode == V8ChannelCountMode::Enum::kExplicit ||
+             mode == V8ChannelCountMode::Enum::kClampedMax) {
+    new_channel_count_mode_ = mode;
   } else {
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
 
   if (new_channel_count_mode_ != old_mode) {

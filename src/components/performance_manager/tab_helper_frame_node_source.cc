@@ -139,7 +139,7 @@ bool TabHelperFrameNodeSource::RemoveObservedFrameNode(
     PerformanceManagerTabHelper* performance_manager_tab_helper,
     FrameNodeImpl* frame_node) {
   auto it = observed_frame_nodes_.find(performance_manager_tab_helper);
-  DCHECK(it != observed_frame_nodes_.end());
+  CHECK(it != observed_frame_nodes_.end());
 
   base::flat_set<raw_ptr<FrameNodeImpl, CtnExperimental>>& frame_nodes =
       it->second;

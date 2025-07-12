@@ -9,6 +9,7 @@
 
 #include "base/memory/ref_counted_memory.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/strings/string_view_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
 #include "chrome/browser/ash/bruschetta/bruschetta_util.h"
@@ -19,7 +20,10 @@
 #include "chrome/browser/ash/file_manager/path_util.h"
 #include "chrome/browser/ash/guest_os/guest_os_security_delegate.h"
 #include "chrome/browser/ash/guest_os/guest_os_share_path.h"
+#include "chrome/browser/ash/guest_os/guest_os_share_path_factory.h"
 #include "chrome/browser/ash/plugin_vm/plugin_vm_util.h"
+#include "chrome/test/base/scoped_testing_local_state.h"
+#include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chromeos/ash/components/dbus/chunneld/chunneld_client.h"
 #include "chromeos/ash/components/dbus/cicerone/cicerone_client.h"
@@ -122,6 +126,10 @@ class ChromeSecurityDelegateTest : public testing::Test {
   Profile* profile() { return profile_.get(); }
 
   content::BrowserTaskEnvironment task_environment_;
+
+  // Needed for `DriveIntegrationService`, which `GuestOsSharePath` depends on.
+  ScopedTestingLocalState local_state_{TestingBrowserProcess::GetGlobal()};
+
   std::unique_ptr<TestingProfile> profile_;
   std::unique_ptr<crostini::CrostiniTestHelper> test_helper_;
 
@@ -138,19 +146,12 @@ TEST_F(ChromeSecurityDelegateTest, CanLockPointer) {
   container_window.Init(ui::LAYER_NOT_DRAWN);
   aura::test::TestWindowDelegate delegate;
 
-  // CanLockPointer should be allowed for arc and lacros, but not others.
+  // CanLockPointer should be allowed for arc, but not others.
   std::unique_ptr<aura::Window> arc_toplevel(
       aura::test::CreateTestWindowWithDelegate(&delegate, 0, gfx::Rect(),
                                                &container_window));
   arc_toplevel->SetProperty(chromeos::kAppTypeKey, chromeos::AppType::ARC_APP);
   EXPECT_TRUE(security_delegate->CanLockPointer(arc_toplevel.get()));
-
-  std::unique_ptr<aura::Window> lacros_toplevel(
-      aura::test::CreateTestWindowWithDelegate(&delegate, 0, gfx::Rect(),
-                                               &container_window));
-  lacros_toplevel->SetProperty(chromeos::kAppTypeKey,
-                               chromeos::AppType::LACROS);
-  EXPECT_TRUE(security_delegate->CanLockPointer(lacros_toplevel.get()));
 
   std::unique_ptr<aura::Window> crostini_toplevel(
       aura::test::CreateTestWindowWithDelegate(&delegate, 0, gfx::Rect(),
@@ -164,7 +165,7 @@ TEST_F(ChromeSecurityDelegateTest, GetFilenames) {
   ChromeSecurityDelegate security_delegate;
   base::FilePath shared_path = myfiles_dir_.Append("shared");
   auto* guest_os_share_path =
-      guest_os::GuestOsSharePath::GetForProfile(profile());
+      guest_os::GuestOsSharePathFactory::GetForProfile(profile());
   guest_os_share_path->RegisterSharedPath(crostini::kCrostiniDefaultVmName,
                                           shared_path);
   guest_os_share_path->RegisterSharedPath(plugin_vm::kPluginVmName,
@@ -303,7 +304,7 @@ TEST_F(ChromeSecurityDelegateTest, SendFileInfoConvertPaths) {
   ui::FileInfo file1(myfiles_dir_.Append("file1"), base::FilePath());
   ui::FileInfo file2(myfiles_dir_.Append("file2"), base::FilePath());
   auto* guest_os_share_path =
-      guest_os::GuestOsSharePath::GetForProfile(profile());
+      guest_os::GuestOsSharePathFactory::GetForProfile(profile());
   guest_os_share_path->RegisterSharedPath(plugin_vm::kPluginVmName,
                                           myfiles_dir_);
 
@@ -409,7 +410,7 @@ TEST_F(ChromeSecurityDelegateTest, SendFileInfoSharePathsCrostini) {
   // A path which is already shared should not be shared again.
   base::FilePath shared_path = myfiles_dir_.Append("shared");
   auto* guest_os_share_path =
-      guest_os::GuestOsSharePath::GetForProfile(profile());
+      guest_os::GuestOsSharePathFactory::GetForProfile(profile());
   guest_os_share_path->RegisterSharedPath(crostini::kCrostiniDefaultVmName,
                                           shared_path);
   ui::FileInfo file(shared_path, base::FilePath());

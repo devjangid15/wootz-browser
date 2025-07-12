@@ -11,15 +11,14 @@
 #include "build/build_config.h"
 #include "components/permissions/object_permission_context_base.h"
 #include "content/public/browser/browser_context.h"
-#include "mojo/public/cpp/bindings/associated_receiver.h"
 #include "third_party/blink/public/mojom/private_network_device/private_network_device.mojom.h"
 #include "url/origin.h"
 
 class Profile;
 
-const char kPrivateNetworkDeviceValidityHistogramName[] =
+inline constexpr char kPrivateNetworkDeviceValidityHistogramName[] =
     "Security.PrivateNetworkAccess.PermissionDeviceValidity";
-const char kUserAcceptedPrivateNetworkDeviceHistogramName[] =
+inline constexpr char kUserAcceptedPrivateNetworkDeviceHistogramName[] =
     "Security.PrivateNetworkAccess.PermissionNewAcceptedDeviceType";
 
 // These values are logged to UMA. Entries should not be renumbered and numeric
@@ -77,6 +76,9 @@ class PrivateNetworkDevicePermissionContext
   bool HasDevicePermission(const url::Origin& origin,
                            const blink::mojom::PrivateNetworkDevice& device,
                            bool is_device_valid);
+
+  // KeyedService:
+  void Shutdown() override;
 
   // Tracks the set of devices to which an origin has temporary access to.
   std::map<url::Origin, std::set<net::IPAddress>> ephemeral_devices_;

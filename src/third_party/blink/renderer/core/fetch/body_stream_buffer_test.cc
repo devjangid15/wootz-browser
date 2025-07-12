@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "mojo/public/cpp/bindings/remote.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -176,12 +177,8 @@ TEST_F(BodyStreamBufferTest, TeeFromHandleMadeFromStream) {
 
   auto* underlying_source =
       MakeGarbageCollected<TestUnderlyingSource>(scope.GetScriptState());
-  auto* chunk1 = DOMUint8Array::Create(2);
-  chunk1->Data()[0] = 0x41;
-  chunk1->Data()[1] = 0x42;
-  auto* chunk2 = DOMUint8Array::Create(2);
-  chunk2->Data()[0] = 0x55;
-  chunk2->Data()[1] = 0x58;
+  auto* chunk1 = DOMUint8Array::Create(std::array<uint8_t, 2>{0x41, 0x42});
+  auto* chunk2 = DOMUint8Array::Create(std::array<uint8_t, 2>{0x55, 0x58});
 
   auto* stream = ReadableStream::CreateWithCountQueueingStrategy(
       scope.GetScriptState(), underlying_source, 0);
@@ -315,7 +312,7 @@ TEST_F(BodyStreamBufferTest,
 
 TEST_F(BodyStreamBufferTest, DrainAsFormData) {
   V8TestingScope scope;
-  auto* data = MakeGarbageCollected<FormData>(UTF8Encoding());
+  auto* data = MakeGarbageCollected<FormData>(Utf8Encoding());
   data->append("name1", "value1");
   data->append("name2", "value2");
   scoped_refptr<EncodedFormData> input_form_data =
@@ -421,8 +418,7 @@ TEST_F(BodyStreamBufferTest, LoadBodyStreamBufferAsArrayBuffer) {
   EXPECT_TRUE(buffer->IsStreamLocked());
   EXPECT_TRUE(buffer->IsStreamDisturbed());
   ASSERT_TRUE(array_buffer);
-  EXPECT_EQ("hello", String(static_cast<const char*>(array_buffer->Data()),
-                            array_buffer->ByteLength()));
+  EXPECT_EQ("hello", String(array_buffer->ByteSpan()));
 }
 
 class BodyStreamBufferBlobTest : public BodyStreamBufferTest {
@@ -631,7 +627,7 @@ TEST_F(BodyStreamBufferTest, SourceShouldBeCanceledWhenCanceled) {
   ScriptValue reason(scope.GetIsolate(),
                      V8String(scope.GetIsolate(), "reason"));
   EXPECT_FALSE(consumer->IsCancelled());
-  buffer->Cancel(reason.V8Value(), ASSERT_NO_EXCEPTION);
+  buffer->Cancel(reason.V8Value());
   EXPECT_TRUE(consumer->IsCancelled());
 }
 
@@ -806,12 +802,12 @@ TEST_F(BodyStreamBufferTest,
 TEST_F(BodyStreamBufferTest, CachedMetadataHandler) {
   V8TestingScope scope;
   Persistent<BodyStreamBuffer> buffer;
-  WeakPersistent<ScriptCachedMetadataHandler> weak_handler;
+  WeakPersistent<CachedMetadataHandler> weak_handler;
   {
     BytesConsumer* src = MakeGarbageCollected<ReplayingBytesConsumer>(
         scope.GetDocument().GetTaskRunner(TaskType::kNetworking));
     auto* handler = MakeGarbageCollected<ScriptCachedMetadataHandler>(
-        WTF::TextEncoding(), nullptr);
+        TextEncoding(), nullptr);
     weak_handler = handler;
     buffer = BodyStreamBuffer::Create(scope.GetScriptState(), src,
                                       /*abort_signal=*/nullptr, handler);
@@ -832,7 +828,7 @@ TEST_F(BodyStreamBufferTest, CachedMetadataHandlerAndTee) {
   BytesConsumer* src = MakeGarbageCollected<ReplayingBytesConsumer>(
       scope.GetDocument().GetTaskRunner(TaskType::kNetworking));
   auto* handler = MakeGarbageCollected<ScriptCachedMetadataHandler>(
-      WTF::TextEncoding(), nullptr);
+      TextEncoding(), nullptr);
   auto* buffer = BodyStreamBuffer::Create(scope.GetScriptState(), src,
                                           /*abort_signal=*/nullptr, handler);
 
@@ -850,7 +846,7 @@ TEST_F(BodyStreamBufferTest,
        CachedMetadataHandlerAndTeeForBufferMadeFromStream) {
   V8TestingScope scope;
   auto* handler = MakeGarbageCollected<ScriptCachedMetadataHandler>(
-      WTF::TextEncoding(), nullptr);
+      TextEncoding(), nullptr);
   auto* stream =
       ReadableStream::Create(scope.GetScriptState(), ASSERT_NO_EXCEPTION);
   auto* buffer = MakeGarbageCollected<BodyStreamBuffer>(scope.GetScriptState(),

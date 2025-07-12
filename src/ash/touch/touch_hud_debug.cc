@@ -5,6 +5,7 @@
 #include "ash/touch/touch_hud_debug.h"
 
 #include <algorithm>
+#include <array>
 #include <string>
 #include <vector>
 
@@ -32,36 +33,34 @@
 
 namespace ash {
 
-const int kPointRadius = 20;
-const SkColor kColors[] = {
-    SK_ColorYELLOW,
-    SK_ColorGREEN,
-    SK_ColorRED,
-    SK_ColorBLUE,
-    SK_ColorGRAY,
-    SK_ColorMAGENTA,
-    SK_ColorCYAN,
-    SK_ColorWHITE,
-    SK_ColorBLACK,
-    SkColorSetRGB(0xFF, 0x8C, 0x00),
-    SkColorSetRGB(0x8B, 0x45, 0x13),
-    SkColorSetRGB(0xFF, 0xDE, 0xAD),
-};
-const int kAlpha = 0x60;
-const int kMaxPaths = std::size(kColors);
-const int kReducedScale = 10;
+constexpr int kPointRadius = 20;
+constexpr std::array<SkColor, 12> kColors = {SK_ColorYELLOW,
+                                             SK_ColorGREEN,
+                                             SK_ColorRED,
+                                             SK_ColorBLUE,
+                                             SK_ColorGRAY,
+                                             SK_ColorMAGENTA,
+                                             SK_ColorCYAN,
+                                             SK_ColorWHITE,
+                                             SK_ColorBLACK,
+                                             SkColorSetRGB(0xFF, 0x8C, 0x00),
+                                             SkColorSetRGB(0x8B, 0x45, 0x13),
+                                             SkColorSetRGB(0xFF, 0xDE, 0xAD)};
+constexpr int kAlpha = 0x60;
+constexpr int kMaxPaths = kColors.size();
+constexpr int kReducedScale = 10;
 
 const char* GetTouchEventLabel(ui::EventType type) {
   switch (type) {
-    case ui::ET_UNKNOWN:
+    case ui::EventType::kUnknown:
       return " ";
-    case ui::ET_TOUCH_PRESSED:
+    case ui::EventType::kTouchPressed:
       return "P";
-    case ui::ET_TOUCH_MOVED:
+    case ui::EventType::kTouchMoved:
       return "M";
-    case ui::ET_TOUCH_RELEASED:
+    case ui::EventType::kTouchReleased:
       return "R";
-    case ui::ET_TOUCH_CANCELLED:
+    case ui::EventType::kTouchCancelled:
       return "C";
     default:
       break;
@@ -106,8 +105,8 @@ class TouchTrace {
   const std::vector<TouchPointLog>& log() const { return log_; }
 
   bool active() const {
-    return !log_.empty() && log_.back().type != ui::ET_TOUCH_RELEASED &&
-           log_.back().type != ui::ET_TOUCH_CANCELLED;
+    return !log_.empty() && log_.back().type != ui::EventType::kTouchReleased &&
+           log_.back().type != ui::EventType::kTouchCancelled;
   }
 
   void Reset() { log_.clear(); }
@@ -125,8 +124,9 @@ class TouchLog {
   TouchLog& operator=(const TouchLog&) = delete;
 
   void AddTouchPoint(const ui::TouchEvent& touch) {
-    if (touch.type() == ui::ET_TOUCH_PRESSED)
+    if (touch.type() == ui::EventType::kTouchPressed) {
       StartTrace(touch);
+    }
     AddToTrace(touch);
   }
 
@@ -140,7 +140,7 @@ class TouchLog {
     return touch_id_to_trace_index_.at(touch_id);
   }
 
-  const TouchTrace* traces() const { return traces_; }
+  const std::array<TouchTrace, kMaxPaths>& traces() const { return traces_; }
 
  private:
   void StartTrace(const ui::TouchEvent& touch) {
@@ -164,7 +164,7 @@ class TouchLog {
     traces_[trace_index].AddTouchPoint(touch);
   }
 
-  TouchTrace traces_[kMaxPaths];
+  std::array<TouchTrace, kMaxPaths> traces_;
   int next_trace_index_;
 
   std::map<int, int> touch_id_to_trace_index_;
@@ -203,10 +203,12 @@ class TouchHudCanvas : public views::View {
     int trace_index = touch_log_->GetTraceIndex(touch_id);
     const TouchTrace& trace = touch_log_->traces()[trace_index];
     const TouchPointLog& point = trace.log().back();
-    if (point.type == ui::ET_TOUCH_PRESSED)
+    if (point.type == ui::EventType::kTouchPressed) {
       StartedTrace(trace_index);
-    if (point.type != ui::ET_TOUCH_CANCELLED)
+    }
+    if (point.type != ui::EventType::kTouchCancelled) {
       AddedPointToTrace(trace_index);
+    }
   }
 
   void Clear() {
@@ -249,8 +251,8 @@ class TouchHudCanvas : public views::View {
   cc::PaintFlags flags_;
 
   const raw_ref<const TouchLog, DanglingUntriaged> touch_log_;
-  SkPath paths_[kMaxPaths];
-  SkColor colors_[kMaxPaths];
+  std::array<SkPath, kMaxPaths> paths_;
+  std::array<SkColor, kMaxPaths> colors_;
 
   int scale_;
 };
@@ -269,7 +271,7 @@ TouchHudDebug::TouchHudDebug(aura::Window* initial_root)
 
   views::View* content = widget()->GetContentsView();
 
-  content->AddChildView(canvas_.get());
+  content->AddChildViewRaw(canvas_.get());
 
   const gfx::Size& display_size = display.size();
   canvas_->SetSize(display_size);
@@ -286,13 +288,13 @@ TouchHudDebug::TouchHudDebug(aura::Window* initial_root)
     touch_labels_[i]->SetBackgroundColor(SK_ColorTRANSPARENT);
     touch_labels_[i]->SetShadows(gfx::ShadowValues(
         1, gfx::ShadowValue(gfx::Vector2d(1, 1), 0, kShadowColor)));
-    label_container_->AddChildView(touch_labels_[i]);
+    label_container_->AddChildViewRaw(touch_labels_[i]);
   }
   label_container_->SetX(0);
   label_container_->SetY(display_size.height() / kReducedScale);
   label_container_->SetSize(label_container_->GetPreferredSize());
   label_container_->SetVisible(false);
-  content->AddChildView(label_container_.get());
+  content->AddChildViewRaw(label_container_.get());
 }
 
 TouchHudDebug::~TouchHudDebug() = default;
@@ -351,8 +353,10 @@ void TouchHudDebug::UpdateTouchPointLabel(int index) {
   TouchTrace::const_reverse_iterator point = trace.log().rbegin();
   ui::EventType touch_status = point->type;
   float touch_radius = std::max(point->radius_x, point->radius_y);
-  while (point != trace.log().rend() && point->type == ui::ET_TOUCH_CANCELLED)
+  while (point != trace.log().rend() &&
+         point->type == ui::EventType::kTouchCancelled) {
     point++;
+  }
   DCHECK(point != trace.log().rend());
   gfx::Point touch_position = point->location;
 

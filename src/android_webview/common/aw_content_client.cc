@@ -10,7 +10,6 @@
 #include "android_webview/common/aw_resource.h"
 #include "android_webview/common/crash_reporter/crash_keys.h"
 #include "android_webview/common/url_constants.h"
-#include "android_webview/common_jni/DisableOriginTrialsSafeModeUtils_jni.h"
 #include "base/android/jni_android.h"
 #include "base/command_line.h"
 #include "base/debug/crash_logging.h"
@@ -30,6 +29,9 @@
 #include "third_party/widevine/cdm/buildflags.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "android_webview/common_jni/DisableOriginTrialsSafeModeUtils_jni.h"
 
 namespace android_webview {
 
@@ -129,10 +131,21 @@ blink::OriginTrialPolicy* AwContentClient::GetOriginTrialPolicy() {
   return origin_trial_policy_.get();
 }
 
+bool AwContentClient::ShouldAllowDefaultSiteInstanceGroup() {
+  // TODO(crbug.com/419595581): Remove this function once default
+  // SiteInstanceGroups are supported on Android WebView.
+  return false;
+}
+
 bool IsDisableOriginTrialsSafeModeActionOn() {
-  JNIEnv* env = base::android::AttachCurrentThread();
-  return Java_DisableOriginTrialsSafeModeUtils_isDisableOriginTrialsEnabled(
-      env);
+  // TODO(crbug.com/393461816) - fix origin trial safemode for renderers.
+  if (base::android::IsJavaAvailable()) {
+    JNIEnv* env = base::android::AttachCurrentThread();
+    return Java_DisableOriginTrialsSafeModeUtils_isDisableOriginTrialsEnabled(
+        env);
+  } else {
+    return false;
+  }
 }
 
 }  // namespace android_webview

@@ -19,6 +19,7 @@
 #if !BUILDFLAG(IS_ANDROID)
 #include "components/commerce/core/proto/cart_db_content.pb.h"
 #include "components/commerce/core/proto/coupon_db_content.pb.h"
+#include "components/commerce/core/proto/discount_infos_db_content.pb.h"  // nogncheck
 #include "components/commerce/core/proto/discounts_db_content.pb.h"  // nogncheck
 #else
 #include "components/commerce/core/proto/merchant_signal_db_content.pb.h"
@@ -31,6 +32,7 @@ const char kMerchantTrustSignalDBFolder[] = "merchant_signal_db";
 const char kCommerceSubscriptionDBFolder[] = "commerce_subscription_db";
 const char kCouponDBFolder[] = "coupon_db";
 const char kDiscountsDBFolder[] = "discounts_db";
+const char kDiscountInfosDBFolder[] = "discount_infos_db";
 const char kParcelTrackingDBFolder[] = "parcel_tracking_db";
 }  // namespace
 
@@ -44,6 +46,8 @@ SessionProtoDBFactory<coupon_db::CouponContentProto>*
 GetCouponSessionProtoDBFactory();
 SessionProtoDBFactory<discounts_db::DiscountsContentProto>*
 GetDiscountsSessionProtoDBFactory();
+SessionProtoDBFactory<discount_infos_db::DiscountInfosContentProto>*
+GetDiscountInfosSessionProtoDBFactory();
 #else
 SessionProtoDBFactory<merchant_signal_db::MerchantSignalContentProto>*
 GetMerchantSignalSessionProtoDBFactory();
@@ -79,7 +83,7 @@ class SessionProtoDBFactory : public ProfileKeyedServiceFactory {
   SessionProtoDBFactory();
   ~SessionProtoDBFactory() override;
 
-  KeyedService* BuildServiceInstanceFor(
+  std::unique_ptr<KeyedService> BuildServiceInstanceForBrowserContext(
       content::BrowserContext* context) const override;
 };
 
@@ -88,8 +92,9 @@ template <typename T>
 SessionProtoDB<T>* SessionProtoDBFactory<T>::GetForProfile(
     content::BrowserContext* context) {
   // Incognito is currently not supported
-  if (context->IsOffTheRecord())
+  if (context->IsOffTheRecord()) {
     return nullptr;
+  }
 
   return static_cast<SessionProtoDB<T>*>(
       GetInstance()->GetServiceForBrowserContext(context, true));
@@ -104,13 +109,17 @@ SessionProtoDBFactory<T>::SessionProtoDBFactory()
               // TODO(crbug.com/40257657): Check if this service is needed in
               // Guest mode.
               .WithGuest(ProfileSelection::kOriginalOnly)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kOriginalOnly)
               .Build()) {}
 
 template <typename T>
 SessionProtoDBFactory<T>::~SessionProtoDBFactory() = default;
 
 template <typename T>
-KeyedService* SessionProtoDBFactory<T>::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+SessionProtoDBFactory<T>::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* context) const {
   DCHECK(!context->IsOffTheRecord());
 
@@ -121,7 +130,7 @@ KeyedService* SessionProtoDBFactory<T>::BuildServiceInstanceFor(
   // leveldb_proto::ProtoDbType mapping as more protos are added.
   if (std::is_base_of<persisted_state_db::PersistedStateContentProto,
                       T>::value) {
-    return new SessionProtoDB<T>(
+    return std::make_unique<SessionProtoDB<T>>(
         proto_database_provider,
         context->GetPath().AppendASCII(kPersistedStateDBFolder),
         leveldb_proto::ProtoDbType::PERSISTED_STATE_DATABASE,
@@ -129,41 +138,48 @@ KeyedService* SessionProtoDBFactory<T>::BuildServiceInstanceFor(
   } else if (std::is_base_of<
                  commerce_subscription_db::CommerceSubscriptionContentProto,
                  T>::value) {
-    return new SessionProtoDB<T>(
+    return std::make_unique<SessionProtoDB<T>>(
         proto_database_provider,
         context->GetPath().AppendASCII(kCommerceSubscriptionDBFolder),
         leveldb_proto::ProtoDbType::COMMERCE_SUBSCRIPTION_DATABASE,
         content::GetUIThreadTaskRunner({}));
   } else if (std::is_base_of<parcel_tracking_db::ParcelTrackingContent,
                              T>::value) {
-    return new SessionProtoDB<T>(
+    return std::make_unique<SessionProtoDB<T>>(
         proto_database_provider,
         context->GetPath().AppendASCII(kParcelTrackingDBFolder),
         leveldb_proto::ProtoDbType::COMMERCE_PARCEL_TRACKING_DATABASE,
         content::GetUIThreadTaskRunner({}));
 #if !BUILDFLAG(IS_ANDROID)
   } else if (std::is_base_of<cart_db::ChromeCartContentProto, T>::value) {
-    return new SessionProtoDB<T>(
+    return std::make_unique<SessionProtoDB<T>>(
         proto_database_provider,
         context->GetPath().AppendASCII(kChromeCartDBFolder),
         leveldb_proto::ProtoDbType::CART_DATABASE,
         content::GetUIThreadTaskRunner({}));
   } else if (std::is_base_of<coupon_db::CouponContentProto, T>::value) {
-    return new SessionProtoDB<T>(
+    return std::make_unique<SessionProtoDB<T>>(
         proto_database_provider,
         context->GetPath().AppendASCII(kCouponDBFolder),
         leveldb_proto::ProtoDbType::COUPON_DATABASE,
         content::GetUIThreadTaskRunner({}));
   } else if (std::is_base_of<discounts_db::DiscountsContentProto, T>::value) {
-    return new SessionProtoDB<T>(
+    return std::make_unique<SessionProtoDB<T>>(
         proto_database_provider,
         context->GetPath().AppendASCII(kDiscountsDBFolder),
         leveldb_proto::ProtoDbType::DISCOUNTS_DATABASE,
         content::GetUIThreadTaskRunner({}));
+  } else if (std::is_base_of<discount_infos_db::DiscountInfosContentProto,
+                             T>::value) {
+    return std::make_unique<SessionProtoDB<T>>(
+        proto_database_provider,
+        context->GetPath().AppendASCII(kDiscountInfosDBFolder),
+        leveldb_proto::ProtoDbType::DISCOUNT_INFOS_DATABASE,
+        content::GetUIThreadTaskRunner({}));
 #else
   } else if (std::is_base_of<merchant_signal_db::MerchantSignalContentProto,
                              T>::value) {
-    return new SessionProtoDB<T>(
+    return std::make_unique<SessionProtoDB<T>>(
         proto_database_provider,
         context->GetPath().AppendASCII(kMerchantTrustSignalDBFolder),
         leveldb_proto::ProtoDbType::MERCHANT_TRUST_SIGNAL_DATABASE,

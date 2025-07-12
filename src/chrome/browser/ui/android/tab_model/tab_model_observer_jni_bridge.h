@@ -42,8 +42,8 @@ class TabModelObserverJniBridge {
 
   void OnFinishingTabClosure(JNIEnv* env,
                              const base::android::JavaParamRef<jobject>& jobj,
-                             int tab_id,
-                             bool incognito);
+                             const base::android::JavaParamRef<jobject>& jtab,
+                             int source);
 
   void OnFinishingMultipleTabClosure(
       JNIEnv* env,
@@ -69,11 +69,16 @@ class TabModelObserverJniBridge {
 
   void TabPendingClosure(JNIEnv* env,
                          const base::android::JavaParamRef<jobject>& jobj,
-                         const base::android::JavaParamRef<jobject>& jtab);
+                         const base::android::JavaParamRef<jobject>& jtab,
+                         int source);
 
   void TabClosureUndone(JNIEnv* env,
                         const base::android::JavaParamRef<jobject>& jobj,
                         const base::android::JavaParamRef<jobject>& jtab);
+
+  void OnTabCloseUndone(JNIEnv* env,
+                        const base::android::JavaParamRef<jobject>& jobj,
+                        const base::android::JavaParamRef<jobjectArray>& jtabs);
 
   void TabClosureCommitted(JNIEnv* env,
                            const base::android::JavaParamRef<jobject>& jobj,

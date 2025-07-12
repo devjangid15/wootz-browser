@@ -51,7 +51,7 @@ void CSSKeyframeRule::setKeyText(const ExecutionContext* execution_context,
   if (!keyframe_->SetKeyText(execution_context, key_text)) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kSyntaxError,
-        "The key '" + key_text + "' is invalid and cannot be parsed");
+        StrCat({"The key '", key_text, "' is invalid and cannot be parsed"}));
   }
 
   if (auto* parent = To<CSSKeyframesRule>(parentRule())) {
@@ -73,7 +73,7 @@ CSSStyleDeclaration* CSSKeyframeRule::style() const {
 
 void CSSKeyframeRule::Reattach(StyleRuleBase*) {
   // No need to reattach, the underlying data is shareable on mutation.
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void CSSKeyframeRule::Trace(Visitor* visitor) const {

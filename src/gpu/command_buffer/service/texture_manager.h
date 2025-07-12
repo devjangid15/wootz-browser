@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 #ifndef GPU_COMMAND_BUFFER_SERVICE_TEXTURE_MANAGER_H_
 #define GPU_COMMAND_BUFFER_SERVICE_TEXTURE_MANAGER_H_
 
@@ -9,6 +10,7 @@
 #include <stdint.h>
 
 #include <algorithm>
+#include <array>
 #include <memory>
 #include <set>
 #include <string>
@@ -19,6 +21,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/notreached.h"
+#include "base/trace_event/memory_dump_provider.h"
 #include "build/build_config.h"
 #include "gpu/command_buffer/service/feature_info.h"
 #include "gpu/command_buffer/service/gl_utils.h"
@@ -331,8 +334,6 @@ class GPU_GLES2_EXPORT Texture final : public TextureBase {
   // Marks a particular level as cleared or uncleared.
   void SetLevelCleared(GLenum target, GLint level, bool cleared);
 
-  void ApplyClampedBaseLevelAndMaxLevelToDriver();
-
   MemoryTypeTracker* GetMemTracker();
 
   // Returns GL_NONE on error.
@@ -360,7 +361,7 @@ class GPU_GLES2_EXPORT Texture final : public TextureBase {
   // Sets the Texture's target
   // Parameters:
   //   target: GL_TEXTURE_2D or GL_TEXTURE_CUBE_MAP or
-  //           GL_TEXTURE_EXTERNAL_OES or GL_TEXTURE_RECTANGLE_ARB
+  //           GL_TEXTURE_EXTERNAL_OES or GL_TEXTURE_RECTANGLE_ANGLE
   //           GL_TEXTURE_2D_ARRAY or GL_TEXTURE_3D (for GLES3)
   //   max_levels: The maximum levels this type of target can have.
   void SetTarget(GLenum target, GLint max_levels);
@@ -739,7 +740,7 @@ class GPU_GLES2_EXPORT TextureManager
     kNumDefaultTextures
   };
 
-  TextureManager(MemoryTracker* memory_tracker,
+  TextureManager(scoped_refptr<MemoryTracker> memory_tracker,
                  FeatureInfo* feature_info,
                  GLsizei max_texture_size,
                  GLsizei max_cube_map_texture_size,
@@ -772,7 +773,7 @@ class GPU_GLES2_EXPORT TextureManager
       case GL_TEXTURE_2D:
       case GL_TEXTURE_2D_ARRAY:
         return max_levels_;
-      case GL_TEXTURE_RECTANGLE_ARB:
+      case GL_TEXTURE_RECTANGLE_ANGLE:
       case GL_TEXTURE_EXTERNAL_OES:
         return 1;
       case GL_TEXTURE_3D:
@@ -789,7 +790,7 @@ class GPU_GLES2_EXPORT TextureManager
       case GL_TEXTURE_EXTERNAL_OES:
       case GL_TEXTURE_2D_ARRAY:
         return max_texture_size_;
-      case GL_TEXTURE_RECTANGLE:
+      case GL_TEXTURE_RECTANGLE_ANGLE:
         return max_rectangle_texture_size_;
       case GL_TEXTURE_3D:
         return max_3d_texture_size_;
@@ -937,11 +938,10 @@ class GPU_GLES2_EXPORT TextureManager
         return default_textures_[kCubeMap].get();
       case GL_TEXTURE_EXTERNAL_OES:
         return default_textures_[kExternalOES].get();
-      case GL_TEXTURE_RECTANGLE_ARB:
+      case GL_TEXTURE_RECTANGLE_ANGLE:
         return default_textures_[kRectangleARB].get();
       default:
-        NOTREACHED_IN_MIGRATION();
-        return nullptr;
+        NOTREACHED();
     }
   }
 
@@ -965,7 +965,7 @@ class GPU_GLES2_EXPORT TextureManager
         return black_texture_ids_[kCubeMap];
       case GL_SAMPLER_EXTERNAL_OES:
         return black_texture_ids_[kExternalOES];
-      case GL_SAMPLER_2D_RECT_ARB:
+      case GL_SAMPLER_2D_RECT_ANGLE:
         return black_texture_ids_[kRectangleARB];
       default:
         // The above covers ES 2, but ES 3 has many more sampler types. Rather
@@ -1001,7 +1001,7 @@ class GPU_GLES2_EXPORT TextureManager
         return;
       }
     }
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
 
   struct DoTexImageArguments {
@@ -1201,7 +1201,6 @@ class GPU_GLES2_EXPORT TextureManager
 
   MemoryTypeTracker* GetMemTracker();
   std::unique_ptr<MemoryTypeTracker> memory_type_tracker_;
-  raw_ptr<MemoryTracker> memory_tracker_;
 
   scoped_refptr<FeatureInfo> feature_info_;
 
@@ -1238,7 +1237,7 @@ class GPU_GLES2_EXPORT TextureManager
   GLuint black_texture_ids_[kNumDefaultTextures];
 
   // The default textures for each target (texture name = 0)
-  scoped_refptr<TextureRef> default_textures_[kNumDefaultTextures];
+  std::array<scoped_refptr<TextureRef>, kNumDefaultTextures> default_textures_;
 
   std::vector<raw_ptr<DestructionObserver, VectorExperimental>>
       destruction_observers_;

@@ -6,11 +6,12 @@
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_CROSS_THREAD_FUNCTIONAL_H_
 
 #include <type_traits>
+
 #include "base/functional/bind.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_copier.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 
-namespace WTF {
+namespace blink {
 
 // `CrossThreadBindOnce()` and `CrossThreadBindRepeating()` are the Blink
 // equivalents of `base::BindOnce()` and `base::BindRepeating()` for creating
@@ -81,8 +82,8 @@ base::OnceCallback<Signature> CoerceFunctorForCrossThreadBind(
 template <typename FunctionType, typename... Ps>
 auto CrossThreadBindRepeating(FunctionType&& function, Ps&&... parameters) {
   static_assert(
-      internal::CheckGCedTypeRestrictions<std::index_sequence_for<Ps...>,
-                                          std::decay_t<Ps>...>::ok,
+      WTF::internal::CheckGCedTypeRestrictions<std::index_sequence_for<Ps...>,
+                                               std::decay_t<Ps>...>::ok,
       "A bound argument uses a bad pattern.");
   return internal::MakeCrossThreadFunction(
       base::BindRepeating(internal::CoerceFunctorForCrossThreadBind(
@@ -94,8 +95,8 @@ auto CrossThreadBindRepeating(FunctionType&& function, Ps&&... parameters) {
 template <typename FunctionType, typename... Ps>
 auto CrossThreadBindOnce(FunctionType&& function, Ps&&... parameters) {
   static_assert(
-      internal::CheckGCedTypeRestrictions<std::index_sequence_for<Ps...>,
-                                          std::decay_t<Ps>...>::ok,
+      WTF::internal::CheckGCedTypeRestrictions<std::index_sequence_for<Ps...>,
+                                               std::decay_t<Ps>...>::ok,
       "A bound argument uses a bad pattern.");
   return internal::MakeCrossThreadOnceFunction(
       base::BindOnce(internal::CoerceFunctorForCrossThreadBind(
@@ -104,9 +105,6 @@ auto CrossThreadBindOnce(FunctionType&& function, Ps&&... parameters) {
                          std::forward<Ps>(parameters))...));
 }
 
-}  // namespace WTF
-
-using WTF::CrossThreadBindOnce;
-using WTF::CrossThreadBindRepeating;
+}  // namespace blink
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_CROSS_THREAD_FUNCTIONAL_H_

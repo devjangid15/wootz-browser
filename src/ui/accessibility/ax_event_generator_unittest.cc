@@ -1477,7 +1477,7 @@ TEST(AXEventGeneratorTest, NodeBecomesUnignored) {
   AXEventGenerator event_generator(&tree);
   ASSERT_THAT(event_generator, IsEmpty());
   AXTreeUpdate update = initial_state;
-  update.nodes[3].state = 0;
+  update.nodes[3].state = AXStates(0U);
   ASSERT_TRUE(tree.Unserialize(update));
   EXPECT_THAT(event_generator,
               UnorderedElementsAre(
@@ -1514,7 +1514,7 @@ TEST(AXEventGeneratorTest, NodeBecomesUnignored2) {
   ASSERT_THAT(event_generator, IsEmpty());
   AXTreeUpdate update = initial_state;
   // Marking as no longer ignored should fire CHILDREN_CHANGED on 2
-  update.nodes[3].state = 0;
+  update.nodes[3].state = AXStates(0U);
   // Remove node id 5 so it also fires CHILDREN_CHANGED on 4.
   update.nodes.pop_back();
   update.nodes[3].child_ids.clear();
@@ -1524,56 +1524,6 @@ TEST(AXEventGeneratorTest, NodeBecomesUnignored2) {
                   HasEventAtNode(AXEventGenerator::Event::CHILDREN_CHANGED, 2),
                   HasEventAtNode(AXEventGenerator::Event::SUBTREE_CREATED, 4),
                   HasEventAtNode(AXEventGenerator::Event::IGNORED_CHANGED, 4)));
-}
-
-TEST(AXEventGeneratorTest, NodeChangesIsIgnoredDueToFocusChange) {
-  AXTree::SetFocusedNodeShouldNeverBeIgnored();
-
-  AXNodeData root;
-  AXNodeData button_1;
-  AXNodeData button_2;
-  root.id = 1;
-  button_1.id = 2;
-  button_2.id = 3;
-
-  root.role = ax::mojom::Role::kRootWebArea;
-  root.child_ids = {button_1.id, button_2.id};
-
-  button_1.role = ax::mojom::Role::kButton;
-  button_1.AddState(ax::mojom::State::kIgnored);
-
-  button_2.role = ax::mojom::Role::kButton;
-  button_2.AddState(ax::mojom::State::kIgnored);
-
-  AXTreeUpdate update;
-  update.root_id = root.id;
-  update.nodes = {root, button_1, button_2};
-
-  AXTreeData tree_data;
-  tree_data.focus_id = button_1.id;
-  update.has_tree_data = true;
-  update.tree_data = tree_data;
-
-  AXTree tree(update);
-  AXEventGenerator event_generator(&tree);
-  ASSERT_THAT(event_generator, IsEmpty());
-
-  tree_data = tree.data();
-  tree_data.focused_tree_id = tree.GetAXTreeID();
-  tree_data.focus_id = button_2.id;
-  AXTreeUpdate update_2;
-  update_2.has_tree_data = true;
-  update_2.tree_data = tree_data;
-
-  ASSERT_TRUE(tree.Unserialize(update_2));
-  EXPECT_THAT(
-      event_generator,
-      UnorderedElementsAre(
-          HasEventAtNode(AXEventGenerator::Event::IGNORED_CHANGED, button_1.id),
-          HasEventAtNode(AXEventGenerator::Event::IGNORED_CHANGED, button_2.id),
-          HasEventAtNode(AXEventGenerator::Event::CHILDREN_CHANGED, root.id),
-          HasEventAtNode(AXEventGenerator::Event::SUBTREE_CREATED,
-                         button_2.id)));
 }
 
 TEST(AXEventGeneratorTest, NodeInsertedViaRoleChange) {
@@ -3130,6 +3080,67 @@ TEST(AXEventGenerator, ParsingUnknownEvent) {
 
   // Event should not be changed
   EXPECT_EQ(event, AXEventGenerator::Event::CARET_BOUNDS_CHANGED);
+}
+
+TEST(AXEventGeneratorTest, UnignoredWithNodeCleared) {
+  AXTreeUpdate initial_state;
+  initial_state.root_id = 1;
+  {
+    AXNodeData data;
+    data.id = 1;
+    data.role = ax::mojom::Role::kRootWebArea;
+    data.child_ids = {2};
+    initial_state.nodes.push_back(data);
+  }
+  {
+    AXNodeData data;
+    data.id = 2;
+    data.role = ax::mojom::Role::kGenericContainer;
+    data.child_ids = {3};
+    initial_state.nodes.push_back(data);
+  }
+  {
+    AXNodeData data;
+    data.id = 3;
+    data.role = ax::mojom::Role::kGenericContainer;
+    data.AddState(ax::mojom::State::kIgnored);
+    data.child_ids = {4};
+    initial_state.nodes.push_back(data);
+  }
+  {
+    AXNodeData data;
+    data.id = 4;
+    data.role = ax::mojom::Role::kGenericContainer;
+    data.AddState(ax::mojom::State::kIgnored);
+    initial_state.nodes.push_back(data);
+  }
+
+  AXTree tree(initial_state);
+  AXEventGenerator event_generator(&tree);
+  ASSERT_THAT(event_generator, IsEmpty());
+
+  AXTreeUpdate update;
+  update.node_id_to_clear = 3;
+  {
+    AXNodeData data;
+    data.id = 3;
+    data.role = ax::mojom::Role::kGenericContainer;
+    data.child_ids = {4};
+    update.nodes.push_back(data);
+  }
+  {
+    AXNodeData data;
+    data.id = 4;
+    data.role = ax::mojom::Role::kGenericContainer;
+    update.nodes.push_back(data);
+  }
+
+  ASSERT_TRUE(tree.Unserialize(update));
+  EXPECT_THAT(event_generator,
+              UnorderedElementsAre(
+                  HasEventAtNode(AXEventGenerator::Event::CHILDREN_CHANGED, 2),
+                  HasEventAtNode(AXEventGenerator::Event::IGNORED_CHANGED, 3),
+                  HasEventAtNode(AXEventGenerator::Event::SUBTREE_CREATED, 3)));
 }
 
 }  // namespace ui

@@ -446,7 +446,7 @@ IN_PROC_BROWSER_TEST_F(HistoryBrowserTest, InvalidSchemeNoHistory) {
       ui_test_utils::NavigateToURL(browser(), GURL("view-source:about:blank")));
   ExpectEmptyHistory();
 
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL("wootzapp://about")));
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL("chrome://about")));
   ExpectEmptyHistory();
 
   content::WebUIConfigMap::GetInstance().AddUntrustedWebUIConfig(
@@ -889,7 +889,8 @@ IN_PROC_BROWSER_TEST_F(HistoryBrowserTest, ReplaceStateSamePageIsNotRecorded) {
 
   // Do a replaceState() to create a new navigation entry.
   ASSERT_TRUE(
-      content::ExecJs(web_contents, "history.replaceState({foo: 'bar'},'')"));
+      content::ExecJs(web_contents, "history.replaceState({foo: 'bar'},'')",
+                      content::EvalJsOptions::EXECUTE_SCRIPT_NO_USER_GESTURE));
   content::WaitForLoadStop(web_contents);
 
   // Because there was no user gesture and the url did not change, there should
@@ -899,6 +900,31 @@ IN_PROC_BROWSER_TEST_F(HistoryBrowserTest, ReplaceStateSamePageIsNotRecorded) {
   EXPECT_EQ(url, urls[0]);
   history::QueryURLResult url_result = QueryURL(url);
   EXPECT_EQ(1u, url_result.visits.size());
+}
+
+// Verifies history.replaceState() to the same url with a user gesture logs
+// a visit.
+IN_PROC_BROWSER_TEST_F(HistoryBrowserTest, ReplaceStateSamePageVisitsRecorded) {
+  // Use the default embedded_https_test_server() for this test because
+  // replaceState requires a real, non-file URL.
+  GURL url(embedded_https_test_server().GetURL("foo.com", "/title3.html"));
+  NavigateParams params(browser(), url, ui::PAGE_TRANSITION_TYPED);
+  params.user_gesture = false;
+  ui_test_utils::NavigateToURL(&params);
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+
+  // Do a replaceState() to create a new navigation entry.
+  ASSERT_TRUE(
+      content::ExecJs(web_contents, "history.replaceState({foo: 'bar'},'')"));
+  content::WaitForLoadStop(web_contents);
+
+  // The same url should have 2 visits given the user gesture.
+  std::vector<GURL> urls(GetHistoryContents());
+  ASSERT_EQ(1u, urls.size());
+  EXPECT_EQ(url, urls[0]);
+  history::QueryURLResult url_result = QueryURL(url);
+  EXPECT_EQ(2u, url_result.visits.size());
 }
 
 IN_PROC_BROWSER_TEST_F(HistoryBrowserTest, VisitAnnotations) {
@@ -1052,8 +1078,9 @@ IN_PROC_BROWSER_TEST_F(HistoryPrerenderBrowserTest,
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), kInitialUrl));
 
   // Start a prerender, but we don't activate it.
-  const int kHostId = prerender_helper().AddPrerender(kPrerenderingUrl);
-  ASSERT_NE(kHostId, content::RenderFrameHost::kNoFrameTreeNodeId);
+  const content::FrameTreeNodeId kHostId =
+      prerender_helper().AddPrerender(kPrerenderingUrl);
+  ASSERT_TRUE(kHostId);
 
   // The prerendered page should not be recorded.
   EXPECT_THAT(GetHistoryContents(), testing::ElementsAre(kInitialUrl));
@@ -1070,8 +1097,9 @@ IN_PROC_BROWSER_TEST_F(HistoryPrerenderBrowserTest,
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), kInitialUrl));
 
   // Start a prerender.
-  const int kHostId = prerender_helper().AddPrerender(kPrerenderingUrl);
-  ASSERT_NE(kHostId, content::RenderFrameHost::kNoFrameTreeNodeId);
+  const content::FrameTreeNodeId kHostId =
+      prerender_helper().AddPrerender(kPrerenderingUrl);
+  ASSERT_TRUE(kHostId);
 
   // Activate.
   prerender_helper().NavigatePrimaryPage(kPrerenderingUrl);
@@ -1095,8 +1123,9 @@ IN_PROC_BROWSER_TEST_F(HistoryPrerenderBrowserTest,
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), kInitialUrl));
 
   // Start a prerender.
-  const int kHostId = prerender_helper().AddPrerender(kPrerenderingUrl);
-  ASSERT_NE(kHostId, content::RenderFrameHost::kNoFrameTreeNodeId);
+  const content::FrameTreeNodeId kHostId =
+      prerender_helper().AddPrerender(kPrerenderingUrl);
+  ASSERT_TRUE(kHostId);
 
   // Do a fragment navigation in the prerendered page.
   prerender_helper().NavigatePrerenderedPage(kHostId, kPrerenderingFragmentUrl);
@@ -1200,24 +1229,40 @@ class HistoryVisitedLinksBrowserTest : public HistoryBrowserTest {
  public:
   HistoryVisitedLinksBrowserTest() {
     scoped_feature_list_.InitAndEnableFeature(
-        blink::features::kPartitionVisitedLinkDatabase);
+        blink::features::kPartitionVisitedLinkDatabaseWithSelfLinks);
   }
   content::WebContents* web_contents() {
     return browser()->tab_strip_model()->GetActiveWebContents();
   }
 
- private:
   base::test::ScopedFeatureList scoped_feature_list_;
 };
 
-IN_PROC_BROWSER_TEST_F(HistoryVisitedLinksBrowserTest, GetSaltForSameOrigin) {
+IN_PROC_BROWSER_TEST_F(HistoryVisitedLinksBrowserTest,
+                       PartitionedGetSaltForSameOrigin) {
   constexpr char kOrigin[] = "foo.com";
   const GURL kUrl(embedded_https_test_server().GetURL(kOrigin, "/empty.html"));
+  int roundtrips = 5;
 
   // Obtain our expected salt value from the history service.
   history::HistoryService* history_service =
       HistoryServiceFactory::GetForProfile(browser()->profile(),
                                            ServiceAccessType::EXPLICIT_ACCESS);
+
+  // crbug.com/391985597: To obtain a salt from the `HistoryService`, the
+  // :visited links hashtable must have completed loading in data from the
+  // `HistoryDatabase`. Even though the `HistoryDatabase` is empty, on Windows
+  // and MacOS trybots, this test was flaky due to delays in switching from
+  // the DB to UI thread. To ensure that we can obtain our expected salt, we
+  // will run a few navigations which the test must wait for their completion
+  // to buy these trybots some more time to finish loading the table. (NOTE:
+  // this would traditionally be done with a waiter, but due to layering
+  // constraints, we cannot directly access the `(Partitioned)VisitedLink::
+  // TableBuilder` to be signaled once loading is complete.)
+  for (int i = 0; i < roundtrips; i++) {
+    ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), kUrl));
+  }
+
   std::optional<uint64_t> expected_salt =
       history_service->GetOrAddOriginSalt(url::Origin::Create(kUrl));
   ASSERT_TRUE(expected_salt.has_value());
@@ -1225,7 +1270,8 @@ IN_PROC_BROWSER_TEST_F(HistoryVisitedLinksBrowserTest, GetSaltForSameOrigin) {
   // Perform a navigation and assert that we obtain our expected salt value.
   VisitedLinkNavigationThrottleObserver observer(web_contents(), kUrl);
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), kUrl));
-  EXPECT_EQ(observer.GetVisitedLinkSalt(), expected_salt.value());
+  ASSERT_TRUE(observer.GetVisitedLinkSalt().has_value());
+  EXPECT_EQ(observer.GetVisitedLinkSalt().value(), expected_salt.value());
 
   // Navigate to a same-origin URL. We should receive the same salt as our
   // previous navigation.
@@ -1233,17 +1279,36 @@ IN_PROC_BROWSER_TEST_F(HistoryVisitedLinksBrowserTest, GetSaltForSameOrigin) {
       embedded_https_test_server().GetURL(kOrigin, "/title1.html"));
   VisitedLinkNavigationThrottleObserver observer2(web_contents(), kUrl2);
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), kUrl2));
-  EXPECT_EQ(observer.GetVisitedLinkSalt(), observer2.GetVisitedLinkSalt());
+  ASSERT_TRUE(observer2.GetVisitedLinkSalt().has_value());
+  EXPECT_EQ(observer.GetVisitedLinkSalt().value(),
+            observer2.GetVisitedLinkSalt().value());
 }
 
-IN_PROC_BROWSER_TEST_F(HistoryVisitedLinksBrowserTest, AddSaltForCrossOrigin) {
+IN_PROC_BROWSER_TEST_F(HistoryVisitedLinksBrowserTest,
+                       PartitionedAddSaltForCrossOrigin) {
   constexpr char kOrigin[] = "foo.com";
   const GURL kUrl(embedded_https_test_server().GetURL(kOrigin, "/empty.html"));
+  int roundtrips = 5;
 
   // Obtain our expected salt value for kOrigin from the history service.
   history::HistoryService* history_service =
       HistoryServiceFactory::GetForProfile(browser()->profile(),
                                            ServiceAccessType::EXPLICIT_ACCESS);
+
+  // crbug.com/391985597: To obtain a salt from the `HistoryService`, the
+  // :visited links hashtable must have completed loading in data from the
+  // `HistoryDatabase`. Even though the `HistoryDatabase` is empty, on Windows
+  // and MacOS trybots, this test was flaky due to delays in switching from
+  // the DB to UI thread. To ensure that we can obtain our expected salt, we
+  // will run a few navigations which the test must wait for their completion
+  // to buy these trybots some more time to finish loading the table. (NOTE:
+  // this would traditionally be done with a waiter, but due to layering
+  // constraints, we cannot directly access the `(Partitioned)VisitedLink::
+  // TableBuilder` to be signaled once loading is complete.)
+  for (int i = 0; i < roundtrips; i++) {
+    ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), kUrl));
+  }
+
   std::optional<uint64_t> expected_salt =
       history_service->GetOrAddOriginSalt(url::Origin::Create(kUrl));
   ASSERT_TRUE(expected_salt.has_value());
@@ -1252,7 +1317,8 @@ IN_PROC_BROWSER_TEST_F(HistoryVisitedLinksBrowserTest, AddSaltForCrossOrigin) {
   // kOrigin.
   VisitedLinkNavigationThrottleObserver observer(web_contents(), kUrl);
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), kUrl));
-  EXPECT_EQ(observer.GetVisitedLinkSalt(), expected_salt.value());
+  ASSERT_TRUE(observer.GetVisitedLinkSalt().has_value());
+  EXPECT_EQ(observer.GetVisitedLinkSalt().value(), expected_salt.value());
 
   // Navigate to a cross-origin URL. We should receive a different salt from our
   // previous navigation.
@@ -1261,6 +1327,7 @@ IN_PROC_BROWSER_TEST_F(HistoryVisitedLinksBrowserTest, AddSaltForCrossOrigin) {
       embedded_https_test_server().GetURL(kOrigin2, "/title1.html"));
   VisitedLinkNavigationThrottleObserver observer2(web_contents(), kUrl2);
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), kUrl2));
-  EXPECT_NE(observer2.GetVisitedLinkSalt(), std::nullopt);
-  EXPECT_NE(observer.GetVisitedLinkSalt(), observer2.GetVisitedLinkSalt());
+  ASSERT_TRUE(observer2.GetVisitedLinkSalt().has_value());
+  EXPECT_NE(observer.GetVisitedLinkSalt().value(),
+            observer2.GetVisitedLinkSalt().value());
 }

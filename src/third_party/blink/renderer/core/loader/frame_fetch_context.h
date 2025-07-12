@@ -92,14 +92,29 @@ class CORE_EXPORT FrameFetchContext final : public BaseFetchContext,
                       WebScopedVirtualTimePauser&,
                       ResourceType) override;
 
+  void FillInitiatorInfo(FetchInitiatorInfo& initiator_info) override;
+
   void AddResourceTiming(mojom::blink::ResourceTimingInfoPtr,
                          const AtomicString& initiator_type) override;
   bool AllowImage() const override;
 
-  void PopulateResourceRequest(ResourceType,
-                               const std::optional<float> resource_width,
-                               ResourceRequest&,
-                               const ResourceLoaderOptions&) override;
+  void ModifyRequestForMixedContentUpgrade(ResourceRequest&) override;
+
+  void PopulateResourceRequestBeforeCacheAccess(
+      const ResourceLoaderOptions& options,
+      ResourceRequest& request) override;
+
+  void WillSendRequest(ResourceRequest& resource_request) override;
+
+  void UpgradeResourceRequestForLoader(
+      ResourceType,
+      const std::optional<float> resource_width,
+      ResourceRequest&,
+      const ResourceLoaderOptions&) override;
+
+  bool StartSpeculativeImageDecode(Resource* resource,
+                                   base::OnceClosure callback) override;
+  bool SpeculativeDecodeRequestInFlight() const override;
 
   bool IsPrerendering() const override;
 
@@ -108,7 +123,6 @@ class CORE_EXPORT FrameFetchContext final : public BaseFetchContext,
   bool DoesLCPPHaveLcpElementLocatorHintData() override;
 
   // Exposed for testing.
-  void ModifyRequestForCSP(ResourceRequest&);
   void AddClientHintsIfNecessary(const std::optional<float> resource_width,
                                  ResourceRequest&);
 
@@ -122,7 +136,8 @@ class CORE_EXPORT FrameFetchContext final : public BaseFetchContext,
       const ResourceRequestHead& resource_request,
       base::optional_ref<const KURL> alias_url,
       ResourceType type,
-      const FetchInitiatorInfo& initiator_info) override;
+      const FetchInitiatorInfo& initiator_info,
+      subresource_filter::ScopedRule* out_rule) override;
 
   // LoadingBehaviorObserver overrides:
   void DidObserveLoadingBehavior(LoadingBehaviorFlag) override;
@@ -144,7 +159,7 @@ class CORE_EXPORT FrameFetchContext final : public BaseFetchContext,
   void AddLcpPredictedCallback(base::OnceClosure callback) override;
 
  private:
-  friend class FrameFetchContextTest;
+  friend class FrameFetchContextTestBase;
 
   struct FrozenState;
 
@@ -189,18 +204,17 @@ class CORE_EXPORT FrameFetchContext final : public BaseFetchContext,
   Settings* GetSettings() const;
   String GetUserAgent() const;
   std::optional<UserAgentMetadata> GetUserAgentMetadata() const;
-  const PermissionsPolicy* GetPermissionsPolicy() const override;
+  const network::PermissionsPolicy* GetPermissionsPolicy() const override;
+  const FeatureContext* GetFeatureContext() const override;
+  HashSet<HashAlgorithm> CSPHashesToReport() const override;
+  void AddCSPHashReport(
+      const String& url,
+      const HashMap<HashAlgorithm, String>& integrity_hashes) override;
   const ClientHintsPreferences GetClientHintsPreferences() const;
   float GetDevicePixelRatio() const;
   String GetReducedAcceptLanguage() const;
 
   enum class ClientHintsMode { kLegacy, kStandard };
-  bool ShouldSendClientHint(ClientHintsMode mode,
-                            const PermissionsPolicy*,
-                            const url::Origin& resource_origin,
-                            bool is_1p_origin,
-                            network::mojom::blink::WebClientHintsType,
-                            const ClientHintsPreferences&) const;
   void SetFirstPartyCookie(ResourceRequest&);
 
   // Returns true if `resource_origin` is same as the origin of the top level
@@ -215,6 +229,10 @@ class CORE_EXPORT FrameFetchContext final : public BaseFetchContext,
 
   // Non-null only when detached.
   Member<FrozenState> frozen_state_;
+
+  // Serializing the brand major version list is expensive, so it's cached.
+  std::optional<UserAgentMetadata> last_ua_;
+  std::optional<AtomicString> last_ua_serialized_brand_major_version_list_;
 };
 
 }  // namespace blink

@@ -4,185 +4,306 @@
 
 #include "components/optimization_guide/core/model_execution/substitution.h"
 
+#include <sys/types.h>
+
+#include <cstddef>
 #include <optional>
 #include <sstream>
 #include <string>
+#include <variant>
 #include <vector>
 
-#include "base/containers/contains.h"
 #include "base/debug/dump_without_crashing.h"
-#include "base/files/file_util.h"
 #include "base/logging.h"
-#include "base/strings/strcat.h"
-#include "base/strings/stringprintf.h"
-#include "base/task/task_traits.h"
-#include "base/task/thread_pool.h"
+#include "base/notreached.h"
+#include "base/strings/string_number_conversions.h"
+#include "components/optimization_guide/core/model_execution/multimodal_message.h"
 #include "components/optimization_guide/core/model_execution/on_device_model_execution_proto_descriptors.h"
 #include "components/optimization_guide/core/model_execution/on_device_model_execution_proto_value_utils.h"
 #include "components/optimization_guide/proto/descriptors.pb.h"
 #include "components/optimization_guide/proto/substitution.pb.h"
+#include "services/on_device_model/ml/chrome_ml_audio_buffer.h"
+#include "services/on_device_model/ml/chrome_ml_types.h"
+#include "third_party/skia/include/core/SkBitmap.h"
 
 namespace optimization_guide {
 
 namespace {
 
 using google::protobuf::RepeatedPtrField;
+using on_device_model::mojom::Input;
+using on_device_model::mojom::InputPiece;
+using on_device_model::mojom::InputPtr;
+
+// A context for resolving substitution expressions.
+struct ResolutionContext {
+  // The message we are resolving expressions against.
+  MultimodalMessageReadView view;
+
+  // 0-based index of 'message' in the repeated field that contains it.
+  // 0 for the top level message.
+  int offset = 0;
+};
+
+enum class ConditionResult { kFalse, kTrue, kStop };
+
+ConditionResult AsResult(bool value) {
+  return value ? ConditionResult::kTrue : ConditionResult::kFalse;
+}
 
 // Returns whether `condition` applies based on `message`.
-bool EvaluateCondition(const google::protobuf::MessageLite& message,
-                       const proto::Condition& condition) {
+ConditionResult EvaluateCondition(const ResolutionContext& ctx,
+                                  const proto::Condition& condition) {
+  if (ctx.view.IsPending(condition.proto_field())) {
+    return ConditionResult::kStop;
+  }
   std::optional<proto::Value> proto_value =
-      GetProtoValue(message, condition.proto_field());
+      ctx.view.GetValue(condition.proto_field());
   if (!proto_value) {
-    return false;
+    return AsResult(false);
   }
 
   switch (condition.operator_type()) {
     case proto::OPERATOR_TYPE_EQUAL_TO:
-      return AreValuesEqual(*proto_value, condition.value());
+      return AsResult(AreValuesEqual(*proto_value, condition.value()));
     case proto::OPERATOR_TYPE_NOT_EQUAL_TO:
-      return !AreValuesEqual(*proto_value, condition.value());
+      return AsResult(!AreValuesEqual(*proto_value, condition.value()));
     default:
       base::debug::DumpWithoutCrashing();
-      return false;
+      return AsResult(false);
   }
 }
 
-bool AndConditions(const google::protobuf::MessageLite& message,
-                   const RepeatedPtrField<proto::Condition>& conditions) {
+ConditionResult AndConditions(
+    const ResolutionContext& ctx,
+    const RepeatedPtrField<proto::Condition>& conditions) {
   for (const auto& condition : conditions) {
-    if (!EvaluateCondition(message, condition)) {
-      return false;
+    ConditionResult result = EvaluateCondition(ctx, condition);
+    if (result != ConditionResult::kTrue) {
+      return result;
     }
   }
-  return true;
+  return ConditionResult::kTrue;
 }
 
-bool OrConditions(const google::protobuf::MessageLite& message,
-                  const RepeatedPtrField<proto::Condition>& conditions) {
+ConditionResult OrConditions(
+    const ResolutionContext& ctx,
+    const RepeatedPtrField<proto::Condition>& conditions) {
   for (const auto& condition : conditions) {
-    if (EvaluateCondition(message, condition)) {
-      return true;
+    ConditionResult result = EvaluateCondition(ctx, condition);
+    if (result != ConditionResult::kFalse) {
+      return result;
     }
   }
-  return false;
+  return ConditionResult::kFalse;
 }
 
 // Returns whether `conditions` apply based on `message`.
-bool DoConditionsApply(const google::protobuf::MessageLite& message,
-                       const proto::ConditionList& conditions) {
+ConditionResult DoConditionsApply(const ResolutionContext& ctx,
+                                  const proto::ConditionList& conditions) {
   if (conditions.conditions_size() == 0) {
-    return true;
+    return ConditionResult::kTrue;
   }
 
   switch (conditions.condition_evaluation_type()) {
     case proto::CONDITION_EVALUATION_TYPE_OR:
-      return OrConditions(message, conditions.conditions());
+      return OrConditions(ctx, conditions.conditions());
     case proto::CONDITION_EVALUATION_TYPE_AND:
-      return AndConditions(message, conditions.conditions());
+      return AndConditions(ctx, conditions.conditions());
     default:
       base::debug::DumpWithoutCrashing();
-      return false;
+      return ConditionResult::kFalse;
   }
 }
 
 // Resolve various expression in proto::SubstitutedString by appending
 // appropriate text to an output string and updating state.
 // Methods return false on error.
-class StringBuilder {
+class InputBuilder final {
  public:
   enum class Error {
-    OK = 0,
-    FAILED = 1,
+    kOk = 0,
+    kFailed = 1,  // The config is not valid over this input.
+    kStop = 2,    // Terminate early due to a pending field.
   };
-  StringBuilder() = default;
-  Error ResolveSubstitutedString(const google::protobuf::MessageLite& request,
+  InputBuilder() : out_(Input::New()) {}
+  Error ResolveSubstitutedString(const ResolutionContext& ctx,
                                  const proto::SubstitutedString& substitution);
 
-  SubstitutionResult result() {
-    return SubstitutionResult{
-        .input_string = out_.str(),
-        .should_ignore_input_context = should_ignore_input_context_};
+  SubstitutionResult result() && {
+    SubstitutionResult res;
+    res.input = std::move(out_);
+    res.should_ignore_input_context = should_ignore_input_context_;
+    return res;
   }
 
  private:
-  Error ResolveSubstitution(const google::protobuf::MessageLite& request,
+  Error ResolveSubstitution(const ResolutionContext& ctx,
                             const proto::StringSubstitution& arg);
+  Error ResolveStringArg(const ResolutionContext& ctx,
+                         const proto::StringArg& candidate);
 
-  // Resolve a StringArg, returns false on error.
-  Error ResolveArg(const google::protobuf::MessageLite& request,
-                   const proto::StringArg& candidate);
-
-  Error ResolveRangeExpr(const google::protobuf::MessageLite& request,
-                         const proto::RangeExpr& expr);
-
-  Error ResolveProtoField(const google::protobuf::MessageLite& request,
+  Error ResolveProtoField(const ResolutionContext& ctx,
                           const proto::ProtoField& field);
+  Error ResolveRangeExpr(const ResolutionContext& ctx,
+                         const proto::RangeExpr& expr);
+  Error ResolveIndexExpr(const ResolutionContext& ctx,
+                         const proto::IndexExpr& field);
+  Error ResolveControlToken(const ResolutionContext& ctx,
+                            proto::ControlToken token);
+  Error ResolveMediaField(const ResolutionContext& ctx,
+                          proto::MediaField token);
 
-  std::ostringstream out_;
+  void AddToken(ml::Token token) { out_->pieces.emplace_back(token); }
+
+  void AddString(std::string_view str) {
+    if (!str.empty()) {
+      out_->pieces.emplace_back(std::string(str));
+    }
+  }
+
+  InputPtr out_;
   bool should_ignore_input_context_ = false;
 };
 
-StringBuilder::Error StringBuilder::ResolveProtoField(
-    const google::protobuf::MessageLite& request,
+InputBuilder::Error InputBuilder::ResolveProtoField(
+    const ResolutionContext& ctx,
     const proto::ProtoField& field) {
-  std::optional<proto::Value> value = GetProtoValue(request, field);
-  if (!value) {
-    return Error::FAILED;
+  if (ctx.view.IsPending(field)) {
+    return Error::kStop;
   }
-  out_ << GetStringFromValue(*value);
-  return Error::OK;
+  std::optional<proto::Value> value = ctx.view.GetValue(field);
+  if (!value) {
+    DVLOG(1) << "Invalid proto field of " << ctx.view.GetTypeName();
+    return Error::kFailed;
+  }
+  AddString(GetStringFromValue(*value));
+  return Error::kOk;
 }
 
-StringBuilder::Error StringBuilder::ResolveRangeExpr(
-    const google::protobuf::MessageLite& request,
+InputBuilder::Error InputBuilder::ResolveRangeExpr(
+    const ResolutionContext& ctx,
     const proto::RangeExpr& expr) {
-  std::vector<std::string> vals;
-  auto it = GetProtoRepeated(&request, expr.proto_field());
-  if (!it) {
-    return Error::FAILED;
+  if (ctx.view.IsPending(expr.proto_field())) {
+    return Error::kStop;
   }
-  for (const auto* msg : *it) {
-    Error error = ResolveSubstitutedString(*msg, expr.expr());
-    if (error != Error::OK) {
+  auto repeated = ctx.view.GetRepeated(expr.proto_field());
+  if (!repeated) {
+    DVLOG(1) << "Invalid proto field for RangeExpr over "
+             << ctx.view.GetTypeName();
+    return Error::kFailed;
+  }
+  int repeated_size = repeated->Size();
+  for (int i = 0; i < repeated_size; i++) {
+    Error error = ResolveSubstitutedString(
+        ResolutionContext{repeated->Get(i), i}, expr.expr());
+    if (error != Error::kOk) {
       return error;
     }
   }
-  return Error::OK;
+  if (repeated->IsIncomplete()) {
+    return Error::kStop;
+  }
+  return Error::kOk;
 }
 
-StringBuilder::Error StringBuilder::ResolveArg(
-    const google::protobuf::MessageLite& request,
+InputBuilder::Error InputBuilder::ResolveIndexExpr(
+    const ResolutionContext& ctx,
+    const proto::IndexExpr& expr) {
+  AddString(base::NumberToString(ctx.offset + expr.one_based()));
+  return Error::kOk;
+}
+
+InputBuilder::Error InputBuilder::ResolveControlToken(
+    const ResolutionContext& ctx,
+    proto::ControlToken token) {
+  switch (token) {
+    case proto::CONTROL_TOKEN_SYSTEM:
+      AddToken(ml::Token::kSystem);
+      break;
+    case proto::CONTROL_TOKEN_MODEL:
+      AddToken(ml::Token::kModel);
+      break;
+    case proto::CONTROL_TOKEN_USER:
+      AddToken(ml::Token::kUser);
+      break;
+    case proto::CONTROL_TOKEN_END:
+      AddToken(ml::Token::kEnd);
+      break;
+    default:
+      return Error::kFailed;
+  }
+  return Error::kOk;
+}
+
+InputBuilder::Error InputBuilder::ResolveMediaField(
+    const ResolutionContext& ctx,
+    proto::MediaField field) {
+  if (ctx.view.IsPending(field.proto_field())) {
+    return Error::kStop;
+  }
+  MultimodalType mtype = ctx.view.GetMultimodalType(field.proto_field());
+  switch (mtype) {
+    case MultimodalType::kAudio:
+      out_->pieces.emplace_back(*ctx.view.GetAudio(field.proto_field()));
+      return Error::kOk;
+    case MultimodalType::kImage:
+      out_->pieces.emplace_back(*ctx.view.GetImage(field.proto_field()));
+      return Error::kOk;
+    case MultimodalType::kNone:
+      return Error::kOk;
+  }
+}
+
+InputBuilder::Error InputBuilder::ResolveStringArg(
+    const ResolutionContext& ctx,
     const proto::StringArg& candidate) {
   switch (candidate.arg_case()) {
     case proto::StringArg::kRawString:
-      out_ << candidate.raw_string();
-      return Error::OK;
+      AddString(candidate.raw_string());
+      return Error::kOk;
     case proto::StringArg::kProtoField:
-      return ResolveProtoField(request, candidate.proto_field());
+      return ResolveProtoField(ctx, candidate.proto_field());
     case proto::StringArg::kRangeExpr:
-      return ResolveRangeExpr(request, candidate.range_expr());
+      return ResolveRangeExpr(ctx, candidate.range_expr());
+    case proto::StringArg::kIndexExpr:
+      return ResolveIndexExpr(ctx, candidate.index_expr());
+    case proto::StringArg::kControlToken:
+      return ResolveControlToken(ctx, candidate.control_token());
+    case proto::StringArg::kMediaField:
+      return ResolveMediaField(ctx, candidate.media_field());
     case proto::StringArg::ARG_NOT_SET:
-      return Error::FAILED;
+      DVLOG(1) << "StringArg is incomplete.";
+      return Error::kFailed;
   }
 }
 
-StringBuilder::Error StringBuilder::ResolveSubstitution(
-    const google::protobuf::MessageLite& request,
+InputBuilder::Error InputBuilder::ResolveSubstitution(
+    const ResolutionContext& ctx,
     const proto::StringSubstitution& arg) {
   for (const auto& candidate : arg.candidates()) {
-    if (DoConditionsApply(request, candidate.conditions())) {
-      return ResolveArg(request, candidate);
+    switch (DoConditionsApply(ctx, candidate.conditions())) {
+      case ConditionResult::kFalse:
+        continue;
+      case ConditionResult::kStop:
+        return Error::kStop;
+      case ConditionResult::kTrue:
+        return ResolveStringArg(ctx, candidate);
     }
   }
-  return Error::OK;
+  return Error::kOk;
 }
 
-StringBuilder::Error StringBuilder::ResolveSubstitutedString(
-    const google::protobuf::MessageLite& request,
+InputBuilder::Error InputBuilder::ResolveSubstitutedString(
+    const ResolutionContext& ctx,
     const proto::SubstitutedString& substitution) {
-  if (!DoConditionsApply(request, substitution.conditions())) {
-    return Error::OK;
+  switch (DoConditionsApply(ctx, substitution.conditions())) {
+    case ConditionResult::kFalse:
+      return Error::kOk;
+    case ConditionResult::kStop:
+      return Error::kStop;
+    case ConditionResult::kTrue:
+      break;
   }
   if (substitution.should_ignore_input_context()) {
     should_ignore_input_context_ = true;
@@ -192,47 +313,96 @@ StringBuilder::Error StringBuilder::ResolveSubstitutedString(
   size_t template_idx = 0;
   for (size_t pos = templ.find('%', template_idx);
        pos != std::string_view::npos; pos = templ.find('%', template_idx)) {
-    out_ << templ.substr(template_idx, pos - template_idx);
+    AddString(templ.substr(template_idx, pos - template_idx));
     std::string_view token = templ.substr(pos, 2);
     template_idx = pos + 2;
     if (token == "%%") {
-      out_ << "%";
+      AddString("%");
       continue;
     }
     if (token != "%s") {
-      return Error::FAILED;  // Invalid token
+      DVLOG(1) << "Invalid Token";
+      return Error::kFailed;  // Invalid token
     }
     if (substitution_idx >= substitution.substitutions_size()) {
-      return Error::FAILED;
+      DVLOG(1) << "Too many substitutions";
+      return Error::kFailed;
     }
-    Error error = ResolveSubstitution(
-        request, substitution.substitutions(substitution_idx));
-    if (error != Error::OK) {
+    Error error =
+        ResolveSubstitution(ctx, substitution.substitutions(substitution_idx));
+    if (error != Error::kOk) {
       return error;
     }
     ++substitution_idx;
   }
-  out_ << templ.substr(template_idx, std::string_view::npos);
+  AddString(templ.substr(template_idx, std::string_view::npos));
   if (substitution_idx != substitution.substitutions_size()) {
-    return Error::FAILED;
+    DVLOG(1) << "Missing substitutions";
+    return Error::kFailed;
   }
-  return Error::OK;
+  return Error::kOk;
+}
+
+// Placeholder strings for a control token in MQLS logs / display.
+std::string PlaceholderForToken(ml::Token token) {
+  switch (token) {
+    case ml::Token::kSystem:
+      return "<system>";
+    case ml::Token::kModel:
+      return "<model>";
+    case ml::Token::kUser:
+      return "<user>";
+    case ml::Token::kEnd:
+      return "<end>";
+  }
 }
 
 }  // namespace
 
+SubstitutionResult::SubstitutionResult() = default;
+SubstitutionResult::~SubstitutionResult() = default;
+SubstitutionResult::SubstitutionResult(SubstitutionResult&&) = default;
+SubstitutionResult& SubstitutionResult::operator=(SubstitutionResult&&) =
+    default;
+
+std::string OnDeviceInputToString(const on_device_model::mojom::Input& input) {
+  std::ostringstream oss;
+  for (const auto& piece : input.pieces) {
+    if (std::holds_alternative<std::string>(piece)) {
+      oss << std::get<std::string>(piece);
+    } else if (std::holds_alternative<ml::Token>(piece)) {
+      oss << PlaceholderForToken(std::get<ml::Token>(piece));
+    } else if (std::holds_alternative<SkBitmap>(piece)) {
+      oss << "<image>";
+    } else if (std::holds_alternative<ml::AudioBuffer>(piece)) {
+      oss << "<audio>";
+    } else {
+      NOTREACHED();
+    }
+  }
+  return oss.str();
+}
+
+std::string SubstitutionResult::ToString() const {
+  return OnDeviceInputToString(*input);
+}
+
 std::optional<SubstitutionResult> CreateSubstitutions(
-    const google::protobuf::MessageLite& request,
+    MultimodalMessageReadView request,
     const google::protobuf::RepeatedPtrField<proto::SubstitutedString>&
         config_substitutions) {
-  StringBuilder builder;
+  InputBuilder builder;
   for (const auto& substitution : config_substitutions) {
-    auto error = builder.ResolveSubstitutedString(request, substitution);
-    if (error != StringBuilder::Error::OK) {
+    auto error = builder.ResolveSubstitutedString(ResolutionContext{request, 0},
+                                                  substitution);
+    if (error == InputBuilder::Error::kStop) {
+      break;
+    }
+    if (error != InputBuilder::Error::kOk) {
       return std::nullopt;
     }
   }
-  return builder.result();
+  return std::move(builder).result();
 }
 
 }  // namespace optimization_guide

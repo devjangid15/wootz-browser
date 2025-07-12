@@ -6,13 +6,9 @@
 
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ui/ui_features.h"
-#include "chrome/common/url_constants.h"
-#include "chrome/grit/generated_resources.h"
+#include "components/fullscreen_control/fullscreen_features.h"
 #include "components/strings/grit/components_strings.h"
-#include "extensions/browser/extension_registry.h"
-#include "extensions/common/constants.h"
-#include "extensions/common/extension.h"
-#include "extensions/common/extension_set.h"
+#include "components/url_formatter/elide_url.h"
 #include "ui/base/l10n/l10n_util.h"
 
 namespace exclusive_access_bubble {
@@ -34,8 +30,7 @@ bool IsHoldRequiredToExit(ExclusiveAccessBubbleType type) {
       return base::FeatureList::IsEnabled(
           features::kPressAndHoldEscToExitBrowserFullscreen);
     default:
-      NOTREACHED_IN_MIGRATION();
-      return false;
+      NOTREACHED();
   }
 }
 
@@ -43,6 +38,7 @@ bool IsHoldRequiredToExit(ExclusiveAccessBubbleType type) {
 
 std::u16string GetInstructionTextForType(ExclusiveAccessBubbleType type,
                                          const std::u16string& accelerator,
+                                         const url::Origin& origin,
                                          bool has_download,
                                          bool notify_overridden) {
   if (has_download) {
@@ -62,20 +58,46 @@ std::u16string GetInstructionTextForType(ExclusiveAccessBubbleType type,
                      IDS_FULLSCREEN_PRESS_TO_SEE_DOWNLOADS, accelerator);
   }
 
+  std::optional<std::u16string> origin_string;
+  if (!origin.opaque() &&
+      base::FeatureList::IsEnabled(features::kFullscreenBubbleShowOrigin)) {
+    origin_string = url_formatter::FormatOriginForSecurityDisplay(
+        origin, url_formatter::SchemeDisplay::OMIT_CRYPTOGRAPHIC);
+  }
+
   switch (type) {
     case EXCLUSIVE_ACCESS_BUBBLE_TYPE_FULLSCREEN_EXIT_INSTRUCTION:
     case EXCLUSIVE_ACCESS_BUBBLE_TYPE_FULLSCREEN_POINTERLOCK_EXIT_INSTRUCTION:
       // Both tab fullscreen and tab fullscreen + pointer lock have the same
       // message (the user does not care about pointer lock when in fullscreen
       // mode). All ways to trigger fullscreen result in the same message.
-      return l10n_util::GetStringFUTF16(IDS_FULLSCREEN_PRESS_TO_EXIT_FULLSCREEN,
-                                        accelerator);
+      if (origin_string) {
+        return l10n_util::GetStringFUTF16(
+            IDS_FULLSCREEN_PRESS_TO_EXIT_FULLSCREEN_WITH_ORIGIN,
+            origin_string.value(), accelerator);
+      } else {
+        return l10n_util::GetStringFUTF16(
+            IDS_FULLSCREEN_PRESS_TO_EXIT_FULLSCREEN, accelerator);
+      }
+
     case EXCLUSIVE_ACCESS_BUBBLE_TYPE_KEYBOARD_LOCK_EXIT_INSTRUCTION:
-      return l10n_util::GetStringFUTF16(IDS_FULLSCREEN_HOLD_TO_EXIT_FULLSCREEN,
-                                        accelerator);
+      if (origin_string) {
+        return l10n_util::GetStringFUTF16(
+            IDS_FULLSCREEN_HOLD_TO_EXIT_FULLSCREEN_WITH_ORIGIN,
+            origin_string.value(), accelerator);
+      } else {
+        return l10n_util::GetStringFUTF16(
+            IDS_FULLSCREEN_HOLD_TO_EXIT_FULLSCREEN, accelerator);
+      }
     case EXCLUSIVE_ACCESS_BUBBLE_TYPE_POINTERLOCK_EXIT_INSTRUCTION:
-      return l10n_util::GetStringFUTF16(IDS_PRESS_TO_EXIT_MOUSELOCK,
-                                        accelerator);
+      if (origin_string) {
+        return l10n_util::GetStringFUTF16(
+            IDS_PRESS_TO_EXIT_MOUSELOCK_WITH_ORIGIN, origin_string.value(),
+            accelerator);
+      } else {
+        return l10n_util::GetStringFUTF16(IDS_PRESS_TO_EXIT_MOUSELOCK,
+                                          accelerator);
+      }
     case EXCLUSIVE_ACCESS_BUBBLE_TYPE_EXTENSION_FULLSCREEN_EXIT_INSTRUCTION:
     case EXCLUSIVE_ACCESS_BUBBLE_TYPE_BROWSER_FULLSCREEN_EXIT_INSTRUCTION:
       if (base::FeatureList::IsEnabled(
@@ -88,8 +110,7 @@ std::u16string GetInstructionTextForType(ExclusiveAccessBubbleType type,
       }
     case EXCLUSIVE_ACCESS_BUBBLE_TYPE_NONE:
     default:
-      NOTREACHED_IN_MIGRATION();
-      return std::u16string();
+      NOTREACHED();
   }
 }
 
@@ -104,11 +125,9 @@ bool IsExclusiveAccessModeBrowserFullscreen(ExclusiveAccessBubbleType type) {
     case EXCLUSIVE_ACCESS_BUBBLE_TYPE_POINTERLOCK_EXIT_INSTRUCTION:
       return false;
     case EXCLUSIVE_ACCESS_BUBBLE_TYPE_NONE:
-      NOTREACHED_IN_MIGRATION();
-      return false;
+      NOTREACHED();
   }
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 }
 
 }  // namespace exclusive_access_bubble

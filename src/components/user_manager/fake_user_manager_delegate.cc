@@ -20,11 +20,21 @@ const std::string& FakeUserManagerDelegate::GetApplicationLocale() {
 }
 
 void FakeUserManagerDelegate::OverrideDirHome(const User& primary_user) {
-  NOTIMPLEMENTED();
+  // Do nothing.
 }
 
-bool FakeUserManagerDelegate::IsUserSessionRestoreInProgress() {
-  return false;
+void FakeUserManagerDelegate::CheckProfileOnLogin(const User& user) {
+  // Do nothing.
+}
+
+void FakeUserManagerDelegate::RemoveProfileByAccountId(
+    const AccountId& account_id) {
+  // Do nothing.
+}
+
+void FakeUserManagerDelegate::RemoveCryptohomeAsync(
+    const AccountId& account_id) {
+  // Do nothing.
 }
 
 }  // namespace user_manager

@@ -29,14 +29,14 @@ import java.util.TreeMap;
 public class FakeTranslateBridgeJni implements TranslateBridge.Natives {
     private String mTargetLanguage;
     private ArrayList<String> mUserAcceptLanguages;
-    private LinkedHashSet<String> mDefaultUserAcceptLanguages;
-    private HashSet<String> mNeverLanguages;
-    private HashSet<String> mAlwaysLanguages;
-    private TreeMap<String, LanguageItem> mChromeLanguages;
+    private final LinkedHashSet<String> mDefaultUserAcceptLanguages;
+    private final HashSet<String> mNeverLanguages;
+    private final HashSet<String> mAlwaysLanguages;
+    private final TreeMap<String, LanguageItem> mChromeLanguages;
     private boolean mAppLanguagePromptShown;
     private String mCurrentLanguage;
     private boolean mIsPageTranslated;
-    private final Map<Long, TranslationObserver> mObservers = new HashMap<>();
+    private final Map<WebContents, Map<Long, TranslationObserver>> mObservers = new HashMap<>();
     private static long sObserverPtr;
 
     public FakeTranslateBridgeJni(
@@ -45,7 +45,7 @@ public class FakeTranslateBridgeJni implements TranslateBridge.Natives {
             Collection<String> neverLanguages,
             Collection<String> alwaysLanguages,
             String targetLanguage) {
-        mChromeLanguages = new TreeMap<String, LanguageItem>();
+        mChromeLanguages = new TreeMap<>();
         for (LanguageItem item : chromeLanguages) {
             mChromeLanguages.put(item.getDisplayName(), item);
         }
@@ -58,7 +58,7 @@ public class FakeTranslateBridgeJni implements TranslateBridge.Natives {
 
     /** Create a basic fake translate bridge with English as the default language. */
     public FakeTranslateBridgeJni() {
-        mChromeLanguages = new TreeMap<String, LanguageItem>();
+        mChromeLanguages = new TreeMap<>();
         mUserAcceptLanguages = new ArrayList(Arrays.asList("en"));
         mDefaultUserAcceptLanguages = new LinkedHashSet(Arrays.asList("en"));
         mNeverLanguages = new HashSet(Arrays.asList("en"));
@@ -173,21 +173,37 @@ public class FakeTranslateBridgeJni implements TranslateBridge.Natives {
     @Override
     public long addTranslationObserver(WebContents webContents, TranslationObserver observer) {
         long ptr = ++sObserverPtr;
-        mObservers.put(ptr, observer);
+        if (!mObservers.containsKey(webContents)) {
+            mObservers.put(webContents, new HashMap<>());
+        }
+        mObservers.get(webContents).put(ptr, observer);
         return ptr;
     }
 
     @Override
     public void removeTranslationObserver(WebContents webContents, long observerNativePtr) {
-        mObservers.remove(observerNativePtr);
+        var observersForWebContents = mObservers.get(webContents);
+        if (observersForWebContents != null) {
+            observersForWebContents.remove(observerNativePtr);
+        }
     }
 
     public int getObserverCount() {
-        return mObservers.keySet().size();
+        int count = 0;
+        for (var observersForWebContents : mObservers.values()) {
+            count += observersForWebContents.size();
+        }
+        return count;
+    }
+
+    public int getObserverCount(WebContents webContents) {
+        var observersForWebContents = mObservers.get(webContents);
+        return observersForWebContents == null ? 0 : observersForWebContents.size();
     }
 
     /**
      * Set the web content's current language for testing.
+     *
      * @param language String value of what getCurrentLanguage should return.
      */
     public void setCurrentLanguage(String language) {
@@ -220,7 +236,7 @@ public class FakeTranslateBridgeJni implements TranslateBridge.Natives {
     }
 
     @Override
-    public boolean shouldShowManualTranslateIPH(WebContents webContents) {
+    public boolean shouldShowManualTranslateIph(WebContents webContents) {
         throw new UnsupportedOperationException();
     }
 

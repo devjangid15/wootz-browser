@@ -65,7 +65,6 @@ FakeDistilledPage::FakeDistilledPage(EmbeddedTestServer* server)
   AppendScriptFile("dom_distiller_viewer.js");
 
   // Also load test helper scripts.
-  AppendScriptFile("chai.js");
   AppendScriptFile("mocha.js");
   AppendScriptFile("test_util.js");
 }
@@ -89,7 +88,8 @@ void FakeDistilledPage::Load(EmbeddedTestServer* server,
 
 std::string FakeDistilledPage::GetPageHtmlWithScripts() {
   std::string html = GetArticleTemplateHtml(
-      mojom::Theme::kLight, mojom::FontFamily::kSansSerif, std::string());
+      mojom::Theme::kLight, mojom::FontFamily::kSansSerif, std::string(),
+      /*use_offline_data=*/false);
   for (const std::string& file : scripts_) {
     StrAppend(&html, {JsReplace("<script src=$1></script>", file)});
   }

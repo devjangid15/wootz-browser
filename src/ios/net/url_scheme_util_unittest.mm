@@ -2,22 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #import "ios/net/url_scheme_util.h"
 
 #import <Foundation/Foundation.h>
 
 #import "testing/gtest_mac.h"
-#include "testing/platform_test.h"
-#include "url/gurl.h"
+#import "testing/platform_test.h"
+#import "url/gurl.h"
 
 namespace net {
 
 const char* kSchemeTestData[] = {
-    "http://foo.com",
-    "https://foo.com",
-    "data:text/html;charset=utf-8,Hello",
-    "about:blank",
-    "chrome://settings",
+    "http://foo.com", "https://foo.com",   "data:text/html;charset=utf-8,Hello",
+    "about:blank",    "chrome://settings",
 };
 
 using URLSchemeUtilTest = PlatformTest;

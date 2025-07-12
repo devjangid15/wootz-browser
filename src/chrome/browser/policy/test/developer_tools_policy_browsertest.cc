@@ -4,11 +4,13 @@
 
 #include "base/files/file_path.h"
 #include "base/strings/stringprintf.h"
+#include "base/strings/to_string.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/devtools/devtools_window_testing.h"
 #include "chrome/browser/extensions/chrome_test_extension_loader.h"
+#include "chrome/browser/extensions/scoped_test_mv2_enabler.h"
 #include "chrome/browser/policy/policy_test_utils.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
@@ -64,7 +66,7 @@ void WaitForExtensionsDevModeControlsVisibility(
           "  }"
           "});",
           dev_controls_accessor_js, dev_controls_visibility_check_js,
-          (expected_visible ? "true" : "false"))));
+          base::ToString(expected_visible))));
 }
 
 // Utility to get a PolicyMap for setting the DeveloperToolsAvailability policy
@@ -217,6 +219,37 @@ IN_PROC_BROWSER_TEST_F(PolicyTest,
   EXPECT_FALSE(DevToolsWindow::GetInstanceForInspectedWebContents(contents));
 }
 
+IN_PROC_BROWSER_TEST_F(PolicyTest,
+                       DevToolsUrlDisabledByDeveloperToolsAvailability) {
+  UpdateProviderPolicy(
+      MakeDeveloperToolsAvailabilityMap(2 /* DeveloperToolsDisallowed */));
+
+  GURL devtools_url("devtools://devtools/bundled/devtools_app.html");
+  // Navigate to the extensions frame and enabled "Developer mode"
+  EXPECT_TRUE(ui_test_utils::NavigateToURL(browser(), devtools_url));
+
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  // Loading fails so that the title is not set to "DevTools".
+  EXPECT_EQ(u"devtools://devtools/bundled/devtools_app.html",
+            web_contents->GetTitle());
+}
+
+IN_PROC_BROWSER_TEST_F(PolicyTest,
+                       DevToolsUrlAllowedByDeveloperToolsAvailability) {
+  UpdateProviderPolicy(
+      MakeDeveloperToolsAvailabilityMap(0 /* DeveloperToolsDisallowed */));
+
+  GURL devtools_url("devtools://devtools/bundled/devtools_app.html");
+  // Navigate to the extensions frame and enabled "Developer mode"
+  EXPECT_TRUE(ui_test_utils::NavigateToURL(browser(), devtools_url));
+
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  // Loading succeeds so that the title is not set to "DevTools".
+  EXPECT_EQ(u"DevTools", web_contents->GetTitle());
+}
+
 // Test for https://b/263040629
 IN_PROC_BROWSER_TEST_F(PolicyTest, AvailabilityWins) {
   // DeveloperToolsDisabled is true, but DeveloperToolsAvailability wins.
@@ -338,6 +371,9 @@ IN_PROC_BROWSER_TEST_F(PolicyTest, DeveloperToolsDisabledExtensionsDevMode) {
 #endif
 IN_PROC_BROWSER_TEST_F(PolicyTest,
                        MAYBE_DebugURLsDisabledByDeveloperToolsAvailability) {
+  // TODO(https://crbug.com/40804030): Remove this when updated to use MV3.
+  extensions::ScopedTestMV2Enabler mv2_enabler;
+
   // Get a url for a standard web page.
   ASSERT_TRUE(embedded_test_server()->Start());
   GURL tab_url(embedded_test_server()->GetURL("/empty.html"));

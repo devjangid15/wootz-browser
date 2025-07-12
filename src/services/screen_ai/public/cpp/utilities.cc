@@ -12,12 +12,14 @@
 #include "base/version.h"
 #include "build/build_config.h"
 #include "components/component_updater/component_updater_paths.h"
-#include "services/screen_ai/buildflags/buildflags.h"
 #include "ui/accessibility/accessibility_features.h"
 
 namespace screen_ai {
 
 namespace {
+
+// The maximum image dimension which is processed without downsampling by OCR.
+constexpr uint32_t kMaxImageDimensionForOcr = 2048;
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 constexpr char kBinaryPathSwitch[] = "screen-ai-binary";
@@ -110,6 +112,7 @@ base::FilePath GetComponentDir() {
 #endif
 }
 
+#if BUILDFLAG(ENABLE_SCREEN_AI_BROWSERTESTS)
 base::FilePath GetComponentBinaryPathForTests() {
   base::FilePath component_path = GetComponentDir();
 
@@ -124,6 +127,7 @@ base::FilePath GetComponentBinaryPathForTests() {
 
   return component_path;
 }
+#endif
 
 const char* GetBinaryPathSwitch() {
   // This is only used on Linux and ChromeOS.
@@ -132,6 +136,10 @@ const char* GetBinaryPathSwitch() {
 #else
   return nullptr;
 #endif
+}
+
+uint32_t GetMaxDimensionForOCR() {
+  return kMaxImageDimensionForOcr;
 }
 
 }  // namespace screen_ai

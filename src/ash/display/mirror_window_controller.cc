@@ -84,7 +84,7 @@ class MirroringScreenPositionClient
   void SetBounds(aura::Window* window,
                  const gfx::Rect& bounds,
                  const display::Display& display) override {
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
 
  protected:
@@ -266,19 +266,8 @@ void MirrorWindowController::UpdateWindow(
             ->compositor();
     gfx::Size mirror_size = source_compositor->size();
 
-    auto* mirroring_host_info = mirroring_host_info_map_[display_info.id()];
-
-    const bool should_undo_rotation = ShouldUndoRotationForMirror();
-
-    if (!should_undo_rotation && !display_manager->IsInUnifiedMode()) {
-      // Use the rotation from source display without panel orientation
-      // applied instead of the display transform hint in |source_compositor|
-      // so that panel orientation is not applied to the mirror host.
-      mirroring_host_info->ash_host->AsWindowTreeHost()
-          ->SetDisplayTransformHint(display::DisplayRotationToOverlayTransform(
-              display_manager->GetDisplayInfo(reflecting_source_id_)
-                  .GetActiveRotation()));
-    }
+    auto* mirroring_host_info =
+        mirroring_host_info_map_[display_info.id()].get();
 
     aura::Window* mirror_window = mirroring_host_info->mirror_window;
     mirror_window->SetBounds(gfx::Rect(mirror_size));
@@ -397,6 +386,15 @@ const display::Display* MirrorWindowController::GetDisplayById(
       return &display;
   }
 
+  return nullptr;
+}
+
+const aura::Window* MirrorWindowController::GetMirrorWindowForDisplayIdForTest(
+    int64_t display_id) {
+  auto iter = mirroring_host_info_map_.find(display_id);
+  if (iter != mirroring_host_info_map_.end()) {
+    return iter->second->mirror_window;
+  }
   return nullptr;
 }
 

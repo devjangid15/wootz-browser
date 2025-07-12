@@ -16,6 +16,7 @@
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
+#include "base/strings/string_view_util.h"
 #include "base/time/time.h"
 #include "chrome/services/cups_proxy/cups_proxy_service_delegate.h"
 #include "chrome/services/cups_proxy/ipp_validator.h"
@@ -313,15 +314,13 @@ void ProxyManagerImpl::OnProxyToCups(
 void ProxyManagerImpl::ProxyResponseToCaller(
     const std::vector<uint8_t>& response) {
   // Convert to string for parsing HTTP headers.
-  std::string response_str = ipp_converter::ConvertToString(response);
-  auto end_of_headers = net::HttpUtil::LocateEndOfHeaders(response_str.data(),
-                                                          response_str.size());
+  auto end_of_headers = net::HttpUtil::LocateEndOfHeaders(response);
   if (end_of_headers < 0) {
     return Fail("IPP response missing end of headers",
                 HTTP_STATUS_SERVER_ERROR);
   }
-
-  std::string_view headers_slice(response_str.data(), end_of_headers);
+  std::string_view headers_slice =
+      base::as_string_view(base::span(response).first(end_of_headers));
   scoped_refptr<net::HttpResponseHeaders> response_headers =
       net::HttpResponseHeaders::TryToCreate(headers_slice);
   if (!response_headers) {

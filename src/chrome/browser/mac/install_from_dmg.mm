@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/mac/install_from_dmg.h"
 
 #import <AppKit/AppKit.h>
@@ -115,100 +120,53 @@ bool MediaResidesOnDiskImage(base::mac::ScopedIOObject<io_service_t> media,
     image_path->clear();
   }
 
-  if (base::mac::MacOSMajorVersion() >= 12) {
-    // Starting with macOS 12 "Monterey", the IOMedia has an ancestor of
-    // type "AppleDiskImageDevice" that has a property "DiskImageURL" of string
-    // type.
-
-    base::mac::ScopedIOObject<io_service_t> di_device =
-        GetDiskImageAncestorForMedia("AppleDiskImageDevice", media);
-    if (di_device) {
-      if (image_path) {
-        base::apple::ScopedCFTypeRef<CFTypeRef> disk_image_url_cftyperef(
-            IORegistryEntryCreateCFProperty(di_device.get(),
-                                            CFSTR("DiskImageURL"),
-                                            /*allocator=*/nullptr,
-                                            /*options=*/0));
-        if (!disk_image_url_cftyperef) {
-          LOG(ERROR)
-              << "IORegistryEntryCreateCFProperty failed for DiskImageURL";
-          return true;
-        }
-
-        CFStringRef disk_image_url_string =
-            base::apple::CFCast<CFStringRef>(disk_image_url_cftyperef.get());
-        if (!disk_image_url_string) {
-          base::apple::ScopedCFTypeRef<CFStringRef> observed_type_cf(
-              CFCopyTypeIDDescription(
-                  CFGetTypeID(disk_image_url_cftyperef.get())));
-          LOG(ERROR) << "DiskImageURL: expected CFString, observed "
-                     << base::SysCFStringRefToUTF8(observed_type_cf.get());
-          return true;
-        }
-
-        base::apple::ScopedCFTypeRef<CFURLRef> disk_image_url(
-            CFURLCreateWithString(
-                /*allocator=*/nullptr, disk_image_url_string,
-                /*baseURL=*/nullptr));
-        if (!disk_image_url) {
-          LOG(ERROR) << "CFURLCreateWithString failed";
-          return true;
-        }
-
-        base::apple::ScopedCFTypeRef<CFStringRef> disk_image_path(
-            CFURLCopyFileSystemPath(disk_image_url.get(),
-                                    kCFURLPOSIXPathStyle));
-        if (!disk_image_path) {
-          LOG(ERROR) << "CFURLCopyFileSystemPath failed";
-          return true;
-        }
-
-        *image_path = base::SysCFStringRefToUTF8(disk_image_path.get());
+  // The IOMedia has an ancestor of type "AppleDiskImageDevice" that has a
+  // property "DiskImageURL" of string type.
+  base::mac::ScopedIOObject<io_service_t> di_device =
+      GetDiskImageAncestorForMedia("AppleDiskImageDevice", media);
+  if (di_device) {
+    if (image_path) {
+      base::apple::ScopedCFTypeRef<CFTypeRef> disk_image_url_cftyperef(
+          IORegistryEntryCreateCFProperty(di_device.get(),
+                                          CFSTR("DiskImageURL"),
+                                          /*allocator=*/nullptr,
+                                          /*options=*/0));
+      if (!disk_image_url_cftyperef) {
+        LOG(ERROR) << "IORegistryEntryCreateCFProperty failed for DiskImageURL";
+        return true;
       }
 
-      return true;
-    }
-  } else {
-    // From the mists of time through macOS 11 "Big Sur", the IOMedia has an
-    // ancestor of type "IOHDIXHDDrive" that has a property "image-path" of data
-    // type.
-
-    base::mac::ScopedIOObject<io_service_t> hdix_drive =
-        GetDiskImageAncestorForMedia("IOHDIXHDDrive", media);
-    if (hdix_drive) {
-      if (image_path) {
-        base::apple::ScopedCFTypeRef<CFTypeRef> image_path_cftyperef(
-            IORegistryEntryCreateCFProperty(hdix_drive.get(),
-                                            CFSTR("image-path"),
-                                            /*allocator=*/nullptr,
-                                            /*options=*/0));
-        if (!image_path_cftyperef) {
-          LOG(ERROR) << "IORegistryEntryCreateCFProperty failed for image-path";
-          return true;
-        }
-
-        CFDataRef image_path_data =
-            base::apple::CFCast<CFDataRef>(image_path_cftyperef.get());
-        if (!image_path_data) {
-          base::apple::ScopedCFTypeRef<CFStringRef> observed_type_cf(
-              CFCopyTypeIDDescription(CFGetTypeID(image_path_cftyperef.get())));
-          LOG(ERROR) << "image-path: expected CFData, observed "
-                     << base::SysCFStringRefToUTF8(observed_type_cf.get());
-          return true;
-        }
-
-        CFIndex length = CFDataGetLength(image_path_data);
-        if (length <= 0) {
-          LOG(ERROR) << "image_path_data is unexpectedly empty";
-          return true;
-        }
-        char* image_path_c = base::WriteInto(image_path, length + 1);
-        CFDataGetBytes(image_path_data, CFRangeMake(0, length),
-                       reinterpret_cast<UInt8*>(image_path_c));
+      CFStringRef disk_image_url_string =
+          base::apple::CFCast<CFStringRef>(disk_image_url_cftyperef.get());
+      if (!disk_image_url_string) {
+        base::apple::ScopedCFTypeRef<CFStringRef> observed_type_cf(
+            CFCopyTypeIDDescription(
+                CFGetTypeID(disk_image_url_cftyperef.get())));
+        LOG(ERROR) << "DiskImageURL: expected CFString, observed "
+                   << base::SysCFStringRefToUTF8(observed_type_cf.get());
+        return true;
       }
 
-      return true;
+      base::apple::ScopedCFTypeRef<CFURLRef> disk_image_url(
+          CFURLCreateWithString(
+              /*allocator=*/nullptr, disk_image_url_string,
+              /*baseURL=*/nullptr));
+      if (!disk_image_url) {
+        LOG(ERROR) << "CFURLCreateWithString failed";
+        return true;
+      }
+
+      base::apple::ScopedCFTypeRef<CFStringRef> disk_image_path(
+          CFURLCopyFileSystemPath(disk_image_url.get(), kCFURLPOSIXPathStyle));
+      if (!disk_image_path) {
+        LOG(ERROR) << "CFURLCopyFileSystemPath failed";
+        return true;
+      }
+
+      *image_path = base::SysCFStringRefToUTF8(disk_image_path.get());
     }
+
+    return true;
   }
 
   return false;
@@ -250,7 +208,7 @@ DiskImageStatus IsPathOnReadOnlyDiskImage(
   }
 
   base::apple::ScopedCFTypeRef<CFMutableDictionaryRef> match_dict(
-      IOBSDNameMatching(kIOMasterPortDefault, /*options=*/0,
+      IOBSDNameMatching(kIOMainPortDefault, /*options=*/0,
                         dmg_bsd_device_name));
   if (!match_dict) {
     LOG(ERROR) << "IOBSDNameMatching " << dmg_bsd_device_name;
@@ -259,7 +217,7 @@ DiskImageStatus IsPathOnReadOnlyDiskImage(
 
   base::mac::ScopedIOObject<io_iterator_t> iterator;
   kern_return_t kr = IOServiceGetMatchingServices(
-      kIOMasterPortDefault, match_dict.release(), iterator.InitializeInto());
+      kIOMainPortDefault, match_dict.release(), iterator.InitializeInto());
   if (kr != KERN_SUCCESS) {
     MACH_LOG(ERROR, kr) << "IOServiceGetMatchingServices";
     return DiskImageStatusFailure;
@@ -378,25 +336,24 @@ bool InstallFromDiskImage(base::mac::ScopedAuthorizationRef authorization,
   return true;
 }
 
-// Launches the application at installed_path. The helper application
-// contained within install_path will be used for the relauncher process. This
-// keeps Launch Services from ever having to see or think about the helper
-// application on the disk image. The relauncher process will be asked to
-// call EjectAndTrashDiskImage on dmg_bsd_device_name.
+// Launches the application at `installed_path`. The helper application
+// contained within `installed_path` will be used for the relauncher process.
+// This keeps Launch Services from ever having to see or think about the helper
+// application on the disk image. The relauncher process will be asked to call
+// EjectAndTrashDiskImage on `dmg_bsd_device_name`.
 bool LaunchInstalledApp(NSString* installed_path,
                         const std::string& dmg_bsd_device_name) {
-  base::FilePath browser_path = base::apple::NSStringToFilePath(installed_path);
+  base::FilePath browser = base::apple::NSStringToFilePath(installed_path);
 
-  base::FilePath helper_path = browser_path.Append("Contents/Frameworks");
-  helper_path = helper_path.Append(chrome::kFrameworkName);
-  helper_path = helper_path.Append("Versions");
-  helper_path = helper_path.Append(chrome::kChromeVersion);
-  helper_path = helper_path.Append("Helpers");
-  helper_path = helper_path.Append(chrome::kHelperProcessExecutablePath);
+  base::FilePath helper = browser.Append("Contents/Frameworks");
+  helper = helper.Append(chrome::kFrameworkName);
+  helper = helper.Append("Versions");
+  helper = helper.Append(chrome::kChromeVersion);
+  helper = helper.Append("Helpers");
+  helper = helper.Append(chrome::kHelperProcessExecutablePath);
 
   std::vector<std::string> args =
       base::CommandLine::ForCurrentProcess()->argv();
-  args[0] = browser_path.value();
 
   std::vector<std::string> relauncher_args;
   if (!dmg_bsd_device_name.empty()) {
@@ -407,9 +364,8 @@ bool LaunchInstalledApp(NSString* installed_path,
     relauncher_args.push_back(dmg_arg);
   }
 
-  return mac_relauncher::RelaunchAppWithHelper(helper_path.value(),
-                                               relauncher_args,
-                                               args);
+  return mac_relauncher::RelaunchAppAtPathWithHelper(helper, browser,
+                                                     relauncher_args, args);
 }
 
 void ShowErrorDialog() {
@@ -449,7 +405,7 @@ bool MaybeInstallFromDiskImage() {
 
     NSArray* application_directories = NSSearchPathForDirectoriesInDomains(
         NSApplicationDirectory, NSLocalDomainMask, YES);
-    if (application_directories.count) {
+    if (!application_directories.count) {
       LOG(ERROR) << "NSSearchPathForDirectoriesInDomains: "
                  << "no local application directories";
       return false;

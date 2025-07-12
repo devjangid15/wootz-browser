@@ -15,7 +15,6 @@ import androidx.annotation.VisibleForTesting;
 
 import org.chromium.chrome.browser.compositor.bottombar.OverlayPanel;
 import org.chromium.chrome.browser.compositor.bottombar.OverlayPanel.PanelState;
-import org.chromium.chrome.browser.compositor.bottombar.OverlayPanelManager;
 import org.chromium.components.browser_ui.widget.gesture.SwipeGestureListener;
 import org.chromium.content_public.browser.WebContents;
 
@@ -112,7 +111,7 @@ public class OverlayPanelEventFilter extends MotionEventFilter {
     private float mSyntheticActionDownY;
 
     /** The list of recorded events. */
-    private final ArrayList<MotionEvent> mRecordedEvents = new ArrayList<MotionEvent>();
+    private final ArrayList<MotionEvent> mRecordedEvents = new ArrayList<>();
 
     /** The initial Y position of the current gesture. */
     private float mInitialEventY;
@@ -134,8 +133,8 @@ public class OverlayPanelEventFilter extends MotionEventFilter {
 
     /**
      * Creates a {@link MotionEventFilter} with offset touch events.
+     *
      * @param context The {@link Context} for Android.
-     * @param panelManager The {@link OverlayPanelManager} responsible for showing panels.
      */
     public OverlayPanelEventFilter(Context context, OverlayPanel panel) {
         super(context, panel, false, false);

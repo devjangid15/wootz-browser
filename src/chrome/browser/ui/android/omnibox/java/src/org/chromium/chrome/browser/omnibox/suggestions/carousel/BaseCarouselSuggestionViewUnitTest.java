@@ -12,14 +12,11 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 import android.view.KeyEvent;
 import android.view.View;
-
-import androidx.recyclerview.widget.RecyclerView;
 
 import org.junit.Before;
 import org.junit.Rule;
@@ -55,16 +52,14 @@ public class BaseCarouselSuggestionViewUnitTest {
     }
 
     @Test
-    public void onKeyDown_selectNextItem_ltr() {
-        doReturn(View.LAYOUT_DIRECTION_LTR).when(mView).getLayoutDirection();
+    public void onKeyDown_selectNextItem() {
+        var event = new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_TAB);
 
-        var event = new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT);
-        assertTrue(event.dispatch(mView));
+        doReturn(true).when(mController).selectNextItem();
+        assertTrue(event.dispatch(mView, null, null));
 
-        verify(mView).onKeyDown(event.getKeyCode(), event);
-        verify(mController).selectNextItem();
-
-        verifyNoMoreInteractions(mController);
+        doReturn(false).when(mController).selectNextItem();
+        assertFalse(event.dispatch(mView, null, null));
     }
 
     @Test
@@ -82,42 +77,21 @@ public class BaseCarouselSuggestionViewUnitTest {
     }
 
     @Test
-    public void onKeyDown_selectNextItem_rtl() {
-        doReturn(View.LAYOUT_DIRECTION_RTL).when(mView).getLayoutDirection();
+    public void onKeyDown_selectPrevItem() {
+        var event =
+                new KeyEvent(
+                        0,
+                        0,
+                        KeyEvent.ACTION_DOWN,
+                        KeyEvent.KEYCODE_TAB,
+                        0,
+                        KeyEvent.META_SHIFT_ON);
 
-        var event = new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT);
-        assertTrue(event.dispatch(mView));
+        doReturn(true).when(mController).selectPreviousItem();
+        assertTrue(event.dispatch(mView, null, null));
 
-        verify(mView).onKeyDown(event.getKeyCode(), event);
-        verify(mController).selectNextItem();
-
-        verifyNoMoreInteractions(mController);
-    }
-
-    @Test
-    public void onKeyDown_selectPrevItem_ltr() {
-        doReturn(View.LAYOUT_DIRECTION_LTR).when(mView).getLayoutDirection();
-
-        var event = new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT);
-        assertTrue(event.dispatch(mView));
-
-        verify(mView).onKeyDown(event.getKeyCode(), event);
-        verify(mController).selectPreviousItem();
-
-        verifyNoMoreInteractions(mController);
-    }
-
-    @Test
-    public void onKeyDown_selectPrevItem_rtl() {
-        doReturn(View.LAYOUT_DIRECTION_RTL).when(mView).getLayoutDirection();
-
-        var event = new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT);
-        assertTrue(event.dispatch(mView));
-
-        verify(mView).onKeyDown(event.getKeyCode(), event);
-        verify(mController).selectPreviousItem();
-
-        verifyNoMoreInteractions(mController);
+        doReturn(false).when(mController).selectPreviousItem();
+        assertFalse(event.dispatch(mView, null, null));
     }
 
     @Test
@@ -163,14 +137,15 @@ public class BaseCarouselSuggestionViewUnitTest {
     @Test
     public void setSelected_resetsCarouselSelectionWhenSelected() {
         mView.setSelected(true);
-        verify(mController, times(1)).setSelectedItem(0);
+        verify(mController).reset();
+        verify(mController).selectNextItem();
         verifyNoMoreInteractions(mController);
     }
 
     @Test
     public void setSelected_resetsCarouselSelectionWhenDeselected() {
         mView.setSelected(false);
-        verify(mController, times(1)).setSelectedItem(RecyclerView.NO_POSITION);
+        verify(mController).reset();
         verifyNoMoreInteractions(mController);
     }
 

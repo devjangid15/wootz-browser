@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "components/services/storage/dom_storage/dom_storage_database.h"
 
 #include <algorithm>
@@ -17,7 +22,9 @@
 #include "base/trace_event/memory_dump_manager.h"
 #include "base/trace_event/process_memory_dump.h"
 #include "components/services/storage/filesystem_proxy_factory.h"
+#include "storage/common/database/leveldb_status_helper.h"
 #include "third_party/leveldatabase/leveldb_chrome.h"
+#include "third_party/leveldatabase/src/include/leveldb/status.h"
 #include "third_party/leveldatabase/src/include/leveldb/write_batch.h"
 
 namespace storage {
@@ -71,8 +78,9 @@ std::unique_ptr<leveldb::DB> TryOpenDB(
     DomStorageDatabase::StatusCallback callback) {
   std::unique_ptr<leveldb::DB> db;
   leveldb::Status status = leveldb_env::OpenDB(options, name, &db);
-  callback_task_runner->PostTask(FROM_HERE,
-                                 base::BindOnce(std::move(callback), status));
+  callback_task_runner->PostTask(
+      FROM_HERE,
+      base::BindOnce(std::move(callback), FromLevelDBStatus(status)));
   return db;
 }
 
@@ -85,17 +93,17 @@ leveldb::Slice MakeSlice(base::span<const uint8_t> data) {
 
 DomStorageDatabase::KeyValuePair MakeKeyValuePair(const leveldb::Slice& key,
                                                   const leveldb::Slice& value) {
-  auto key_span = base::make_span(key);
-  auto value_span = base::make_span(value);
+  base::span key_span(key);
+  base::span value_span(value);
   return DomStorageDatabase::KeyValuePair(
       DomStorageDatabase::Key(key_span.begin(), key_span.end()),
       DomStorageDatabase::Value(value_span.begin(), value_span.end()));
 }
 
 template <typename Func>
-DomStorageDatabase::Status ForEachWithPrefix(leveldb::DB* db,
-                                             DomStorageDatabase::KeyView prefix,
-                                             Func function) {
+DbStatus ForEachWithPrefix(leveldb::DB* db,
+                           DomStorageDatabase::KeyView prefix,
+                           Func function) {
   std::unique_ptr<leveldb::Iterator> iter(
       db->NewIterator(leveldb::ReadOptions()));
   const leveldb::Slice prefix_slice(MakeSlice(prefix));
@@ -105,7 +113,7 @@ DomStorageDatabase::Status ForEachWithPrefix(leveldb::DB* db,
       break;
     function(iter->key(), iter->value());
   }
-  return iter->status();
+  return FromLevelDBStatus(iter->status());
 }
 
 }  // namespace
@@ -203,8 +211,7 @@ void DomStorageDatabase::CreateSequenceBoundDomStorageDatabase(
       base::SequencedTaskRunner::GetCurrentDefault(),
       base::BindOnce(
           [](base::SequenceBound<DomStorageDatabase>* database_ptr,
-             DomStorageDatabase::OpenCallback callback,
-             leveldb::Status status) {
+             DomStorageDatabase::OpenCallback callback, DbStatus status) {
             auto database = base::WrapUnique(database_ptr);
             if (status.ok())
               std::move(callback).Run(std::move(*database), status);
@@ -260,39 +267,39 @@ void DomStorageDatabase::Destroy(
              scoped_refptr<base::SequencedTaskRunner> callback_task_runner,
              StatusCallback callback) {
             callback_task_runner->PostTask(
-                FROM_HERE,
-                base::BindOnce(std::move(callback),
-                               leveldb::DestroyDB(db_name, MakeOptions())));
+                FROM_HERE, base::BindOnce(std::move(callback),
+                                          FromLevelDBStatus(leveldb::DestroyDB(
+                                              db_name, MakeOptions()))));
           },
           MakeFullPersistentDBName(directory, name),
           base::SequencedTaskRunner::GetCurrentDefault(), std::move(callback)));
 }
 
-DomStorageDatabase::Status DomStorageDatabase::Get(KeyView key,
-                                                   Value* out_value) const {
+DbStatus DomStorageDatabase::Get(KeyView key, Value* out_value) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (!db_)
-    return Status::IOError(kInvalidDatabaseMessage);
+    return DbStatus::IOError(kInvalidDatabaseMessage);
   std::string value;
-  Status status = db_->Get(leveldb::ReadOptions(), MakeSlice(key), &value);
+  leveldb::Status status =
+      db_->Get(leveldb::ReadOptions(), MakeSlice(key), &value);
   *out_value = Value(value.begin(), value.end());
-  return status;
+  return FromLevelDBStatus(status);
 }
 
-DomStorageDatabase::Status DomStorageDatabase::Put(KeyView key,
-                                                   ValueView value) const {
+DbStatus DomStorageDatabase::Put(KeyView key, ValueView value) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (!db_)
-    return Status::IOError(kInvalidDatabaseMessage);
-  return db_->Put(leveldb::WriteOptions(), MakeSlice(key), MakeSlice(value));
+    return DbStatus::IOError(kInvalidDatabaseMessage);
+  return FromLevelDBStatus(
+      db_->Put(leveldb::WriteOptions(), MakeSlice(key), MakeSlice(value)));
 }
 
-DomStorageDatabase::Status DomStorageDatabase::GetPrefixed(
+DbStatus DomStorageDatabase::GetPrefixed(
     KeyView prefix,
     std::vector<KeyValuePair>* entries) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (!db_)
-    return Status::IOError(kInvalidDatabaseMessage);
+    return DbStatus::IOError(kInvalidDatabaseMessage);
   return ForEachWithPrefix(
       db_.get(), prefix,
       [&](const leveldb::Slice& key, const leveldb::Slice& value) {
@@ -300,13 +307,12 @@ DomStorageDatabase::Status DomStorageDatabase::GetPrefixed(
       });
 }
 
-DomStorageDatabase::Status DomStorageDatabase::DeletePrefixed(
-    KeyView prefix,
-    leveldb::WriteBatch* batch) const {
+DbStatus DomStorageDatabase::DeletePrefixed(KeyView prefix,
+                                            leveldb::WriteBatch* batch) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (!db_)
-    return Status::IOError(kInvalidDatabaseMessage);
-  Status status = ForEachWithPrefix(
+    return DbStatus::IOError(kInvalidDatabaseMessage);
+  DbStatus status = ForEachWithPrefix(
       db_.get(), prefix,
       [&](const leveldb::Slice& key, const leveldb::Slice& value) {
         batch->Delete(key);
@@ -314,15 +320,14 @@ DomStorageDatabase::Status DomStorageDatabase::DeletePrefixed(
   return status;
 }
 
-DomStorageDatabase::Status DomStorageDatabase::CopyPrefixed(
-    KeyView prefix,
-    KeyView new_prefix,
-    leveldb::WriteBatch* batch) const {
+DbStatus DomStorageDatabase::CopyPrefixed(KeyView prefix,
+                                          KeyView new_prefix,
+                                          leveldb::WriteBatch* batch) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (!db_)
-    return Status::IOError(kInvalidDatabaseMessage);
+    return DbStatus::IOError(kInvalidDatabaseMessage);
   Key new_key(new_prefix.begin(), new_prefix.end());
-  Status status = ForEachWithPrefix(
+  DbStatus status = ForEachWithPrefix(
       db_.get(), prefix,
       [&](const leveldb::Slice& key, const leveldb::Slice& value) {
         DCHECK_GE(key.size(), prefix.size());  // By definition.
@@ -335,22 +340,21 @@ DomStorageDatabase::Status DomStorageDatabase::CopyPrefixed(
   return status;
 }
 
-DomStorageDatabase::Status DomStorageDatabase::Commit(
-    leveldb::WriteBatch* batch) const {
+DbStatus DomStorageDatabase::Commit(leveldb::WriteBatch* batch) const {
   if (!db_)
-    return Status::IOError(kInvalidDatabaseMessage);
+    return DbStatus::IOError(kInvalidDatabaseMessage);
   if (fail_commits_for_testing_)
-    return Status::IOError("Simulated I/O Error");
-  return db_->Write(leveldb::WriteOptions(), batch);
+    return DbStatus::IOError("Simulated I/O Error");
+  return FromLevelDBStatus(db_->Write(leveldb::WriteOptions(), batch));
 }
 
-DomStorageDatabase::Status DomStorageDatabase::RewriteDB() {
+DbStatus DomStorageDatabase::RewriteDB() {
   if (!db_)
-    return Status::IOError(kInvalidDatabaseMessage);
-  Status status = leveldb_env::RewriteDB(options_, name_, &db_);
+    return DbStatus::IOError(kInvalidDatabaseMessage);
+  leveldb::Status status = leveldb_env::RewriteDB(options_, name_, &db_);
   if (!status.ok())
     db_.reset();
-  return status;
+  return FromLevelDBStatus(status);
 }
 
 bool DomStorageDatabase::OnMemoryDump(

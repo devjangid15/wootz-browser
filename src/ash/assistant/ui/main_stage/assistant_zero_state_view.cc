@@ -10,7 +10,6 @@
 #include "ash/assistant/ui/assistant_ui_constants.h"
 #include "ash/assistant/ui/assistant_view_delegate.h"
 #include "ash/assistant/ui/assistant_view_ids.h"
-#include "ash/assistant/ui/main_stage/assistant_onboarding_view.h"
 #include "ash/assistant/ui/main_stage/launcher_search_iph_view.h"
 #include "ash/public/cpp/assistant/assistant_state.h"
 #include "ash/public/cpp/assistant/controller/assistant_controller.h"
@@ -19,7 +18,6 @@
 #include "ash/style/ash_color_id.h"
 #include "base/feature_list.h"
 #include "base/notreached.h"
-#include "base/strings/string_piece.h"
 #include "components/feature_engagement/public/feature_constants.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -41,7 +39,6 @@ namespace {
 
 // Appearance.
 constexpr int kGreetingLabelTopMarginDip = 28;
-constexpr int kOnboardingViewTopMarginDip = 48;
 
 bool ShouldShowGreetingOrOnboarding(bool in_tablet_mode) {
   if (base::FeatureList::IsEnabled(
@@ -116,12 +113,6 @@ void AssistantZeroStateView::InitLayout() {
   layout->set_cross_axis_alignment(
       views::BoxLayout::CrossAxisAlignment::kCenter);
 
-  // Onboarding.
-  onboarding_view_ =
-      AddChildView(std::make_unique<AssistantOnboardingView>(delegate_));
-  onboarding_view_->SetBorder(views::CreateEmptyBorder(
-      gfx::Insets::TLBR(kOnboardingViewTopMarginDip, 0, 0, 0)));
-
   // Greeting.
   greeting_label_ = AddChildView(std::make_unique<views::Label>());
   greeting_label_->SetID(AssistantViewID::kGreetingLabel);
@@ -137,8 +128,8 @@ void AssistantZeroStateView::InitLayout() {
   greeting_label_->SetMultiLine(true);
   greeting_label_->SetText(
       l10n_util::GetStringUTF16(IDS_ASH_ASSISTANT_PROMPT_DEFAULT));
-  greeting_label_->SetBackgroundColorId(kColorAshAssistantBgPlate);
-  greeting_label_->SetEnabledColorId(kColorAshAssistantTextColorPrimary);
+  greeting_label_->SetBackgroundColor(kColorAshAssistantBgPlate);
+  greeting_label_->SetEnabledColor(kColorAshAssistantTextColorPrimary);
 
   // Spacer.
   spacer_ = AddChildView(std::make_unique<views::View>());
@@ -155,22 +146,19 @@ void AssistantZeroStateView::InitLayout() {
 void AssistantZeroStateView::UpdateLayout() {
   const bool show_greeting_or_onboarding =
       ShouldShowGreetingOrOnboarding(delegate_->IsTabletMode());
-  const bool show_onboarding = delegate_->ShouldShowOnboarding();
-  onboarding_view_->SetVisible(show_greeting_or_onboarding && show_onboarding);
-  greeting_label_->SetVisible(show_greeting_or_onboarding && !show_onboarding);
+  greeting_label_->SetVisible(show_greeting_or_onboarding);
 
   const bool show_iph = ShouldShowIph();
   spacer_->SetVisible(show_iph);
   iph_view_->SetVisible(show_iph);
 }
 
-void AssistantZeroStateView::RunLauncherSearchQuery(
-    const std::u16string& query) {
+void AssistantZeroStateView::RunLauncherSearchQuery(std::u16string_view query) {
   delegate_->OnLauncherSearchChipPressed(query);
 }
 
 void AssistantZeroStateView::OpenAssistantPage() {
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 BEGIN_METADATA(AssistantZeroStateView)

@@ -4,26 +4,22 @@
 
 #include "chrome/browser/password_manager/android/save_update_password_message_delegate.h"
 
-#include <jni.h>
-
 #include <algorithm>
 #include <memory>
 
 #include "base/android/jni_android.h"
-#include "base/functional/callback_forward.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/metrics/histogram.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "base/test/mock_callback.h"
 #include "base/test/scoped_feature_list.h"
-#include "base/test/with_feature_override.h"
 #include "chrome/browser/android/android_theme_resources.h"
 #include "chrome/browser/android/resource_mapper.h"
-#include "chrome/browser/flags/android/chrome_feature_list.h"
-#include "chrome/browser/password_manager/android/local_passwords_migration_warning_util.h"
+#include "chrome/browser/password_edit_dialog/android/password_edit_dialog_bridge_delegate.h"
+#include "chrome/browser/password_manager/android/access_loss/mock_password_access_loss_warning_bridge.h"
 #include "chrome/browser/password_manager/chrome_password_manager_client.h"
 #include "chrome/browser/ui/autofill/chrome_autofill_client.h"
 #include "chrome/grit/branded_strings.h"
@@ -31,12 +27,12 @@
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "components/browser_ui/device_lock/android/device_lock_bridge.h"
 #include "components/messages/android/mock_message_dispatcher_bridge.h"
+#include "components/password_manager/core/browser/features/password_features.h"
 #include "components/password_manager/core/browser/mock_password_form_manager_for_ui.h"
 #include "components/password_manager/core/browser/password_form.h"
 #include "components/password_manager/core/browser/password_form_metrics_recorder.h"
 #include "components/password_manager/core/browser/password_manager_metrics_util.h"
 #include "components/password_manager/core/browser/stub_password_manager_client.h"
-#include "components/password_manager/core/common/password_manager_features.h"
 #include "components/password_manager/core/common/password_manager_pref_names.h"
 #include "components/signin/public/identity_manager/account_capabilities_test_mutator.h"
 #include "components/ukm/test_ukm_recorder.h"
@@ -47,10 +43,6 @@
 #include "ui/gfx/native_widget_types.h"
 #include "url/gurl.h"
 
-using base::MockCallback;
-using base::RepeatingCallback;
-using base::test::FeatureRef;
-using base::test::FeatureRefAndParams;
 using password_manager::MockPasswordFormManagerForUI;
 using password_manager::PasswordForm;
 using password_manager::PasswordFormManagerForUI;
@@ -74,15 +66,6 @@ constexpr char kSaveUIDismissalReasonHistogramName[] =
     "PasswordManager.SaveUIDismissalReason";
 constexpr char kUpdateUIDismissalReasonHistogramName[] =
     "PasswordManager.UpdateUIDismissalReason";
-constexpr char kSaveUpdatePasswordMessageDismissalReason[] =
-    "PasswordManager.SaveUpdateUIDismissalReasonAndroid";
-constexpr char kSavePasswordMessageDismissalReason[] =
-    "PasswordManager.SaveUpdateUIDismissalReasonAndroid.Save";
-constexpr char kUpdatePasswordMessageDismissalReason[] =
-    "PasswordManager.SaveUpdateUIDismissalReasonAndroid.Update";
-constexpr char kConfirmUsernameMessageDismissalReason[] =
-    "PasswordManager.SaveUpdateUIDismissalReasonAndroid."
-    "UpdateWithUsernameConfirmation";
 
 }  // namespace
 
@@ -181,6 +164,7 @@ class SaveUpdatePasswordMessageDelegateTest
   void DestroyDelegate();
 
   TestDeviceLockBridge* test_bridge();
+  MockPasswordAccessLossWarningBridge* mock_access_loss_warning_bridge();
   bool is_password_saved();
 
   messages::MessageWrapper* GetMessageWrapper();
@@ -198,12 +182,6 @@ class SaveUpdatePasswordMessageDelegateTest
   // Returns non-owning pointer to the mock for test to configure mock
   // expectations.
   MockPasswordEditDialog* PreparePasswordEditDialog();
-
-  base::MockCallback<RepeatingCallback<
-      void(gfx::NativeWindow,
-           Profile*,
-           password_manager::metrics_util::PasswordMigrationWarningTriggers)>>&
-  GetMigrationWarningCallback();
 
   void TriggerDialogAcceptedCallback(const std::u16string& username,
                                      const std::u16string& password);
@@ -245,12 +223,8 @@ class SaveUpdatePasswordMessageDelegateTest
   ukm::SourceId ukm_source_id_;
   messages::MockMessageDispatcherBridge message_dispatcher_bridge_;
   std::unique_ptr<MockPasswordEditDialog> mock_password_edit_dialog_;
-  base::MockCallback<RepeatingCallback<void(
-      gfx::NativeWindow,
-      Profile*,
-      password_manager::metrics_util::PasswordMigrationWarningTriggers)>>
-      mock_password_migration_warning_callback_;
   raw_ptr<TestDeviceLockBridge> test_bridge_;
+  raw_ptr<MockPasswordAccessLossWarningBridge> mock_access_loss_warning_bridge_;
   std::unique_ptr<SaveUpdatePasswordMessageDelegate> delegate_;
   bool is_password_saved_ = false;
   MockPasswordManagerClient password_manager_client_;
@@ -270,12 +244,15 @@ void SaveUpdatePasswordMessageDelegateTest::SetUp() {
 
   auto bridge = std::make_unique<TestDeviceLockBridge>();
   test_bridge_ = bridge.get();
+  auto access_loss_bridge =
+      std::make_unique<MockPasswordAccessLossWarningBridge>();
+  mock_access_loss_warning_bridge_ = access_loss_bridge.get();
   delegate_ = std::make_unique<SaveUpdatePasswordMessageDelegate>(
       base::PassKey<class SaveUpdatePasswordMessageDelegateTest>(),
       base::BindRepeating(
           &SaveUpdatePasswordMessageDelegateTest::CreatePasswordEditDialog,
           base::Unretained(this)),
-      mock_password_migration_warning_callback_.Get(), std::move(bridge));
+      std::move(bridge), std::move(access_loss_bridge));
 
   messages::MessageDispatcherBridge::SetInstanceForTesting(
       &message_dispatcher_bridge_);
@@ -305,8 +282,7 @@ SaveUpdatePasswordMessageDelegateTest::CreateFormManager(
   ON_CALL(*form_manager, GetURL()).WillByDefault(ReturnRef(password_form_url_));
   ON_CALL(*form_manager, GetBestMatches()).WillByDefault(Return(best_matches));
   ON_CALL(*form_manager, GetFederatedMatches())
-      .WillByDefault(Return(
-          std::vector<raw_ptr<const PasswordForm, VectorExperimental>>{}));
+      .WillByDefault(Return(base::span<const PasswordForm>()));
   ON_CALL(*form_manager, GetMetricsRecorder())
       .WillByDefault(Return(metrics_recorder_.get()));
   ON_CALL(*form_manager, Save())
@@ -424,6 +400,11 @@ TestDeviceLockBridge* SaveUpdatePasswordMessageDelegateTest::test_bridge() {
   return test_bridge_;
 }
 
+MockPasswordAccessLossWarningBridge*
+SaveUpdatePasswordMessageDelegateTest::mock_access_loss_warning_bridge() {
+  return mock_access_loss_warning_bridge_;
+}
+
 bool SaveUpdatePasswordMessageDelegateTest::is_password_saved() {
   return is_password_saved_;
 }
@@ -448,14 +429,6 @@ MockPasswordEditDialog*
 SaveUpdatePasswordMessageDelegateTest::PreparePasswordEditDialog() {
   mock_password_edit_dialog_ = std::make_unique<MockPasswordEditDialog>();
   return mock_password_edit_dialog_.get();
-}
-
-base::MockCallback<RepeatingCallback<
-    void(gfx::NativeWindow,
-         Profile*,
-         password_manager::metrics_util::PasswordMigrationWarningTriggers)>>&
-SaveUpdatePasswordMessageDelegateTest::GetMigrationWarningCallback() {
-  return mock_password_migration_warning_callback_;
 }
 
 void SaveUpdatePasswordMessageDelegateTest::TriggerDialogAcceptedCallback(
@@ -609,24 +582,26 @@ TEST_F(SaveUpdatePasswordMessageDelegateTest, SaveOnActionClick) {
       password_manager::metrics_util::CLICKED_ACCEPT, 1);
 }
 
-// Tests that the local password migration warning will show when the user
+// Tests that the access loss warning will show when the user
 // clicks the "Save" button.
 TEST_F(SaveUpdatePasswordMessageDelegateTest,
-       TriggerLocalPasswordMigrationWarning_OnSaveClicked) {
-  base::test::ScopedFeatureList scoped_feature_state;
-  scoped_feature_state.InitAndEnableFeature(
-      password_manager::features::
-          kUnifiedPasswordManagerLocalPasswordsMigrationWarning);
+       TriggerAccessLossWarning_OnSaveClicked) {
   auto form_manager =
       CreateFormManager(GURL(kDefaultUrl), empty_best_matches());
   EXPECT_CALL(*form_manager, Save());
   EnqueueMessage(std::move(form_manager), /*user_signed_in=*/false,
                  /*update_password=*/false);
   EXPECT_NE(nullptr, GetMessageWrapper());
+  EXPECT_CALL(*mock_access_loss_warning_bridge(),
+              ShouldShowAccessLossNoticeSheet(profile()->GetPrefs(),
+                                              /*called_at_startup=*/false))
+      .WillRepeatedly(testing::Return(true));
   EXPECT_CALL(
-      GetMigrationWarningCallback(),
-      Run(_, _,
-          password_manager::metrics_util::PasswordMigrationWarningTriggers::
+      *mock_access_loss_warning_bridge(),
+      MaybeShowAccessLossNoticeSheet(
+          profile()->GetPrefs(), _, profile(),
+          /*called_at_startup=*/false,
+          password_manager_android_util::PasswordAccessLossWarningTriggers::
               kPasswordSaveUpdateMessage));
   TriggerActionClick();
   EXPECT_EQ(nullptr, GetMessageWrapper());
@@ -637,9 +612,6 @@ TEST_F(SaveUpdatePasswordMessageDelegateTest,
 // passwords.
 TEST_F(SaveUpdatePasswordMessageDelegateTest,
        NudgeToUpdateGmsCore_OnSaveClicked) {
-  base::test::ScopedFeatureList scoped_feature_state;
-  scoped_feature_state.InitAndEnableFeature(
-      password_manager::features::kUnifiedPasswordManagerSyncOnlyInGMSCore);
   auto form_manager =
       CreateFormManager(GURL(kDefaultUrl), empty_best_matches());
   EXPECT_CALL(*form_manager, Save());
@@ -664,9 +636,6 @@ TEST_F(SaveUpdatePasswordMessageDelegateTest,
 // clicks the "Save" button.
 TEST_F(SaveUpdatePasswordMessageDelegateTest,
        DontNudgeToUpdateGmsCore_OnSaveClicked) {
-  base::test::ScopedFeatureList scoped_feature_state;
-  scoped_feature_state.InitAndEnableFeature(
-      password_manager::features::kUnifiedPasswordManagerSyncOnlyInGMSCore);
   auto form_manager =
       CreateFormManager(GURL(kDefaultUrl), empty_best_matches());
   EXPECT_CALL(*form_manager, Save());
@@ -688,12 +657,10 @@ TEST_F(SaveUpdatePasswordMessageDelegateTest,
   EXPECT_EQ(nullptr, GetMessageWrapper());
 }
 
+// Tests that the password access loss warning will show when the user
+// accepts the password edit dialog.
 TEST_F(SaveUpdatePasswordMessageDelegateTest,
-       TriggerLocalPasswordMigrationWarning_OnSavePasswordDialogAccepted) {
-  base::test::ScopedFeatureList scoped_feature_state;
-  scoped_feature_state.InitAndEnableFeature(
-      password_manager::features::
-          kUnifiedPasswordManagerLocalPasswordsMigrationWarning);
+       TriggerAccessLossWarning_OnSavePasswordDialogAccepted) {
   auto form_manager =
       CreateFormManager(GURL(kDefaultUrl), empty_best_matches());
   MockPasswordFormManagerForUI* form_manager_pointer = form_manager.get();
@@ -703,44 +670,50 @@ TEST_F(SaveUpdatePasswordMessageDelegateTest,
                  /*update_password=*/false);
   EXPECT_NE(nullptr, GetMessageWrapper());
   EXPECT_CALL(*mock_dialog, ShowPasswordEditDialog);
-  EXPECT_CALL(GetMigrationWarningCallback(), Run).Times(0);
   TriggerPasswordEditDialog(/*update_password=*/false);
 
   EXPECT_EQ(nullptr, GetMessageWrapper());
   EXPECT_CALL(*form_manager_pointer, Save());
   TriggerDialogAcceptedCallback(/*username=*/kUsername,
                                 /*password=*/kPassword);
-  EXPECT_CALL(GetMigrationWarningCallback(), Run);
+  EXPECT_CALL(*mock_access_loss_warning_bridge(),
+              ShouldShowAccessLossNoticeSheet(profile()->GetPrefs(),
+                                              /*called_at_startup=*/false))
+      .WillRepeatedly(testing::Return(true));
+  EXPECT_CALL(
+      *mock_access_loss_warning_bridge(),
+      MaybeShowAccessLossNoticeSheet(
+          profile()->GetPrefs(), _, profile(),
+          /*called_at_startup=*/false,
+          password_manager_android_util::PasswordAccessLossWarningTriggers::
+              kPasswordSaveUpdateMessage));
   TriggerDialogDismissedCallback(/*dialog_accepted=*/true);
 }
 
-// Tests that the local password migration warning will not show when the user
+// Tests that the access loss warning will not show when the user
 // dismisses the save password message.
 TEST_F(SaveUpdatePasswordMessageDelegateTest,
-       DontTriggerLocalPasswordMigrationWarning_OnSaveMessageDismissed) {
-  base::test::ScopedFeatureList scoped_feature_state;
-  scoped_feature_state.InitAndEnableFeature(
-      password_manager::features::
-          kUnifiedPasswordManagerLocalPasswordsMigrationWarning);
+       DontTriggerAccessLossWarning_OnSaveMessageDismissed) {
   auto form_manager =
       CreateFormManager(GURL(kDefaultUrl), empty_best_matches());
   EnqueueMessage(std::move(form_manager), /*user_signed_in=*/true,
                  /*update_password=*/false);
   EXPECT_NE(nullptr, GetMessageWrapper());
-  EXPECT_CALL(GetMigrationWarningCallback(), Run).Times(0);
+  EXPECT_CALL(*mock_access_loss_warning_bridge(),
+              ShouldShowAccessLossNoticeSheet(profile()->GetPrefs(),
+                                              /*called_at_startup=*/false))
+      .WillRepeatedly(testing::Return(true));
+  EXPECT_CALL(*mock_access_loss_warning_bridge(),
+              MaybeShowAccessLossNoticeSheet)
+      .Times(0);
   DismissMessage(messages::DismissReason::GESTURE);
   EXPECT_EQ(nullptr, GetMessageWrapper());
 }
 
-// Tests that the local password migration warning will show when the user
-// accepts the update password message in case when there is no confirmation
-// dialog.
+// Tests that the access loss warning will show when the user accepts the update
+// password message in case when there is no confirmation dialog.
 TEST_F(SaveUpdatePasswordMessageDelegateTest,
-       TriggerLocalPasswordMigrationWarning_OnUpdatePasswordWithSingleForm) {
-  base::test::ScopedFeatureList scoped_feature_state;
-  scoped_feature_state.InitAndEnableFeature(
-      password_manager::features::
-          kUnifiedPasswordManagerLocalPasswordsMigrationWarning);
+       TriggerAccessLossWarning_OnUpdatePasswordWithSingleForm) {
   SetPendingCredentials(kUsername, kPassword);
   std::vector<PasswordForm> single_form_best_matches = {
       CreatePasswordForm(kUsername, kPassword)};
@@ -750,7 +723,17 @@ TEST_F(SaveUpdatePasswordMessageDelegateTest,
   EnqueueMessage(std::move(form_manager), /*user_signed_in=*/true,
                  /*update_password=*/true);
   EXPECT_NE(nullptr, GetMessageWrapper());
-  EXPECT_CALL(GetMigrationWarningCallback(), Run);
+  EXPECT_CALL(*mock_access_loss_warning_bridge(),
+              ShouldShowAccessLossNoticeSheet(profile()->GetPrefs(),
+                                              /*called_at_startup=*/false))
+      .WillRepeatedly(testing::Return(true));
+  EXPECT_CALL(
+      *mock_access_loss_warning_bridge(),
+      MaybeShowAccessLossNoticeSheet(
+          profile()->GetPrefs(), _, profile(),
+          /*called_at_startup=*/false,
+          password_manager_android_util::PasswordAccessLossWarningTriggers::
+              kPasswordSaveUpdateMessage));
   TriggerActionClick();
   EXPECT_EQ(nullptr, GetMessageWrapper());
 }
@@ -760,10 +743,6 @@ TEST_F(SaveUpdatePasswordMessageDelegateTest,
 // dialog.
 TEST_F(SaveUpdatePasswordMessageDelegateTest,
        NudgeToUpdateGmsCore_OnUpdatePasswordWithSingleForm) {
-  base::test::ScopedFeatureList scoped_feature_state;
-  scoped_feature_state.InitAndEnableFeature(
-      password_manager::features::kUnifiedPasswordManagerSyncOnlyInGMSCore);
-
   SetPendingCredentials(kUsername, kPassword);
   std::vector<PasswordForm> single_form_best_matches = {
       CreatePasswordForm(kUsername, kPassword)};
@@ -773,7 +752,6 @@ TEST_F(SaveUpdatePasswordMessageDelegateTest,
   EnqueueMessage(std::move(form_manager), /*user_signed_in=*/true,
                  /*update_password=*/true);
   EXPECT_NE(nullptr, GetMessageWrapper());
-  EXPECT_CALL(GetMigrationWarningCallback(), Run);
   EXPECT_CALL(*GetClient(),
               ShowPasswordManagerErrorMessage(
                   password_manager::ErrorMessageFlowType::kSaveFlow,
@@ -792,10 +770,6 @@ TEST_F(SaveUpdatePasswordMessageDelegateTest,
 // the update password message in case when there is no confirmation dialog.
 TEST_F(SaveUpdatePasswordMessageDelegateTest,
        DontNudgeToUpdateGmsCore_OnUpdatePasswordWithSingleForm) {
-  base::test::ScopedFeatureList scoped_feature_state;
-  scoped_feature_state.InitAndEnableFeature(
-      password_manager::features::kUnifiedPasswordManagerSyncOnlyInGMSCore);
-
   SetPendingCredentials(kUsername, kPassword);
   std::vector<PasswordForm> single_form_best_matches = {
       CreatePasswordForm(kUsername, kPassword)};
@@ -805,7 +779,6 @@ TEST_F(SaveUpdatePasswordMessageDelegateTest,
   EnqueueMessage(std::move(form_manager), /*user_signed_in=*/true,
                  /*update_password=*/true);
   EXPECT_NE(nullptr, GetMessageWrapper());
-  EXPECT_CALL(GetMigrationWarningCallback(), Run);
   EXPECT_CALL(*GetClient(),
               ShowPasswordManagerErrorMessage(
                   password_manager::ErrorMessageFlowType::kSaveFlow,
@@ -821,15 +794,10 @@ TEST_F(SaveUpdatePasswordMessageDelegateTest,
   EXPECT_EQ(nullptr, GetMessageWrapper());
 }
 
-// Tests that the local password migration warning will not show when the user
+// Tests that the access loss warning will not show when the user
 // dismisses the update password message.
-TEST_F(
-    SaveUpdatePasswordMessageDelegateTest,
-    DontTriggerLocalPasswordMigrationWarning_OnUpdatePasswordMessageDismissed) {
-  base::test::ScopedFeatureList scoped_feature_state;
-  scoped_feature_state.InitAndEnableFeature(
-      password_manager::features::
-          kUnifiedPasswordManagerLocalPasswordsMigrationWarning);
+TEST_F(SaveUpdatePasswordMessageDelegateTest,
+       DontTriggerAccessLossWarning_OnUpdatePasswordMessageDismissed) {
   SetPendingCredentials(kUsername, kPassword);
   std::vector<PasswordForm> single_form_best_matches = {
       CreatePasswordForm(kUsername, kPassword)};
@@ -838,19 +806,21 @@ TEST_F(
   EnqueueMessage(std::move(form_manager), /*user_signed_in=*/true,
                  /*update_password=*/true);
   EXPECT_NE(nullptr, GetMessageWrapper());
-  EXPECT_CALL(GetMigrationWarningCallback(), Run).Times(0);
+  EXPECT_CALL(*mock_access_loss_warning_bridge(),
+              ShouldShowAccessLossNoticeSheet(profile()->GetPrefs(),
+                                              /*called_at_startup=*/false))
+      .WillRepeatedly(testing::Return(true));
+  EXPECT_CALL(*mock_access_loss_warning_bridge(),
+              MaybeShowAccessLossNoticeSheet)
+      .Times(0);
   DismissMessage(messages::DismissReason::GESTURE);
   EXPECT_EQ(nullptr, GetMessageWrapper());
 }
 
-// Tests that the local password migration warning will show when the user
-// accepts the update password message and the confirmation dialog.
+// Tests that the access loss warning will show when the user accepts the update
+// password message and the confirmation dialog.
 TEST_F(SaveUpdatePasswordMessageDelegateTest,
-       TriggerLocalPasswordMigrationWarning_OnUpdatePasswordDialogAccepted) {
-  base::test::ScopedFeatureList scoped_feature_state;
-  scoped_feature_state.InitAndEnableFeature(
-      password_manager::features::
-          kUnifiedPasswordManagerLocalPasswordsMigrationWarning);
+       TriggerAccessLossWarning_OnUpdatePasswordDialogAccepted) {
   SetPendingCredentials(kUsername, kPassword);
   auto form_manager =
       CreateFormManager(GURL(kDefaultUrl), two_forms_best_matches());
@@ -862,95 +832,30 @@ TEST_F(SaveUpdatePasswordMessageDelegateTest,
           Eq(kUsername), Eq(kPassword), Eq(kAccountEmail)));
   EnqueueMessage(std::move(form_manager), /*user_signed_in=*/true,
                  /*update_password=*/true);
-  EXPECT_CALL(GetMigrationWarningCallback(), Run).Times(0);
-  TriggerActionClick();
-  TriggerDialogAcceptedCallback(/*username=*/kUsername,
-                                /*password=*/kPassword);
-  EXPECT_CALL(GetMigrationWarningCallback(), Run);
-  TriggerDialogDismissedCallback(/*dialog_accepted=*/true);
-}
-
-// Tests that the message to update GMSCore will show when the user accepts the
-// update password message and the confirmation dialog.
-TEST_F(SaveUpdatePasswordMessageDelegateTest,
-       NudgeToUpdateGmsCore_OnUpdatePasswordDialogAccepted) {
-  base::test::ScopedFeatureList scoped_feature_state;
-  scoped_feature_state.InitAndEnableFeature(
-      password_manager::features::kUnifiedPasswordManagerSyncOnlyInGMSCore);
-
-  SetPendingCredentials(kUsername, kPassword);
-  auto form_manager =
-      CreateFormManager(GURL(kDefaultUrl), two_forms_best_matches());
-  MockPasswordEditDialog* mock_dialog = PreparePasswordEditDialog();
-  EXPECT_CALL(
-      *mock_dialog,
-      ShowPasswordEditDialog(
-          ElementsAre(std::u16string(kUsername), std::u16string(kUsername2)),
-          Eq(kUsername), Eq(kPassword), Eq(kAccountEmail)));
-  EnqueueMessage(std::move(form_manager), /*user_signed_in=*/true,
-                 /*update_password=*/true);
-  EXPECT_CALL(GetMigrationWarningCallback(), Run).Times(0);
-  EXPECT_CALL(*GetClient(),
-              ShowPasswordManagerErrorMessage(
-                  password_manager::ErrorMessageFlowType::kSaveFlow,
-                  password_manager::PasswordStoreBackendErrorType::
-                      kGMSCoreOutdatedSavingPossible));
-  EXPECT_CALL(*(GetClient()->GetPasswordFeatureManager()), ShouldUpdateGmsCore)
-      .WillOnce(Return(true));
-  TriggerActionClick();
-  TriggerDialogAcceptedCallback(/*username=*/kUsername,
-                                /*password=*/kPassword);
-  EXPECT_CALL(GetMigrationWarningCallback(), Run);
-  TriggerDialogDismissedCallback(/*dialog_accepted=*/true);
-  // Fast forward, since Update message is shown with a delay.
-  FastForward();
-}
-
-// Tests that the message to update GMSCore will not show when the user accepts
-// the update password message and the confirmation dialog.
-TEST_F(SaveUpdatePasswordMessageDelegateTest,
-       DontNudgeToUpdateGmsCore_OnUpdatePasswordDialogAccepted) {
-  base::test::ScopedFeatureList scoped_feature_state;
-  scoped_feature_state.InitAndEnableFeature(
-      password_manager::features::kUnifiedPasswordManagerSyncOnlyInGMSCore);
-
-  SetPendingCredentials(kUsername, kPassword);
-  auto form_manager =
-      CreateFormManager(GURL(kDefaultUrl), two_forms_best_matches());
-  MockPasswordEditDialog* mock_dialog = PreparePasswordEditDialog();
-  EXPECT_CALL(
-      *mock_dialog,
-      ShowPasswordEditDialog(
-          ElementsAre(std::u16string(kUsername), std::u16string(kUsername2)),
-          Eq(kUsername), Eq(kPassword), Eq(kAccountEmail)));
-  EnqueueMessage(std::move(form_manager), /*user_signed_in=*/true,
-                 /*update_password=*/true);
-  EXPECT_CALL(GetMigrationWarningCallback(), Run).Times(0);
-  EXPECT_CALL(*GetClient(),
-              ShowPasswordManagerErrorMessage(
-                  password_manager::ErrorMessageFlowType::kSaveFlow,
-                  password_manager::PasswordStoreBackendErrorType::
-                      kGMSCoreOutdatedSavingPossible))
+  EXPECT_CALL(*mock_access_loss_warning_bridge(),
+              ShouldShowAccessLossNoticeSheet(profile()->GetPrefs(),
+                                              /*called_at_startup=*/false))
+      .WillRepeatedly(testing::Return(true));
+  EXPECT_CALL(*mock_access_loss_warning_bridge(),
+              MaybeShowAccessLossNoticeSheet)
       .Times(0);
-  EXPECT_CALL(*(GetClient()->GetPasswordFeatureManager()), ShouldUpdateGmsCore)
-      .WillOnce(Return(false));
   TriggerActionClick();
   TriggerDialogAcceptedCallback(/*username=*/kUsername,
                                 /*password=*/kPassword);
-  EXPECT_CALL(GetMigrationWarningCallback(), Run);
+  EXPECT_CALL(
+      *mock_access_loss_warning_bridge(),
+      MaybeShowAccessLossNoticeSheet(
+          profile()->GetPrefs(), _, profile(),
+          /*called_at_startup=*/false,
+          password_manager_android_util::PasswordAccessLossWarningTriggers::
+              kPasswordSaveUpdateMessage));
   TriggerDialogDismissedCallback(/*dialog_accepted=*/true);
-  // Fast forward, since Update message is shown with a delay.
-  FastForward();
 }
 
-// Tests that the local password migration warning will show when the user
-// accepts the update password message and cancels the confirmation dialog.
+// Tests that the access loss warning will show when the user accepts the
+// update password message and cancels the confirmation dialog.
 TEST_F(SaveUpdatePasswordMessageDelegateTest,
-       TriggerLocalPasswordMigrationWarning_OnUpdatePasswordDialogCanceled) {
-  base::test::ScopedFeatureList scoped_feature_state;
-  scoped_feature_state.InitAndEnableFeature(
-      password_manager::features::
-          kUnifiedPasswordManagerLocalPasswordsMigrationWarning);
+       TriggerAccessLossWarning_OnUpdatePasswordDialogCanceled) {
   SetPendingCredentials(kUsername, kPassword);
   auto form_manager =
       CreateFormManager(GURL(kDefaultUrl), two_forms_best_matches());
@@ -962,9 +867,21 @@ TEST_F(SaveUpdatePasswordMessageDelegateTest,
           Eq(kUsername), Eq(kPassword), Eq(kAccountEmail)));
   EnqueueMessage(std::move(form_manager), /*user_signed_in=*/true,
                  /*update_password=*/true);
-  EXPECT_CALL(GetMigrationWarningCallback(), Run).Times(0);
+  EXPECT_CALL(*mock_access_loss_warning_bridge(),
+              ShouldShowAccessLossNoticeSheet(profile()->GetPrefs(),
+                                              /*called_at_startup=*/false))
+      .WillRepeatedly(testing::Return(true));
+  EXPECT_CALL(*mock_access_loss_warning_bridge(),
+              MaybeShowAccessLossNoticeSheet)
+      .Times(0);
   TriggerActionClick();
-  EXPECT_CALL(GetMigrationWarningCallback(), Run);
+  EXPECT_CALL(
+      *mock_access_loss_warning_bridge(),
+      MaybeShowAccessLossNoticeSheet(
+          profile()->GetPrefs(), _, profile(),
+          /*called_at_startup=*/false,
+          password_manager_android_util::PasswordAccessLossWarningTriggers::
+              kPasswordSaveUpdateMessage));
   TriggerDialogDismissedCallback(/*dialog_accepted=*/false);
 }
 
@@ -1016,25 +933,30 @@ TEST_F(SaveUpdatePasswordMessageDelegateTest, MetricOnAutodismissTimer) {
       password_manager::metrics_util::NO_DIRECT_INTERACTION, 1);
 }
 
-// Tests that the local password migration warning will not show when the user
-// lets the save message time out.
+// Tests that the access loss warning will not show when the user lets the save
+// message time out.
 TEST_F(SaveUpdatePasswordMessageDelegateTest,
-       DontTriggerLocalPasswordMigrationWarning_OnSaveMessageAutodismissTimer) {
+       DontTriggerAccessLossWarning_OnSaveMessageAutodismissTimer) {
   auto form_manager =
       CreateFormManager(GURL(kDefaultUrl), empty_best_matches());
   EnqueueMessage(std::move(form_manager), /*user_signed_in=*/false,
                  /*update_password=*/false);
   EXPECT_NE(nullptr, GetMessageWrapper());
-  EXPECT_CALL(GetMigrationWarningCallback(), Run).Times(0);
+  EXPECT_CALL(*mock_access_loss_warning_bridge(),
+              ShouldShowAccessLossNoticeSheet(profile()->GetPrefs(),
+                                              /*called_at_startup=*/false))
+      .WillRepeatedly(testing::Return(true));
+  EXPECT_CALL(*mock_access_loss_warning_bridge(),
+              MaybeShowAccessLossNoticeSheet)
+      .Times(0);
   DismissMessage(messages::DismissReason::TIMER);
   EXPECT_EQ(nullptr, GetMessageWrapper());
 }
 
-// Tests that the local password migration warning will not show when the user
-// lets the update message time out.
-TEST_F(
-    SaveUpdatePasswordMessageDelegateTest,
-    DontTriggerLocalPasswordMigrationWarning_OnUpdateMessageAutodismissTimer) {
+// Tests that the access loss warning will not show when the user lets the
+// update message time out.
+TEST_F(SaveUpdatePasswordMessageDelegateTest,
+       DontTriggerAccessLossWarning_OnUpdateMessageAutodismissTimer) {
   SetPendingCredentials(kUsername, kPassword);
   std::vector<PasswordForm> single_form_best_matches = {
       CreatePasswordForm(kUsername, kPassword)};
@@ -1043,7 +965,13 @@ TEST_F(
   EnqueueMessage(std::move(form_manager), /*user_signed_in=*/true,
                  /*update_password=*/true);
   EXPECT_NE(nullptr, GetMessageWrapper());
-  EXPECT_CALL(GetMigrationWarningCallback(), Run).Times(0);
+  EXPECT_CALL(*mock_access_loss_warning_bridge(),
+              ShouldShowAccessLossNoticeSheet(profile()->GetPrefs(),
+                                              /*called_at_startup=*/false))
+      .WillRepeatedly(testing::Return(true));
+  EXPECT_CALL(*mock_access_loss_warning_bridge(),
+              MaybeShowAccessLossNoticeSheet)
+      .Times(0);
   DismissMessage(messages::DismissReason::TIMER);
   EXPECT_EQ(nullptr, GetMessageWrapper());
 }
@@ -1106,18 +1034,6 @@ TEST_F(SaveUpdatePasswordMessageDelegateTest,
   histogram_tester.ExpectUniqueSample(
       kUpdateUIDismissalReasonHistogramName,
       password_manager::metrics_util::CLICKED_ACCEPT, 1);
-  histogram_tester.ExpectUniqueSample(
-      kSaveUpdatePasswordMessageDismissalReason,
-      SaveUpdatePasswordMessageDelegate::
-          SaveUpdatePasswordMessageDismissReason::
-              kAcceptInUsernameConfirmDialog,
-      1);
-  histogram_tester.ExpectUniqueSample(
-      kConfirmUsernameMessageDismissalReason,
-      SaveUpdatePasswordMessageDelegate::
-          SaveUpdatePasswordMessageDismissReason::
-              kAcceptInUsernameConfirmDialog,
-      1);
 }
 // Verifies that:
 // 1. Save password dialog is shown after clicking on cog menu item
@@ -1156,16 +1072,6 @@ TEST_F(SaveUpdatePasswordMessageDelegateTest,
   histogram_tester.ExpectUniqueSample(
       kSaveUIDismissalReasonHistogramName,
       password_manager::metrics_util::CLICKED_ACCEPT, 1);
-  histogram_tester.ExpectUniqueSample(
-      kSaveUpdatePasswordMessageDismissalReason,
-      SaveUpdatePasswordMessageDelegate::
-          SaveUpdatePasswordMessageDismissReason::kAcceptInDialog,
-      1);
-  histogram_tester.ExpectUniqueSample(
-      kSavePasswordMessageDismissalReason,
-      SaveUpdatePasswordMessageDelegate::
-          SaveUpdatePasswordMessageDismissReason::kAcceptInDialog,
-      1);
 }
 
 // Verifies that the site is blocklisted after clicking on
@@ -1192,27 +1098,12 @@ TEST_F(SaveUpdatePasswordMessageDelegateTest,
   histogram_tester.ExpectUniqueSample(
       kSaveUIDismissalReasonHistogramName,
       password_manager::metrics_util::CLICKED_NEVER, 1);
-  histogram_tester.ExpectUniqueSample(
-      kSaveUpdatePasswordMessageDismissalReason,
-      SaveUpdatePasswordMessageDelegate::
-          SaveUpdatePasswordMessageDismissReason::kNeverSave,
-      1);
-  histogram_tester.ExpectUniqueSample(
-      kSavePasswordMessageDismissalReason,
-      SaveUpdatePasswordMessageDelegate::
-          SaveUpdatePasswordMessageDismissReason::kNeverSave,
-      1);
 }
 
-// Verifies that the password migration warning is not shown after selecting
+// Verifies that the access loss warning is not shown after selecting
 // "Never for this site" menu option in the Save message.
 TEST_F(SaveUpdatePasswordMessageDelegateTest,
-       DontTriggerLocalPasswordMigrationWarning_OnNeverSave) {
-  base::test::ScopedFeatureList scoped_feature_state;
-  scoped_feature_state.InitAndEnableFeature(
-      password_manager::features::
-          kUnifiedPasswordManagerLocalPasswordsMigrationWarning);
-
+       DontTriggerAccessLossWarning_OnNeverSave) {
   auto form_manager =
       CreateFormManager(GURL(kDefaultUrl), empty_best_matches());
   MockPasswordFormManagerForUI* form_manager_pointer = form_manager.get();
@@ -1220,7 +1111,13 @@ TEST_F(SaveUpdatePasswordMessageDelegateTest,
   EnqueueMessage(std::move(form_manager), /*user_signed_in=*/false,
                  /*update_password=*/false);
   EXPECT_NE(nullptr, GetMessageWrapper());
-  EXPECT_CALL(GetMigrationWarningCallback(), Run).Times(0);
+  EXPECT_CALL(*mock_access_loss_warning_bridge(),
+              ShouldShowAccessLossNoticeSheet(profile()->GetPrefs(),
+                                              /*called_at_startup=*/false))
+      .WillRepeatedly(testing::Return(true));
+  EXPECT_CALL(*mock_access_loss_warning_bridge(),
+              MaybeShowAccessLossNoticeSheet)
+      .Times(0);
   EXPECT_CALL(*form_manager_pointer, Blocklist());
   TriggerNeverSaveMenuItem();
 }
@@ -1263,16 +1160,6 @@ TEST_F(SaveUpdatePasswordMessageDelegateTest,
   histogram_tester.ExpectUniqueSample(
       kUpdateUIDismissalReasonHistogramName,
       password_manager::metrics_util::CLICKED_ACCEPT, 1);
-  histogram_tester.ExpectUniqueSample(
-      kSaveUpdatePasswordMessageDismissalReason,
-      SaveUpdatePasswordMessageDelegate::
-          SaveUpdatePasswordMessageDismissReason::kAcceptInDialog,
-      1);
-  histogram_tester.ExpectUniqueSample(
-      kUpdatePasswordMessageDismissalReason,
-      SaveUpdatePasswordMessageDelegate::
-          SaveUpdatePasswordMessageDismissReason::kAcceptInDialog,
-      1);
 }
 
 // Verifies that:
@@ -1305,16 +1192,6 @@ TEST_F(SaveUpdatePasswordMessageDelegateTest,
   histogram_tester.ExpectUniqueSample(
       kSaveUIDismissalReasonHistogramName,
       password_manager::metrics_util::CLICKED_CANCEL, 1);
-  histogram_tester.ExpectUniqueSample(
-      kSaveUpdatePasswordMessageDismissalReason,
-      SaveUpdatePasswordMessageDelegate::
-          SaveUpdatePasswordMessageDismissReason::kCancelInDialog,
-      1);
-  histogram_tester.ExpectUniqueSample(
-      kSavePasswordMessageDismissalReason,
-      SaveUpdatePasswordMessageDelegate::
-          SaveUpdatePasswordMessageDismissReason::kCancelInDialog,
-      1);
 }
 
 // Tests that password is saved if device lock UI is shown and device lock is
@@ -1466,9 +1343,9 @@ TEST_F(SaveUpdatePasswordMessageDelegateTest,
   EXPECT_EQ(l10n_util::GetStringUTF16(IDS_UPDATE_PASSWORD),
             GetMessageWrapper()->GetTitle());
 
-    EXPECT_EQ(GetExpectedUPMMessageDescription(is_update, is_signed_in,
-                                               kAccountEmail16),
-              GetMessageWrapper()->GetDescription());
+  EXPECT_EQ(GetExpectedUPMMessageDescription(is_update, is_signed_in,
+                                             kAccountEmail16),
+            GetMessageWrapper()->GetDescription());
 
   EXPECT_EQ(l10n_util::GetStringUTF16(IDS_PASSWORD_MANAGER_UPDATE_BUTTON),
             GetMessageWrapper()->GetPrimaryButtonText());
@@ -1490,9 +1367,9 @@ TEST_F(SaveUpdatePasswordMessageDelegateTest,
   EnqueueMessage(std::move(form_manager), /*user_signed_in=*/is_signed_in,
                  /*update_password=*/is_update);
 
-    EXPECT_EQ(GetExpectedUPMMessageDescription(is_update, is_signed_in,
-                                               kAccountEmail16),
-              GetMessageWrapper()->GetDescription());
+  EXPECT_EQ(GetExpectedUPMMessageDescription(is_update, is_signed_in,
+                                             kAccountEmail16),
+            GetMessageWrapper()->GetDescription());
 
   DismissMessage(messages::DismissReason::UNKNOWN);
 }
@@ -1517,9 +1394,9 @@ TEST_F(SaveUpdatePasswordMessageDelegateTest,
   EnqueueMessage(std::move(form_manager), /*user_signed_in=*/is_signed_in,
                  /*update_password=*/is_update, account_info);
 
-    EXPECT_EQ(GetExpectedUPMMessageDescription(is_update, is_signed_in,
-                                               kAccountFullName16),
-              GetMessageWrapper()->GetDescription());
+  EXPECT_EQ(GetExpectedUPMMessageDescription(is_update, is_signed_in,
+                                             kAccountFullName16),
+            GetMessageWrapper()->GetDescription());
   DismissMessage(messages::DismissReason::UNKNOWN);
 }
 
@@ -1535,9 +1412,9 @@ TEST_F(SaveUpdatePasswordMessageDelegateTest,
   EnqueueMessage(std::move(form_manager), /*user_signed_in=*/is_signed_in,
                  /*update_password=*/is_update);
 
-    EXPECT_EQ(GetExpectedUPMMessageDescription(is_update, is_signed_in,
-                                               kAccountEmail16),
-              GetMessageWrapper()->GetDescription());
+  EXPECT_EQ(GetExpectedUPMMessageDescription(is_update, is_signed_in,
+                                             kAccountEmail16),
+            GetMessageWrapper()->GetDescription());
 
   DismissMessage(messages::DismissReason::UNKNOWN);
 }
@@ -1612,8 +1489,70 @@ TEST_F(SaveUpdatePasswordMessageDelegateTest,
 
   EnqueueMessage(std::move(form_manager), /*user_signed_in=*/is_signed_in,
                  /*update_password=*/is_update, account_info);
-    EXPECT_EQ(GetExpectedUPMMessageDescription(is_update, is_signed_in,
-                                               kAccountFullName16),
-              GetMessageWrapper()->GetDescription());
+  EXPECT_EQ(GetExpectedUPMMessageDescription(is_update, is_signed_in,
+                                             kAccountFullName16),
+            GetMessageWrapper()->GetDescription());
+  DismissMessage(messages::DismissReason::UNKNOWN);
+}
+
+TEST_F(SaveUpdatePasswordMessageDelegateTest, RecordsPromptShownWhenEnqueuing) {
+  base::HistogramTester histogram_tester;
+  SetPendingCredentials(kUsername, kPassword, /*is_account_store=*/true);
+  auto form_manager =
+      CreateFormManager(GURL(kDefaultUrl), empty_best_matches());
+  EnqueueMessage(std::move(form_manager), /*user_signed_in=*/false,
+                 /*update_password=*/false);
+  histogram_tester.ExpectUniqueSample(
+      "PasswordManager.FormSubmissionsVsSavePrompts",
+      password_manager::metrics_util::SaveFlowStep::kSavePromptShown, 1);
+  DismissMessage(messages::DismissReason::UNKNOWN);
+}
+
+// Tests `IsUsingAccountStorage` returns false if the credential being
+// updated comes from the local storage, despite the user being signed in,
+// if the credential comes from the profile store.
+TEST_F(SaveUpdatePasswordMessageDelegateTest,
+       LocalCredentialNotUsingAccountStorage_DbDeprecationOn) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(
+      password_manager::features::kLoginDbDeprecationAndroid);
+  profile()->GetPrefs()->SetInteger(
+      password_manager::prefs::kPasswordsUseUPMLocalAndSeparateStores,
+      static_cast<int>(
+          password_manager::prefs::UseUpmLocalAndSeparateStoresState::kOff));
+  SetPendingCredentials(kUsername, kPassword, /*is_account_store=*/false);
+  auto form_manager =
+      CreateFormManager(GURL(kDefaultUrl), empty_best_matches());
+  EnqueueMessage(std::move(form_manager), /*user_signed_in=*/true,
+                 /*update_password=*/true);
+  PasswordEditDialogBridgeDelegate* edit_dialog_delegate =
+      get_password_edit_dialog_bridge_delegate();
+
+  EXPECT_FALSE(edit_dialog_delegate->IsUsingAccountStorage(kUsername));
+
+  DismissMessage(messages::DismissReason::UNKNOWN);
+}
+
+// Tests `IsUsingAccountStorage` returns true if the crential comes from
+// the account store.
+TEST_F(SaveUpdatePasswordMessageDelegateTest,
+       CredentialUsingAccountStorage_DbDeprecationOn) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(
+      password_manager::features::kLoginDbDeprecationAndroid);
+  profile()->GetPrefs()->SetInteger(
+      password_manager::prefs::kPasswordsUseUPMLocalAndSeparateStores,
+      static_cast<int>(
+          password_manager::prefs::UseUpmLocalAndSeparateStoresState::kOff));
+  SetPendingCredentials(kUsername, kPassword, /*is_account_store=*/true);
+  auto form_manager =
+      CreateFormManager(GURL(kDefaultUrl), empty_best_matches());
+  EnqueueMessage(std::move(form_manager), /*user_signed_in=*/true,
+                 /*update_password=*/true);
+  PasswordEditDialogBridgeDelegate* edit_dialog_delegate =
+      get_password_edit_dialog_bridge_delegate();
+
+  EXPECT_TRUE(edit_dialog_delegate->IsUsingAccountStorage(kUsername));
+
   DismissMessage(messages::DismissReason::UNKNOWN);
 }

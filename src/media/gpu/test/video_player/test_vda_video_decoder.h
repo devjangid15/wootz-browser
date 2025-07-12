@@ -6,6 +6,7 @@
 #define MEDIA_GPU_TEST_VIDEO_PLAYER_TEST_VDA_VIDEO_DECODER_H_
 
 #include <stdint.h>
+
 #include <map>
 #include <memory>
 
@@ -14,6 +15,7 @@
 #include "base/sequence_checker.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
+#include "gpu/command_buffer/client/test_shared_image_interface.h"
 #include "media/base/video_decoder.h"
 #include "media/gpu/test/video_player/decoder_wrapper.h"
 #include "media/media_buildflags.h"
@@ -64,9 +66,6 @@ class TestVDAVideoDecoder : public media::VideoDecoder,
  private:
   // media::VideoDecodeAccelerator::Client implementation
   void NotifyInitializationComplete(DecoderStatus status) override;
-  void ProvidePictureBuffers(uint32_t requested_num_of_buffers,
-                             VideoPixelFormat format,
-                             const gfx::Size& dimensions) override;
   void ProvidePictureBuffersWithVisibleRect(
       uint32_t requested_num_of_buffers,
       VideoPixelFormat format,
@@ -114,11 +113,11 @@ class TestVDAVideoDecoder : public media::VideoDecoder,
   // Frame renderer used to manage GL context.
   const raw_ptr<FrameRendererDummy> frame_renderer_;
 
-#if BUILDFLAG(USE_CHROMEOS_MEDIA_ACCELERATION)
+#if BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION)
   // Whether the decoder output buffers should be allocated with a linear
   // layout.
   const bool linear_output_;
-#endif  // BUILDFLAG(USE_CHROMEOS_MEDIA_ACCELERATION)
+#endif  // BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION)
 
   // Map of video frames the decoder uses as output, keyed on picture buffer id.
   std::map<int32_t, scoped_refptr<VideoFrame>> video_frames_;
@@ -131,6 +130,7 @@ class TestVDAVideoDecoder : public media::VideoDecoder,
   int32_t next_picture_buffer_id_ = 0;
 
   std::unique_ptr<VideoDecodeAccelerator> decoder_;
+  scoped_refptr<gpu::TestSharedImageInterface> test_sii_;
 
   scoped_refptr<base::SequencedTaskRunner> vda_wrapper_task_runner_;
 

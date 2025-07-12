@@ -7,13 +7,13 @@
 
 #include <stdint.h>
 
-#include <tuple>
-
 namespace gfx {
 
 // The format needs to be taken into account when mapping a buffer into the
 // client's address space.
 enum class BufferFormat : uint8_t {
+  // Used as an enum for metrics. DO NOT reorder or delete values. Rather,
+  // add them at the end and increment kMaxValue.
   R_8,
   R_16,
   RG_88,
@@ -32,7 +32,8 @@ enum class BufferFormat : uint8_t {
   YUVA_420_TRIPLANAR,
   P010,
 
-  LAST = P010
+  LAST = P010,
+  kMaxValue = LAST
 };
 
 // The usage mode affects how a buffer can be used. Only buffers created with
@@ -72,7 +73,7 @@ struct BufferUsageAndFormat {
       : usage(usage), format(format) {}
 
   bool operator==(const BufferUsageAndFormat& other) const {
-    return std::tie(usage, format) == std::tie(other.usage, other.format);
+    return usage == other.usage && format == other.format;
   }
 
   BufferUsage usage;

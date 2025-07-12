@@ -34,6 +34,7 @@ include_rules = [
   "+chrome/browser/consent_auditor",
   "+chrome/browser/extensions/api/tabs",
   "+chrome/browser/extensions/extension_tab_util.h",
+  "+chrome/browser/global_features.h",
   "+chrome/browser/lifetime",
   "+chrome/browser/net",
   "+chrome/browser/notifications",
@@ -41,6 +42,7 @@ include_rules = [
   "+chrome/browser/prefs",
   "+chrome/browser/profiles",
   "+chrome/browser/signin",
+  "+chrome/browser/ui/ash/login",
   "+chrome/browser/ui/ash/multi_user",
   "+chrome/browser/ui/ash/shelf",
   "+chrome/browser/ui/browser_commands.h",
@@ -50,3 +52,10 @@ include_rules = [
   "+chrome/grit",
   "+chrome/test/base",
 ]
+
+specific_include_rules = {
+  "arc_session_manager_browsertest\.cc": [
+    "+chrome/browser/ash/test",
+    "+chrome/browser/ui/browser_window.h",
+  ]
+}

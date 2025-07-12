@@ -36,6 +36,10 @@ public class RoundedIconGeneratorTest {
         return RoundedIconGenerator.getIconTextForUrl(url, includePrivateRegistries);
     }
 
+    private String getInitialLetter(String text) {
+        return RoundedIconGenerator.getInitialLetter(text);
+    }
+
     /**
      * Verifies that RoundedIconGenerator's ability to generate icons based on URLs considers the
      * appropriate parts of the URL for the icon to generate.
@@ -54,7 +58,7 @@ public class RoundedIconGeneratorTest {
         Assert.assertEquals("appspot.com", getIconTextForUrl("https://foo.appspot.com/", false));
 
         // Verify Chrome-internal
-        Assert.assertEquals("chrome", getIconTextForUrl("wootzapp://about", false));
+        Assert.assertEquals("chrome", getIconTextForUrl("chrome://about", false));
         Assert.assertEquals("chrome", getIconTextForUrl("chrome-native://newtab", false));
 
         // Verify that other URIs from which a hostname can be resolved use that.
@@ -90,5 +94,19 @@ public class RoundedIconGeneratorTest {
 
         Assert.assertTrue(generator.generateIconForText("") != null);
         Assert.assertTrue(generator.generateIconForText("A") != null);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Browser", "RoundedIconGenerator"})
+    public void testGetInitialLetter() {
+        Assert.assertEquals("E", getInitialLetter("English Text"));
+        Assert.assertEquals("😊", getInitialLetter("😊 Emoji Text"));
+        Assert.assertEquals("ا", getInitialLetter("النص العربي"));
+        Assert.assertEquals("ט", getInitialLetter("טקסט בעברית"));
+        Assert.assertEquals("中", getInitialLetter("中文文本"));
+        Assert.assertEquals("H́", getInitialLetter("h́ Text with combining character"));
+        Assert.assertEquals(
+                "👩🏾‍⚕️", getInitialLetter("👩🏾‍⚕️ Emoji with skin tone (combining character)"));
     }
 }

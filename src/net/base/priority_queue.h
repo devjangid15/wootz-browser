@@ -264,7 +264,7 @@ class PriorityQueue {
 
     typename Pointer::ListIterator it = pointer.iterator_;
     Priority priority = pointer.priority_;
-    DCHECK(it != lists_[priority].end());
+    CHECK(it != lists_[priority].end());
     ++it;
     while (it == lists_[priority].end()) {
       if (priority == 0u) {
@@ -289,7 +289,7 @@ class PriorityQueue {
 
     typename Pointer::ListIterator it = pointer.iterator_;
     Priority priority = pointer.priority_;
-    DCHECK(it != lists_[priority].end());
+    CHECK(it != lists_[priority].end());
     while (it == lists_[priority].begin()) {
       if (priority == num_priorities() - 1) {
         DCHECK(pointer.Equals(FirstMax()));

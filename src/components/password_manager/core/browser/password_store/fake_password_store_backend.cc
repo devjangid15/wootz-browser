@@ -4,21 +4,22 @@
 
 #include "components/password_manager/core/browser/password_store/fake_password_store_backend.h"
 
+#include <algorithm>
 #include <iterator>
 #include <optional>
 #include <utility>
+#include <variant>
 
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/memory/scoped_refptr.h"
-#include "base/notreached.h"
-#include "base/ranges/algorithm.h"
+#include "base/notimplemented.h"
 #include "base/task/sequenced_task_runner.h"
 #include "components/password_manager/core/browser/affiliation/affiliated_match_helper.h"
 #include "components/password_manager/core/browser/password_form.h"
 #include "components/password_manager/core/browser/password_store/get_logins_with_affiliations_request_handler.h"
 #include "components/password_manager/core/browser/password_store/psl_matching_helper.h"
-#include "components/sync/model/proxy_model_type_controller_delegate.h"
+#include "components/sync/model/proxy_data_type_controller_delegate.h"
 
 namespace password_manager {
 
@@ -29,13 +30,13 @@ void InjectAffiliationAndBrandingInformation(
     LoginsOrErrorReply callback,
     LoginsResultOrError forms_or_error) {
   if (!match_helper ||
-      absl::holds_alternative<PasswordStoreBackendError>(forms_or_error) ||
-      absl::get<LoginsResult>(forms_or_error).empty()) {
+      std::holds_alternative<PasswordStoreBackendError>(forms_or_error) ||
+      std::get<LoginsResult>(forms_or_error).empty()) {
     std::move(callback).Run(std::move(forms_or_error));
     return;
   }
   match_helper->InjectAffiliationAndBrandingInformation(
-      std::move(absl::get<LoginsResult>(forms_or_error)), std::move(callback));
+      std::move(std::get<LoginsResult>(forms_or_error)), std::move(callback));
 }
 
 }  // namespace
@@ -85,6 +86,11 @@ void FakePasswordStoreBackend::TriggerOnLoginsRetainedForAndroid(
       FROM_HERE, base::BindOnce(remote_form_changes_received_, std::nullopt));
 }
 
+void FakePasswordStoreBackend::ReturnErrorOnRequest(
+    PasswordStoreBackendError password_store_backend_error) {
+  password_store_backend_error_ = password_store_backend_error;
+}
+
 void FakePasswordStoreBackend::InitBackend(
     AffiliatedMatchHelper* affiliated_match_helper,
     RemoteChangesReceived remote_form_changes_received,
@@ -109,11 +115,17 @@ bool FakePasswordStoreBackend::IsAbleToSavePasswords() {
 }
 
 void FakePasswordStoreBackend::GetAllLoginsAsync(LoginsOrErrorReply callback) {
-  GetTaskRunner()->PostTaskAndReplyWithResult(
-      FROM_HERE,
-      base::BindOnce(&FakePasswordStoreBackend::GetAllLoginsInternal,
-                     base::Unretained(this)),
-      std::move(callback));
+  if (password_store_backend_error_.has_value()) {
+    GetTaskRunner()->PostTask(
+        FROM_HERE, base::BindOnce(std::move(callback),
+                                  password_store_backend_error_.value()));
+  } else {
+    GetTaskRunner()->PostTaskAndReplyWithResult(
+        FROM_HERE,
+        base::BindOnce(&FakePasswordStoreBackend::GetAllLoginsInternal,
+                       base::Unretained(this)),
+        std::move(callback));
+  }
 }
 
 void FakePasswordStoreBackend::GetAllLoginsWithAffiliationAndBrandingAsync(
@@ -130,13 +142,6 @@ void FakePasswordStoreBackend::GetAutofillableLoginsAsync(
       base::BindOnce(&FakePasswordStoreBackend::GetAutofillableLoginsInternal,
                      base::Unretained(this)),
       std::move(callback));
-}
-
-void FakePasswordStoreBackend::GetAllLoginsForAccountAsync(
-    std::string account,
-    LoginsOrErrorReply callback) {
-  CHECK(!account.empty());
-  GetAllLoginsAsync(std::move(callback));
 }
 
 void FakePasswordStoreBackend::FillMatchingLoginsAsync(
@@ -188,9 +193,8 @@ void FakePasswordStoreBackend::RemoveLoginAsync(
       std::move(callback));
 }
 
-void FakePasswordStoreBackend::RemoveLoginsByURLAndTimeAsync(
+void FakePasswordStoreBackend::RemoveLoginsCreatedBetweenAsync(
     const base::Location& location,
-    const base::RepeatingCallback<bool(const GURL&)>& url_filter,
     base::Time delete_begin,
     base::Time delete_end,
     base::OnceCallback<void(bool)> sync_completion,
@@ -201,22 +205,9 @@ void FakePasswordStoreBackend::RemoveLoginsByURLAndTimeAsync(
   GetTaskRunner()->PostTaskAndReplyWithResult(
       FROM_HERE,
       base::BindOnce(
-          &FakePasswordStoreBackend::RemoveLoginsByURLAndTimeInternal,
-          base::Unretained(this), url_filter, delete_begin, delete_end),
-      std::move(cb));
-}
-
-void FakePasswordStoreBackend::RemoveLoginsCreatedBetweenAsync(
-    const base::Location& location,
-    base::Time delete_begin,
-    base::Time delete_end,
-    PasswordChangesOrErrorReply callback) {
-  GetTaskRunner()->PostTaskAndReplyWithResult(
-      FROM_HERE,
-      base::BindOnce(
           &FakePasswordStoreBackend::RemoveLoginsCreatedBetweenInternal,
           base::Unretained(this), delete_begin, delete_end),
-      std::move(callback));
+      std::move(cb));
 }
 
 void FakePasswordStoreBackend::DisableAutoSignInForOriginsAsync(
@@ -234,7 +225,7 @@ SmartBubbleStatsStore* FakePasswordStoreBackend::GetSmartBubbleStatsStore() {
   return nullptr;
 }
 
-std::unique_ptr<syncer::ModelTypeControllerDelegate>
+std::unique_ptr<syncer::DataTypeControllerDelegate>
 FakePasswordStoreBackend::CreateSyncControllerDelegate() {
   NOTIMPLEMENTED();
   return nullptr;
@@ -244,10 +235,6 @@ void FakePasswordStoreBackend::OnSyncServiceInitialized(
     syncer::SyncService* sync_service) {
   NOTIMPLEMENTED();
 }
-
-void FakePasswordStoreBackend::RecordAddLoginAsyncCalledFromTheStore() {}
-
-void FakePasswordStoreBackend::RecordUpdateLoginAsyncCalledFromTheStore() {}
 
 base::WeakPtr<PasswordStoreBackend> FakePasswordStoreBackend::AsWeakPtr() {
   return weak_ptr_factory_.GetWeakPtr();
@@ -267,8 +254,9 @@ LoginsResult FakePasswordStoreBackend::GetAutofillableLoginsInternal() {
   LoginsResult result;
   for (const auto& elements : stored_passwords_) {
     for (const auto& stored_form : elements.second) {
-      if (!stored_form.blocked_by_user)
+      if (!stored_form.blocked_by_user) {
         result.push_back(stored_form);
+      }
     }
   }
   return result;
@@ -321,7 +309,7 @@ PasswordStoreChangeList FakePasswordStoreBackend::AddLoginInternal(
     const PasswordForm& form) {
   PasswordStoreChangeList changes;
   auto& passwords_for_signon_realm = stored_passwords_[form.signon_realm];
-  auto iter = base::ranges::find_if(
+  auto iter = std::ranges::find_if(
       passwords_for_signon_realm, [&form](const auto& password) {
         return ArePasswordFormUniqueKeysEqual(form, password);
       });
@@ -407,28 +395,17 @@ PasswordStoreChangeList FakePasswordStoreBackend::RemoveLoginInternal(
 }
 
 PasswordStoreChangeList
-FakePasswordStoreBackend::RemoveLoginsByURLAndTimeInternal(
-    const base::RepeatingCallback<bool(const GURL&)>& url_filter,
+FakePasswordStoreBackend::RemoveLoginsCreatedBetweenInternal(
     base::Time delete_begin,
     base::Time delete_end) {
   std::vector<PasswordForm> all_logins = GetAllLoginsInternal();
   PasswordStoreChangeList list;
   for (const auto& form : all_logins) {
-    if (url_filter.Run(form.url) && delete_begin <= form.date_created &&
-        form.date_created < delete_end) {
-      base::ranges::move(RemoveLoginInternal(form), std::back_inserter(list));
+    if (delete_begin <= form.date_created && form.date_created < delete_end) {
+      std::ranges::move(RemoveLoginInternal(form), std::back_inserter(list));
     }
   }
   return list;
-}
-
-PasswordStoreChangeList
-FakePasswordStoreBackend::RemoveLoginsCreatedBetweenInternal(
-    base::Time delete_begin,
-    base::Time delete_end) {
-  return RemoveLoginsByURLAndTimeInternal(
-      base::BindRepeating([](const GURL&) { return true; }), delete_begin,
-      delete_end);
 }
 
 }  // namespace password_manager

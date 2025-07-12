@@ -25,6 +25,7 @@
 #include "base/values.h"
 #include "chrome/browser/ash/crostini/fake_crostini_features.h"
 #include "chrome/browser/ash/drive/drive_integration_service.h"
+#include "chrome/browser/ash/drive/drive_integration_service_factory.h"
 #include "chrome/browser/ash/login/test/logged_in_user_mixin.h"
 #include "chrome/browser/extensions/mixin_based_extension_apitest.h"
 #include "chrome/browser/profiles/profile.h"
@@ -141,9 +142,6 @@ class FileManagerBrowserTestBase
     // Whether Drive should act as if offline.
     bool offline = false;
 
-    // Whether test needs the files-app-experimental feature.
-    bool files_experimental = false;
-
     // Whether test should enable the conflict dialog.
     bool enable_conflict_dialog = false;
 
@@ -203,11 +201,12 @@ class FileManagerBrowserTestBase
     // connector.
     bool bypass_requires_justification = false;
 
+    // Whether tests should disable Google One offer Files banner. This flag is
+    // disabled by default.
+    bool disable_google_one_offer_files_banner = false;
+
     // Whether tests should enable local image search by query.
     bool enable_local_image_search = false;
-
-    // Whether test should run with the fsps-in-recents flag.
-    bool enable_fsps_in_recents = false;
 
     // Whether tests should enable Google One offer Files banner. This flag is
     // enabled by default.
@@ -276,7 +275,8 @@ class FileManagerBrowserTestBase
   void StartTest();
 
  private:
-  using IdToWebContents = std::map<std::string, content::WebContents*>;
+  using IdToWebContents =
+      std::map<std::string, raw_ptr<content::WebContents, CtnExperimental>>;
 
   class MockFileTasksObserver;
 
@@ -315,6 +315,12 @@ class FileManagerBrowserTestBase
   virtual bool HandleEnterpriseConnectorCommands(const std::string& name,
                                                  const base::Value::Dict& value,
                                                  std::string* output);
+
+  // Checks if the command is from SkyVault. If so, handles it and returns true,
+  // otherwise it returns false.
+  virtual bool HandleSkyVaultCommands(const std::string& name,
+                                      const base::Value::Dict& value,
+                                      std::string* output);
 
   // Called during setup if needed, to create a drive integration service for
   // the given |profile|. Caller owns the return result.

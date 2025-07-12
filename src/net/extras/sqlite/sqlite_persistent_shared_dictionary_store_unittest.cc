@@ -20,7 +20,7 @@
 #include "build/build_config.h"
 #include "net/base/schemeful_site.h"
 #include "net/extras/shared_dictionary/shared_dictionary_info.h"
-#include "net/extras/shared_dictionary/shared_dictionary_isolation_key.h"
+#include "net/shared_dictionary/shared_dictionary_isolation_key.h"
 #include "net/test/test_with_task_environment.h"
 #include "sql/database.h"
 #include "sql/meta_table.h"
@@ -41,7 +41,7 @@ namespace {
 const base::FilePath::CharType kSharedDictionaryStoreFilename[] =
     FILE_PATH_LITERAL("SharedDictionary");
 
-const int kCurrentVersionNumber = 3;
+const int kCurrentVersionNumber = 4;
 
 int GetDBCurrentVersionNumber(sql::Database* db) {
   static constexpr char kGetDBCurrentVersionQuery[] =
@@ -149,6 +149,94 @@ bool CreateV2Schema(sql::Database* db) {
           "match_dest TEXT NOT NULL,"
           "id TEXT NOT NULL,"
           "url TEXT NOT NULL,"
+          "res_time INTEGER NOT NULL,"
+          "exp_time INTEGER NOT NULL,"
+          "last_used_time INTEGER NOT NULL,"
+          "size INTEGER NOT NULL,"
+          "sha256 BLOB NOT NULL,"
+          "token_high INTEGER NOT NULL,"
+          "token_low INTEGER NOT NULL)";
+  // clang-format on
+
+  static constexpr char kCreateUniqueIndexQuery[] =
+      // clang-format off
+      "CREATE UNIQUE INDEX unique_index ON dictionaries("
+          "frame_origin,"
+          "top_frame_site,"
+          "host,"
+          "match,"
+          "match_dest)";
+  // clang-format on
+
+  // This index is used for the size and count limitation per top_frame_site.
+  static constexpr char kCreateTopFrameSiteIndexQuery[] =
+      // clang-format off
+      "CREATE INDEX top_frame_site_index ON dictionaries("
+          "top_frame_site)";
+  // clang-format on
+
+  // This index is used for GetDictionaries().
+  static constexpr char kCreateIsolationIndexQuery[] =
+      // clang-format off
+      "CREATE INDEX isolation_index ON dictionaries("
+          "frame_origin,"
+          "top_frame_site)";
+  // clang-format on
+
+  // This index will be used when implementing garbage collection logic of
+  // SharedDictionaryDiskCache.
+  static constexpr char kCreateTokenIndexQuery[] =
+      // clang-format off
+      "CREATE INDEX token_index ON dictionaries("
+          "token_high, token_low)";
+  // clang-format on
+
+  // This index will be used when implementing clearing expired dictionary
+  // logic.
+  static constexpr char kCreateExpirationTimeIndexQuery[] =
+      // clang-format off
+      "CREATE INDEX exp_time_index ON dictionaries("
+          "exp_time)";
+  // clang-format on
+
+  // This index will be used when implementing clearing dictionary logic which
+  // will be called from BrowsingDataRemover.
+  static constexpr char kCreateLastUsedTimeIndexQuery[] =
+      // clang-format off
+      "CREATE INDEX last_used_time_index ON dictionaries("
+          "last_used_time)";
+  // clang-format on
+
+  if (!db->Execute(kCreateTableQuery) ||
+      !db->Execute(kCreateUniqueIndexQuery) ||
+      !db->Execute(kCreateTopFrameSiteIndexQuery) ||
+      !db->Execute(kCreateIsolationIndexQuery) ||
+      !db->Execute(kCreateTokenIndexQuery) ||
+      !db->Execute(kCreateExpirationTimeIndexQuery) ||
+      !db->Execute(kCreateLastUsedTimeIndexQuery) ||
+      !meta_table.SetValue(kTotalDictSizeKey, 0)) {
+    return false;
+  }
+  return true;
+}
+
+bool CreateV3Schema(sql::Database* db) {
+  sql::MetaTable meta_table;
+  CHECK(meta_table.Init(db, 3, 3));
+  constexpr char kTotalDictSizeKey[] = "total_dict_size";
+
+  static constexpr char kCreateTableQuery[] =
+      // clang-format off
+      "CREATE TABLE dictionaries("
+          "primary_key INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,"
+          "frame_origin TEXT NOT NULL,"
+          "top_frame_site TEXT NOT NULL,"
+          "host TEXT NOT NULL,"
+          "match TEXT NOT NULL,"
+          "match_dest TEXT NOT NULL,"
+          "id TEXT NOT NULL,"
+          "url TEXT NOT NULL,"
+          "last_fetch_time INTEGER NOT NULL,"
           "res_time INTEGER NOT NULL,"
           "exp_time INTEGER NOT NULL,"
           "last_used_time INTEGER NOT NULL,"
@@ -610,14 +698,14 @@ class SQLitePersistentSharedDictionaryStoreTest : public ::testing::Test,
     ASSERT_FALSE(store_);
 
     std::unique_ptr<sql::Database> db =
-        std::make_unique<sql::Database>(sql::DatabaseOptions{});
+        std::make_unique<sql::Database>(sql::test::kTestTag);
     ASSERT_TRUE(db->Open(GetStroeFilePath()));
 
     sql::MetaTable meta_table;
     ASSERT_TRUE(meta_table.Init(db.get(), kCurrentVersionNumber,
                                 kCurrentVersionNumber));
     for (const std::string& query : queries) {
-      ASSERT_TRUE(db->Execute(query.c_str()));
+      ASSERT_TRUE(db->Execute(query));
     }
     db->Close();
   }
@@ -1051,17 +1139,17 @@ TEST_F(SQLitePersistentSharedDictionaryStoreTest,
       SQLitePersistentSharedDictionaryStore::Error::kInvalidSql);
 }
 
-#if !BUILDFLAG(IS_FUCHSIA) && !BUILDFLAG(IS_WIN)
-// MakeFileUnwritable() doesn't cause the failure on Fuchsia and Windows. So
-// disabling the test on Fuchsia and Windows.
+#if !BUILDFLAG(IS_FUCHSIA)
+// MakeFileUnwritable() doesn't cause the failure on Fuchsia. So disabling the
+// test on Fuchsia.
 TEST_F(SQLitePersistentSharedDictionaryStoreTest,
        RegisterDictionaryErrorSqlExecutionFailure) {
   CreateStore();
   ClearAllDictionaries();
   DestroyStore();
   MakeFileUnwritable();
-  RunRegisterDictionaryFailureTest(
-      SQLitePersistentSharedDictionaryStore::Error::kFailedToExecuteSql);
+  RunRegisterDictionaryFailureTest(SQLitePersistentSharedDictionaryStore::
+                                       Error::kFailedToInitializeDatabase);
 }
 #endif  // !BUILDFLAG(IS_FUCHSIA)
 
@@ -1684,17 +1772,17 @@ TEST_F(SQLitePersistentSharedDictionaryStoreTest,
   CheckStoreRecovered();
 }
 
-#if !BUILDFLAG(IS_FUCHSIA) && !BUILDFLAG(IS_WIN)
-// MakeFileUnwritable() doesn't cause the failure on Fuchsia and Windows. So
-// disabling the test on Fuchsia and Windows.
+#if !BUILDFLAG(IS_FUCHSIA)
+// MakeFileUnwritable() doesn't cause the failure on Fuchsia. So disabling the
+// test on Fuchsia.
 TEST_F(SQLitePersistentSharedDictionaryStoreTest,
        ClearAllDictionariesErrorSqlExecutionFailure) {
   CreateStore();
   ClearAllDictionaries();
   DestroyStore();
   MakeFileUnwritable();
-  RunClearAllDictionariesFailureTest(
-      SQLitePersistentSharedDictionaryStore::Error::kFailedToSetTotalDictSize);
+  RunClearAllDictionariesFailureTest(SQLitePersistentSharedDictionaryStore::
+                                         Error::kFailedToInitializeDatabase);
 }
 #endif  // !BUILDFLAG(IS_FUCHSIA)
 
@@ -1742,18 +1830,18 @@ TEST_F(SQLitePersistentSharedDictionaryStoreTest,
       SQLitePersistentSharedDictionaryStore::Error::kInvalidSql);
 }
 
-#if !BUILDFLAG(IS_FUCHSIA) && !BUILDFLAG(IS_WIN)
-// MakeFileUnwritable() doesn't cause the failure on Fuchsia and Windows. So
-// disabling the test on Fuchsia and Windows.
+#if !BUILDFLAG(IS_FUCHSIA)
+// MakeFileUnwritable() doesn't cause the failure on Fuchsia. So disabling the
+// test on Fuchsia.
 TEST_F(SQLitePersistentSharedDictionaryStoreTest,
        ClearDictionariesErrorSqlExecutionFailure) {
   CreateStore();
   RegisterDictionary(isolation_key_, dictionary_info_);
   DestroyStore();
   MakeFileUnwritable();
-  RunClearDictionariesFailureTest(
-      base::RepeatingCallback<bool(const GURL&)>(),
-      SQLitePersistentSharedDictionaryStore::Error::kFailedToExecuteSql);
+  RunClearDictionariesFailureTest(base::RepeatingCallback<bool(const GURL&)>(),
+                                  SQLitePersistentSharedDictionaryStore::Error::
+                                      kFailedToInitializeDatabase);
 }
 
 TEST_F(SQLitePersistentSharedDictionaryStoreTest,
@@ -1764,7 +1852,8 @@ TEST_F(SQLitePersistentSharedDictionaryStoreTest,
   MakeFileUnwritable();
   RunClearDictionariesFailureTest(
       base::BindRepeating([](const GURL&) { return true; }),
-      SQLitePersistentSharedDictionaryStore::Error::kFailedToExecuteSql);
+      SQLitePersistentSharedDictionaryStore::Error::
+          kFailedToInitializeDatabase);
 }
 #endif  // !BUILDFLAG(IS_FUCHSIA)
 
@@ -1939,9 +2028,9 @@ TEST_F(SQLitePersistentSharedDictionaryStoreTest,
       SQLitePersistentSharedDictionaryStore::Error::kInvalidSql);
 }
 
-#if !BUILDFLAG(IS_FUCHSIA) && !BUILDFLAG(IS_WIN)
-// MakeFileUnwritable() doesn't cause the failure on Fuchsia and Windows. So
-// disabling the test on Fuchsia and Windows.
+#if !BUILDFLAG(IS_FUCHSIA)
+// MakeFileUnwritable() doesn't cause the failure on Fuchsia. So disabling the
+// test on Fuchsia.
 TEST_F(SQLitePersistentSharedDictionaryStoreTest,
        ProcessEvictionErrorSqlExecutionFailure) {
   CreateStore();
@@ -1949,8 +2038,8 @@ TEST_F(SQLitePersistentSharedDictionaryStoreTest,
   DestroyStore();
   MakeFileUnwritable();
 
-  RunProcessEvictionFailureTest(
-      SQLitePersistentSharedDictionaryStore::Error::kFailedToExecuteSql);
+  RunProcessEvictionFailureTest(SQLitePersistentSharedDictionaryStore::Error::
+                                    kFailedToInitializeDatabase);
 }
 #endif  // !BUILDFLAG(IS_FUCHSIA)
 
@@ -2074,9 +2163,9 @@ TEST_F(SQLitePersistentSharedDictionaryStoreTest,
                                     /*last_fetch_time=*/base::Time::Now()));
 }
 
-#if !BUILDFLAG(IS_FUCHSIA) && !BUILDFLAG(IS_WIN)
-// MakeFileUnwritable() doesn't cause the failure on Fuchsia and Windows. So
-// disabling the test on Fuchsia and Windows.
+#if !BUILDFLAG(IS_FUCHSIA)
+// MakeFileUnwritable() doesn't cause the failure on Fuchsia. So disabling the
+// test on Fuchsia.
 TEST_F(SQLitePersistentSharedDictionaryStoreTest,
        UpdateDictionaryLastFetchTimeErrorSqlExecutionFailure) {
   CreateStore();
@@ -2085,10 +2174,11 @@ TEST_F(SQLitePersistentSharedDictionaryStoreTest,
   DestroyStore();
   MakeFileUnwritable();
   CreateStore();
-  EXPECT_EQ(SQLitePersistentSharedDictionaryStore::Error::kFailedToExecuteSql,
-            UpdateDictionaryLastFetchTime(
-                register_dictionary_result.primary_key_in_database(),
-                /*last_fetch_time=*/base::Time::Now()));
+  EXPECT_EQ(
+      SQLitePersistentSharedDictionaryStore::Error::kFailedToInitializeDatabase,
+      UpdateDictionaryLastFetchTime(
+          register_dictionary_result.primary_key_in_database(),
+          /*last_fetch_time=*/base::Time::Now()));
 }
 #endif  // !BUILDFLAG(IS_FUCHSIA)
 
@@ -3057,9 +3147,9 @@ TEST_F(SQLitePersistentSharedDictionaryStoreTest,
   EXPECT_EQ(updated_last_used_time, dicts3[0].last_used_time());
 }
 
-TEST_F(SQLitePersistentSharedDictionaryStoreTest, MigrateFromV1ToV3) {
+TEST_F(SQLitePersistentSharedDictionaryStoreTest, MigrateFromV1ToV4) {
   {
-    sql::Database db;
+    sql::Database db(sql::test::kTestTag);
     ASSERT_TRUE(db.Open(GetStroeFilePath()));
     CreateV1Schema(&db);
     ASSERT_EQ(GetDBCurrentVersionNumber(&db), 1);
@@ -3068,15 +3158,15 @@ TEST_F(SQLitePersistentSharedDictionaryStoreTest, MigrateFromV1ToV3) {
   EXPECT_EQ(GetTotalDictionarySize(), 0u);
   DestroyStore();
   {
-    sql::Database db;
+    sql::Database db(sql::test::kTestTag);
     ASSERT_TRUE(db.Open(GetStroeFilePath()));
-    ASSERT_EQ(GetDBCurrentVersionNumber(&db), 3);
+    ASSERT_EQ(GetDBCurrentVersionNumber(&db), 4);
   }
 }
 
-TEST_F(SQLitePersistentSharedDictionaryStoreTest, MigrateFromV2ToV3) {
+TEST_F(SQLitePersistentSharedDictionaryStoreTest, MigrateFromV2ToV4) {
   {
-    sql::Database db;
+    sql::Database db(sql::test::kTestTag);
     ASSERT_TRUE(db.Open(GetStroeFilePath()));
     CreateV2Schema(&db);
     ASSERT_EQ(GetDBCurrentVersionNumber(&db), 2);
@@ -3085,10 +3175,26 @@ TEST_F(SQLitePersistentSharedDictionaryStoreTest, MigrateFromV2ToV3) {
   EXPECT_EQ(GetTotalDictionarySize(), 0u);
   DestroyStore();
   {
-    sql::Database db;
+    sql::Database db(sql::test::kTestTag);
     ASSERT_TRUE(db.Open(GetStroeFilePath()));
-    ASSERT_EQ(GetDBCurrentVersionNumber(&db), 3);
+    ASSERT_EQ(GetDBCurrentVersionNumber(&db), 4);
   }
 }
 
+TEST_F(SQLitePersistentSharedDictionaryStoreTest, MigrateFromV3ToV4) {
+  {
+    sql::Database db(sql::test::kTestTag);
+    ASSERT_TRUE(db.Open(GetStroeFilePath()));
+    CreateV3Schema(&db);
+    ASSERT_EQ(GetDBCurrentVersionNumber(&db), 3);
+  }
+  CreateStore();
+  EXPECT_EQ(GetTotalDictionarySize(), 0u);
+  DestroyStore();
+  {
+    sql::Database db(sql::test::kTestTag);
+    ASSERT_TRUE(db.Open(GetStroeFilePath()));
+    ASSERT_EQ(GetDBCurrentVersionNumber(&db), 4);
+  }
+}
 }  // namespace net

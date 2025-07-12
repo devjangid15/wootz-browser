@@ -111,6 +111,13 @@ class MESSAGE_CENTER_EXPORT MessagePopupCollection
  protected:
   // Stores animation related state of a popup.
   struct PopupItem {
+    PopupItem();
+    PopupItem(const PopupItem&) = delete;
+    PopupItem(PopupItem&& other);
+    PopupItem& operator=(const PopupItem&) = delete;
+    PopupItem& operator=(PopupItem&&);
+    ~PopupItem();
+
     // Notification ID.
     std::string id;
 
@@ -127,6 +134,8 @@ class MESSAGE_CENTER_EXPORT MessagePopupCollection
 
     // Unowned.
     raw_ptr<MessagePopupView, DanglingUntriaged> popup = nullptr;
+
+    std::unique_ptr<views::Widget> widget;
   };
 
   // Returns the x-origin for the given popup bounds in the current work area.
@@ -186,7 +195,7 @@ class MESSAGE_CENTER_EXPORT MessagePopupCollection
   bool IsNextEdgeOutsideWorkArea(const PopupItem& item) const;
 
   // Called to close a particular popup item.
-  virtual void ClosePopupItem(const PopupItem& item);
+  virtual void ClosePopupItem(PopupItem& item);
 
   // Marks `is_animating` flag of all popups for `kMoveDown` animation.
   void MoveDownPopups();
@@ -194,6 +203,9 @@ class MESSAGE_CENTER_EXPORT MessagePopupCollection
   // virtual for testing.
   virtual void RestartPopupTimers();
   virtual void PausePopupTimers();
+
+  // Whether transform can be used for animation instead of bounds change.
+  virtual bool CanUseTransformForBoundsAnimation() const = 0;
 
   // Stops all the animation and closes all the popups immediately.
   void CloseAllPopupsNow();
@@ -263,6 +275,8 @@ class MESSAGE_CENTER_EXPORT MessagePopupCollection
   bool CloseTransparentPopups();
   void ClosePopupsOutsideWorkArea();
   void RemoveClosedPopupItems();
+  void CloseAndRemovePopupFromPopupItem(MessagePopupView* popup,
+                                        bool remove_only = false);
 
   // Collapse all existing popups. Return true if size of any popup is actually
   // changed.
@@ -280,10 +294,6 @@ class MESSAGE_CENTER_EXPORT MessagePopupCollection
 
   // Returns the popup which is visually |index_from_top|-th from the top.
   PopupItem* GetPopupItem(size_t index_from_top);
-
-  // Reset |recently_closed_by_user_| to false. Used by
-  // |recently_closed_by_user_timer_|
-  void ResetRecentlyClosedByUser();
 
   // Animation state. See the comment of State.
   State state_ = State::kIdle;

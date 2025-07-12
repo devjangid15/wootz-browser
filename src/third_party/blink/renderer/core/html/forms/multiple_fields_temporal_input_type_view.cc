@@ -194,7 +194,7 @@ void MultipleFieldsTemporalInputTypeView::DidBlurFromControl(
   if (ContainsFocusedShadowElement())
     return;
   EventQueueScope scope;
-  // Remove focus ring by CSS "focus" pseudo class.
+  // Remove focus ring by CSS "focus" pseudo-class.
   GetElement().SetFocused(false, focus_type);
   if (SpinButtonElement* spin_button = GetSpinButtonElement())
     spin_button->ReleaseCapture();
@@ -207,7 +207,7 @@ void MultipleFieldsTemporalInputTypeView::DidFocusOnControl(
 
   if (!ContainsFocusedShadowElement())
     return;
-  // Add focus ring by CSS "focus" pseudo class.
+  // Add focus ring by CSS "focus" pseudo-class.
   // FIXME: Setting the focus flag to non-focused element is too tricky.
   GetElement().SetFocused(true, focus_type);
 }
@@ -502,7 +502,7 @@ void MultipleFieldsTemporalInputTypeView::HandleKeydownEvent(
   if (!GetElement().IsFocused())
     return;
   if (picker_indicator_is_visible_ &&
-      ((event.key() == "ArrowDown" && event.getModifierState("Alt")) ||
+      ((event.key() == keywords::kArrowDown && event.getModifierState("Alt")) ||
        event.key() == "F4" || event.key() == " ")) {
     OpenPopupView();
     event.SetDefaultHandled();
@@ -615,8 +615,8 @@ void MultipleFieldsTemporalInputTypeView::UpdateView() {
   UpdateClearButtonVisibility();
 }
 
-ControlPart MultipleFieldsTemporalInputTypeView::AutoAppearance() const {
-  return kTextFieldPart;
+AppearanceValue MultipleFieldsTemporalInputTypeView::AutoAppearance() const {
+  return AppearanceValue::kTextField;
 }
 
 void MultipleFieldsTemporalInputTypeView::OpenPopupView() {
@@ -636,6 +636,13 @@ bool MultipleFieldsTemporalInputTypeView::HasOpenedPopup() const {
   if (PickerIndicatorElement* picker = GetPickerIndicatorElement())
     return picker->HasOpenedPopup();
 
+  return false;
+}
+
+bool MultipleFieldsTemporalInputTypeView::IsPickerVisible() const {
+  if (PickerIndicatorElement* picker = GetPickerIndicatorElement()) {
+    return picker->IsPickerVisible();
+  }
   return false;
 }
 

@@ -2,9 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 #include "storage/common/file_system/file_system_util.h"
 
 #include <stddef.h>
+
+#include <array>
 
 #include "base/files/file_path.h"
 #include "net/base/net_errors.h"
@@ -164,7 +167,7 @@ TEST_F(FileSystemUtilTest, VirtualPathGetComponents) {
   struct test_data {
     const base::FilePath::StringType path;
     size_t count;
-    const base::FilePath::StringType components[2];
+    const std::array<base::FilePath::StringType, 2> components;
   } test_cases[] = {
       {FILE_PATH_LITERAL("foo/bar"),
        2,

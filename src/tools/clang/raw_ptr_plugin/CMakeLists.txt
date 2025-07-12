@@ -1,7 +1,5 @@
 set(plugin_sources
-  ChromeClassTester.cpp
   RawPtrPlugin.cpp
-  RawPtrPluginConsumer.cpp
   FindBadRawPtrPatterns.cpp
   RawPtrHelpers.cpp
   StackAllocatedChecker.cpp
@@ -22,6 +20,9 @@ foreach(source ${plugin_sources})
   list(APPEND absolute_sources ${CMAKE_CURRENT_SOURCE_DIR}/${source})
 endforeach()
 set_property(TARGET clang APPEND PROPERTY SOURCES ${absolute_sources})
+
+# We need some way to depend on code in tools/clang/plugins
+target_include_directories(clang AFTER PRIVATE ../../..)
 
 cr_add_test(raw_ptr_plugin_test
   python3 tests/test.py

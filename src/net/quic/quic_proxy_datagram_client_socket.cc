@@ -4,8 +4,10 @@
 
 #include "net/quic/quic_proxy_datagram_client_socket.h"
 
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "net/base/net_errors.h"
@@ -84,43 +86,37 @@ int QuicProxyDatagramClientSocket::ConnectViaStream(
 }
 
 int QuicProxyDatagramClientSocket::Connect(const IPEndPoint& address) {
-  NOTREACHED_IN_MIGRATION();
-  return ERR_NOT_IMPLEMENTED;
+  NOTREACHED();
 }
 
 int QuicProxyDatagramClientSocket::ConnectAsync(
     const IPEndPoint& address,
     CompletionOnceCallback callback) {
-  NOTREACHED_IN_MIGRATION();
-  return ERR_NOT_IMPLEMENTED;
+  NOTREACHED();
 }
 
 int QuicProxyDatagramClientSocket::ConnectUsingDefaultNetworkAsync(
     const IPEndPoint& address,
     CompletionOnceCallback callback) {
-  NOTREACHED_IN_MIGRATION();
-  return ERR_NOT_IMPLEMENTED;
+  NOTREACHED();
 }
 
 int QuicProxyDatagramClientSocket::ConnectUsingNetwork(
     handles::NetworkHandle network,
     const IPEndPoint& address) {
-  NOTREACHED_IN_MIGRATION();
-  return ERR_NOT_IMPLEMENTED;
+  NOTREACHED();
 }
 
 int QuicProxyDatagramClientSocket::ConnectUsingDefaultNetwork(
     const IPEndPoint& address) {
-  NOTREACHED_IN_MIGRATION();
-  return ERR_NOT_IMPLEMENTED;
+  NOTREACHED();
 }
 
 int QuicProxyDatagramClientSocket::ConnectUsingNetworkAsync(
     handles::NetworkHandle network,
     const IPEndPoint& address,
     CompletionOnceCallback callback) {
-  NOTREACHED_IN_MIGRATION();
-  return ERR_NOT_IMPLEMENTED;
+  NOTREACHED();
 }
 
 void QuicProxyDatagramClientSocket::Close() {
@@ -176,7 +172,8 @@ void QuicProxyDatagramClientSocket::OnHttp3Datagram(
       CHECK(read_buf_ != nullptr);
       CHECK(read_buf_len_ > 0);
 
-      std::memcpy(read_buf_->data(), http_payload.data(), http_payload.size());
+      UNSAFE_TODO(std::memcpy(read_buf_->data(), http_payload.data(),
+                              http_payload.size()));
       result = bytes_read;
     }
 
@@ -202,7 +199,7 @@ void QuicProxyDatagramClientSocket::OnUnknownCapsule(
     quic::QuicStreamId stream_id,
     const quiche::UnknownCapsule& capsule) {}
 
-// TODO(crbug.com/41497362) Implement method.
+// Proxied connections are not on any specific network.
 handles::NetworkHandle QuicProxyDatagramClientSocket::GetBoundNetwork() const {
   return handles::kInvalidNetworkHandle;
 }
@@ -212,8 +209,7 @@ void QuicProxyDatagramClientSocket::ApplySocketTag(const SocketTag& tag) {}
 
 int QuicProxyDatagramClientSocket::SetMulticastInterface(
     uint32_t interface_index) {
-  NOTREACHED_IN_MIGRATION();
-  return ERR_NOT_IMPLEMENTED;
+  NOTREACHED();
 }
 
 void QuicProxyDatagramClientSocket::SetIOSNetworkServiceType(
@@ -230,17 +226,15 @@ int QuicProxyDatagramClientSocket::GetLocalAddress(IPEndPoint* address) const {
 }
 
 void QuicProxyDatagramClientSocket::UseNonBlockingIO() {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 int QuicProxyDatagramClientSocket::SetDoNotFragment() {
-  NOTREACHED_IN_MIGRATION();
-  return ERR_NOT_IMPLEMENTED;
+  NOTREACHED();
 }
 
 int QuicProxyDatagramClientSocket::SetRecvTos() {
-  NOTREACHED_IN_MIGRATION();
-  return ERR_NOT_IMPLEMENTED;
+  NOTREACHED();
 }
 
 int QuicProxyDatagramClientSocket::SetTos(net::DiffServCodePoint dscp,
@@ -249,7 +243,7 @@ int QuicProxyDatagramClientSocket::SetTos(net::DiffServCodePoint dscp,
 }
 
 void QuicProxyDatagramClientSocket::SetMsgConfirm(bool confirm) {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 const NetLogWithSource& QuicProxyDatagramClientSocket::NetLog() const {
@@ -287,7 +281,7 @@ int QuicProxyDatagramClientSocket::Read(IOBuffer* buf,
     if (datagram.size() > static_cast<std::size_t>(buf_len)) {
       result = ERR_MSG_TOO_BIG;
     } else {
-      std::memcpy(buf->data(), datagram.data(), datagram.size());
+      UNSAFE_TODO(std::memcpy(buf->data(), datagram.data(), datagram.size()));
       result = bytes_read;
     }
     datagrams_.pop();
@@ -362,9 +356,7 @@ int QuicProxyDatagramClientSocket::DoLoop(int last_io_result) {
             NetLogEventType::HTTP_TRANSACTION_TUNNEL_READ_HEADERS, rv);
         break;
       default:
-        NOTREACHED_IN_MIGRATION() << "bad state";
-        rv = ERR_UNEXPECTED;
-        break;
+        NOTREACHED() << "bad state";
     }
   } while (rv != ERR_IO_PENDING && next_state_ != STATE_DISCONNECTED &&
            next_state_ != STATE_CONNECT_COMPLETE);
@@ -381,7 +373,7 @@ int QuicProxyDatagramClientSocket::DoSendRequest() {
   int port = url_.IntPort();
   std::string host_and_port =
       url_.has_port() ? base::StrCat({host, ":", base::NumberToString(port)})
-                      : host;
+                      : std::move(host);
   request_.extra_headers.SetHeader(HttpRequestHeaders::kHost, host_and_port);
 
   HttpRequestHeaders authorization_headers;
@@ -412,7 +404,7 @@ int QuicProxyDatagramClientSocket::DoSendRequest() {
                        NetLogEventType::HTTP_TRANSACTION_SEND_TUNNEL_HEADERS,
                        request_line, &request_.extra_headers);
 
-  spdy::Http2HeaderBlock headers;
+  quiche::HttpHeaderBlock headers;
   CreateSpdyHeadersFromHttpRequestForExtendedConnect(
       request_, /*priority=*/std::nullopt, "connect-udp",
       request_.extra_headers, &headers);
@@ -485,7 +477,7 @@ int QuicProxyDatagramClientSocket::DoReadReplyComplete(int result) {
 }
 
 void QuicProxyDatagramClientSocket::OnReadResponseHeadersComplete(int result) {
-  // Convert the now-populated spdy::Http2HeaderBlock to HttpResponseInfo
+  // Convert the now-populated quiche::HttpHeaderBlock to HttpResponseInfo
   if (result > 0) {
     result = ProcessResponseHeaders(response_header_block_);
   }
@@ -496,7 +488,7 @@ void QuicProxyDatagramClientSocket::OnReadResponseHeadersComplete(int result) {
 }
 
 int QuicProxyDatagramClientSocket::ProcessResponseHeaders(
-    const spdy::Http2HeaderBlock& headers) {
+    const quiche::HttpHeaderBlock& headers) {
   if (SpdyHeadersToHttpResponse(headers, &response_) != OK) {
     DLOG(WARNING) << "Invalid headers";
     return ERR_QUIC_PROTOCOL_ERROR;

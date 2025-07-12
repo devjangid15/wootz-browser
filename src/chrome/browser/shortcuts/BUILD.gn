@@ -4,11 +4,12 @@
 
 import("//chrome/browser/buildflags.gni")
 
-# assert(!is_android)
+assert(!is_android)
 
 source_set("shortcuts") {
   public = [ "shortcut_icon_generator.h" ]
   sources = [ "shortcut_icon_generator.cc" ]
+  public_deps = [ "//chrome/browser:browser_public_dependencies" ]
   deps = [
     "//chrome/app/resources:platform_locale_settings",
     "//components/url_formatter",
@@ -22,10 +23,8 @@ source_set("shortcuts") {
 
     sources += [
       "create_shortcut_for_current_web_contents_task.cc",
-      "document_icon_fetcher.cc",
-      "document_icon_fetcher.h",
-      "fetch_icons_from_document_task.cc",
-      "fetch_icons_from_document_task.h",
+      "document_icon_fetcher_task.cc",
+      "document_icon_fetcher_task.h",
       "icon_badging.cc",
       "icon_badging.h",
       "shortcut_creator.cc",
@@ -34,7 +33,6 @@ source_set("shortcuts") {
 
     deps += [
       "//base",
-      "//base/version_info:channel",
       "//build:branding_buildflags",
       "//chrome/app/theme:chrome_unscaled_resources_grit",
       "//chrome/browser/profiles:profile",
@@ -126,36 +124,36 @@ source_set("test_support") {
 }
 
 if (!is_chromeos) {
-  # source_set("browser_tests") {
-  #   testonly = true
+  source_set("browser_tests") {
+    testonly = true
 
-  #   sources = [
-  #     "document_icon_fetcher_browsertest.cc",
-  #     "shortcut_creation_browsertest.cc",
-  #     "shortcut_launch_browsertest.cc",
-  #   ]
+    sources = [
+      "document_icon_fetcher_browsertest.cc",
+      "shortcut_creation_browsertest.cc",
+      "shortcut_launch_browsertest.cc",
+    ]
 
-  #   defines = [ "HAS_OUT_OF_PROC_TEST_RUNNER" ]
+    defines = [ "HAS_OUT_OF_PROC_TEST_RUNNER" ]
 
-  #   deps = [
-  #     ":shortcuts",
-  #     ":test_support",
-  #     "//base",
-  #     "//chrome/app:command_ids",
-  #     "//chrome/browser",
-  #     "//chrome/browser:browser_process",
-  #     "//chrome/browser/profiles",
-  #     "//chrome/browser/ui",
-  #     "//chrome/common:non_code_constants",
-  #     "//chrome/test:test_support",
-  #     "//chrome/test:test_support_ui",
-  #     "//content/public/browser",
-  #     "//skia",
-  #     "//testing/gtest",
-  #     "//ui/gfx:test_support",
-  #     "//url",
-  #   ]
-  # }
+    deps = [
+      ":shortcuts",
+      ":test_support",
+      "//base",
+      "//chrome/app:command_ids",
+      "//chrome/browser",
+      "//chrome/browser:browser_process",
+      "//chrome/browser/profiles",
+      "//chrome/browser/ui",
+      "//chrome/common:non_code_constants",
+      "//chrome/test:test_support",
+      "//chrome/test:test_support_ui",
+      "//content/public/browser",
+      "//skia",
+      "//testing/gtest",
+      "//ui/gfx:test_support",
+      "//url",
+    ]
+  }
 }
 
 source_set("unit_tests") {

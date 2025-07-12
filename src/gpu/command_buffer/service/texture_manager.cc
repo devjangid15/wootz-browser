@@ -2,12 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "gpu/command_buffer/service/texture_manager.h"
 
 #include <stddef.h>
 #include <stdint.h>
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cstdint>
 #include <set>
@@ -15,6 +21,7 @@
 #include <utility>
 
 #include "base/containers/contains.h"
+#include "base/containers/heap_array.h"
 #include "base/format_macros.h"
 #include "base/lazy_instance.h"
 #include "base/memory/raw_ptr.h"
@@ -126,7 +133,7 @@ struct TextureSignature {
 class FormatTypeValidator {
  public:
   FormatTypeValidator() {
-    static const FormatType kSupportedFormatTypes[] = {
+    static const auto kSupportedFormatTypes = std::to_array<FormatType>({
         // ES2.
         {GL_RGB, GL_RGB, GL_UNSIGNED_BYTE},
         {GL_RGB, GL_RGB, GL_UNSIGNED_SHORT_5_6_5},
@@ -225,9 +232,9 @@ class FormatTypeValidator {
         {GL_RG16_SNORM_EXT, GL_RG, GL_SHORT},
         {GL_RGB16_SNORM_EXT, GL_RGB, GL_SHORT},
         {GL_RGBA16_SNORM_EXT, GL_RGBA, GL_SHORT},
-    };
+    });
 
-    static const FormatType kSupportedFormatTypesES2Only[] = {
+    static const auto kSupportedFormatTypesES2Only = std::to_array<FormatType>({
         // Exposed by GL_OES_texture_float and GL_OES_texture_half_float
         {GL_RGB, GL_RGB, GL_FLOAT},
         {GL_RGBA, GL_RGBA, GL_FLOAT},
@@ -247,7 +254,7 @@ class FormatTypeValidator {
 
         // Exposed by GL_EXT_sRGB
         {GL_SRGB, GL_SRGB, GL_UNSIGNED_BYTE},
-        {GL_SRGB_ALPHA, GL_SRGB_ALPHA, GL_UNSIGNED_BYTE},
+        {GL_SRGB_ALPHA_EXT, GL_SRGB_ALPHA_EXT, GL_UNSIGNED_BYTE},
 
         // Exposed by GL_EXT_texture_rg
         {GL_RED, GL_RED, GL_UNSIGNED_BYTE},
@@ -256,7 +263,7 @@ class FormatTypeValidator {
         {GL_RG, GL_RG, GL_FLOAT},
         {GL_RED, GL_RED, GL_HALF_FLOAT_OES},
         {GL_RG, GL_RG, GL_HALF_FLOAT_OES},
-    };
+    });
 
     for (size_t ii = 0; ii < std::size(kSupportedFormatTypes); ++ii) {
       supported_combinations_.insert(kSupportedFormatTypes[ii]);
@@ -305,11 +312,12 @@ class FormatTypeValidator {
   std::set<FormatType, FormatTypeCompare> supported_combinations_es2_only_;
 };
 
-static const Texture::CompatibilitySwizzle kSwizzledFormats[] = {
-    {GL_ALPHA, GL_RED, GL_ZERO, GL_ZERO, GL_ZERO, GL_RED},
-    {GL_LUMINANCE, GL_RED, GL_RED, GL_RED, GL_RED, GL_ONE},
-    {GL_LUMINANCE_ALPHA, GL_RG, GL_RED, GL_RED, GL_RED, GL_GREEN},
-};
+static const auto kSwizzledFormats =
+    std::to_array<Texture::CompatibilitySwizzle>({
+        {GL_ALPHA, GL_RED, GL_ZERO, GL_ZERO, GL_ZERO, GL_RED},
+        {GL_LUMINANCE, GL_RED, GL_RED, GL_RED, GL_RED, GL_ONE},
+        {GL_LUMINANCE_ALPHA, GL_RG, GL_RED, GL_RED, GL_RED, GL_GREEN},
+    });
 
 const Texture::CompatibilitySwizzle* GetCompatibilitySwizzleInternal(
     GLenum format) {
@@ -340,8 +348,7 @@ GLenum GetSwizzleForChannel(GLenum channel,
     case GL_ALPHA:
       return swizzle->alpha;
     default:
-      NOTREACHED_IN_MIGRATION();
-      return GL_NONE;
+      NOTREACHED();
   }
 }
 
@@ -724,10 +731,11 @@ bool Texture::CanRenderWithSampler(const FeatureInfo* feature_info,
         sampler_state.wrap_t == GL_CLAMP_TO_EDGE;
 
     if (!is_npot_compatible) {
-      if (target_ == GL_TEXTURE_RECTANGLE_ARB)
+      if (target_ == GL_TEXTURE_RECTANGLE_ANGLE) {
         return false;
-      else if (npot())
+      } else if (npot()) {
         return feature_info->feature_flags().npot_ok;
+      }
     }
   }
 
@@ -792,7 +800,8 @@ void Texture::SetTarget(GLenum target, GLint max_levels) {
     face_infos_[ii].level_infos.resize(max_levels);
   }
 
-  if (target == GL_TEXTURE_EXTERNAL_OES || target == GL_TEXTURE_RECTANGLE_ARB) {
+  if (target == GL_TEXTURE_EXTERNAL_OES ||
+      target == GL_TEXTURE_RECTANGLE_ANGLE) {
     sampler_state_.min_filter = GL_LINEAR;
     sampler_state_.wrap_s = sampler_state_.wrap_t = GL_CLAMP_TO_EDGE;
   }
@@ -806,9 +815,8 @@ void Texture::SetTarget(GLenum target, GLint max_levels) {
 
 bool Texture::CanGenerateMipmaps(const FeatureInfo* feature_info) const {
   if ((npot() && !feature_info->feature_flags().npot_ok) ||
-      face_infos_.empty() ||
-      target_ == GL_TEXTURE_EXTERNAL_OES ||
-      target_ == GL_TEXTURE_RECTANGLE_ARB) {
+      face_infos_.empty() || target_ == GL_TEXTURE_EXTERNAL_OES ||
+      target_ == GL_TEXTURE_RECTANGLE_ANGLE) {
     return false;
   }
 
@@ -1112,15 +1120,6 @@ void Texture::UpdateNumMipLevels() {
   UpdateCanRenderCondition();
 }
 
-void Texture::ApplyClampedBaseLevelAndMaxLevelToDriver() {
-  if (base_level_ != unclamped_base_level_) {
-    glTexParameteri(target_, GL_TEXTURE_BASE_LEVEL, base_level_);
-  }
-  if (max_level_ != unclamped_max_level_) {
-    glTexParameteri(target_, GL_TEXTURE_MAX_LEVEL, max_level_);
-  }
-}
-
 void Texture::SetLevelInfo(GLenum target,
                            GLint level,
                            GLenum internal_format,
@@ -1309,7 +1308,7 @@ GLenum Texture::SetParameteri(
   DCHECK(feature_info);
 
   if (target_ == GL_TEXTURE_EXTERNAL_OES ||
-      target_ == GL_TEXTURE_RECTANGLE_ARB) {
+      target_ == GL_TEXTURE_RECTANGLE_ANGLE) {
     if (pname == GL_TEXTURE_MIN_FILTER &&
         (param != GL_NEAREST && param != GL_LINEAR))
       return GL_INVALID_ENUM;
@@ -1419,8 +1418,7 @@ GLenum Texture::SetParameteri(
     case GL_REQUIRED_TEXTURE_IMAGE_UNITS_OES:
       return GL_INVALID_ENUM;
     default:
-      NOTREACHED_IN_MIGRATION();
-      return GL_INVALID_ENUM;
+      NOTREACHED();
   }
   Update();
   UpdateCleared();
@@ -1668,10 +1666,18 @@ bool Texture::ClearLevel(DecoderContext* decoder, GLenum target, GLint level) {
         return false;
     } else {
       // Clear all remaining sub regions.
-      const int x[] = {
-        0, info.cleared_rect.x(), info.cleared_rect.right(), info.width};
-      const int y[] = {
-        0, info.cleared_rect.y(), info.cleared_rect.bottom(), info.height};
+      const auto x = std::to_array<int>({
+          0,
+          info.cleared_rect.x(),
+          info.cleared_rect.right(),
+          info.width,
+      });
+      const auto y = std::to_array<int>({
+          0,
+          info.cleared_rect.y(),
+          info.cleared_rect.bottom(),
+          info.height,
+      });
 
       for (size_t j = 0; j < 3; ++j) {
         for (size_t i = 0; i < 3; ++i) {
@@ -1713,7 +1719,7 @@ void Texture::BindToServiceId(GLuint service_id) {
 const Texture::LevelInfo* Texture::GetLevelInfo(GLint target,
                                                 GLint level) const {
   if (target != GL_TEXTURE_2D && target != GL_TEXTURE_EXTERNAL_OES &&
-      target != GL_TEXTURE_RECTANGLE_ARB) {
+      target != GL_TEXTURE_RECTANGLE_ANGLE) {
     return nullptr;
   }
 
@@ -1869,7 +1875,7 @@ void TextureRef::SetSharedImageRepresentation(
   shared_image_ = std::move(shared_image);
 }
 
-TextureManager::TextureManager(MemoryTracker* memory_tracker,
+TextureManager::TextureManager(scoped_refptr<MemoryTracker> memory_tracker,
                                FeatureInfo* feature_info,
                                GLint max_texture_size,
                                GLint max_cube_map_texture_size,
@@ -1879,8 +1885,7 @@ TextureManager::TextureManager(MemoryTracker* memory_tracker,
                                bool use_default_textures,
                                gl::ProgressReporter* progress_reporter,
                                ServiceDiscardableManager* discardable_manager)
-    : memory_type_tracker_(new MemoryTypeTracker(memory_tracker)),
-      memory_tracker_(memory_tracker),
+    : memory_type_tracker_(new MemoryTypeTracker(std::move(memory_tracker))),
       feature_info_(feature_info),
       max_texture_size_(max_texture_size),
       max_cube_map_texture_size_(max_cube_map_texture_size),
@@ -1926,12 +1931,12 @@ void TextureManager::RemoveFramebufferManager(
       return;
     }
   }
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void TextureManager::Initialize() {
   // Reset PIXEL_UNPACK_BUFFER to avoid unrelated GL error on some GL drivers.
-  if (feature_info_->gl_version_info().is_es3_capable) {
+  if (feature_info_->gl_version_info().IsAtLeastGLES(3, 0)) {
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
   }
 
@@ -1960,12 +1965,12 @@ void TextureManager::Initialize() {
 
   if (feature_info_->feature_flags().arb_texture_rectangle) {
     default_textures_[kRectangleARB] = CreateDefaultAndBlackTextures(
-        GL_TEXTURE_RECTANGLE_ARB, &black_texture_ids_[kRectangleARB]);
+        GL_TEXTURE_RECTANGLE_ANGLE, &black_texture_ids_[kRectangleARB]);
   }
 
   // When created from InProcessCommandBuffer, we won't have a |memory_tracker_|
   // so don't register a dump provider.
-  if (memory_tracker_) {
+  if (memory_type_tracker_->memory_tracker()) {
     base::trace_event::MemoryDumpManager::GetInstance()->RegisterDumpProvider(
         this, "gpu::TextureManager",
         base::SingleThreadTaskRunner::GetCurrentDefault());
@@ -2336,7 +2341,7 @@ GLsizei TextureManager::ComputeMipMapCount(GLenum target,
                                            GLsizei depth) {
   switch (target) {
     case GL_TEXTURE_EXTERNAL_OES:
-    case GL_TEXTURE_RECTANGLE_ARB:
+    case GL_TEXTURE_RECTANGLE_ANGLE:
       return 1;
     case GL_TEXTURE_3D:
       return std::bit_width<uint32_t>(std::max({width, height, depth}));
@@ -2442,7 +2447,7 @@ TextureRef* TextureManager::GetTextureInfoForTarget(
     case GL_TEXTURE_EXTERNAL_OES:
       texture = unit.bound_texture_external_oes.get();
       break;
-    case GL_TEXTURE_RECTANGLE_ARB:
+    case GL_TEXTURE_RECTANGLE_ANGLE:
       texture = unit.bound_texture_rectangle_arb.get();
       break;
     case GL_TEXTURE_3D:
@@ -2452,8 +2457,7 @@ TextureRef* TextureManager::GetTextureInfoForTarget(
       texture = unit.bound_texture_2d_array.get();
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
-      return nullptr;
+      NOTREACHED();
   }
   return texture;
 }
@@ -2485,7 +2489,7 @@ bool TextureManager::ValidateTexImage(ContextState* state,
   // TODO(ccameron): Add a separate texture from |texture_target| for
   // [Compressed]Tex[Sub]Image2D and related functions.
   // http://crbug.com/536854
-  if (args.target == GL_TEXTURE_RECTANGLE_ARB) {
+  if (args.target == GL_TEXTURE_RECTANGLE_ANGLE) {
     ERRORSTATE_SET_GL_ERROR_INVALID_ENUM(
         error_state, function_name, args.target, "target");
     return false;
@@ -2615,13 +2619,12 @@ void TextureManager::DoCubeMapWorkaround(
     }
   }
   DoTexImageArguments new_args = args;
-  std::unique_ptr<char[]> zero(new char[args.pixels_size]);
-  memset(zero.get(), 0, args.pixels_size);
+  auto zero = base::HeapArray<char>::WithSize(args.pixels_size);
   // Need to clear PIXEL_UNPACK_BUFFER and UNPACK params for data uploading.
   state->PushTextureUnpackState();
   for (GLenum face : undefined_faces) {
     new_args.target = face;
-    new_args.pixels = zero.get();
+    new_args.pixels = zero.data();
     DoTexImage(texture_state, state, error_state, framebuffer_state,
                function_name, texture_ref, new_args);
     texture->MarkLevelAsInternalWorkaround(face, args.level);
@@ -3249,7 +3252,7 @@ GLenum TextureManager::AdjustTexInternalFormat(
             return GL_RG8;
         }
       } else {
-        NOTREACHED_IN_MIGRATION();
+        NOTREACHED();
       }
     }
   }
@@ -3259,14 +3262,6 @@ GLenum TextureManager::AdjustTexInternalFormat(
 // static
 GLenum TextureManager::AdjustTexFormat(const gles2::FeatureInfo* feature_info,
                                        GLenum format) {
-  // TODO(bajones): GLES 3 allows for internal format and format to differ.
-  // This logic may need to change as a result.
-  if (!feature_info->gl_version_info().is_es) {
-    if (format == GL_SRGB_EXT)
-      return GL_RGB;
-    if (format == GL_SRGB_ALPHA_EXT)
-      return GL_RGBA;
-  }
   if (feature_info->gl_version_info().NeedsLuminanceAlphaEmulation()) {
     const Texture::CompatibilitySwizzle* swizzle =
         GetCompatibilitySwizzleInternal(format);
@@ -3402,9 +3397,11 @@ bool TextureManager::CombineAdjacentRects(const gfx::Rect& rect1,
 bool TextureManager::OnMemoryDump(const base::trace_event::MemoryDumpArgs& args,
                                   base::trace_event::ProcessMemoryDump* pmd) {
   if (args.level_of_detail == MemoryDumpLevelOfDetail::kBackground) {
-    std::string dump_name =
-        base::StringPrintf("gpu/gl/textures/context_group_0x%" PRIX64,
-                           memory_tracker_->ContextGroupTracingId());
+    const MemoryTracker* memory_tracker =
+        memory_type_tracker_->memory_tracker();
+    std::string dump_name = base::StringPrintf(
+        "gpu/gl/textures/context_group_0x%" PRIX64,
+        memory_tracker ? memory_tracker->ContextGroupTracingId() : 0);
     MemoryAllocatorDump* dump = pmd->CreateAllocatorDump(dump_name);
     dump->AddScalar(MemoryAllocatorDump::kNameSize,
                     MemoryAllocatorDump::kUnitsBytes, mem_represented());
@@ -3442,9 +3439,11 @@ void TextureManager::DumpTextureRef(base::trace_event::ProcessMemoryDump* pmd,
   if (size == 0)
     return;
 
+  const MemoryTracker* memory_tracker = memory_type_tracker_->memory_tracker();
   std::string dump_name = base::StringPrintf(
       "gpu/gl/textures/context_group_0x%" PRIX64 "/texture_0x%" PRIX32,
-      memory_tracker_->ContextGroupTracingId(), ref->client_id());
+      (memory_tracker ? memory_tracker->ContextGroupTracingId() : 0),
+      ref->client_id());
 
   MemoryAllocatorDump* dump = pmd->CreateAllocatorDump(dump_name);
   dump->AddScalar(MemoryAllocatorDump::kNameSize,
@@ -3454,14 +3453,15 @@ void TextureManager::DumpTextureRef(base::trace_event::ProcessMemoryDump* pmd,
   // Add the |client_guid| which expresses shared ownership with the client
   // process.
   auto client_guid = gl::GetGLTextureClientGUIDForTracing(
-      memory_tracker_->ContextGroupTracingId(), ref->client_id());
+      (memory_tracker ? memory_tracker->ContextGroupTracingId() : 0),
+      ref->client_id());
   pmd->CreateSharedGlobalAllocatorDump(client_guid);
   pmd->AddOwnershipEdge(dump->guid(), client_guid);
 
   // Dump all sub-levels held by the texture. They will appear below the main
   // gl/textures/client_X/texture_Y dump.
-  ref->texture()->DumpLevelMemory(pmd, memory_tracker_->ClientTracingId(),
-                                  dump_name);
+  ref->texture()->DumpLevelMemory(
+      pmd, (memory_tracker ? memory_tracker->ClientTracingId() : 0), dump_name);
 }
 
 GLenum TextureManager::ExtractFormatFromStorageFormat(GLenum internalformat) {
@@ -3492,8 +3492,8 @@ GLenum TextureManager::ExtractFormatFromStorageFormat(GLenum internalformat) {
     case GL_RG:
     case GL_RG8:
     case GL_RG8_SNORM:
-    case GL_RG16:
-    case GL_RG16_SNORM:
+    case GL_RG16_EXT:
+    case GL_RG16_SNORM_EXT:
     case GL_RG16F:
     case GL_RG32F:
       return GL_RG;
@@ -3518,11 +3518,11 @@ GLenum TextureManager::ExtractFormatFromStorageFormat(GLenum internalformat) {
     case GL_RGB8:
     case GL_RGBX8_ANGLE:
     case GL_SRGB8:
-    case GL_RGB16:
+    case GL_RGB16_EXT:
     case GL_R11F_G11F_B10F:
     case GL_RGB565:
     case GL_RGB8_SNORM:
-    case GL_RGB16_SNORM:
+    case GL_RGB16_SNORM_EXT:
     case GL_RGB9_E5:
     case GL_RGB16F:
     case GL_RGB32F:
@@ -3582,18 +3582,18 @@ GLenum TextureManager::ExtractFormatFromStorageFormat(GLenum internalformat) {
     case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_12x12_KHR:
     case GL_RGBA:
     case GL_RGBA8:
-    case GL_RGBA16:
+    case GL_RGBA16_EXT:
     case GL_SRGB8_ALPHA8:
     case GL_RGBA8_SNORM:
-    case GL_RGBA16_SNORM:
+    case GL_RGBA16_SNORM_EXT:
     case GL_RGBA4:
     case GL_RGB5_A1:
     case GL_RGB10_A2:
     case GL_RGBA16F:
     case GL_RGBA32F:
       return GL_RGBA;
-    case GL_SRGB_ALPHA:
-      return GL_SRGB_ALPHA;
+    case GL_SRGB_ALPHA_EXT:
+      return GL_SRGB_ALPHA_EXT;
     case GL_RGBA8UI:
     case GL_RGBA8I:
     case GL_RGB10_A2UI:
@@ -3646,7 +3646,7 @@ GLenum TextureManager::ExtractTypeFromStorageFormat(GLenum internalformat) {
     case GL_SRGB:
     case GL_RGBA:
     case GL_BGRA_EXT:
-    case GL_SRGB_ALPHA:
+    case GL_SRGB_ALPHA_EXT:
     case GL_LUMINANCE_ALPHA:
     case GL_LUMINANCE:
     case GL_ALPHA:
@@ -3913,7 +3913,7 @@ bool Texture::CompatibleWithSamplerUniformType(
 
   switch (type) {
     case GL_SAMPLER_2D:
-    case GL_SAMPLER_2D_RECT_ARB:
+    case GL_SAMPLER_2D_RECT_ANGLE:
     case GL_SAMPLER_CUBE:
     case GL_SAMPLER_EXTERNAL_OES:
     case GL_SAMPLER_3D:
@@ -3935,11 +3935,10 @@ bool Texture::CompatibleWithSamplerUniformType(
     case GL_SAMPLER_2D_SHADOW:
     case GL_SAMPLER_2D_ARRAY_SHADOW:
     case GL_SAMPLER_CUBE_SHADOW:
-    case GL_SAMPLER_2D_RECT_SHADOW_ARB:
       category = SAMPLER_SHADOW;
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
 
   const LevelInfo* level_info = GetBaseLevelInfo();
@@ -3998,13 +3997,12 @@ bool Texture::CompatibleWithSamplerUniformType(
       // Unsigned integer formats.
       return category == SAMPLER_UNSIGNED;
     default:
-      NOTREACHED_IN_MIGRATION()
-          << "Type: " << GLES2Util::GetStringEnum(level_info->type)
-          << " Format: " << GLES2Util::GetStringEnum(level_info->format)
-          << "  Internal format: "
-          << GLES2Util::GetStringEnum(level_info->internal_format);
+      NOTREACHED() << "Type: " << GLES2Util::GetStringEnum(level_info->type)
+                   << " Format: "
+                   << GLES2Util::GetStringEnum(level_info->format)
+                   << "  Internal format: "
+                   << GLES2Util::GetStringEnum(level_info->internal_format);
   }
-  return false;
 }
 
 }  // namespace gles2

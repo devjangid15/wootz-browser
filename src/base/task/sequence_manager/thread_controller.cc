@@ -18,11 +18,9 @@
 #include "base/strings/string_util.h"
 #include "base/time/tick_clock.h"
 #include "base/time/time.h"
-#include "base/trace_event/base_tracing.h"
+#include "base/trace_event/trace_event.h"
 
-namespace base {
-namespace sequence_manager {
-namespace internal {
+namespace base::sequence_manager::internal {
 
 namespace {
 // Enable sample metadata recording in this class, if it's currently disabled.
@@ -120,8 +118,9 @@ void ThreadController::EnableMessagePumpTimeKeeperMetrics(
     const char* thread_name,
     bool wall_time_based_metrics_enabled_for_testing) {
   // MessagePump runs too fast, a low-res clock would result in noisy metrics.
-  if (!base::TimeTicks::IsHighResolution())
+  if (!base::TimeTicks::IsHighResolution()) {
     return;
+  }
 
   run_level_tracker_.EnableTimeKeeperMetrics(
       thread_name, wall_time_based_metrics_enabled_for_testing);
@@ -147,21 +146,8 @@ void ThreadController::RunLevelTracker::TimeKeeper::EnableRecording(
       Phase::kLastPhase, Phase::kLastPhase + 1,
       base::HistogramBase::kUmaTargetedHistogramFlag);
 
-#if BUILDFLAG(ENABLE_BASE_TRACING)
-  perfetto_track_.emplace(
-      reinterpret_cast<uint64_t>(this),
-      // TODO(crbug.com/42050015): Replace with ThreadTrack::Current() after SDK
-      // migration.
-      // In the non-SDK version, ThreadTrack::Current() returns a different
-      // track id on some platforms (for example Mac OS), which results in
-      // async tracks not being associated with their thread.
-      perfetto::ThreadTrack::ForThread(base::PlatformThread::CurrentId()));
-  // TODO(crbug.com/42050015): Use Perfetto library to name this Track.
-  // auto desc = perfetto_track_->Serialize();
-  // desc.set_name(JoinString({"MessagePumpPhases", thread_name}, " "));
-  // perfetto::internal::TrackEventDataSource::SetTrackDescriptor(
-  //     *perfetto_track_, desc);
-#endif  // BUILDFLAG(ENABLE_BASE_TRACING)
+  perfetto_track_.emplace("MessagePumpPhases", 0,
+                          perfetto::ThreadTrack::Current());
 }
 
 void ThreadController::RunLevelTracker::OnRunLoopStarted(State initial_state,
@@ -172,8 +158,9 @@ void ThreadController::RunLevelTracker::OnRunLoopStarted(State initial_state,
   run_levels_.emplace(initial_state, is_nested, time_keeper_, lazy_now);
 
   // In unit tests, RunLoop::Run() acts as the initial wake-up.
-  if (!is_nested && initial_state != kIdle)
+  if (!is_nested && initial_state != kIdle) {
     time_keeper_.RecordWakeUp(lazy_now);
+  }
 }
 
 void ThreadController::RunLevelTracker::OnRunLoopEnded() {
@@ -199,8 +186,9 @@ void ThreadController::RunLevelTracker::OnWorkStarted(LazyNow& lazy_now) {
   // (like we would inside an application task which is at least guaranteed to
   // itself notify us when it ends). Some ThreadControllerWithMessagePumpTest
   // also drive ThreadController outside a RunLoop and hit this.
-  if (run_levels_.empty())
+  if (run_levels_.empty()) {
     return;
+  }
 
   // Already running a work item? => #work-in-work-implies-nested
   if (run_levels_.top().state() == kRunningWorkItem) {
@@ -225,8 +213,9 @@ void ThreadController::RunLevelTracker::OnApplicationTaskSelected(
   // As-in OnWorkStarted. Early native loops can result in
   // ThreadController::DoWork because the lack of a top-level RunLoop means
   // `task_execution_allowed` wasn't consumed.
-  if (run_levels_.empty())
+  if (run_levels_.empty()) {
     return;
+  }
 
   // OnWorkStarted() is expected to precede OnApplicationTaskSelected().
   DCHECK_EQ(run_levels_.top().state(), kRunningWorkItem);
@@ -237,8 +226,9 @@ void ThreadController::RunLevelTracker::OnApplicationTaskSelected(
 void ThreadController::RunLevelTracker::OnWorkEnded(LazyNow& lazy_now,
                                                     int run_level_depth) {
   DCHECK_CALLED_ON_VALID_THREAD(outer_->associated_thread_->thread_checker);
-  if (run_levels_.empty())
+  if (run_levels_.empty()) {
     return;
+  }
 
   // #done-work-at-lower-runlevel-implies-done-nested
   if (run_level_depth != static_cast<int>(num_run_levels())) {
@@ -257,8 +247,9 @@ void ThreadController::RunLevelTracker::OnWorkEnded(LazyNow& lazy_now,
 
 void ThreadController::RunLevelTracker::OnIdle(LazyNow& lazy_now) {
   DCHECK_CALLED_ON_VALID_THREAD(outer_->associated_thread_->thread_checker);
-  if (run_levels_.empty())
+  if (run_levels_.empty()) {
     return;
+  }
 
   DCHECK_NE(run_levels_.top().state(), kRunningWorkItem);
   time_keeper_.RecordEndOfPhase(kIdleWork, lazy_now);
@@ -478,8 +469,9 @@ void ThreadController::RunLevelTracker::RunLevel::UpdateState(
   const bool is_active = new_state != kIdle;
 
   state_ = new_state;
-  if (was_active == is_active)
+  if (was_active == is_active) {
     return;
+  }
 
   // Change of state.
   if (is_active) {
@@ -506,15 +498,14 @@ void ThreadController::RunLevelTracker::RunLevel::UpdateState(
     LogOnIdleMetrics(lazy_now);
 
     TRACE_EVENT_END("base", lazy_now.Now());
-    // TODO(crbug.com/40657156): Remove this once fixed.
-    PERFETTO_INTERNAL_ADD_EMPTY_EVENT();
   }
 
   if (trace_observer_for_testing_) {
-    if (is_active)
+    if (is_active) {
       trace_observer_for_testing_->OnThreadControllerActiveBegin();
-    else
+    } else {
       trace_observer_for_testing_->OnThreadControllerActiveEnd();
+    }
   }
 }
 
@@ -524,8 +515,9 @@ ThreadController::RunLevelTracker::TimeKeeper::TimeKeeper(
 
 void ThreadController::RunLevelTracker::TimeKeeper::RecordWakeUp(
     LazyNow& lazy_now) {
-  if (!ShouldRecordNow(ShouldRecordReqs::kOnWakeUp))
+  if (!ShouldRecordNow(ShouldRecordReqs::kOnWakeUp)) {
     return;
+  }
 
   // Phase::kScheduled will be accounted against `last_wakeup_` in
   // OnTaskSelected, if there's an application task in this work cycle.
@@ -533,7 +525,6 @@ void ThreadController::RunLevelTracker::TimeKeeper::RecordWakeUp(
   // Account the next phase starting from now.
   last_phase_end_ = last_wakeup_;
 
-#if BUILDFLAG(ENABLE_BASE_TRACING)
   // Emit the END of the kScheduled phase right away, this avoids incorrect
   // ordering when kScheduled is later emitted and its END matches the BEGIN of
   // an already emitted phase (tracing's sort is stable and would keep the late
@@ -543,14 +534,14 @@ void ThreadController::RunLevelTracker::TimeKeeper::RecordWakeUp(
   // a kScheduled phase, this unmatched END will be ignored.
   TRACE_EVENT_END(TRACE_DISABLED_BY_DEFAULT("base"), *perfetto_track_,
                   last_wakeup_);
-#endif  // BUILDFLAG(ENABLE_BASE_TRACING)
 }
 
 void ThreadController::RunLevelTracker::TimeKeeper::OnApplicationTaskSelected(
     TimeTicks queue_time,
     LazyNow& lazy_now) {
-  if (!ShouldRecordNow())
+  if (!ShouldRecordNow()) {
     return;
+  }
 
   if (!last_wakeup_.is_null()) {
     // `queue_time` can be null on threads that did not
@@ -565,12 +556,10 @@ void ThreadController::RunLevelTracker::TimeKeeper::OnApplicationTaskSelected(
         queue_time = last_sleep_;
       }
       RecordTimeInPhase(kScheduled, queue_time, last_wakeup_);
-#if BUILDFLAG(ENABLE_BASE_TRACING)
       // Match the END event which was already emitted by RecordWakeUp().
       TRACE_EVENT_BEGIN(TRACE_DISABLED_BY_DEFAULT("base"),
                         perfetto::StaticString(PhaseToEventName(kScheduled)),
                         *perfetto_track_, queue_time);
-#endif  // BUILDFLAG(ENABLE_BASE_TRACING)
     }
     last_wakeup_ = TimeTicks();
   }
@@ -602,46 +591,26 @@ void ThreadController::RunLevelTracker::TimeKeeper::RecordEndOfPhase(
   const TimeTicks phase_end = lazy_now.Now();
   RecordTimeInPhase(phase, last_phase_end_, phase_end);
 
-#if BUILDFLAG(ENABLE_BASE_TRACING)
-  // Ugly hack to name our `perfetto_track_`.
-  bool is_tracing_enabled = false;
-  TRACE_EVENT_CATEGORY_GROUP_ENABLED(TRACE_DISABLED_BY_DEFAULT("base"),
-                                     &is_tracing_enabled);
-  if (is_tracing_enabled) {
-    if (!was_tracing_enabled_) {
-      // The first event name on the track hackily names the track...
-      // TODO(crbug.com/42050015): Use the Perfetto library to properly name
-      // this Track in EnableRecording above.
-      TRACE_EVENT_INSTANT(TRACE_DISABLED_BY_DEFAULT("base"),
-                          "MessagePumpPhases", *perfetto_track_,
-                          last_phase_end_ - Seconds(1));
-    }
-
-    const char* event_name = PhaseToEventName(phase);
-    TRACE_EVENT_BEGIN(TRACE_DISABLED_BY_DEFAULT("base"),
-                      perfetto::StaticString(event_name), *perfetto_track_,
-                      last_phase_end_);
-    TRACE_EVENT_END(TRACE_DISABLED_BY_DEFAULT("base"), *perfetto_track_,
-                    phase_end);
-  }
-  was_tracing_enabled_ = is_tracing_enabled;
-#endif  // BUILDFLAG(ENABLE_BASE_TRACING)
+  const char* event_name = PhaseToEventName(phase);
+  TRACE_EVENT_BEGIN(TRACE_DISABLED_BY_DEFAULT("base"),
+                    perfetto::StaticString(event_name), *perfetto_track_,
+                    last_phase_end_);
+  TRACE_EVENT_END(TRACE_DISABLED_BY_DEFAULT("base"), *perfetto_track_,
+                  phase_end);
 
   last_phase_end_ = phase_end;
 }
 
 void ThreadController::RunLevelTracker::TimeKeeper::MaybeEmitIncomingWakeupFlow(
     perfetto::EventContext& ctx) {
-#if BUILDFLAG(ENABLE_BASE_TRACING)
   static const uint8_t* flow_enabled =
       TRACE_EVENT_API_GET_CATEGORY_GROUP_ENABLED("wakeup.flow");
   if (!*flow_enabled) {
     return;
   }
 
-  perfetto::Flow::ProcessScoped(reinterpret_cast<uint64_t>(&(outer_.get())))(
-      ctx);
-#endif
+  perfetto::TerminatingFlow::ProcessScoped(
+      reinterpret_cast<uint64_t>(&(outer_.get())))(ctx);
 }
 
 bool ThreadController::RunLevelTracker::TimeKeeper::ShouldRecordNow(
@@ -683,8 +652,9 @@ void ThreadController::RunLevelTracker::TimeKeeper::RecordTimeInPhase(
 
   const auto delta = phase_end - phase_begin;
   DCHECK(!delta.is_negative()) << delta;
-  if (delta >= kSkippedDelta)
+  if (delta >= kSkippedDelta) {
     return;
+  }
 
   deltas_[phase] += delta;
   if (deltas_[phase] >= kReportInterval) {
@@ -693,11 +663,13 @@ void ThreadController::RunLevelTracker::TimeKeeper::RecordTimeInPhase(
     deltas_[phase] -= Milliseconds(count);
   }
 
-  if (phase == kIdleWork)
+  if (phase == kIdleWork) {
     last_sleep_ = phase_end;
+  }
 
-  if (outer_->trace_observer_for_testing_)
+  if (outer_->trace_observer_for_testing_) {
     outer_->trace_observer_for_testing_->OnPhaseRecorded(phase);
+  }
 }
 
 // static
@@ -721,11 +693,8 @@ const char* ThreadController::RunLevelTracker::TimeKeeper::PhaseToEventName(
     case kWorkItemSuspendedOnNested:
       // kWorkItemSuspendedOnNested should be transformed into kNativeWork or
       // kApplicationTask before this point.
-      NOTREACHED_IN_MIGRATION();
-      return "";
+      NOTREACHED();
   }
 }
 
-}  // namespace internal
-}  // namespace sequence_manager
-}  // namespace base
+}  // namespace base::sequence_manager::internal

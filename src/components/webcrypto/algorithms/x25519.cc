@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "components/webcrypto/algorithms/x25519.h"
 
 #include <string_view>
@@ -12,6 +17,7 @@
 #include "components/webcrypto/generate_key_result.h"
 #include "components/webcrypto/jwk.h"
 #include "components/webcrypto/status.h"
+#include "crypto/evp.h"
 #include "crypto/openssl_util.h"
 #include "third_party/blink/public/platform/web_crypto_algorithm_params.h"
 #include "third_party/blink/public/platform/web_crypto_key_algorithm.h"
@@ -123,9 +129,9 @@ Status X25519Implementation::GenerateKey(
   }
 
   blink::WebCryptoKey private_key;
-  status = CreateWebCryptoX25519PrivateKey(base::make_span(privkey),
-                                           key_algorithm, extractable,
-                                           private_usages, &private_key);
+  status = CreateWebCryptoX25519PrivateKey(base::span(privkey), key_algorithm,
+                                           extractable, private_usages,
+                                           &private_key);
   if (status.IsError()) {
     return status;
   }
@@ -424,7 +430,8 @@ Status X25519Implementation::ExportKeyPkcs8(
     return Status::ErrorUnexpectedKeyType();
   }
 
-  return ExportPKeyPkcs8(GetEVP_PKEY(key), buffer);
+  *buffer = crypto::evp::PrivateKeyToBytes(GetEVP_PKEY(key));
+  return Status::Success();
 }
 
 Status X25519Implementation::ExportKeySpki(const blink::WebCryptoKey& key,
@@ -433,7 +440,8 @@ Status X25519Implementation::ExportKeySpki(const blink::WebCryptoKey& key,
     return Status::ErrorUnexpectedKeyType();
   }
 
-  return ExportPKeySpki(GetEVP_PKEY(key), buffer);
+  *buffer = crypto::evp::PublicKeyToBytes(GetEVP_PKEY(key));
+  return Status::Success();
 }
 
 Status X25519Implementation::ExportKeyJwk(const blink::WebCryptoKey& key,

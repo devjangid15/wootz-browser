@@ -6,33 +6,37 @@
 
 #include <memory>
 
-#include "components/content_settings/android/content_settings_jni_headers/CookieControlsBridge_jni.h"
 #include "components/content_settings/core/browser/cookie_settings.h"
+#include "components/content_settings/core/common/cookie_controls_state.h"
 #include "components/permissions/permissions_client.h"
 #include "content/public/browser/android/browser_context_handle.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/web_contents.h"
 
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "components/content_settings/android/content_settings_jni_headers/CookieControlsBridge_jni.h"
+
 namespace content_settings {
 
 using base::android::JavaParamRef;
+using base::android::ScopedJavaLocalRef;
 
 CookieControlsBridge::CookieControlsBridge(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj,
-    const base::android::JavaParamRef<jobject>& jweb_contents_android,
-    const base::android::JavaParamRef<jobject>&
-        joriginal_browser_context_handle)
+    const JavaParamRef<jobject>& jweb_contents_android,
+    const JavaParamRef<jobject>& joriginal_browser_context_handle,
+    bool is_incognito_branded)
     : jobject_(obj) {
   UpdateWebContents(env, jweb_contents_android,
-                    joriginal_browser_context_handle);
+                    joriginal_browser_context_handle, is_incognito_branded);
 }
 
 void CookieControlsBridge::UpdateWebContents(
     JNIEnv* env,
-    const base::android::JavaParamRef<jobject>& jweb_contents_android,
-    const base::android::JavaParamRef<jobject>&
-        joriginal_browser_context_handle) {
+    const JavaParamRef<jobject>& jweb_contents_android,
+    const JavaParamRef<jobject>& joriginal_browser_context_handle,
+    bool is_incognito_branded) {
   content::WebContents* web_contents =
       content::WebContents::FromJavaWebContents(jweb_contents_android);
 
@@ -49,39 +53,37 @@ void CookieControlsBridge::UpdateWebContents(
       original_context ? permissions_client->GetCookieSettings(original_context)
                        : nullptr,
       permissions_client->GetSettingsMap(context),
-      permissions_client->GetTrackingProtectionSettings(context));
+      permissions_client->GetTrackingProtectionSettings(context),
+      is_incognito_branded);
 
   observation_.Observe(controller_.get());
   controller_->Update(web_contents);
 }
 
 void CookieControlsBridge::OnStatusChanged(
-    bool controls_visible,
-    bool protections_on,
+    CookieControlsState controls_state,
     CookieControlsEnforcement enforcement,
     CookieBlocking3pcdStatus blocking_status,
     base::Time expiration) {
   // Only invoke the callback when there is a change.
-  if (controls_visible_ == controls_visible &&
-      protections_on_ == protections_on && enforcement_ == enforcement &&
+  if (controls_state_ == controls_state && enforcement_ == enforcement &&
       expiration_ == expiration) {
     return;
   }
-  controls_visible_ = controls_visible;
-  protections_on_ = protections_on;
+  controls_state_ = controls_state;
   enforcement_ = enforcement;
   expiration_ = expiration;
   JNIEnv* env = base::android::AttachCurrentThread();
+
   Java_CookieControlsBridge_onStatusChanged(
-      env, jobject_, static_cast<bool>(controls_visible),
-      static_cast<bool>(protections_on), static_cast<int>(enforcement_),
-      static_cast<int>(blocking_status),
+      env, jobject_, static_cast<int>(controls_state_),
+      static_cast<int>(enforcement_), static_cast<int>(blocking_status),
       expiration.InMillisecondsSinceUnixEpoch());
 }
 
 void CookieControlsBridge::OnCookieControlsIconStatusChanged(
     bool icon_visible,
-    bool protections_on,
+    CookieControlsState controls_state,
     CookieBlocking3pcdStatus blocking_status,
     bool should_highlight) {
   // This function's main use is for web's User Bypass icon, which
@@ -93,10 +95,19 @@ void CookieControlsBridge::OnCookieControlsIconStatusChanged(
       env, jobject_, static_cast<bool>(should_highlight));
 }
 
+void CookieControlsBridge::OnReloadThresholdExceeded() {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  Java_CookieControlsBridge_onHighlightPwaCookieControl(env, jobject_);
+}
+
 void CookieControlsBridge::SetThirdPartyCookieBlockingEnabledForSite(
     JNIEnv* env,
     bool block_cookies) {
   controller_->OnCookieBlockingEnabledForSite(block_cookies);
+}
+
+void CookieControlsBridge::OnTrackingProtectionsChangedForSite(JNIEnv* env) {
+  controller_->OnTrackingProtectionsChangedForSite();
 }
 
 void CookieControlsBridge::OnUiClosing(JNIEnv* env) {
@@ -109,14 +120,13 @@ void CookieControlsBridge::OnEntryPointAnimated(JNIEnv* env) {
 
 CookieControlsBridge::~CookieControlsBridge() = default;
 
-void CookieControlsBridge::Destroy(JNIEnv* env,
-                                   const JavaParamRef<jobject>& obj) {
+void CookieControlsBridge::Destroy(JNIEnv* env) {
   delete this;
 }
 
 jboolean JNI_CookieControlsBridge_IsCookieControlsEnabled(
     JNIEnv* env,
-    const base::android::JavaParamRef<jobject>& jbrowser_context_handle) {
+    const JavaParamRef<jobject>& jbrowser_context_handle) {
   content::BrowserContext* context =
       content::BrowserContextFromJavaHandle(jbrowser_context_handle);
   return permissions::PermissionsClient::Get()
@@ -127,11 +137,12 @@ jboolean JNI_CookieControlsBridge_IsCookieControlsEnabled(
 static jlong JNI_CookieControlsBridge_Init(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj,
-    const base::android::JavaParamRef<jobject>& jweb_contents_android,
-    const base::android::JavaParamRef<jobject>&
-        joriginal_browser_context_handle) {
+    const JavaParamRef<jobject>& jweb_contents_android,
+    const JavaParamRef<jobject>& joriginal_browser_context_handle,
+    jboolean is_incognito_branded) {
   return reinterpret_cast<intptr_t>(new CookieControlsBridge(
-      env, obj, jweb_contents_android, joriginal_browser_context_handle));
+      env, obj, jweb_contents_android, joriginal_browser_context_handle,
+      is_incognito_branded));
 }
 
 }  // namespace content_settings

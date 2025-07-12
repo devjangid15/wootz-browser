@@ -17,8 +17,8 @@
 #include "base/time/time.h"
 #include "components/account_id/account_id.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
-#include "ui/base/models/simple_menu_model.h"
-#include "url/gurl.h"
+#include "ui/base/models/image_model.h"
+#include "ui/menus/simple_menu_model.h"
 
 namespace ash {
 
@@ -153,6 +153,12 @@ class ASH_PUBLIC_EXPORT AppListClient {
       const std::vector<std::string>& apps_above_the_fold,
       const std::vector<std::string>& apps_below_the_fold,
       bool is_apps_collections_page) = 0;
+
+  // Whether the app list was reordered locally.
+  virtual bool HasReordered() = 0;
+
+  // Returns a Gemini icon. Gemini icon resource exists in //chrome.
+  virtual gfx::Image GetGeminiIcon() = 0;
 
  protected:
   virtual ~AppListClient() = default;

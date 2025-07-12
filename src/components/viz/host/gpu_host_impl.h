@@ -7,7 +7,6 @@
 
 #include <map>
 #include <optional>
-#include <queue>
 #include <set>
 #include <string>
 #include <vector>
@@ -39,6 +38,7 @@
 #include "services/service_manager/public/mojom/service.mojom.h"
 #include "services/viz/privileged/mojom/compositing/frame_sink_manager.mojom.h"
 #include "services/viz/privileged/mojom/gl/gpu_host.mojom.h"
+#include "services/viz/privileged/mojom/gl/gpu_logging.mojom.h"
 #include "services/viz/privileged/mojom/gl/gpu_service.mojom.h"
 #include "services/viz/privileged/mojom/viz_main.mojom.h"
 #include "ui/gfx/gpu_extra_info.h"
@@ -60,7 +60,8 @@ class GpuDiskCache;
 
 namespace viz {
 
-class VIZ_HOST_EXPORT GpuHostImpl : public mojom::GpuHost
+class VIZ_HOST_EXPORT GpuHostImpl : public mojom::GpuHost,
+                                    public mojom::GpuLogging
 #if BUILDFLAG(USE_VIZ_DEBUGGER)
     ,
                                     public mojom::VizDebugOutput
@@ -109,7 +110,7 @@ class VIZ_HOST_EXPORT GpuHostImpl : public mojom::GpuHost
 #endif
 
    protected:
-    virtual ~Delegate() {}
+    virtual ~Delegate() = default;
   };
 
   struct VIZ_HOST_EXPORT InitParams {
@@ -135,6 +136,9 @@ class VIZ_HOST_EXPORT GpuHostImpl : public mojom::GpuHost
 
     // Whether this GPU process is used for GPU info collection only.
     bool info_collection_gpu_process = false;
+
+    // Whether the GPU service is running in the host process.
+    bool gpu_service_running_in_process = false;
   };
 
   enum class EstablishChannelStatus {
@@ -274,6 +278,9 @@ class VIZ_HOST_EXPORT GpuHostImpl : public mojom::GpuHost
   void StoreBlobToDisk(const gpu::GpuDiskCacheHandle& handle,
                        const std::string& key,
                        const std::string& blob) override;
+  void ClearGrShaderDiskCache() override;
+
+  // mojom::GpuLogging:
   void RecordLogMessage(int32_t severity,
                         const std::string& header,
                         const std::string& message) override;
@@ -295,6 +302,8 @@ class VIZ_HOST_EXPORT GpuHostImpl : public mojom::GpuHost
       info_collection_gpu_service_remote_;
 #endif
   mojo::Receiver<mojom::GpuHost> gpu_host_receiver_{this};
+  mojo::Receiver<mojom::GpuLogging> gpu_logging_receiver_{this};
+
   gpu::GpuProcessHostShmCount use_shader_cache_shm_count_;
 
 #if BUILDFLAG(USE_VIZ_DEBUGGER)
@@ -315,8 +324,6 @@ class VIZ_HOST_EXPORT GpuHostImpl : public mojom::GpuHost
 
   std::multimap<int32_t, scoped_refptr<gpu::GpuDiskCache>> client_id_to_caches_;
   std::string shader_prefix_key_;
-
-  const bool shared_bitmap_to_shared_image_flag_;
 
   // These are the channel requests that we have already sent to the GPU
   // service, but haven't heard back about yet.

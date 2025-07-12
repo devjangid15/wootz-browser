@@ -6,13 +6,9 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_STYLE_STYLE_MASK_SOURCE_IMAGE_H_
 
 #include "third_party/blink/renderer/core/style/style_image.h"
-
 #include "third_party/blink/renderer/platform/heap/member.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
-
-namespace WTF {
-class String;
-}  // namespace WTF
+#include "third_party/blink/renderer/platform/wtf/forward.h"
 
 namespace blink {
 
@@ -50,7 +46,7 @@ class StyleMaskSourceImage : public StyleImage {
   bool ErrorOccurred() const override;
   bool IsAccessAllowed(WTF::String& failing_url) const override;
 
-  IntrinsicSizingInfo GetNaturalSizingInfo(
+  NaturalSizingInfo GetNaturalSizingInfo(
       float multiplier,
       RespectImageOrientationEnum) const override;
 
@@ -64,7 +60,7 @@ class StyleMaskSourceImage : public StyleImage {
   void RemoveClient(ImageResourceObserver*) override;
 
   scoped_refptr<Image> GetImage(const ImageResourceObserver&,
-                                const Document&,
+                                const Node&,
                                 const ComputedStyle&,
                                 const gfx::SizeF& target_size) const override;
   float ImageScaleFactor() const override;

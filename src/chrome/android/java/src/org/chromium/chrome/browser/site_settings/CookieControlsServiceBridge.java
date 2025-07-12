@@ -7,14 +7,18 @@ package org.chromium.chrome.browser.site_settings;
 import androidx.annotation.VisibleForTesting;
 
 import org.jni_zero.CalledByNative;
+import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.components.content_settings.CookieControlsEnforcement;
 
 /**
  * Communicates between CookieControlsService (C++ backend) and observers in the Incognito NTP Java
  * UI.
  */
+@NullMarked
 public class CookieControlsServiceBridge {
     /**
      * Interface for a class that wants to receive cookie controls updates from
@@ -23,26 +27,30 @@ public class CookieControlsServiceBridge {
     public interface CookieControlsServiceObserver {
         /**
          * Called when there is an update in the cookie controls that should be reflected in the UI.
+         *
          * @param checked A boolean indicating whether the toggle indicating third-party cookies are
-         *         currently being blocked should be checked or not.
+         *     currently being blocked should be checked or not.
          * @param enforcement A CookieControlsEnforcement enum type indicating the enforcement rule
-         *         for these cookie controls.
+         *     for these cookie controls.
          */
-        public void sendCookieControlsUIChanges(
+        public void sendCookieControlsUiChanges(
                 boolean checked, @CookieControlsEnforcement int enforcement);
     }
 
     private long mNativeCookieControlsServiceBridge;
-    private CookieControlsServiceObserver mObserver;
+    private final CookieControlsServiceObserver mObserver;
 
     /**
      * Initializes a CookieControlsServiceBridge instance.
+     *
+     * @param profile The {@link Profile} associated with the cookie controls.
      * @param observer An observer to call with updates from the cookie controls service.
      */
-    public CookieControlsServiceBridge(CookieControlsServiceObserver observer) {
+    public CookieControlsServiceBridge(Profile profile, CookieControlsServiceObserver observer) {
         mObserver = observer;
         mNativeCookieControlsServiceBridge =
-                CookieControlsServiceBridgeJni.get().init(CookieControlsServiceBridge.this);
+                CookieControlsServiceBridgeJni.get()
+                        .init(CookieControlsServiceBridge.this, profile);
     }
 
     /** Destroys the native counterpart of this class. */
@@ -71,15 +79,15 @@ public class CookieControlsServiceBridge {
     }
 
     @CalledByNative
-    private void sendCookieControlsUIChanges(
+    private void sendCookieControlsUiChanges(
             boolean checked, @CookieControlsEnforcement int enforcement) {
-        mObserver.sendCookieControlsUIChanges(checked, enforcement);
+        mObserver.sendCookieControlsUiChanges(checked, enforcement);
     }
 
     @VisibleForTesting(otherwise = VisibleForTesting.PACKAGE_PRIVATE)
     @NativeMethods
     public interface Natives {
-        long init(CookieControlsServiceBridge caller);
+        long init(CookieControlsServiceBridge caller, @JniType("Profile*") Profile profile);
 
         void destroy(long nativeCookieControlsServiceBridge, CookieControlsServiceBridge caller);
 

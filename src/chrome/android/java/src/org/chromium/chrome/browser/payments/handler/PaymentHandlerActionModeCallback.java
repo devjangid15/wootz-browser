@@ -10,15 +10,17 @@ import android.view.ActionMode;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
+import android.view.View.OnClickListener;
 
-import androidx.annotation.Nullable;
-
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.content_public.browser.ActionModeCallback;
 import org.chromium.content_public.browser.ActionModeCallbackHelper;
 import org.chromium.content_public.browser.SelectionPopupController;
 import org.chromium.content_public.browser.WebContents;
 
 /** A class that handles selection action mode for Payment Handler. */
+@NullMarked
 public class PaymentHandlerActionModeCallback extends ActionModeCallback {
     private final ActionModeCallbackHelper mHelper;
 
@@ -46,15 +48,13 @@ public class PaymentHandlerActionModeCallback extends ActionModeCallback {
     @Override
     public boolean onActionItemClicked(ActionMode mode, MenuItem item) {
         if (!mHelper.isActionModeValid()) return true;
+
         return mHelper.onActionItemClicked(mode, item);
     }
 
     @Override
     public boolean onDropdownItemClicked(
-            int groupId,
-            int id,
-            @Nullable Intent intent,
-            @Nullable View.OnClickListener clickListener) {
+            int groupId, int id, @Nullable Intent intent, @Nullable OnClickListener clickListener) {
         return mHelper.onDropdownItemClicked(groupId, id, intent, clickListener);
     }
 

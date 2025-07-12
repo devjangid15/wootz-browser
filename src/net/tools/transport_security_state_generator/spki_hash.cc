@@ -35,12 +35,12 @@ bool SPKIHash::FromString(std::string_view hash_string) {
     return false;
   }
 
-  memcpy(data_, decoded.data(), decoded.size());
+  base::span(data_).copy_from(base::as_byte_span(decoded));
   return true;
 }
 
-void SPKIHash::CalculateFromBytes(const uint8_t* input, size_t input_length) {
-  SHA256(input, input_length, data_);
+void SPKIHash::CalculateFromBytes(base::span<const uint8_t> bytes) {
+  data_ = crypto::hash::Sha256(bytes);
 }
 
 }  // namespace net::transport_security_state

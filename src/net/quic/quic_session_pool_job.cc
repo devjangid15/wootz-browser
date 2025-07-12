@@ -25,7 +25,7 @@ namespace net {
 namespace {
 
 base::Value::Dict NetLogQuicSessionPoolJobParams(
-    const QuicSessionPool::QuicSessionAliasKey* key) {
+    const QuicSessionAliasKey* key) {
   const ProxyChain& proxy_chain = key->session_key().proxy_chain();
   return base::Value::Dict()
       .Set("host", key->server_id().host())
@@ -42,12 +42,12 @@ base::Value::Dict NetLogQuicSessionPoolJobParams(
 
 QuicSessionPool::Job::Job(
     QuicSessionPool* pool,
-    const QuicSessionAliasKey& key,
+    QuicSessionAliasKey key,
     std::unique_ptr<CryptoClientConfigHandle> client_config_handle,
     RequestPriority priority,
     const NetLogWithSource& net_log)
     : pool_(pool),
-      key_(key),
+      key_(std::move(key)),
       client_config_handle_(std::move(client_config_handle)),
       priority_(priority),
       net_log_(net_log) {
@@ -60,13 +60,15 @@ QuicSessionPool::Job::~Job() {
 }
 
 void QuicSessionPool::Job::AddRequest(QuicSessionRequest* request) {
+  request->AddedToJob();
   requests_.insert(request);
   SetRequestExpectations(request);
 }
 
 void QuicSessionPool::Job::RemoveRequest(QuicSessionRequest* request) {
+  request->RemovedFromJob();
   auto request_iter = requests_.find(request);
-  DCHECK(request_iter != requests_.end());
+  CHECK(request_iter != requests_.end());
   requests_.erase(request_iter);
 }
 
@@ -82,6 +84,30 @@ void QuicSessionPool::Job::AssociateWithNetLogSource(
       http_stream_job_net_log.source());
   http_stream_job_net_log.AddEventReferencingSource(
       NetLogEventType::BOUND_TO_QUIC_SESSION_POOL_JOB, net_log().source());
+}
+
+QuicSessionPool* QuicSessionPool::Job::GetQuicSessionPool() {
+  return pool();
+}
+
+const QuicSessionAliasKey& QuicSessionPool::Job::GetKey() {
+  return key();
+}
+
+const NetLogWithSource& QuicSessionPool::Job::GetNetLog() {
+  return net_log();
+}
+
+void QuicSessionPool::Job::OnConnectionFailedOnDefaultNetwork() {
+  for (QuicSessionRequest* request : requests()) {
+    request->OnConnectionFailedOnDefaultNetwork();
+  }
+}
+
+void QuicSessionPool::Job::OnQuicSessionCreationComplete(int rv) {
+  for (QuicSessionRequest* request : requests()) {
+    request->OnQuicSessionCreationComplete(rv);
+  }
 }
 
 void QuicSessionPool::Job::UpdatePriority(RequestPriority old_priority,

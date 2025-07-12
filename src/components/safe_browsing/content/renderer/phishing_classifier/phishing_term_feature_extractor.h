@@ -23,7 +23,6 @@
 #include <set>
 #include <string>
 #include <string_view>
-#include <unordered_set>
 
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
@@ -155,7 +154,7 @@ class PhishingTermFeatureExtractor {
   // The output parameters from the most recent call to ExtractFeatures().
   raw_ptr<const std::u16string>
       page_text_;                 // The caller keeps ownership of this.
-  raw_ptr<FeatureMap> features_;  // The caller keeps ownership of this.
+  raw_ptr<FeatureMap, DanglingUntriaged> features_;  // The caller keeps ownership of this.
   raw_ptr<std::set<uint32_t>> shingle_hashes_;
   DoneCallback done_callback_;
 

@@ -31,7 +31,10 @@
 #ifndef THIRD_PARTY_BLINK_PUBLIC_WEB_WEB_DOCUMENT_H_
 #define THIRD_PARTY_BLINK_PUBLIC_WEB_WEB_DOCUMENT_H_
 
+#include <vector>
+
 #include "net/cookies/site_for_cookies.h"
+#include "net/storage_access_api/status.h"
 #include "net/url_request/referrer_policy.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
 #include "services/network/public/mojom/referrer_policy.mojom-shared.h"
@@ -40,21 +43,25 @@
 #include "third_party/blink/public/platform/cross_variant_mojo_util.h"
 #include "third_party/blink/public/platform/web_common.h"
 #include "third_party/blink/public/platform/web_security_origin.h"
-#include "third_party/blink/public/platform/web_vector.h"
 #include "third_party/blink/public/web/web_css_origin.h"
 #include "third_party/blink/public/web/web_draggable_region.h"
-#include "third_party/blink/public/web/web_frame.h"
 #include "third_party/blink/public/web/web_node.h"
 #include "third_party/skia/include/core/SkColor.h"
+#include "ui/accessibility/ax_error_types.h"
+
+namespace ui {
+struct AXTreeUpdate;
+class AXMode;
+}  // namespace ui
 
 namespace blink {
 
 class Document;
-class WebAnchorElement;
 class WebElement;
 class WebFormElement;
 class WebFormControlElement;
 class WebElementCollection;
+class WebLocalFrame;
 class WebString;
 class WebURL;
 struct WebDistillabilityFeatures;
@@ -99,10 +106,8 @@ class BLINK_EXPORT WebDocument : public WebNode {
   WebLocalFrame* GetFrame() const;
   bool IsHTMLDocument() const;
   bool IsXHTMLDocument() const;
-  bool IsDOMFeaturePolicyEnabled(v8::Isolate* isolate,         
-                            v8::Local<v8::Context> context, 
-                            const WebString& feature);      
   bool IsPluginDocument() const;
+  bool IsActive() const;
   WebURL BaseURL() const;
   ukm::SourceId GetUkmSourceId() const;
 
@@ -111,11 +116,11 @@ class BLINK_EXPORT WebDocument : public WebNode {
   // cookie blocking.
   net::SiteForCookies SiteForCookies() const;
 
-  // The `HasStorageAccess` boolean is used to determine whether this document
-  // has opted into using the Storage Access API. This is relevant when
-  // attempting to access cookies in a context where third-party cookies may be
-  // blocked.
-  bool HasStorageAccess() const;
+  // `StorageAccessApiStatus` is used to describe how/if this document has opted
+  // into accessing cross-site cookies using the Storage Access API. This is
+  // relevant when attempting to access cookies in a context where third-party
+  // cookies may be blocked.
+  net::StorageAccessApiStatus StorageAccessApiStatus() const;
 
   WebSecurityOrigin TopFrameOrigin() const;
   WebElement DocumentElement() const;
@@ -124,12 +129,12 @@ class BLINK_EXPORT WebDocument : public WebNode {
   WebString Title() const;
   WebString ContentAsTextForTesting() const;
   WebElementCollection All() const;
-  WebVector<WebFormElement> Forms() const;
-  WebVector<WebAnchorElement> Anchors() const;
+  std::vector<WebFormElement> Forms() const;
+  WebElement ScrollingElement();
 
   // Returns all form elements that have no shadow-tree including ancestor that
   // is also a form element. This includes form elements inside shadow trees.
-  WebVector<WebFormElement> GetTopLevelForms() const;
+  std::vector<WebFormElement> GetTopLevelForms() const;
 
   WebURL CompleteURL(const WebString&) const;
   WebElement GetElementById(const WebString&) const;
@@ -137,7 +142,7 @@ class BLINK_EXPORT WebDocument : public WebNode {
 
   // The unassociated form controls are form control elements that are not
   // associated to a <form> element.
-  WebVector<WebFormControlElement> UnassociatedFormControls() const;
+  std::vector<WebFormControlElement> UnassociatedFormControls() const;
 
   // Inserts the given CSS source code as a style sheet in the document.
   WebStyleSheetKey InsertStyleSheet(
@@ -154,9 +159,9 @@ class BLINK_EXPORT WebDocument : public WebNode {
   // Arranges to call WebLocalFrameClient::didMatchCSS(frame(), ...) when one of
   // the selectors matches or stops matching an element in this document.
   // Each call to this method overrides any previous calls.
-  void WatchCSSSelectors(const WebVector<WebString>& selectors);
+  void WatchCSSSelectors(const std::vector<WebString>& selectors);
 
-  WebVector<WebDraggableRegion> DraggableRegions() const;
+  std::vector<WebDraggableRegion> DraggableRegions() const;
 
   WebDistillabilityFeatures DistillabilityFeatures();
 
@@ -192,9 +197,16 @@ class BLINK_EXPORT WebDocument : public WebNode {
   // It is intended to be used in WebLinkPreviewTriggerer.
   void InitiatePreview(const WebURL& url);
 
-  void SetUpActionUrlHeader();
-  void SetUpActionUrlScriptBlock();
-  void ResetScriptState();
+  void SnapshotAccessibilityTree(
+      size_t max_nodes,
+      base::TimeDelta timeout,
+      ui::AXTreeUpdate* response,
+      ui::AXMode mode,
+      std::set<ui::AXSerializationErrorFlag>* out_error);
+
+  // Returns the number of active resource requests that are being loaded by the
+  // document's ResourceFetcher.
+  size_t ActiveResourceRequestCount() const;
 
 #if INSIDE_BLINK
   WebDocument(Document*);

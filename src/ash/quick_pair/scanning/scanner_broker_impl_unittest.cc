@@ -221,7 +221,7 @@ class ScannerBrokerImplTest : public AshTestBase,
   }
 
   void Login(user_manager::UserType user_type) {
-    SimulateUserLogin(kUserEmail, user_type);
+    SimulateUserLogin({kUserEmail, user_type});
   }
 
   void TriggerDiscoverableDeviceFound() {
@@ -407,7 +407,7 @@ TEST_F(ScannerBrokerImplTest, PublicUser_NotDiscoverableNotCreated) {
 }
 
 TEST_F(ScannerBrokerImplTest, Kiosk_NotDiscoverableNotCreated) {
-  Login(user_manager::UserType::kKioskApp);
+  Login(user_manager::UserType::kKioskChromeApp);
   base::RunLoop().RunUntilIdle();
 
   EXPECT_FALSE(not_discoverable_scanner_factory_->create_instance());

@@ -17,7 +17,7 @@
 #include "base/memory/ref_counted.h"
 #include "net/base/network_handle.h"
 #include "net/http/bidirectional_stream.h"
-#include "net/third_party/quiche/src/quiche/spdy/core/http2_header_block.h"
+#include "net/third_party/quiche/src/quiche/common/http/http_header_block.h"
 
 namespace net {
 struct BidirectionalStreamRequestInfo;
@@ -94,7 +94,6 @@ class CronetBidirectionalStreamAdapter
   // Returns position of invalid header value in |jheaders| if header name is
   // not valid.
   jint Start(JNIEnv* env,
-             const base::android::JavaParamRef<jobject>& jcaller,
              const base::android::JavaParamRef<jstring>& jurl,
              jint jpriority,
              const base::android::JavaParamRef<jstring>& jmethod,
@@ -111,14 +110,12 @@ class CronetBidirectionalStreamAdapter
   // true nor when OnStreamReady() is invoked with request_headers_sent = true,
   // since headers have been sent by the stream when stream is negotiated
   // successfully.)
-  void SendRequestHeaders(JNIEnv* env,
-                          const base::android::JavaParamRef<jobject>& jcaller);
+  void SendRequestHeaders(JNIEnv* env);
 
   // Reads more data into |jbyte_buffer| starting at |jposition| and not
   // exceeding |jlimit|. Arguments are preserved to ensure that |jbyte_buffer|
   // is not modified by the application during read.
   jboolean ReadData(JNIEnv* env,
-                    const base::android::JavaParamRef<jobject>& jcaller,
                     const base::android::JavaParamRef<jobject>& jbyte_buffer,
                     jint jposition,
                     jint jlimit);
@@ -131,7 +128,6 @@ class CronetBidirectionalStreamAdapter
   // passed to remote to indicate end of stream.
   jboolean WritevData(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& jcaller,
       const base::android::JavaParamRef<jobjectArray>& jbyte_buffers,
       const base::android::JavaParamRef<jintArray>& jpositions,
       const base::android::JavaParamRef<jintArray>& jlimits,
@@ -141,17 +137,16 @@ class CronetBidirectionalStreamAdapter
   // |jsend_on_canceled| indicates if Java onCanceled callback should be
   // issued to indicate that no more callbacks will be issued.
   void Destroy(JNIEnv* env,
-               const base::android::JavaParamRef<jobject>& jcaller,
                jboolean jsend_on_canceled);
 
  private:
   // net::BidirectionalStream::Delegate implementations:
   void OnStreamReady(bool request_headers_sent) override;
   void OnHeadersReceived(
-      const spdy::Http2HeaderBlock& response_headers) override;
+      const quiche::HttpHeaderBlock& response_headers) override;
   void OnDataRead(int bytes_read) override;
   void OnDataSent() override;
-  void OnTrailersReceived(const spdy::Http2HeaderBlock& trailers) override;
+  void OnTrailersReceived(const quiche::HttpHeaderBlock& trailers) override;
   void OnFailed(int error) override;
 
   void StartOnNetworkThread(
@@ -166,7 +161,7 @@ class CronetBidirectionalStreamAdapter
   // Gets headers as a Java array.
   base::android::ScopedJavaLocalRef<jobjectArray> GetHeadersArray(
       JNIEnv* env,
-      const spdy::Http2HeaderBlock& header_block);
+      const quiche::HttpHeaderBlock& header_block);
   // Reports metrics to the Java layer if the stream was ever started. Called on
   // the network thread immediately before the adapter destroys itself.
   void MaybeReportMetrics();

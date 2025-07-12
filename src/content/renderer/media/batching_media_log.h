@@ -15,7 +15,6 @@
 #include "base/time/time.h"
 #include "content/common/content_export.h"
 #include "media/base/media_log.h"
-#include "url/gurl.h"
 
 namespace base {
 class TickClock;
@@ -94,6 +93,8 @@ class CONTENT_EXPORT BatchingMediaLog : public media::MediaLog {
       GUARDED_BY(lock_);
   std::optional<media::MediaLogRecord> last_buffering_state_event_
       GUARDED_BY(lock_);
+  std::optional<media::MediaLogRecord> last_play_event_;
+  std::optional<media::MediaLogRecord> last_pause_event_;
 
   // Holds the earliest MEDIA_ERROR_LOG_ENTRY event added to this log. This is
   // most likely to contain the most specific information available describing

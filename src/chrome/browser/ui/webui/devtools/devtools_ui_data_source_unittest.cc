@@ -12,6 +12,7 @@
 #include "base/memory/ref_counted_memory.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_util.h"
 #include "base/test/bind.h"
 #include "build/build_config.h"
 #include "chrome/common/chrome_switches.h"
@@ -50,7 +51,7 @@ std::string DevToolsCustomPath(const std::string& path) {
 class TestDevToolsDataSource : public DevToolsDataSource {
  public:
   TestDevToolsDataSource() : DevToolsDataSource(nullptr) {}
-  ~TestDevToolsDataSource() override {}
+  ~TestDevToolsDataSource() override = default;
 
   void StartNetworkRequest(
       const GURL& url,
@@ -76,7 +77,7 @@ class DevToolsUIDataSourceTest : public testing::Test {
   DevToolsUIDataSourceTest& operator=(const DevToolsUIDataSourceTest&) = delete;
 
  protected:
-  DevToolsUIDataSourceTest() {}
+  DevToolsUIDataSourceTest() = default;
   ~DevToolsUIDataSourceTest() override = default;
 
   void SetUp() override {
@@ -100,7 +101,7 @@ class DevToolsUIDataSourceTest : public testing::Test {
     std::string trimmed_path = path.substr(1);
     content::WebContents::Getter wc_getter;
     data_source()->StartDataRequest(
-        GURL("wootzapp://any-host/" + trimmed_path), std::move(wc_getter),
+        GURL("chrome://any-host/" + trimmed_path), std::move(wc_getter),
         base::BindOnce(&DevToolsUIDataSourceTest::OnDataReceived,
                        base::Unretained(this)));
   }

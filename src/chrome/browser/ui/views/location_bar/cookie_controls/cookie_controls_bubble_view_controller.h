@@ -14,8 +14,8 @@
 #include "components/content_settings/browser/ui/cookie_controls_view.h"
 #include "components/content_settings/core/common/cookie_blocking_3pcd_status.h"
 #include "components/content_settings/core/common/cookie_controls_enforcement.h"
+#include "components/content_settings/core/common/cookie_controls_state.h"
 #include "components/favicon_base/favicon_types.h"
-#include "url/gurl.h"
 
 class CookieControlsBubbleView;
 
@@ -32,8 +32,7 @@ class CookieControlsBubbleViewController
       content_settings::CookieControlsController* controller);
 
   // CookieControlsObserver:
-  void OnStatusChanged(bool controls_visible,
-                       bool protections_on,
+  void OnStatusChanged(CookieControlsState controls_state,
                        CookieControlsEnforcement enforcement,
                        CookieBlocking3pcdStatus blocking_status,
                        base::Time expiration) override;
@@ -41,22 +40,39 @@ class CookieControlsBubbleViewController
 
   void SetSubjectUrlNameForTesting(const std::u16string& name);
 
+  void SetIsReloadingState(bool is_reloading_state) {
+    is_reloading_state_ = is_reloading_state;
+  }
+
+  bool IsReloadingState() { return is_reloading_state_; }
+
  private:
   friend class CookieControlsBubbleViewBrowserTest;
 
   void SetCallbacks();
   void OnUserClosedContentView();
-  void OnToggleButtonPressed(bool new_value);
+  void OnToggleButtonPressed(bool toggled_on);
   void OnFeedbackButtonPressed();
+  void OnTrackingProtectionsButtonPressed();
 
   void OnFaviconFetched(const favicon_base::FaviconImageResult& result) const;
 
-  void OnReloadingViewTimeout();
+  void OnReloadingUiTimeout();
 
-  void SwitchToReloadingView();
   void ApplyThirdPartyCookiesAllowedState(CookieControlsEnforcement enforcement,
                                           base::Time expiration);
   void ApplyThirdPartyCookiesBlockedState();
+
+  void ApplyTrackingProtectionsActiveState();
+  void ApplyTrackingProtectionsPausedState();
+
+  void FillDescriptionAndToggle(CookieControlsEnforcement enforcement,
+                                base::Time expiration);
+
+  void FillViewForThirdPartyCookies(CookieControlsEnforcement enforcement,
+                                    base::Time expiration);
+  void FillViewForTrackingProtections();
+
   void CloseBubble();
 
   [[nodiscard]] std::unique_ptr<views::View> InitReloadingView(
@@ -66,21 +82,26 @@ class CookieControlsBubbleViewController
 
   std::u16string GetSubjectUrlName(content::WebContents* web_contents) const;
 
-  // Whether protections are enabled for the given site.
-  bool protections_on_ = true;
+  // Whether the page is reloading in the background after UB is toggled.
+  bool is_reloading_state_ = false;
+
   // The most recent status provided by the CookieControlsController, used to
   // determine the user's 3PCD status.
   CookieBlocking3pcdStatus blocking_status_ =
       CookieBlocking3pcdStatus::kNotIn3pcd;
+
+  // The state of the controls to display.
+  CookieControlsState controls_state_ = CookieControlsState::kBlocked3pc;
 
   raw_ptr<CookieControlsBubbleView> bubble_view_ = nullptr;
 
   // Used for favicon loading tasks.
   base::CancelableTaskTracker cancelable_task_tracker_;
 
-  base::CallbackListSubscription on_user_closed_content_view_callback_;
+  base::CallbackListSubscription on_user_triggered_reloading_action_callback_;
   base::CallbackListSubscription toggle_button_callback_;
   base::CallbackListSubscription feedback_button_callback_;
+  base::CallbackListSubscription tracking_protections_button_callback_;
   base::WeakPtr<content_settings::CookieControlsController> controller_;
   base::WeakPtr<content::WebContents> web_contents_;
   base::ScopedObservation<content_settings::CookieControlsController,

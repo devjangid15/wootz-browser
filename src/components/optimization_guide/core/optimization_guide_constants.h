@@ -39,6 +39,10 @@ extern const char kOptimizationGuideServiceModelQualtiyDefaultURL[];
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
 extern const char kLoadedHintLocalHistogramString[];
 
+// The name of the language override request header.
+COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
+extern const char kOptimizationGuideLanguageOverrideHeaderKey[];
+
 // The folder where the hint data will be stored on disk.
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
 extern const base::FilePath::CharType kOptimizationGuideHintStore[];
@@ -60,9 +64,17 @@ extern const base::FilePath::CharType
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
 extern const base::FilePath::CharType kOptimizationGuideModelStoreDirPrefix[];
 
+// The name of the model execution debug logs header.
+COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
+extern const char kOptimizationGuideModelExecutionDebugLogsHeaderKey[];
+
 // Files expected to be in the on device model bundle.
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
 extern const base::FilePath::CharType kWeightsFile[];
+// TODO(crbug.com/400998489): Cache files are experimental. Eventually we
+// probably want a cache path per-backend. This is here now for testing.
+COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
+extern const base::FilePath::CharType kExperimentalCacheFile[];
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
 extern const base::FilePath::CharType kOnDeviceModelExecutionConfigFile[];
 

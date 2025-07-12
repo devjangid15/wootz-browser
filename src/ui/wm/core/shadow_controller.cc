@@ -12,17 +12,18 @@
 #include "base/memory/raw_ptr.h"
 #include "base/no_destructor.h"
 #include "base/scoped_multi_source_observation.h"
-#include "build/chromeos_buildflags.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/env.h"
 #include "ui/aura/env_observer.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_observer.h"
 #include "ui/base/class_property.h"
-#include "ui/base/ui_base_types.h"
+#include "ui/base/mojom/window_show_state.mojom.h"
 #include "ui/color/color_id.h"
 #include "ui/color/color_provider.h"
 #include "ui/compositor/layer.h"
+#include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/wm/core/shadow_controller_delegate.h"
 #include "ui/wm/core/shadow_types.h"
 #include "ui/wm/core/window_util.h"
@@ -31,7 +32,7 @@
 using std::make_pair;
 
 DEFINE_UI_CLASS_PROPERTY_TYPE(ui::Shadow*)
-DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(ui::Shadow, kShadowLayerKey, nullptr)
+DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(ui::Shadow, kShadowLayerKey)
 
 namespace wm {
 
@@ -185,13 +186,13 @@ void ShadowController::Impl::OnWindowPropertyChanged(aura::Window* window,
 
   if (key == aura::client::kShowStateKey) {
     shadow_will_change = window->GetProperty(aura::client::kShowStateKey) !=
-                         static_cast<ui::WindowShowState>(old);
+                         static_cast<ui::mojom::WindowShowState>(old);
   }
 
-  if (key == aura::client::kWindowCornerRadiusKey) {
+  if (key == aura::client::kWindowRoundedCornersKey) {
     shadow_will_change =
-        window->GetProperty(aura::client::kWindowCornerRadiusKey) !=
-        static_cast<int>(old);
+        *window->GetProperty(aura::client::kWindowRoundedCornersKey) !=
+        static_cast<gfx::RoundedCornersF>(old);
   }
 
   shadow_will_change |=
@@ -264,10 +265,10 @@ bool ShadowController::Impl::ShouldShowShadowForWindow(
     return should_show;
   }
 
-  ui::WindowShowState show_state =
+  ui::mojom::WindowShowState show_state =
       window->GetProperty(aura::client::kShowStateKey);
-  if (show_state == ui::SHOW_STATE_FULLSCREEN ||
-      show_state == ui::SHOW_STATE_MAXIMIZED) {
+  if (show_state == ui::mojom::WindowShowState::kFullscreen ||
+      show_state == ui::mojom::WindowShowState::kMaximized) {
     return false;
   }
 
@@ -279,14 +280,19 @@ void ShadowController::Impl::MaybeSetShadowRadiusForWindow(
   ui::Shadow* shadow = GetShadowForWindow(window);
   CHECK(shadow);
 
-  const int corner_radius =
-      window->GetProperty(aura::client::kWindowCornerRadiusKey);
+  if (delegate_ && !delegate_->ShouldRoundShadowForWindow(window)) {
+    shadow->SetRoundedCornerRadius(0);
+    return;
+  }
 
-  // `aura::client::kWindowCornerRadiusKey` default value is -1, meaning
+  gfx::RoundedCornersF* rounded_corners =
+      window->GetProperty(aura::client::kWindowRoundedCornersKey);
+
+  // If `aura::client::kWindowRoundedCornersKey` is not set, it means
   // unspecified radius. i.e window server may want to apply rounded corners
   // implicitly.
-  if (corner_radius >= 0) {
-    shadow->SetRoundedCornerRadius(corner_radius);
+  if (rounded_corners) {
+    shadow->SetRoundedCornerRadius(rounded_corners->upper_left());
   }
 }
 
@@ -310,7 +316,7 @@ void ShadowController::Impl::CreateShadowForWindow(aura::Window* window) {
 
   MaybeSetShadowRadiusForWindow(window);
   shadow->Init(GetShadowElevationForActiveState(window));
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   shadow->SetShadowStyle(gfx::ShadowStyle::kChromeOSSystemUI);
 #endif
   shadow->SetContentBounds(gfx::Rect(window->bounds().size()));

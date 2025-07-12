@@ -12,7 +12,6 @@
 #include "content/renderer/render_frame_impl.h"
 #include "services/network/public/mojom/fetch_api.mojom.h"
 #include "third_party/blink/public/common/loader/resource_type_util.h"
-#include "third_party/blink/public/common/permissions_policy/permissions_policy.h"
 #include "third_party/blink/public/mojom/navigation/navigation_params.mojom.h"
 #include "third_party/blink/public/mojom/service_worker/controller_service_worker.mojom.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_container.mojom.h"
@@ -20,8 +19,30 @@
 
 namespace content {
 
-NavigationClient::NavigationClient(RenderFrameImpl* render_frame)
-    : render_frame_(render_frame) {}
+NavigationClient::NavigationClient(
+    RenderFrameImpl* render_frame,
+    NavigationClient* initiator_navigation_client)
+    : render_frame_(render_frame) {
+  if (initiator_navigation_client) {
+    // When a navigation is initiated in this frame, but commits in a new
+    // RenderFrame object, the `was_initiated_in_this_frame_` value should be
+    // carried over from the old RenderFrame's NavigationClient. This is because
+    // the new RenderFrame uses a new NavigationClient to commit, and
+    // was_initiated_in_this_frame is only set on the previous RenderFrame's
+    // NavigationClient when starting the navigation. Copy that value to the new
+    // NavigationClient.
+    was_initiated_in_this_frame_ =
+        initiator_navigation_client->was_initiated_in_this_frame();
+  }
+}
+
+NavigationClient::NavigationClient(
+    RenderFrameImpl* render_frame,
+    blink::mojom::BeginNavigationParamsPtr begin_params,
+    blink::mojom::CommonNavigationParamsPtr common_params)
+    : render_frame_(render_frame),
+      begin_params_(std::move(begin_params)),
+      common_params_(std::move(common_params)) {}
 
 NavigationClient::~NavigationClient() {}
 
@@ -45,7 +66,7 @@ void NavigationClient::CommitNavigation(
     const blink::DocumentToken& document_token,
     const base::UnguessableToken& devtools_navigation_token,
     const base::Uuid& base_auction_nonce,
-    const std::optional<blink::ParsedPermissionsPolicy>& permissions_policy,
+    const std::optional<network::ParsedPermissionsPolicy>& permissions_policy,
     blink::mojom::PolicyContainerPtr policy_container,
     mojo::PendingRemote<blink::mojom::CodeCacheHost> code_cache_host,
     mojo::PendingRemote<blink::mojom::CodeCacheHost>
@@ -86,6 +107,7 @@ void NavigationClient::CommitFailedNavigation(
     const std::optional<std::string>& error_page_content,
     std::unique_ptr<blink::PendingURLLoaderFactoryBundle> subresource_loaders,
     const blink::DocumentToken& document_token,
+    const base::UnguessableToken& devtools_navigation_token,
     blink::mojom::PolicyContainerPtr policy_container,
     mojom::AlternativeErrorPageOverrideInfoPtr alternative_error_page_info,
     CommitFailedNavigationCallback callback) {
@@ -94,7 +116,7 @@ void NavigationClient::CommitFailedNavigation(
       std::move(common_params), std::move(commit_params),
       has_stale_copy_in_cache, error_code, extended_error_code,
       resolve_error_info, error_page_content, std::move(subresource_loaders),
-      document_token, std::move(policy_container),
+      document_token, devtools_navigation_token, std::move(policy_container),
       std::move(alternative_error_page_info), std::move(callback));
 }
 
@@ -130,7 +152,26 @@ void NavigationClient::SetUpRendererInitiatedNavigation(
 
 void NavigationClient::ResetWithoutCancelling() {
   navigation_client_receiver_.ResetWithReason(
-      mojom::NavigationClient::kResetForSwap, "");
+      base::to_underlying(
+          mojom::NavigationClientDisconnectReason::kResetForSwap),
+      "");
+}
+
+void NavigationClient::ResetForNewNavigation(bool is_duplicate_navigation) {
+  navigation_client_receiver_.ResetWithReason(
+      base::to_underlying(is_duplicate_navigation
+                              ? mojom::NavigationClientDisconnectReason::
+                                    kResetForDuplicateNavigation
+                              : mojom::NavigationClientDisconnectReason::
+                                    kResetForNewNavigation),
+      "");
+}
+
+void NavigationClient::ResetForAbort() {
+  navigation_client_receiver_.ResetWithReason(
+      base::to_underlying(
+          mojom::NavigationClientDisconnectReason::kResetForAbort),
+      "");
 }
 
 void NavigationClient::NotifyNavigationCancellationWindowEnded() {

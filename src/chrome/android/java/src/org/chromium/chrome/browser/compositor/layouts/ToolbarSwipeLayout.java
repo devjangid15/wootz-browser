@@ -4,33 +4,51 @@
 
 package org.chromium.chrome.browser.compositor.layouts;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
 import android.content.Context;
 import android.content.res.Resources;
 import android.graphics.RectF;
+import android.os.Build;
+import android.view.View;
+import android.view.ViewGroup;
 
+import org.chromium.base.CallbackUtils;
 import org.chromium.base.MathUtils;
+import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
+import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
 import org.chromium.chrome.browser.compositor.layouts.components.LayoutTab;
 import org.chromium.chrome.browser.compositor.layouts.eventfilter.BlackHoleEventFilter;
 import org.chromium.chrome.browser.compositor.scene_layer.ToolbarSwipeSceneLayer;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.layouts.EventFilter;
 import org.chromium.chrome.browser.layouts.LayoutManager;
 import org.chromium.chrome.browser.layouts.LayoutType;
 import org.chromium.chrome.browser.layouts.animation.CompositorAnimator;
 import org.chromium.chrome.browser.layouts.scene_layer.SceneLayer;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.TabHidingType;
 import org.chromium.chrome.browser.tab.TabSelectionType;
 import org.chromium.chrome.browser.tab_ui.TabContentManager;
+import org.chromium.chrome.browser.tabmodel.TabClosureParams;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelUtils;
+import org.chromium.chrome.browser.tasks.tab_management.TabUiUtils;
 import org.chromium.chrome.browser.theme.TopUiThemeColorProvider;
 import org.chromium.chrome.browser.toolbar.top.TopToolbarOverlayCoordinator;
 import org.chromium.components.browser_ui.styles.SemanticColorUtils;
 import org.chromium.components.browser_ui.widget.gesture.SwipeGestureListener.ScrollDirection;
 import org.chromium.components.embedder_support.util.UrlUtilities;
+import org.chromium.components.sensitive_content.SensitiveContentClient;
+import org.chromium.components.sensitive_content.SensitiveContentFeatures;
 import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.base.LocalizationUtils;
 import org.chromium.ui.interpolators.Interpolators;
@@ -40,6 +58,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /** Layout defining the animation and positioning of the tabs during the edge swipe effect. */
+@NullMarked
 public class ToolbarSwipeLayout extends Layout {
     private static final boolean ANONYMIZE_NON_FOCUSED_TAB = true;
 
@@ -55,19 +74,21 @@ public class ToolbarSwipeLayout extends Layout {
     // This is the max contribution from fling in screen size percentage.
     private static final float FLING_MAX_CONTRIBUTION = 0.5f;
 
-    private LayoutTab mLeftTab;
-    private LayoutTab mRightTab;
-    private LayoutTab mFromTab; // Set to either mLeftTab or mRightTab.
-    private LayoutTab mToTab; // Set to mLeftTab or mRightTab or null if it is not determined.
+    private @Nullable LayoutTab mLeftTab;
+    private @Nullable LayoutTab mRightTab;
+    private @Nullable LayoutTab mFromTab; // Set to either mLeftTab or mRightTab.
+    private @Nullable LayoutTab mToTab; // Set to mLeftTab or mRightTab or null if undetermined.
 
-    private TopToolbarOverlayCoordinator mLeftToolbarOverlay;
-    private TopToolbarOverlayCoordinator mRightToolbarOverlay;
+    private @Nullable TopToolbarOverlayCoordinator mLeftToolbarOverlay;
+    private @Nullable TopToolbarOverlayCoordinator mRightToolbarOverlay;
 
-    private ObservableSupplierImpl<Tab> mLeftTabSupplier;
-    private ObservableSupplierImpl<Tab> mRightTabSupplier;
+    private final ObservableSupplierImpl<@Nullable Tab> mLeftTabSupplier;
+    private final ObservableSupplierImpl<@Nullable Tab> mRightTabSupplier;
+
+    private final ViewGroup mContentContainer;
 
     // Whether or not to show the toolbar.
-    private boolean mMoveToolbar;
+    private final boolean mMoveToolbar;
 
     // Offsets are in pixels [0, width].
     private float mOffsetStart;
@@ -79,7 +100,7 @@ public class ToolbarSwipeLayout extends Layout {
     private final float mCommitDistanceFromEdge;
 
     private final BlackHoleEventFilter mBlackHoleEventFilter;
-    private ToolbarSwipeSceneLayer mSceneLayer;
+    private @Nullable ToolbarSwipeSceneLayer mSceneLayer;
 
     private final BrowserControlsStateProvider mBrowserControlsStateProvider;
 
@@ -93,9 +114,11 @@ public class ToolbarSwipeLayout extends Layout {
     private int mNextTabId;
 
     /**
-     * @param context             The current Android's context.
-     * @param updateHost          The {@link LayoutUpdateHost} view for this layout.
-     * @param renderHost          The {@link LayoutRenderHost} view for this layout.
+     * @param context The current Android's context.
+     * @param updateHost The {@link LayoutUpdateHost} view for this layout.
+     * @param renderHost The {@link LayoutRenderHost} view for this layout.
+     * @param bottomControlsOffsetSupplier Supplier of the offset, relative to the bottom of the
+     *     viewport, of the bottom-anchored toolbar.
      */
     public ToolbarSwipeLayout(
             Context context,
@@ -103,7 +126,9 @@ public class ToolbarSwipeLayout extends Layout {
             LayoutRenderHost renderHost,
             BrowserControlsStateProvider browserControlsStateProvider,
             LayoutManager layoutManager,
-            TopUiThemeColorProvider topUiColorProvider) {
+            TopUiThemeColorProvider topUiColorProvider,
+            ObservableSupplier<Integer> bottomControlsOffsetSupplier,
+            ViewGroup contentContainer) {
         super(context, updateHost, renderHost);
         mBlackHoleEventFilter = new BlackHoleEventFilter(context);
         mBrowserControlsStateProvider = browserControlsStateProvider;
@@ -111,24 +136,30 @@ public class ToolbarSwipeLayout extends Layout {
         final float pxToDp = 1.0f / res.getDisplayMetrics().density;
         mCommitDistanceFromEdge = res.getDimension(R.dimen.toolbar_swipe_commit_distance) * pxToDp;
         mSpaceBetweenTabs = res.getDimension(R.dimen.toolbar_swipe_space_between_tabs) * pxToDp;
+        mContentContainer = contentContainer;
 
         mMoveToolbar = !DeviceFormFactor.isNonMultiDisplayContextOnTablet(context);
 
         mLeftTabSupplier = new ObservableSupplierImpl<>();
         mRightTabSupplier = new ObservableSupplierImpl<>();
+        // No new captures should be taken mid swipe, so this shouldn't matter.
+        ObservableSupplier<Long> captureResourceIdSupplier = new ObservableSupplierImpl<>();
 
         if (mMoveToolbar) {
             mLeftToolbarOverlay =
                     new TopToolbarOverlayCoordinator(
                             getContext(),
                             layoutManager,
-                            (info) -> {},
+                            CallbackUtils.emptyCallback(),
                             mLeftTabSupplier,
                             mBrowserControlsStateProvider,
                             () -> mRenderHost.getResourceManager(),
                             topUiColorProvider,
+                            bottomControlsOffsetSupplier,
+                            new ObservableSupplierImpl<>(false),
                             LayoutType.TOOLBAR_SWIPE,
-                            true);
+                            /* isVisibilityManuallyControlled= */ true,
+                            captureResourceIdSupplier);
             mLeftToolbarOverlay.setManualVisibility(true);
             layoutManager.addSceneOverlay(mLeftToolbarOverlay);
 
@@ -136,13 +167,16 @@ public class ToolbarSwipeLayout extends Layout {
                     new TopToolbarOverlayCoordinator(
                             getContext(),
                             layoutManager,
-                            (info) -> {},
+                            CallbackUtils.emptyCallback(),
                             mRightTabSupplier,
                             mBrowserControlsStateProvider,
                             () -> mRenderHost.getResourceManager(),
                             topUiColorProvider,
+                            bottomControlsOffsetSupplier,
+                            new ObservableSupplierImpl<>(false),
                             LayoutType.TOOLBAR_SWIPE,
-                            true);
+                            /* isVisibilityManuallyControlled= */ true,
+                            captureResourceIdSupplier);
             mRightToolbarOverlay.setManualVisibility(true);
             layoutManager.addSceneOverlay(mRightToolbarOverlay);
         }
@@ -174,8 +208,19 @@ public class ToolbarSwipeLayout extends Layout {
 
     @Override
     public void doneHiding() {
-        TabModelUtils.selectTabById(
-                mTabModelSelector, mNextTabId, TabSelectionType.FROM_USER, false);
+        // Native pages already had thumbnails captured in `show()` so repeat work can be bypassed
+        // by hiding the tab early. This also fixes a blank NTP from being captured after Feed
+        // memory optimizations.
+        assumeNonNull(mTabModelSelector);
+        Tab currentTab = mTabModelSelector.getCurrentTab();
+        if (currentTab != null && currentTab.isNativePage()) {
+            // Use type CHANGED_TABS here as it triggers side-effects in observers that we want to
+            // maintain. This is the type that would be set in `selectTabById` after thumbnail
+            // capture.
+            currentTab.hide(TabHidingType.CHANGED_TABS);
+        }
+
+        TabModelUtils.selectTabById(mTabModelSelector, mNextTabId, TabSelectionType.FROM_USER);
         super.doneHiding();
     }
 
@@ -186,7 +231,10 @@ public class ToolbarSwipeLayout extends Layout {
         mNextTabId = Tab.INVALID_TAB_ID;
         if (mTabModelSelector == null) return;
         Tab tab = mTabModelSelector.getCurrentTab();
-        if (tab != null && tab.isNativePage()) mTabContentManager.cacheTabThumbnail(tab);
+        if (tab != null && tab.isNativePage()) {
+            assumeNonNull(mTabContentManager);
+            mTabContentManager.cacheTabThumbnail(tab);
+        }
 
         TabModel model = mTabModelSelector.getCurrentModel();
         if (model == null) return;
@@ -203,13 +251,19 @@ public class ToolbarSwipeLayout extends Layout {
             // TODO(crbug.com/40233431): Move this piece logic to use a LayoutStateObserver instead
             // - let the caller of the LayoutManager#switchToTab observe the LayoutState and close
             // the ntp tab in the #doneShowing event.
-            Tab lastTab = mTabModelSelector.getTabById(mFromTabId);
+            Tab lastTab = assumeNonNull(mTabModelSelector.getTabById(mFromTabId));
             if (UrlUtilities.isNtpUrl(lastTab.getUrl())
                     && !lastTab.canGoBack()
                     && !lastTab.canGoForward()) {
                 mTabModelSelector
                         .getModel(lastTab.isIncognito())
-                        .closeTab(lastTab, tab, false, false);
+                        .getTabRemover()
+                        .closeTabs(
+                                TabClosureParams.closeTab(lastTab)
+                                        .recommendedNextTab(tab)
+                                        .allowUndo(false)
+                                        .build(),
+                                /* allowDialog= */ false);
             }
 
             mIsSwitchToStaticTab = false;
@@ -243,8 +297,9 @@ public class ToolbarSwipeLayout extends Layout {
     }
 
     /**
-     * Prepare the tabs sliding animations. This method need to be called before
-     * {@link #doTabSwitchAnimation(int, float, float, long)}.
+     * Prepare the tabs sliding animations. This method need to be called before {@link
+     * #doTabSwitchAnimation(int, float, float, long)}.
+     *
      * @param direction The direction of the slide.
      * @param fromIndex The index of the tab which will be switched from.
      * @param toIndex The index of the tab which will be switched to.
@@ -261,15 +316,16 @@ public class ToolbarSwipeLayout extends Layout {
         mLeftTabSupplier.set(null);
         mRightTabSupplier.set(null);
 
+        assumeNonNull(mTabModelSelector);
         TabModel model = mTabModelSelector.getCurrentModel();
         if (0 <= leftIndex && leftIndex < model.getCount()) {
-            leftTabId = model.getTabAt(leftIndex).getId();
+            leftTabId = model.getTabAtChecked(leftIndex).getId();
             mLeftTab = createLayoutTab(leftTabId, model.isIncognito());
             prepareLayoutTabForSwipe(mLeftTab, leftIndex != fromIndex);
             mLeftTabSupplier.set(model.getTabAt(leftIndex));
         }
         if (0 <= rightIndex && rightIndex < model.getCount()) {
-            rightTabId = model.getTabAt(rightIndex).getId();
+            rightTabId = model.getTabAtChecked(rightIndex).getId();
             mRightTab = createLayoutTab(rightTabId, model.isIncognito());
             prepareLayoutTabForSwipe(mRightTab, rightIndex != fromIndex);
             mRightTabSupplier.set(model.getTabAt(rightIndex));
@@ -277,10 +333,23 @@ public class ToolbarSwipeLayout extends Layout {
         // Prioritize toTabId because fromTabId likely has a live layer.
         int fromTabId = dragFromLeftEdge ? rightTabId : leftTabId;
         int toTabId = !dragFromLeftEdge ? rightTabId : leftTabId;
-        List<Integer> visibleTabs = new ArrayList<Integer>();
+        List<Integer> visibleTabs = new ArrayList<>();
         if (toTabId != Tab.INVALID_TAB_ID) visibleTabs.add(toTabId);
         if (fromTabId != Tab.INVALID_TAB_ID) visibleTabs.add(fromTabId);
         updateCacheVisibleIds(visibleTabs);
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM
+                && ChromeFeatureList.isEnabled(SensitiveContentFeatures.SENSITIVE_CONTENT)
+                && ChromeFeatureList.isEnabled(
+                        SensitiveContentFeatures.SENSITIVE_CONTENT_WHILE_SWITCHING_TABS)
+                && TabUiUtils.anySensitiveContent(
+                        TabModelUtils.getTabsById(visibleTabs, model, /* allowClosing= */ true))) {
+            mContentContainer.setContentSensitivity(View.CONTENT_SENSITIVITY_SENSITIVE);
+            RecordHistogram.recordEnumeratedHistogram(
+                    "SensitiveContent.SensitiveTabSwitchingAnimations",
+                    SensitiveContentClient.TabSwitchingAnimation.TOP_TOOLBAR_SWIPE,
+                    SensitiveContentClient.TabSwitchingAnimation.COUNT);
+        }
 
         mToTab = null;
 
@@ -304,7 +373,6 @@ public class ToolbarSwipeLayout extends Layout {
 
     private void prepareLayoutTabForSwipe(LayoutTab layoutTab, boolean anonymizeToolbar) {
         assert layoutTab != null;
-        if (layoutTab.shouldStall()) layoutTab.setSaturation(0.0f);
         float heightDp = layoutTab.getOriginalContentHeight();
         layoutTab.setClipSize(layoutTab.getOriginalContentWidth(), heightDp);
         layoutTab.setScale(1.f);
@@ -355,18 +423,18 @@ public class ToolbarSwipeLayout extends Layout {
         float start = mOffsetTarget;
         float end = offsetTo;
         long duration = (long) (ANIMATION_SPEED_SCREEN_MS * Math.abs(start - end) / getWidth());
-        doTabSwitchAnimation(mToTab.getId(), start, end, duration);
+        doTabSwitchAnimation(start, end, duration);
     }
 
     /**
      * Perform the tabs sliding animations. {@link #prepareSwipeTabAnimation(int, int, int)} need to
      * be called before calling this method.
-     * @param tabId The id of the tab which will be switched to.
+     *
      * @param start The start point of X coordinate for the animation.
      * @param end The end point of X coordinate for the animation.
      * @param duration The animation duration in millisecond.
      */
-    private void doTabSwitchAnimation(int tabId, float start, float end, long duration) {
+    private void doTabSwitchAnimation(float start, float end, long duration) {
         // Animate gracefully the end of the swiping effect.
         forceAnimationToFinish();
 
@@ -378,6 +446,21 @@ public class ToolbarSwipeLayout extends Layout {
                 animator -> {
                     mOffset = animator.getAnimatedValue();
                     mOffsetTarget = mOffset;
+                });
+        offsetAnimation.addListener(
+                new AnimatorListenerAdapter() {
+                    @Override
+                    public void onAnimationEnd(Animator animation) {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM
+                                && ChromeFeatureList.isEnabled(
+                                        SensitiveContentFeatures.SENSITIVE_CONTENT)
+                                && ChromeFeatureList.isEnabled(
+                                        SensitiveContentFeatures
+                                                .SENSITIVE_CONTENT_WHILE_SWITCHING_TABS)) {
+                            mContentContainer.setContentSensitivity(
+                                    View.CONTENT_SENSITIVITY_NOT_SENSITIVE);
+                        }
+                    }
                 });
         offsetAnimation.start();
     }
@@ -442,11 +525,7 @@ public class ToolbarSwipeLayout extends Layout {
                 mLeftToolbarOverlay.setXOffset(leftX * dpToPx);
             }
             mLeftTab.setX(leftX);
-            if (true) {
-                mLeftTab.setY(0);
-            } else {
-                mLeftTab.setY(mBrowserControlsStateProvider.getContentOffset() / dpToPx);
-            }
+            mLeftTab.setY(mBrowserControlsStateProvider.getContentOffset() / dpToPx);
             needUpdate = updateSnap(dt, mLeftTab) || needUpdate;
         } else if (mLeftToolbarOverlay != null) {
             mLeftToolbarOverlay.setManualVisibility(false);
@@ -459,11 +538,7 @@ public class ToolbarSwipeLayout extends Layout {
                 mRightToolbarOverlay.setXOffset(rightX * dpToPx);
             }
             mRightTab.setX(rightX);
-            if(true){
-                mRightTab.setY(0);
-            } else {
-                mRightTab.setY(mBrowserControlsStateProvider.getContentOffset() / dpToPx);
-            }
+            mRightTab.setY(mBrowserControlsStateProvider.getContentOffset() / dpToPx);
             needUpdate = updateSnap(dt, mRightTab) || needUpdate;
         } else if (mRightToolbarOverlay != null) {
             mRightToolbarOverlay.setManualVisibility(false);
@@ -506,7 +581,7 @@ public class ToolbarSwipeLayout extends Layout {
     }
 
     @Override
-    protected SceneLayer getSceneLayer() {
+    protected @Nullable SceneLayer getSceneLayer() {
         return mSceneLayer;
     }
 
@@ -545,10 +620,12 @@ public class ToolbarSwipeLayout extends Layout {
     /**
      * Perform the tabs sliding animations. If the new tab's index is smaller than the old one, new
      * tab slide in from left, and old one slide out to right, and vice versa.
+     *
      * @param toTabId The id of the next tab which will be switched to.
      * @param fromTabId The id of the previous tab which will be switched out.
      */
     public void switchToTab(int toTabId, int fromTabId) {
+        assumeNonNull(mTabModelSelector);
         int fromTabIndex =
                 TabModelUtils.getTabIndexById(mTabModelSelector.getCurrentModel(), fromTabId);
         int toTabIndex =
@@ -562,13 +639,14 @@ public class ToolbarSwipeLayout extends Layout {
         float end = fromTabIndex < toTabIndex ? -getWidth() : getWidth();
         mNextTabId = toTabId;
         startHiding();
-        doTabSwitchAnimation(toTabId, 0f, end, SWITCH_TO_TAB_DURATION_MS);
+        doTabSwitchAnimation(0f, end, SWITCH_TO_TAB_DURATION_MS);
     }
 
     /**
      * Set it's switching to a tab. With |mIsSwitchToStaticTab| as true, we need to call
      * switchToTab() after this layout is shown. What is set here only applies to the next showing
      * of the layout, after that it is reset.
+     *
      * @param toTabId The id of the next tab which will be switched to.
      * @param fromTabId The id of the previous tab which will be switched out.
      */

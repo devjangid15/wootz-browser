@@ -2,22 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/files/file_path.h"
-#include "chrome/browser/ui/supervised_user/parent_permission_dialog.h"
-
 #include <memory>
 #include <string>
 #include <utility>
 
+#include "base/files/file_path.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/path_service.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "base/test/scoped_feature_list.h"
 #include "chrome/browser/extensions/chrome_test_extension_loader.h"
-#include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_util.h"
+#include "chrome/browser/extensions/scoped_test_mv2_enabler.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/supervised_user/supervised_user_extensions_delegate_impl.h"
 #include "chrome/browser/supervised_user/supervised_user_extensions_metrics_recorder.h"
@@ -27,6 +24,7 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/extensions/extension_enable_flow.h"
 #include "chrome/browser/ui/extensions/extension_enable_flow_test_delegate.h"
+#include "chrome/browser/ui/supervised_user/parent_permission_dialog.h"
 #include "chrome/browser/ui/test/test_browser_dialog.h"
 #include "chrome/browser/ui/views/supervised_user/parent_permission_dialog_view.h"
 #include "chrome/common/chrome_paths.h"
@@ -36,12 +34,12 @@
 #include "chrome/test/supervised_user/supervision_mixin.h"
 #include "components/signin/public/identity_manager/identity_test_environment.h"
 #include "components/supervised_user/core/browser/supervised_user_service.h"
-#include "components/supervised_user/core/common/features.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/test_launcher.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/browser/disable_reason.h"
 #include "extensions/browser/extension_dialog_auto_confirm.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/extension_util.h"
@@ -63,20 +61,13 @@ class ExtensionEnableFlowTestSupervised
   };
 
   ExtensionEnableFlowTestSupervised()
-      : TestParentPermissionDialogViewObserver(this) {
-    feature_list_.InitWithFeatures(
-        // Enable extensions for supervised users in Desktop platforms.
-        /*enabled_features=*/
-        {supervised_user::
-             kEnableExtensionsPermissionsForSupervisedUsersOnDesktop},
-        /*disabled_features=*/{});
-  }
+      : TestParentPermissionDialogViewObserver(this) {}
 
   ExtensionEnableFlowTestSupervised(const ExtensionEnableFlowTestSupervised&) =
       delete;
   ExtensionEnableFlowTestSupervised& operator=(
       const ExtensionEnableFlowTestSupervised&) = delete;
-  ~ExtensionEnableFlowTestSupervised() override { feature_list_.Reset(); }
+  ~ExtensionEnableFlowTestSupervised() override = default;
 
   void OnParentPermissionDialogDone(ParentPermissionDialog::Result result) {
     result_ = result;
@@ -107,7 +98,7 @@ class ExtensionEnableFlowTestSupervised
           view_->AcceptDialog();
           break;
         default:
-          NOTREACHED_NORETURN();
+          NOTREACHED();
       }
     }
   }
@@ -123,10 +114,10 @@ class ExtensionEnableFlowTestSupervised
             browser()->profile());
 
     test_extension_ = extensions::ExtensionBuilder("test extension").Build();
-    extension_service()->AddExtension(test_extension_.get());
-    extension_service()->DisableExtension(
+    extension_registrar()->AddExtension(test_extension_);
+    extension_registrar()->DisableExtension(
         test_extension_->id(),
-        extensions::disable_reason::DISABLE_CUSTODIAN_APPROVAL_REQUIRED);
+        {extensions::disable_reason::DISABLE_CUSTODIAN_APPROVAL_REQUIRED});
   }
 
   void TearDownOnMainThread() override {
@@ -148,20 +139,18 @@ class ExtensionEnableFlowTestSupervised
     return test_extension_.get();
   }
 
-  extensions::ExtensionRegistry* extension_registry() {
-    return extensions::ExtensionRegistry::Get(browser()->profile());
+  extensions::ExtensionRegistrar* extension_registrar() {
+    return extensions::ExtensionRegistrar::Get(browser()->profile());
   }
 
-  extensions::ExtensionService* extension_service() {
-    return extensions::ExtensionSystem::Get(browser()->profile())
-        ->extension_service();
+  extensions::ExtensionRegistry* extension_registry() {
+    return extensions::ExtensionRegistry::Get(browser()->profile());
   }
 
   std::unique_ptr<extensions::SupervisedUserExtensionsDelegate>
       supervised_user_extensions_delegate_;
 
  private:
-  base::test::ScopedFeatureList feature_list_;
   raw_ptr<ParentPermissionDialogView, DanglingUntriaged> view_ = nullptr;
   std::unique_ptr<ParentPermissionDialog> parent_permission_dialog_;
   ParentPermissionDialog::Result result_;
@@ -185,6 +174,10 @@ class ExtensionEnableFlowTestSupervised
   scoped_refptr<const extensions::Extension> test_extension_;
 
   std::optional<NextDialogAction> next_dialog_action_;
+
+  // TODO(https://crbug.com/40804030): Remove when these tests use only MV3
+  // extensions.
+  extensions::ScopedTestMV2Enabler mv2_enabler_;
 };
 
 // Tests launching an app that requires parent approval from the launcher.
@@ -277,54 +270,6 @@ IN_PROC_BROWSER_TEST_F(ExtensionEnableFlowTestSupervised,
   histogram_tester.ExpectTotalCount(SupervisedUserExtensionsMetricsRecorder::
                                         kParentPermissionDialogHistogramName,
                                     2);
-}
-
-// Tests that the Parent Permission Dialog doesn't appear at all when the parent
-// has disabled the "Permissions for sites, apps and extensions" toggle, and the
-// supervised user sees the Extension Install Blocked By Parent error dialog
-// instead.
-IN_PROC_BROWSER_TEST_F(ExtensionEnableFlowTestSupervised,
-                       ParentBlockedExtensionEnable) {
-  base::HistogramTester histogram_tester;
-  ASSERT_TRUE(browser()->profile()->IsChild());
-
-  EXPECT_TRUE(extension_registry()->disabled_extensions().Contains(
-      test_extension()->id()));
-
-  // Simulate the parent disabling the "Permissions for sites, apps and
-  // extensions" toggle.
-  supervised_user_test_util::
-      SetSupervisedUserExtensionsMayRequestPermissionsPref(browser()->profile(),
-                                                           false);
-
-  extensions::ScopedTestDialogAutoConfirm auto_confirm(
-      extensions::ScopedTestDialogAutoConfirm::ACCEPT);
-
-  ExtensionEnableFlowTestDelegate delegate;
-  ExtensionEnableFlow enable_flow(browser()->profile(), test_extension()->id(),
-                                  &delegate);
-  content::WebContents* web_contents =
-      browser()->tab_strip_model()->GetActiveWebContents();
-  enable_flow.StartForWebContents(web_contents);
-  delegate.Wait();
-
-  ASSERT_TRUE(delegate.result());
-  EXPECT_EQ(ExtensionEnableFlowTestDelegate::ABORTED, *delegate.result());
-
-  // The extension should remain disabled.
-  EXPECT_TRUE(extension_registry()->disabled_extensions().Contains(
-      test_extension()->id()));
-
-  // Proof that the Parent Permission Dialog didn't launch.
-  histogram_tester.ExpectTotalCount(SupervisedUserExtensionsMetricsRecorder::
-                                        kParentPermissionDialogHistogramName,
-                                    0);
-
-  // Proof that the Extension Install Blocked By Parent Dialog launched.
-  histogram_tester.ExpectUniqueSample(
-      SupervisedUserExtensionsMetricsRecorder::kEnablementHistogramName,
-      SupervisedUserExtensionsMetricsRecorder::EnablementState::kFailedToEnable,
-      1);
 }
 
 class ExtensionManagementApiTestSupervised
@@ -481,48 +426,4 @@ IN_PROC_BROWSER_TEST_F(ExtensionManagementApiTestSupervised,
   histogram_tester.ExpectTotalCount(SupervisedUserExtensionsMetricsRecorder::
                                         kParentPermissionDialogHistogramName,
                                     2);
-}
-
-IN_PROC_BROWSER_TEST_F(ExtensionManagementApiTestSupervised,
-                       PRE_ParentBlockedExtensionEnable) {
-  ASSERT_FALSE(browser()->profile()->IsChild());
-}
-
-// Tests that the Parent Permission Dialog doesn't appear at all when the parent
-// has disabled the "Permissions for sites, apps and extensions" toggle, and the
-// supervised user sees the Extension Install Blocked By Parent error dialog
-// instead.
-IN_PROC_BROWSER_TEST_F(ExtensionManagementApiTestSupervised,
-                       ParentBlockedExtensionEnable) {
-  base::HistogramTester histogram_tester;
-  ASSERT_TRUE(browser()->profile()->IsChild());
-
-  // Simulate the parent disabling the "Permissions for sites, apps and
-  // extensions" toggle.
-  supervised_user_test_util::
-      SetSupervisedUserExtensionsMayRequestPermissionsPref(browser()->profile(),
-                                                           false);
-
-  extensions::ScopedTestDialogAutoConfirm auto_confirm(
-      extensions::ScopedTestDialogAutoConfirm::ACCEPT);
-
-  std::string error;
-  EXPECT_TRUE(RunManagementSubtest(
-      "supervised_user_parent_disabled_permission_for_enable.html", &error))
-      << error;
-
-  // The extension should still be disabled.
-  EXPECT_TRUE(extension_registry()->disabled_extensions().Contains(
-      disabled_extension_id_));
-
-  // Proof that the Parent Permission Dialog didn't launch.
-  histogram_tester.ExpectTotalCount(SupervisedUserExtensionsMetricsRecorder::
-                                        kParentPermissionDialogHistogramName,
-                                    0);
-
-  // Proof that the Extension Install Blocked By Parent Dialog launched instead.
-  histogram_tester.ExpectUniqueSample(
-      SupervisedUserExtensionsMetricsRecorder::kEnablementHistogramName,
-      SupervisedUserExtensionsMetricsRecorder::EnablementState::kFailedToEnable,
-      1);
 }

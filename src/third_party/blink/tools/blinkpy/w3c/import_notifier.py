@@ -26,7 +26,7 @@ from typing import (
 )
 
 from blinkpy.common import path_finder
-from blinkpy.common.checkout.git import CommitRange
+from blinkpy.common.checkout.git import CommitRange, FileStatusType
 from blinkpy.common.memoized import memoized
 from blinkpy.common.net.git_cl import CLRevisionID
 from blinkpy.common.system.executive import ScriptError
@@ -47,13 +47,12 @@ from blinkpy.w3c.buganizer import (
     BuganizerIssue,
 )
 from blinkpy.w3c.common import (
-    AUTOROLLER_EMAIL,
     WPT_GH_URL,
     WPT_GH_RANGE_URL_TEMPLATE,
 )
 from blinkpy.w3c.directory_owners_extractor import DirectoryOwnersExtractor
 from blinkpy.w3c.gerrit import GerritAPI, GerritCL, OutputOption
-from blinkpy.w3c.wpt_results_processor import TestType
+from blinkpy.w3c.wpt_manifest import TestType
 
 _log = logging.getLogger(__name__)
 
@@ -82,10 +81,6 @@ class ImportNotifier:
 
         self.finder = path_finder.PathFinder(host.filesystem)
         self.default_port = host.port_factory.get()
-        self.default_port.set_option_default('additional_expectations', [
-            self.finder.path_from_web_tests('ChromeTestExpectations'),
-            self.finder.path_from_web_tests('MobileTestExpectations'),
-        ])
         self.default_port.set_option_default('test_types',
                                              typing.get_args(TestType))
         self.owners_extractor = DirectoryOwnersExtractor(host)
@@ -175,7 +170,15 @@ class ImportNotifier:
         platform_pattern = f'(platform|flag-specific){sep}([^{sep}]+){sep}'
         baseline_pattern = re.compile(f'web_tests{sep}({platform_pattern})?')
         import_range = CommitRange(f'{import_rev}~1', import_rev)
-        for changed_file in self.git.changed_files(import_range):
+        diff_filter = (FileStatusType.ADD | FileStatusType.MODIFY
+                       | FileStatusType.RENAME)
+        # Use a fairly high similarity threshold to avoid comparing unrelated
+        # baselines, which is worse than missing a rename and filing a duplicate
+        # bug.
+        changed_files = self.git.changed_files(import_range,
+                                               diff_filter=diff_filter,
+                                               rename_threshold=0.9)
+        for changed_file, status in changed_files.items():
             parts = baseline_pattern.split(changed_file, maxsplit=1)[1:]
             if not parts:
                 continue
@@ -185,7 +188,7 @@ class ImportNotifier:
             directory = self.find_directory_for_bug(test)
             if not directory:
                 continue
-            lines_before = self._read_baseline(changed_file,
+            lines_before = self._read_baseline(status.source or changed_file,
                                                import_range.start)
             lines_after = self._read_baseline(changed_file, import_range.end)
             if self.more_failures_in_baseline(lines_before, lines_after):
@@ -258,7 +261,7 @@ class ImportNotifier:
                     failures.exp_by_file[changed_file].append(line)
 
     def _read_exp_lines(self, path: str,
-                        ref: str) -> List[typ_types.Expectation]:
+                        ref: str) -> List[typ_types.ExpectationType]:
         abs_path = self.finder.path_from_chromium_base(path)
         expectations = TestExpectations(
             self.default_port,
@@ -367,7 +370,7 @@ class ImportNotifier:
         commit_list = ''
         for sha, subject in imported_commits:
             # subject is a Unicode string and can contain non-ASCII characters.
-            line = u'{}: {}'.format(subject, GITHUB_COMMIT_PREFIX + sha)
+            line = '{}: {}'.format(subject, GITHUB_COMMIT_PREFIX + sha)
             if self.local_wpt.is_commit_affecting_directory(
                     sha, path_from_wpt):
                 line += ' [affecting this directory]'
@@ -431,7 +434,6 @@ class ImportNotifier:
 
     def _cl_for_wpt_revision(self, wpt_revision: str) -> GerritCL:
         query = ' '.join([
-            f'owner:{AUTOROLLER_EMAIL}',
             f'prefixsubject:"{self.IMPORT_SUBJECT_PREFIX}{wpt_revision}"',
             'status:merged',
         ])
@@ -465,7 +467,7 @@ class DirectoryFailures:
 
     This corresponds 1-1 to a filed bug.
     """
-    exp_by_file: MutableMapping[str, List[typ_types.Expectation]] = field(
+    exp_by_file: MutableMapping[str, List[typ_types.ExpectationType]] = field(
         default_factory=lambda: defaultdict(list))
     baseline_failures: List[BaselineFailure] = field(default_factory=list)
 

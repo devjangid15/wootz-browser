@@ -4,40 +4,39 @@
 
 package org.chromium.chrome.browser.tabmodel;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import org.chromium.base.Callback;
 import org.chromium.base.lifetime.Destroyable;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.Tab;
 
 /**
  * {@link ObservableSupplier} for {@link Profile} that updates each time the profile of the current
- * tab model changes, e.g. if the current tab model switches to/from incognito.
- * Like {@link org.chromium.base.supplier.ObservableSupplier}, this class must only be
- * accessed from a single thread.
+ * tab model changes, e.g. if the current tab model switches to/from incognito. Like {@link
+ * org.chromium.base.supplier.ObservableSupplier}, this class must only be accessed from a single
+ * thread.
  */
+@NullMarked
 public class TabModelSelectorProfileSupplier extends ObservableSupplierImpl<Profile>
         implements Destroyable {
     private final TabModelSelectorObserver mSelectorObserver;
     private final ObservableSupplier<TabModelSelector> mSelectorSupplier;
     private final Callback<TabModelSelector> mSelectorSupplierCallback;
+    private final Callback<TabModel> mCurrentTabModelObserver;
 
-    private TabModelSelector mSelector;
+    private @Nullable TabModelSelector mSelector;
 
     public TabModelSelectorProfileSupplier(ObservableSupplier<TabModelSelector> selectorSupplier) {
         mSelectorObserver =
                 new TabModelSelectorObserver() {
                     @Override
-                    public void onTabModelSelected(TabModel newModel, TabModel oldModel) {
-                        Profile newProfile = newModel.getProfile();
-                        // Postpone setting the profile until tab state is initialized.
-                        if (newProfile == null) return;
-                        set(newProfile);
-                    }
-
-                    @Override
                     public void onChange() {
+                        assumeNonNull(mSelector);
                         if (mSelector.getCurrentModel() == null) return;
                         Profile profile = mSelector.getCurrentModel().getProfile();
                         if (profile == null) return;
@@ -52,8 +51,18 @@ public class TabModelSelectorProfileSupplier extends ObservableSupplierImpl<Prof
 
                     @Override
                     public void onTabStateInitialized() {
-                        set(mSelector.getCurrentModel().getProfile());
+                        assumeNonNull(mSelector);
+                        Profile profile = mSelector.getCurrentModel().getProfile();
+                        if (profile == null) return;
+                        set(profile);
                     }
+                };
+        mCurrentTabModelObserver =
+                (tabModel) -> {
+                    Profile newProfile = tabModel.getProfile();
+                    // Postpone setting the profile until tab state is initialized.
+                    if (newProfile == null) return;
+                    set(newProfile);
                 };
 
         mSelectorSupplier = selectorSupplier;
@@ -67,13 +76,17 @@ public class TabModelSelectorProfileSupplier extends ObservableSupplierImpl<Prof
 
     private void setSelector(TabModelSelector selector) {
         if (mSelector == selector) return;
-        if (mSelector != null) mSelector.removeObserver(mSelectorObserver);
+        if (mSelector != null) {
+            mSelector.removeObserver(mSelectorObserver);
+            mSelector.getCurrentTabModelSupplier().removeObserver(mCurrentTabModelObserver);
+        }
 
         mSelector = selector;
         mSelector.addObserver(mSelectorObserver);
+        mSelector.getCurrentTabModelSupplier().addObserver(mCurrentTabModelObserver);
 
         if (selector.getCurrentModel() != null) {
-            mSelectorObserver.onTabModelSelected(selector.getCurrentModel(), null);
+            mCurrentTabModelObserver.onResult(selector.getCurrentModel());
         }
     }
 
@@ -81,6 +94,7 @@ public class TabModelSelectorProfileSupplier extends ObservableSupplierImpl<Prof
     public void destroy() {
         if (mSelector != null) {
             mSelector.removeObserver(mSelectorObserver);
+            mSelector.getCurrentTabModelSupplier().removeObserver(mCurrentTabModelObserver);
             mSelector = null;
         }
         mSelectorSupplier.removeObserver(mSelectorSupplierCallback);
@@ -91,6 +105,8 @@ public class TabModelSelectorProfileSupplier extends ObservableSupplierImpl<Prof
         if (profile == null) {
             throw new IllegalStateException("Null is not a valid value to set for the profile.");
         }
+        // TODO(365814339): Convert to checked exception once all callsites are fixed.
+        assert !profile.shutdownStarted() : "Attempting to set an already destroyed Profile";
         super.set(profile);
     }
 
@@ -103,6 +119,8 @@ public class TabModelSelectorProfileSupplier extends ObservableSupplierImpl<Prof
             // to be notified when the profile becomes available.
             throw new IllegalStateException("Attempting to read a null profile from the supplier");
         }
+        // TODO(365814339): Convert to checked exception once all callsites are fixed.
+        assert !profile.shutdownStarted() : "Attempting to access an already destroyed Profile";
         return profile;
     }
 

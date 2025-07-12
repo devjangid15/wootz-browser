@@ -4,10 +4,12 @@
 
 #include "chrome/browser/ui/media_router/media_route_starter.h"
 
+#include <algorithm>
+
 #include "base/json/json_reader.h"
 #include "base/memory/raw_ptr.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "build/build_config.h"
 #include "build/buildflag.h"
 #include "chrome/browser/media/router/chrome_media_router_factory.h"
@@ -83,8 +85,9 @@ class MockPresentationRequestSourceObserver
   }
 
   ~MockPresentationRequestSourceObserver() override {
-    if (starter_)
+    if (starter_) {
       starter_->RemovePresentationRequestSourceObserver(this);
+    }
   }
 
   MOCK_METHOD(void, OnSourceUpdated, (std::u16string&));
@@ -107,7 +110,7 @@ class PresentationRequestCallbacks {
   void Success(const blink::mojom::PresentationInfo&,
                mojom::RoutePresentationConnectionPtr,
                const MediaRoute&) {
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
 
   void Error(const blink::mojom::PresentationError& error) {
@@ -199,7 +202,7 @@ class MediaRouteStarterTest : public ChromeRenderViewHostTestHarness {
     // this to occur).
     ON_CALL(*media_router(), UnregisterMediaSinksObserver(_))
         .WillByDefault([this](MediaSinksObserver* observer) {
-          auto it = base::ranges::find(media_sinks_observers_, observer);
+          auto it = std::ranges::find(media_sinks_observers_, observer);
           if (it != media_sinks_observers_.end()) {
             media_sinks_observers_.erase(it);
           }
@@ -348,8 +351,9 @@ class MediaRouteStarterTest : public ChromeRenderViewHostTestHarness {
         media_route_starter()->CreateRouteParameters(sink.id(), cast_mode);
     EXPECT_TRUE(params);
 
-    if (cast_mode == MediaCastMode::DESKTOP_MIRROR)
+    if (cast_mode == MediaCastMode::DESKTOP_MIRROR) {
       set_screen_capture_allowed_for_testing(true);
+    }
 
     StartRoute(std::move(params));
   }

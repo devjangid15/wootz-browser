@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "base/check_is_test.h"
+#include "base/functional/callback_forward.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
@@ -27,7 +28,6 @@
 #include "components/content_settings/core/browser/content_settings_observer.h"
 #include "components/content_settings/core/browser/content_settings_utils.h"
 #include "components/content_settings/core/browser/user_modifiable_provider.h"
-
 #include "components/content_settings/core/common/content_settings_constraints.h"
 #include "components/content_settings/core/common/content_settings_metadata.h"
 #include "components/content_settings/core/common/content_settings_pattern.h"
@@ -66,7 +66,6 @@ class ObservableProvider;
 class ProviderInterface;
 class PrefProvider;
 class TestUtils;
-class RuleIterator;
 class WebsiteSettingsInfo;
 }  // namespace content_settings
 
@@ -119,7 +118,7 @@ class HostContentSettingsMap : public content_settings::Observer,
   // Returns a single |ContentSetting| which applies to the given URLs.  Note
   // that certain internal schemes are allowlisted. For |CONTENT_TYPE_COOKIES|,
   // |CookieSettings| should be used instead. For content types that can't be
-  // converted to a |ContentSetting|, |GetContentSettingValue| should be called.
+  // converted to a |ContentSetting|, |GetWebsiteSetting| should be called.
   // If there is no content setting, returns CONTENT_SETTING_DEFAULT. |info| is
   // populated as explained in |GetWebsiteSetting()|.
   //
@@ -136,6 +135,15 @@ class HostContentSettingsMap : public content_settings::Observer,
       const GURL& primary_url,
       const GURL& secondary_url,
       ContentSettingsType content_type) const;
+
+  // Same as |GetContentSetting| but returns a variant for either
+  // ContentSettings or other more complex permission state. May be called on
+  // any thread.
+  PermissionSetting GetPermissionSetting(
+      const GURL& primary_url,
+      const GURL& secondary_url,
+      ContentSettingsType content_type,
+      content_settings::SettingInfo* info = nullptr) const;
 
   // Returns a single content setting |Value| which applies to the given URLs.
   // If |info| is not NULL, then the |source| field of |info| is set to the
@@ -229,6 +237,9 @@ class HostContentSettingsMap : public content_settings::Observer,
       ContentSettingsType content_type,
       ContentSetting setting,
       const content_settings::ContentSettingConstraints& constraints = {});
+
+  // TODO(crbug.com/425642101): Add functions to set and reset
+  // PermissionSettings.
 
   // Sets the |value| for the default scope of the url that is appropriate for
   // the given |content_type| applying any provided |constraints|. Setting the
@@ -339,13 +350,18 @@ class HostContentSettingsMap : public content_settings::Observer,
       const ContentSettingsPattern& secondary_pattern,
       ContentSettingsTypeSet content_type_set) override;
 
-
   // Whether this settings map is for an incognito or guest session.
   bool IsOffTheRecord() const { return is_off_the_record_; }
 
   // Adds/removes an observer for content settings changes.
   void AddObserver(content_settings::Observer* observer);
   void RemoveObserver(content_settings::Observer* observer);
+
+  // Forces a sync of content settings and invokes callback when the sync is
+  // done. Useful for ensuring that NOTIFICATIONS content settings are
+  // up-to-date on Android, where they reflect the state of the corresponding OS
+  // channels and need to be initialized from the OS.
+  void EnsureSettingsUpToDate(base::OnceClosure callback);
 
   // Schedules any pending lossy website settings to be written to disk.
   void FlushLossyWebsiteSettings();
@@ -354,7 +370,7 @@ class HostContentSettingsMap : public content_settings::Observer,
 
   // Injects a clock into the PrefProvider to allow control over the
   // |last_modified| timestamp.
-  void SetClockForTesting(base::Clock* clock);
+  void SetClockForTesting(const base::Clock* clock);
 
   // Returns the provider that contains content settings from user
   // preferences.
@@ -367,6 +383,9 @@ class HostContentSettingsMap : public content_settings::Observer,
     allow_invalid_secondary_pattern_for_testing_ = allow;
   }
 
+  // Returns the current time of the `clock_`.
+  base::Time Now() const { return clock_->Now(); }
+
  private:
   friend class base::RefCountedThreadSafe<HostContentSettingsMap>;
   friend class content_settings::TestUtils;
@@ -376,11 +395,14 @@ class HostContentSettingsMap : public content_settings::Observer,
   FRIEND_TEST_ALL_PREFIXES(
       OneTimePermissionExpiryEnforcementUmaInteractiveUiTest,
       TestExpiryEnforcement);
-  FRIEND_TEST_ALL_PREFIXES(IndexedHostContentSettingsMapTest,
+  FRIEND_TEST_ALL_PREFIXES(HostContentSettingsMapTest,
                            MigrateRequestingAndTopLevelOriginSettings);
   FRIEND_TEST_ALL_PREFIXES(
-      IndexedHostContentSettingsMapTest,
+      HostContentSettingsMapTest,
       MigrateRequestingAndTopLevelOriginSettingsResetsEmbeddedSetting);
+
+  // Enum for GetWebsiteSettingInternal() parameter.
+  enum class ProviderFilter { kUserModifiable, kAny };
 
   ~HostContentSettingsMap() override;
 
@@ -424,7 +446,7 @@ class HostContentSettingsMap : public content_settings::Observer,
       const GURL& primary_url,
       const GURL& secondary_url,
       ContentSettingsType content_type,
-      ProviderType first_provider_to_search,
+      ProviderFilter provider_filter,
       content_settings::SettingInfo* info) const;
 
   content_settings::PatternPair GetNarrowestPatterns(
@@ -440,17 +462,7 @@ class HostContentSettingsMap : public content_settings::Observer,
       bool include_incognito,
       ContentSettingsPattern* primary_pattern,
       ContentSettingsPattern* secondary_pattern,
-      content_settings::RuleMetaData* metadata,
-      base::Clock* clock);
-
-  static base::Value GetContentSettingValueAndPatterns(
-      content_settings::RuleIterator* rule_iterator,
-      const GURL& primary_url,
-      const GURL& secondary_url,
-      ContentSettingsPattern* primary_pattern,
-      ContentSettingsPattern* secondary_pattern,
-      content_settings::RuleMetaData* metadata,
-      base::Clock* clock);
+      content_settings::RuleMetaData* metadata);
 
   static base::Value GetContentSettingValueAndPatterns(
       content_settings::Rule* rule,
@@ -482,23 +494,15 @@ class HostContentSettingsMap : public content_settings::Observer,
   void UpdateExpiryEnforcementTimer(ContentSettingsType content_type,
                                     base::Time expiration);
 
-  // If the feature
-  // `kActiveContentSettingExpiry` is enabled,
-  // this method checks for and deletes all
-  // content setting entries which will have
-  // expired before `now() +
-  // kEagerExpiryBuffer` in any provider. It
-  // also determines the time of the next
-  // future expiry and schedules itself to run
-  // at `expiration() - kEagerExpiryBuffer` if
-  // such a closest expiry exists for other
-  // content setting entries of this type in
-  // any provider. This method can and should
-  // be called each time a new expiration
-  // metadata field may be set for the
-  // provider. It aborts and potentially
-  // reinitializes running OneShotTimers
-  // automatically in those cases.
+  // If the feature `kActiveContentSettingExpiry` is enabled, this method checks
+  // for and deletes all content setting entries for temporary allowable
+  // permissions expired before `now() + kEagerExpiryBuffer` in any provider. It
+  // also determines the time of the next future expiry and schedules itself to
+  // run at `expiration() - kEagerExpiryBuffer` if such a closest expiry exists
+  // for other content setting entries of this type in any provider. This method
+  // can and should be called each time a new expiration metadata field may be
+  // set for the provider. It aborts and potentially reinitializes running
+  // OneShotTimers automatically in those cases.
   void DeleteNearlyExpiredSettingsAndMaybeScheduleNextRun(
       ContentSettingsType content_setting_type);
 
@@ -549,12 +553,12 @@ class HostContentSettingsMap : public content_settings::Observer,
   // order to ensure the migration logic is sound.
   bool allow_invalid_secondary_pattern_for_testing_;
 
-  raw_ptr<base::Clock> clock_;
+  raw_ptr<const base::Clock> clock_;
 
   // Maps content setting type to OneShotTimers that are used to run
   // `DeleteNearlyExpiredSettingsAndMaybeScheduleNextRun` which checks for, and
-  // deletes expired entries of the content setting if the feature flag
-  // `kActiveContentSettingExpiry` is enabled.
+  // deletes expired entries of the temporary allowable content setting if the
+  // feature flag `kActiveContentSettingExpiry` is enabled.
   std::map<ContentSettingsType, std::unique_ptr<base::OneShotTimer>>
       expiration_enforcement_timers_;
 

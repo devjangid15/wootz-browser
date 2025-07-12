@@ -19,9 +19,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "extensions/browser/api/declarative/rules_cache_delegate.h"
 #include "extensions/browser/extension_error.h"
-#include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
-#include "extensions/browser/extension_system.h"
 #include "extensions/browser/extensions_browser_client.h"
 #include "extensions/browser/state_store.h"
 #include "extensions/common/api/declarative/declarative_manifest_data.h"
@@ -169,7 +167,7 @@ std::string RulesRegistry::RemoveRules(
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   // Check if any of the rules are non-removable.
-  for (RuleId rule_id : rule_identifiers) {
+  for (const RuleId& rule_id : rule_identifiers) {
     RulesDictionaryKey lookup_key(extension_id, rule_id);
     auto itr = manifest_rules_.find(lookup_key);
     if (itr != manifest_rules_.end())
@@ -302,11 +300,10 @@ void RulesRegistry::OnExtensionLoaded(const Extension* extension) {
 
 size_t RulesRegistry::GetNumberOfUsedRuleIdentifiersForTesting() const {
   size_t entry_count = 0u;
-  for (auto extension = used_rule_identifiers_.cbegin();
-       extension != used_rule_identifiers_.cend(); ++extension) {
+  for (const auto& used_rule_identifier : used_rule_identifiers_) {
     // Each extension is counted as 1 just for being there. Otherwise we miss
     // keys with empty values.
-    entry_count += 1u + extension->second.size();
+    entry_count += 1u + used_rule_identifier.second.size();
   }
   return entry_count;
 }

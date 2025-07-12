@@ -4,8 +4,10 @@
 
 #include "chrome/common/extensions/api/side_panel/side_panel_info.h"
 
+#include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "chrome/common/extensions/api/side_panel.h"
+#include "extensions/common/file_util.h"
 #include "extensions/common/manifest.h"
 #include "extensions/common/manifest_constants.h"
 
@@ -35,12 +37,6 @@ std::unique_ptr<SidePanelInfo> ParseFromDictionary(const Extension& extension,
   return info;
 }
 
-bool ExtensionResourceExists(const Extension* extension,
-                             const std::string& path) {
-  auto resource_path = extension->GetResource(path).GetFilePath();
-  return !resource_path.empty() && base::PathExists(resource_path);
-}
-
 }  // namespace
 
 SidePanelInfo::SidePanelInfo() = default;
@@ -65,12 +61,12 @@ SidePanelManifestHandler::~SidePanelManifestHandler() = default;
 
 bool SidePanelManifestHandler::Parse(Extension* extension,
                                      std::u16string* error) {
-  // auto info = ParseFromDictionary(*extension, error);
-  // if (!info) {
-  //   return false;
-  // }
-  // extension->SetManifestData(SidePanelManifestKeys::kSidePanel,
-  //                            std::move(info));
+  auto info = ParseFromDictionary(*extension, error);
+  if (!info) {
+    return false;
+  }
+  extension->SetManifestData(SidePanelManifestKeys::kSidePanel,
+                             std::move(info));
   return true;
 }
 
@@ -80,14 +76,23 @@ base::span<const char* const> SidePanelManifestHandler::Keys() const {
 }
 
 bool SidePanelManifestHandler::Validate(
-    const Extension* extension,
+    const Extension& extension,
     std::string* error,
     std::vector<InstallWarning>* warnings) const {
-  std::string path = SidePanelInfo::GetDefaultPath(extension);
-  if (!ExtensionResourceExists(extension, path)) {
+  std::string path = SidePanelInfo::GetDefaultPath(&extension);
+  GURL side_panel_url = extension.GetResourceURL(path);
+  if (!side_panel_url.is_valid()) {
     *error = errors::kSidePanelManifestDefaultPathError;
     return false;
   }
+
+  base::FilePath path_file =
+      file_util::ExtensionURLToAbsoluteFilePath(extension, side_panel_url);
+  if (path_file.empty() || !base::PathExists(path_file)) {
+    *error = errors::kSidePanelManifestDefaultPathError;
+    return false;
+  }
+
   return true;
 }
 

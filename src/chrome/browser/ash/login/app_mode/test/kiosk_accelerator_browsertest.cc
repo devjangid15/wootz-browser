@@ -7,11 +7,13 @@
 #include "chrome/browser/app_mode/test/accelerator_helpers.h"
 #include "chrome/browser/ash/app_mode/kiosk_controller.h"
 #include "chrome/browser/ash/app_mode/kiosk_system_session.h"
+#include "chrome/browser/ash/app_mode/test/kiosk_mixin.h"
+#include "chrome/browser/ash/app_mode/test/kiosk_test_utils.h"
 #include "chrome/browser/ash/login/app_mode/test/ash_accelerator_helpers.h"
-#include "chrome/browser/ash/login/app_mode/test/web_kiosk_base_test.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/test/test_browser_closed_waiter.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
+#include "chrome/test/base/in_process_browser_test.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
@@ -19,6 +21,8 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace ash {
+
+using kiosk::test::WaitKioskLaunched;
 
 namespace {
 
@@ -45,14 +49,28 @@ int WindowWidthAfterChange(content::WebContents* web_contents,
 }  // anonymous namespace
 
 // Verifies accelerator behavior in Kiosk sessions in Ash.
-class WebKioskAcceleratorTest : public WebKioskBaseTest {};
+class WebKioskAcceleratorTest : public MixinBasedInProcessBrowserTest {
+ public:
+  WebKioskAcceleratorTest() = default;
+
+  void SetUpOnMainThread() override {
+    MixinBasedInProcessBrowserTest::SetUpOnMainThread();
+    ASSERT_TRUE(WaitKioskLaunched());
+  }
+
+  KioskMixin kiosk_{
+      &mixin_host_,
+      KioskMixin::Config{/*name=*/{},
+                         KioskMixin::AutoLaunchAccount{
+                             KioskMixin::SimpleWebAppOption().account_id},
+                         {KioskMixin::SimpleWebAppOption()}}};
+};
 
 IN_PROC_BROWSER_TEST_F(WebKioskAcceleratorTest, AcceleratorsDontCloseSession) {
-  InitializeRegularOnlineKiosk();
   SelectFirstBrowser();
   ASSERT_EQ(BrowserList::GetInstance()->size(), 1u);
-  ASSERT_FALSE(chrome::PressCloseTabAccelerator(browser()));
-  ASSERT_FALSE(chrome::PressCloseWindowAccelerator(browser()));
+  ASSERT_FALSE(PressCloseTabAccelerator(browser()));
+  ASSERT_FALSE(PressCloseWindowAccelerator(browser()));
   ASSERT_FALSE(ash::PressSignOutAccelerator());
   base::RunLoop loop;
   loop.RunUntilIdle();
@@ -62,7 +80,6 @@ IN_PROC_BROWSER_TEST_F(WebKioskAcceleratorTest, AcceleratorsDontCloseSession) {
 }
 
 IN_PROC_BROWSER_TEST_F(WebKioskAcceleratorTest, ZoomAccelerators) {
-  InitializeRegularOnlineKiosk();
   SelectFirstBrowser();
 
   BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser());
@@ -100,7 +117,7 @@ class NonKioskAcceleratorTest : public InProcessBrowserTest {};
 
 IN_PROC_BROWSER_TEST_F(NonKioskAcceleratorTest, CloseTabAccelerator) {
   ASSERT_EQ(BrowserList::GetInstance()->size(), 1u);
-  ASSERT_TRUE(chrome::PressCloseTabAccelerator(browser()));
+  ASSERT_TRUE(PressCloseTabAccelerator(browser()));
   TestBrowserClosedWaiter settings_browser_closed_waiter{browser()};
   ASSERT_TRUE(settings_browser_closed_waiter.WaitUntilClosed());
   ASSERT_EQ(BrowserList::GetInstance()->size(), 0u);
@@ -108,7 +125,7 @@ IN_PROC_BROWSER_TEST_F(NonKioskAcceleratorTest, CloseTabAccelerator) {
 
 IN_PROC_BROWSER_TEST_F(NonKioskAcceleratorTest, CloseWindowAccelerator) {
   ASSERT_EQ(BrowserList::GetInstance()->size(), 1u);
-  ASSERT_TRUE(chrome::PressCloseWindowAccelerator(browser()));
+  ASSERT_TRUE(PressCloseWindowAccelerator(browser()));
   TestBrowserClosedWaiter settings_browser_closed_waiter{browser()};
   ASSERT_TRUE(settings_browser_closed_waiter.WaitUntilClosed());
   ASSERT_EQ(BrowserList::GetInstance()->size(), 0u);

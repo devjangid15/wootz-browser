@@ -19,32 +19,31 @@ namespace ash {
 using WmShadowControllerDelegateTest = AshTestBase;
 
 TEST_F(WmShadowControllerDelegateTest,
-       UpdateShadowRoundedCornersBasedOnWindowState) {
+       UpdateShadowRoundedCornersEnterExitOverview) {
   auto window = CreateTestWindow();
 
-  const int window_corner_radius =
-      window->GetProperty(aura::client::kWindowCornerRadiusKey);
+  auto* window_rounded_corner =
+      window->GetProperty(aura::client::kWindowRoundedCornersKey);
 
   auto* shadow_controller = Shell::Get()->shadow_controller();
   shadow_controller->UpdateShadowForWindow(window.get());
 
-  // For normal window state, top-level windows have rounded window.
-  WindowState* window_state = WindowState::Get(window.get());
-
+  // Before entering Overview, the shadow should have a same rounded corner
+  // radius with its window.
   auto* shadow = shadow_controller->GetShadowForWindow(window.get());
-  EXPECT_EQ(shadow->rounded_corner_radius_for_testing(), window_corner_radius);
+  EXPECT_TRUE(window_rounded_corner);
+  EXPECT_EQ(shadow->rounded_corner_radius_for_testing(),
+            window_rounded_corner->upper_left());
 
-  // Window in snapped state does not have rounded corners, therefore the window
-  // shadow should adjust accordingly.
-  const WindowSnapWMEvent snap_event(WM_EVENT_SNAP_PRIMARY);
-  window_state->OnWMEvent(&snap_event);
-
+  // Enter Overview, the shadow's rounded corner radius becomes 0.
+  ToggleOverview();
   EXPECT_EQ(shadow->rounded_corner_radius_for_testing(), 0);
 
-  window_state->Restore();
-
-  ASSERT_TRUE(window_state->IsNormalStateType());
-  EXPECT_EQ(shadow->rounded_corner_radius_for_testing(), window_corner_radius);
+  // Exit Overview, the shadow's rounded corner radius is reset to window
+  // rounded corner radius.
+  ToggleOverview();
+  EXPECT_EQ(shadow->rounded_corner_radius_for_testing(),
+            window_rounded_corner->upper_left());
 }
 
 TEST_F(WmShadowControllerDelegateTest,

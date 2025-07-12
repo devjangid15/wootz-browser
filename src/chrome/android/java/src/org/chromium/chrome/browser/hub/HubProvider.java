@@ -4,22 +4,27 @@
 
 package org.chromium.chrome.browser.hub;
 
-import android.content.Context;
+import static org.chromium.build.NullUtil.assumeNonNull;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
+import android.app.Activity;
 
 import org.chromium.base.Callback;
 import org.chromium.base.CallbackController;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.supplier.LazyOneshotSupplier;
 import org.chromium.base.supplier.ObservableSupplier;
+import org.chromium.base.supplier.OneshotSupplier;
 import org.chromium.base.supplier.Supplier;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.back_press.BackPressManager;
+import org.chromium.chrome.browser.profiles.ProfileProvider;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.toolbar.menu_button.MenuButtonCoordinator;
+import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeController;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
+import org.chromium.chrome.browser.ui.searchactivityutils.SearchActivityClient;
 import org.chromium.components.browser_ui.widget.MenuOrKeyboardActionController;
 
 /**
@@ -27,17 +32,19 @@ import org.chromium.components.browser_ui.widget.MenuOrKeyboardActionController;
  *
  * <p>Part of chrome/android/ to use {@link HubManagerFactory} and to use as glue code.
  */
+@NullMarked
 public class HubProvider {
-    private final @NonNull LazyOneshotSupplier<HubManager> mHubManagerSupplier;
-    private final @NonNull PaneListBuilder mPaneListBuilder;
-    private final @NonNull Supplier<TabModelSelector> mTabModelSelectorSupplier;
-    private final @NonNull Callback<Pane> mOnPaneFocused;
+    private final LazyOneshotSupplier<HubManager> mHubManagerSupplier;
+    private final PaneListBuilder mPaneListBuilder;
+    private final Supplier<TabModelSelector> mTabModelSelectorSupplier;
+    private final Callback<Pane> mOnPaneFocused;
+    private final HubShowPaneHelper mHubShowPaneHelper;
 
     private @Nullable CallbackController mCallbackController = new CallbackController();
     private @Nullable HubTabSwitcherMetricsRecorder mHubTabSwitcherMetricsRecorder;
 
     /**
-     * @param context The Android {@link Context} for the Hub.
+     * @param profileProviderSupplier Used to fetch dependencies.
      * @param orderController The {@link PaneOrderController} for the Hub.
      * @param backPressManager The {@link BackPressManager} for the activity.
      * @param menuOrKeyboardActionController The {@link MenuOrKeyboardActionController} for the
@@ -46,38 +53,51 @@ public class HubProvider {
      *     activity.
      * @param tabModelSelectorSupplier The supplier of the {@link TabModelSelector}.
      * @param menuButtonCoordinatorSupplier A supplier for the root component for the app menu.
+     * @param edgeToEdgeSupplier A supplier for the {@link EdgeToEdgeController}.
+     * @param searchActivityClient A client for the search activity, used to launch search.
+     * @param xrSpaceModeObservableSupplier Supplies current XR space mode status. True for XR full
+     *     space mode, false otherwise.
      */
     public HubProvider(
-            @NonNull Context context,
-            @NonNull PaneOrderController orderController,
-            @NonNull BackPressManager backPressManager,
-            @NonNull MenuOrKeyboardActionController menuOrKeyboardActionController,
-            @NonNull Supplier<SnackbarManager> snackbarManagerSupplier,
-            @NonNull Supplier<TabModelSelector> tabModelSelectorSupplier,
-            @NonNull Supplier<MenuButtonCoordinator> menuButtonCoordinatorSupplier) {
+            Activity activity,
+            OneshotSupplier<ProfileProvider> profileProviderSupplier,
+            PaneOrderController orderController,
+            BackPressManager backPressManager,
+            MenuOrKeyboardActionController menuOrKeyboardActionController,
+            Supplier<SnackbarManager> snackbarManagerSupplier,
+            Supplier<TabModelSelector> tabModelSelectorSupplier,
+            Supplier<MenuButtonCoordinator> menuButtonCoordinatorSupplier,
+            ObservableSupplier<EdgeToEdgeController> edgeToEdgeSupplier,
+            SearchActivityClient searchActivityClient,
+            @Nullable ObservableSupplier<Boolean> xrSpaceModeObservableSupplier) {
         mPaneListBuilder = new PaneListBuilder(orderController);
         mTabModelSelectorSupplier = tabModelSelectorSupplier;
+        mHubShowPaneHelper = new HubShowPaneHelper();
         mHubManagerSupplier =
                 LazyOneshotSupplier.fromSupplier(
                         () -> {
                             assert tabModelSelectorSupplier.hasValue();
-                            ObservableSupplier<Tab> tabSupplier =
+                            ObservableSupplier<@Nullable Tab> tabSupplier =
                                     tabModelSelectorSupplier.get().getCurrentTabSupplier();
                             assert menuButtonCoordinatorSupplier.hasValue();
 
                             SnackbarManager snackbarManager = snackbarManagerSupplier.get();
                             assert snackbarManager != null;
                             return HubManagerFactory.createHubManager(
-                                    context,
+                                    activity,
+                                    profileProviderSupplier,
                                     mPaneListBuilder,
                                     backPressManager,
                                     menuOrKeyboardActionController,
                                     snackbarManager,
                                     tabSupplier,
-                                    menuButtonCoordinatorSupplier.get());
+                                    menuButtonCoordinatorSupplier.get(),
+                                    mHubShowPaneHelper,
+                                    edgeToEdgeSupplier,
+                                    searchActivityClient,
+                                    xrSpaceModeObservableSupplier);
                         });
 
-        // Taken from IncognitoToggleTabLayout.
         mOnPaneFocused =
                 pane -> {
                     boolean isIncognito = pane.getPaneId() == PaneId.INCOGNITO_TAB_SWITCHER;
@@ -93,6 +113,7 @@ public class HubProvider {
                                 tabCount == null ? true : tabCount.intValue() == 0);
                     }
                 };
+        assumeNonNull(mCallbackController);
         mHubManagerSupplier.onAvailable(
                 mCallbackController.makeCancelable(this::onHubManagerAvailable));
     }
@@ -110,14 +131,14 @@ public class HubProvider {
         }
 
         if (mHubManagerSupplier.hasValue()) {
-            HubManager hubManager = mHubManagerSupplier.get();
+            HubManager hubManager = assumeNonNull(mHubManagerSupplier.get());
             hubManager.getPaneManager().getFocusedPaneSupplier().removeObserver(mOnPaneFocused);
             hubManager.destroy();
         }
     }
 
     /** Returns the lazy supplier for {@link HubManager}. */
-    public @NonNull LazyOneshotSupplier<HubManager> getHubManagerSupplier() {
+    public LazyOneshotSupplier<HubManager> getHubManagerSupplier() {
         return mHubManagerSupplier;
     }
 
@@ -126,11 +147,19 @@ public class HubProvider {
      * throws an {@link IllegalStateException} once {@code #get()} is invoked on the result of
      * {@link #getHubManagerSupplier()}.
      */
-    public @NonNull PaneListBuilder getPaneListBuilder() {
+    public PaneListBuilder getPaneListBuilder() {
         return mPaneListBuilder;
     }
 
-    private void onHubManagerAvailable(@NonNull HubManager hubManager) {
+    /**
+     * Returns the {@link HubShowPaneHelper} used to select a pane to before opening the {@link
+     * HubLayout}.
+     */
+    public HubShowPaneHelper getHubShowPaneHelper() {
+        return mHubShowPaneHelper;
+    }
+
+    private void onHubManagerAvailable(HubManager hubManager) {
         var focusedPaneSupplier = hubManager.getPaneManager().getFocusedPaneSupplier();
         focusedPaneSupplier.addObserver(mOnPaneFocused);
         mHubTabSwitcherMetricsRecorder =

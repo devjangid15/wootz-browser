@@ -146,8 +146,10 @@ void ExtensionTelemetryUploader::SendRequest(const std::string& access_token) {
   resource_request->method = "POST";
   resource_request->load_flags = net::LOAD_DISABLE_CACHE;
   if (!access_token.empty()) {
-    SetAccessTokenAndClearCookieInResourceRequest(resource_request.get(),
-                                                  access_token);
+    LogAuthenticatedCookieResets(
+        *resource_request,
+        SafeBrowsingAuthenticatedEndpoint::kExtensionTelemetry);
+    SetAccessToken(resource_request.get(), access_token);
   } else {
     resource_request->credentials_mode =
         network::mojom::CredentialsMode::kInclude;

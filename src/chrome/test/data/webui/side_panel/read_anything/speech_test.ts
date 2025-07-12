@@ -3,18 +3,21 @@
 // found in the LICENSE file.
 import 'chrome-untrusted://read-anything-side-panel.top-chrome/read_anything.js';
 
-import type {ReadAnythingElement} from 'chrome-untrusted://read-anything-side-panel.top-chrome/read_anything.js';
-import {NEXT_GRANULARITY_EVENT, PauseActionSource, PREVIOUS_GRANULARITY_EVENT, RATE_EVENT, WordBoundaryMode} from 'chrome-untrusted://read-anything-side-panel.top-chrome/read_anything.js';
-import {assertEquals, assertFalse, assertGT, assertTrue} from 'chrome-untrusted://webui-test/chai_assert.js';
+import type {AppElement} from 'chrome-untrusted://read-anything-side-panel.top-chrome/read_anything.js';
+import {playFromSelectionTimeout, SpeechBrowserProxyImpl, SpeechController, ToolbarEvent, VoiceLanguageController} from 'chrome-untrusted://read-anything-side-panel.top-chrome/read_anything.js';
+import {assertEquals, assertFalse, assertTrue} from 'chrome-untrusted://webui-test/chai_assert.js';
+import {MockTimer} from 'chrome-untrusted://webui-test/mock_timer.js';
+import {microtasksFinished} from 'chrome-untrusted://webui-test/test_util.js';
 
-import {emitEvent, suppressInnocuousErrors} from './common.js';
-import {FakeSpeechSynthesis} from './fake_speech_synthesis.js';
+import {createAndSetVoices, emitEvent, mockMetrics, setupBasicSpeech} from './common.js';
+import {TestSpeechBrowserProxy} from './test_speech_browser_proxy.js';
 
-// TODO: b/323960128 - Add tests for word boundaries here or in a
-// separate file.
 suite('Speech', () => {
-  let app: ReadAnythingElement;
-  let speechSynthesis: FakeSpeechSynthesis;
+  let app: AppElement;
+  let speech: TestSpeechBrowserProxy;
+  let voiceLanguageController: VoiceLanguageController;
+  let speechController: SpeechController;
+
   const paragraph1: string[] = [
     'Something has changed within me, something is not the same.',
     'I\'m through with playing by the rules of someone else\'s game.',
@@ -25,8 +28,9 @@ suite('Speech', () => {
     'It\'s time to try defying gravity.',
     'I think I\'ll try defying gravity.',
     'Kiss me goodbye, I\'m defying gravity.',
-    'And you won\'t bring me down',
+    'And you won\'t bring me down.',
   ];
+
   const leafIds = [3, 5];
   const axTree = {
     rootId: 1,
@@ -62,383 +66,305 @@ suite('Speech', () => {
     ],
   };
 
+  function getSpokenText(): string {
+    assertEquals(1, speech.getCallCount('speak'));
+    return speech.getArgs('speak')[0].text.trim();
+  }
+
   setup(() => {
-    suppressInnocuousErrors();
+    // Clearing the DOM should always be done first.
     document.body.innerHTML = window.trustedTypes!.emptyHTML;
     // Do not call the real `onConnected()`. As defined in
     // ReadAnythingAppController, onConnected creates mojo pipes to connect to
     // the rest of the Read Anything feature, which we are not testing here.
     chrome.readingMode.onConnected = () => {};
+    speech = new TestSpeechBrowserProxy();
+    SpeechBrowserProxyImpl.setInstance(speech);
+    chrome.readingMode.shouldShowUi = () => true;
+    chrome.readingMode.showLoading = () => {};
+    chrome.readingMode.restoreSettingsFromPrefs = () => {};
+    chrome.readingMode.languageChanged = () => {};
+    chrome.readingMode.onTtsEngineInstalled = () => {};
+    mockMetrics();
+    voiceLanguageController = new VoiceLanguageController();
+    VoiceLanguageController.setInstance(voiceLanguageController);
+    speechController = new SpeechController();
+    SpeechController.setInstance(speechController);
 
     app = document.createElement('read-anything-app');
     document.body.appendChild(app);
-    // skip highlighting for these tests as we're just focused on what's spoken
-    // and the fake speech synthesis causes problems here
-    app.highlightNodes = () => {};
-    // No need to attempt to log a speech session while using the fake
-    // synthesis.
-    // @ts-ignore
-    app.logSpeechPlaySession = () => {};
+    setupBasicSpeech(speech);
     chrome.readingMode.setContentForTesting(axTree, leafIds);
-    speechSynthesis = new FakeSpeechSynthesis();
-    app.synth = speechSynthesis;
-
-    // @ts-ignore
-    app.enabledLanguagesInPref = ['en'];
-    app.getSpeechSynthesisVoice();
+    speech.reset();
   });
 
-  suite('on play', () => {
-    setup(() => {
-      app.playSpeech();
-    });
+  test('speaks all text by sentences', () => {
+    emitEvent(app, ToolbarEvent.PLAY_PAUSE);
+    assertEquals(1, speech.getCallCount('speak'));
+    const spoken1 = speech.getArgs('speak')[0];
+    assertEquals(paragraph1[0], spoken1.text.trim());
 
-    test('speaks all text by sentences', () => {
-      assertEquals(
-          speechSynthesis.spokenUtterances.length,
-          paragraph1.length + paragraph2.length);
-      const utteranceTexts = speechSynthesis.spokenUtterances.map(
-          utterance => utterance.text.trim());
-      assertTrue(
-          paragraph1.every(sentence => utteranceTexts.includes(sentence)));
-      assertTrue(
-          paragraph2.every(sentence => utteranceTexts.includes(sentence)));
-    });
+    spoken1.onend();
+    assertEquals(2, speech.getCallCount('speak'));
+    const spoken2 = speech.getArgs('speak')[1];
+    assertEquals(paragraph1[1], spoken2.text.trim());
 
-    test('uses set rate', () => {
-      let expectedRate = 1;
-      assertTrue(
-          speechSynthesis.spokenUtterances.every(
-              utterance => utterance.rate === expectedRate),
-          '1');
+    spoken2.onend();
+    assertEquals(3, speech.getCallCount('speak'));
+    const spoken3 = speech.getArgs('speak')[2];
+    assertEquals(paragraph1[2], spoken3.text.trim());
 
-      speechSynthesis.clearSpokenUtterances();
-      expectedRate = 1.5;
-      emitEvent(app, RATE_EVENT, {detail: {rate: expectedRate}});
-      app.playSpeech();
+    spoken3.onend();
+    assertEquals(4, speech.getCallCount('speak'));
+    const spoken4 = speech.getArgs('speak')[3];
+    assertEquals(paragraph1[3], spoken4.text.trim());
 
-      assertTrue(
-          speechSynthesis.spokenUtterances.every(
-              utterance => utterance.rate === expectedRate),
-          '1.5');
+    spoken4.onend();
+    assertEquals(5, speech.getCallCount('speak'));
+    const spoken5 = speech.getArgs('speak')[4];
+    assertEquals(paragraph2[0], spoken5.text.trim());
 
-      speechSynthesis.clearSpokenUtterances();
-      expectedRate = 4;
-      emitEvent(app, RATE_EVENT, {detail: {rate: expectedRate}});
-      app.playSpeech();
+    spoken5.onend();
+    assertEquals(6, speech.getCallCount('speak'));
+    const spoken6 = speech.getArgs('speak')[5];
+    assertEquals(paragraph2[1], spoken6.text.trim());
 
-      assertTrue(
-          speechSynthesis.spokenUtterances.every(
-              utterance => utterance.rate === expectedRate),
-          '4');
-    });
+    spoken6.onend();
+    assertEquals(7, speech.getCallCount('speak'));
+    const spoken7 = speech.getArgs('speak')[6];
+    assertEquals(paragraph2[2], spoken7.text.trim());
 
-    test('uses set language', () => {
-      // no need to update fonts for this test
-      app.$.toolbar.updateFonts = () => {};
+    spoken7.onend();
+    assertEquals(8, speech.getCallCount('speak'));
+    const spoken8 = speech.getArgs('speak')[7];
+    assertEquals(paragraph2[3], spoken8.text.trim());
 
-      let expectedLang = 'en';
-      assertTrue(
-          speechSynthesis.spokenUtterances.every(
-              utterance => utterance.lang === expectedLang),
-          '1');
-
-      speechSynthesis.clearSpokenUtterances();
-      expectedLang = 'fr';
-      chrome.readingMode.setLanguageForTesting(expectedLang);
-      app.playSpeech();
-
-      assertTrue(
-          speechSynthesis.spokenUtterances.every(
-              utterance => utterance.lang === expectedLang),
-          '1.5');
-
-      speechSynthesis.clearSpokenUtterances();
-      expectedLang = 'zh';
-      chrome.readingMode.setLanguageForTesting(expectedLang);
-      app.playSpeech();
-
-      assertTrue(
-          speechSynthesis.spokenUtterances.every(
-              utterance => utterance.lang === expectedLang),
-          '4');
-    });
+    spoken8.onend();
+    assertEquals(8, speech.getCallCount('speak'));
   });
 
+  test('play after speech finishes plays again from the top', () => {
+    emitEvent(app, ToolbarEvent.PLAY_PAUSE);
+    const spoken1 = speech.getArgs('speak')[0];
+    spoken1.onend();
+    const spoken2 = speech.getArgs('speak')[1];
+    spoken2.onend();
+    const spoken3 = speech.getArgs('speak')[2];
+    spoken3.onend();
+    const spoken4 = speech.getArgs('speak')[3];
+    spoken4.onend();
+    const spoken5 = speech.getArgs('speak')[4];
+    spoken5.onend();
+    const spoken6 = speech.getArgs('speak')[5];
+    spoken6.onend();
+    const spoken7 = speech.getArgs('speak')[6];
+    spoken7.onend();
+    const spoken8 = speech.getArgs('speak')[7];
+    spoken8.onend();
 
-  suite('on pause via pause button', () => {
+    emitEvent(app, ToolbarEvent.PLAY_PAUSE);
+
+    assertEquals(9, speech.getCallCount('speak'));
+    const spoken9 = speech.getArgs('speak')[0];
+    assertEquals(paragraph1[0], spoken9.text.trim());
+  });
+
+  test('uses set language', () => {
+    const expectedLang = 'fr';
+    chrome.readingMode.setLanguageForTesting(expectedLang);
+
+    emitEvent(app, ToolbarEvent.PLAY_PAUSE);
+
+    assertEquals(1, speech.getCallCount('speak'));
+    assertEquals(expectedLang, speech.getArgs('speak')[0].lang);
+  });
+
+  suite('with text selected', () => {
+    let mockTimer: MockTimer;
+
+    function selectAndPlay(
+        baseTree: any, anchorId: number, anchorOffset: number, focusId: number,
+        focusOffset: number, isBackward: boolean = false): void {
+      select(
+          baseTree, anchorId, anchorOffset, focusId, focusOffset, isBackward);
+      playFromSelection();
+    }
+
+    function select(
+        baseTree: any, anchorId: number, anchorOffset: number, focusId: number,
+        focusOffset: number, isBackward: boolean = false): void {
+      mockTimer.install();
+      const selectedTree = Object.assign(
+          {
+            selection: {
+              anchor_object_id: anchorId,
+              focus_object_id: focusId,
+              anchor_offset: anchorOffset,
+              focus_offset: focusOffset,
+              is_backward: isBackward,
+            },
+          },
+          baseTree);
+      chrome.readingMode.setContentForTesting(selectedTree, leafIds);
+      app.updateSelection();
+    }
+
+    function playFromSelection() {
+      emitEvent(app, ToolbarEvent.PLAY_PAUSE);
+      mockTimer.tick(playFromSelectionTimeout);
+      mockTimer.uninstall();
+    }
+
     setup(() => {
-      chrome.readingMode.initAxPositionWithNode(2);
-      app.speechPlayingState.speechStarted = true;
-      app.stopSpeech(PauseActionSource.BUTTON_CLICK);
+      mockTimer = new MockTimer();
+      return microtasksFinished();
     });
 
-    test('pauses speech', () => {
-      assertTrue(speechSynthesis.paused);
-      assertFalse(speechSynthesis.canceled);
+    test('first play starts from selected node', () => {
+      selectAndPlay(axTree, 5, 0, 5, 7);
+      assertEquals(paragraph2[0], getSpokenText());
     });
 
-    suite('then play', () => {
-      test('with no word boundaries resumes speech', () => {
-        app.playSpeech();
-
-        assertTrue(speechSynthesis.speaking);
-        assertFalse(speechSynthesis.canceled);
-      });
-
-      test('with word boundaries cancels and re-speaks', () => {
-        app.wordBoundaryState.mode = WordBoundaryMode.BOUNDARY_DETECTED;
-
-        app.playSpeech();
-
-        assertGT(speechSynthesis.spokenUtterances.length, 0);
-        assertTrue(speechSynthesis.canceled);
-      });
+    test('selection is cleared after play', () => {
+      selectAndPlay(axTree, 5, 0, 5, 10);
+      assertEquals('None', app.getSelection().type);
     });
 
-    test('lock screen stays paused', () => {
-      chrome.readingMode.onLockScreen();
-      assertFalse(speechSynthesis.canceled);
-      assertTrue(speechSynthesis.paused);
+    test('in middle of node, play from beginning of node', () => {
+      selectAndPlay(axTree, 5, 10, 5, 20);
+      assertEquals(paragraph2[0], getSpokenText());
+    });
+
+    test('when selection crosses nodes, play from earlier node', () => {
+      selectAndPlay(axTree, 3, 10, 5, 10);
+      assertEquals(paragraph1[0], getSpokenText());
+    });
+
+    test('when selection is backward, play from earlier node', () => {
+      selectAndPlay(axTree, 5, 10, 3, 10, /*isBackward=*/ true);
+      assertEquals(paragraph1[0], getSpokenText());
+    });
+
+    test('after speech started, cancels and plays from selection', () => {
+      select(axTree, 5, 0, 5, 10);
+      speechController.initializeSpeechTree(1);
+      speechController.setHasSpeechBeenTriggered(true);
+      speech.reset();
+
+      playFromSelection();
+
+      assertEquals(1, speech.getCallCount('cancel'));
+      assertEquals(paragraph2[0], getSpokenText());
+    });
+
+    test('play from selection when node split across sentences', () => {
+      const fragment1 = ' This is a sentence';
+      const fragment2 = ' that ends in the next node. ';
+      const fragment3 =
+          'And a following sentence in the same node to be selected.';
+      const splitNodeTree = {
+        rootId: 1,
+        nodes: [
+          {
+            id: 1,
+            role: 'rootWebArea',
+            htmlTag: '#document',
+            childIds: [2],
+          },
+          {
+            id: 2,
+            role: 'paragraph',
+            htmlTag: 'p',
+            childIds: [3, 5],
+          },
+          {
+            id: 3,
+            role: 'link',
+            htmlTag: 'a',
+            url: 'http://www.google.com',
+            childIds: [4],
+          },
+          {
+            id: 4,
+            role: 'staticText',
+            name: fragment1,
+          },
+          {
+            id: 5,
+            role: 'staticText',
+            name: fragment2 + fragment3,
+          },
+        ],
+      };
+      selectAndPlay(
+          splitNodeTree, 5, fragment2.length + 1, 5,
+          fragment2.length + fragment3.length);
+
+      // We shouldn't speak fragment2 even though it's in the same node
+      // because the selection only covers fragment 3.
+      assertEquals(fragment3, getSpokenText());
     });
   });
 
   test('next granularity plays from there', () => {
-    chrome.readingMode.initAxPositionWithNode(2);
-    const expectedNumSentences = paragraph1.length + paragraph2.length - 1;
-
-    emitEvent(app, NEXT_GRANULARITY_EVENT);
-
-    assertEquals(speechSynthesis.spokenUtterances.length, expectedNumSentences);
-    const utteranceTexts = speechSynthesis.spokenUtterances.map(
-        utterance => utterance.text.trim());
-    assertFalse(utteranceTexts.includes(paragraph1[0]!));
-    assertTrue(paragraph2.every(sentence => utteranceTexts.includes(sentence)));
+    emitEvent(app, ToolbarEvent.NEXT_GRANULARITY);
+    assertEquals(paragraph1[1], getSpokenText());
   });
 
   test('previous granularity plays from there', () => {
     chrome.readingMode.initAxPositionWithNode(2);
-    app.playSpeech();
-    speechSynthesis.clearSpokenUtterances();
+    emitEvent(app, ToolbarEvent.PLAY_PAUSE);
+    speech.reset();
 
-    emitEvent(app, PREVIOUS_GRANULARITY_EVENT);
+    emitEvent(app, ToolbarEvent.PREVIOUS_GRANULARITY);
 
-    assertEquals(speechSynthesis.spokenUtterances.length, 1);
-    assertEquals(speechSynthesis.spokenUtterances[0]!.text, paragraph2.at(-1)!);
-  });
-
-  test('very long text uses max speech length', () => {
-    const longSentences =
-        'A kingdom of isolation, and it looks like I am the queen and the ' +
-        'wind is howling like this swirling storm inside, Couldn\t keep it ' +
-        'in, heaven knows I tried, but don\'t let them in, don\'t let them ' +
-        'see, be the good girl you always have to be, and conceal, don\'t ' +
-        'feel, don\'t let them know.' +
-        'Well, now they know, let it go, let it go, can\'t hold it back ' +
-        'anymore, let it go, let it go, turn away and slam the ' +
-        'door- I don\'t care what they\'re going to say, let the storm rage ' +
-        'on- the cold never bothered me anyway- it\'s funny how some ' +
-        'distance makes everything seem small and the fears that once ' +
-        'controlled me can\'t get to me at all- it\'s time to see what I can ' +
-        'do to test the limits and break through- no right no wrong no rules ' +
-        'for me- I\'m free- let it go let it go I am one with the wind and ' +
-        'sky let it go let it go you\'ll never see me cry- here I stand and ' +
-        'here I stay- let the storm rage on';
-    const leafs = [2];
-    const longTree = {
-      rootId: 1,
-      nodes: [
-        {
-          id: 1,
-          role: 'rootWebArea',
-          htmlTag: '#document',
-          childIds: [2],
-        },
-        {
-          id: 2,
-          role: 'staticText',
-          name: longSentences,
-        },
-      ],
-    };
-    const expectedNumSegments =
-        Math.ceil(longSentences.length / app.maxSpeechLength);
-
-    chrome.readingMode.setContentForTesting(longTree, leafs);
-    app.playSpeech();
-
-    assertEquals(speechSynthesis.spokenUtterances.length, expectedNumSegments);
-    const spoken =
-        speechSynthesis.spokenUtterances.map(utterance => utterance.text)
-            .join('');
-    assertEquals(spoken, longSentences);
+    assertEquals(paragraph1[0], getSpokenText());
   });
 
   suite('while playing', () => {
     setup(() => {
-      chrome.readingMode.initAxPositionWithNode(2);
-      app.speechPlayingState.speechStarted = true;
-      app.speechPlayingState.paused = false;
+      speechController.initializeSpeechTree(1);
+      emitEvent(app, ToolbarEvent.PLAY_PAUSE);
     });
 
-
     test('voice change cancels and restarts speech', () => {
-      chrome.readingMode.onVoiceChange = () => {};
-      emitEvent(
-          app, 'select-voice',
-          {detail: {selectedVoice: speechSynthesis.getVoices()[1]}});
+      createAndSetVoices(speech, [
+        {lang: 'en', name: 'Google Sheldon'},
+        {lang: 'en', name: 'Google Mary'},
+      ]);
+      speech.reset();
 
-      assertGT(speechSynthesis.spokenUtterances.length, 0);
-      assertTrue(speechSynthesis.canceled);
-      assertFalse(speechSynthesis.paused);
+      emitEvent(
+          app, ToolbarEvent.VOICE,
+          {detail: {selectedVoice: speech.getVoices()[1]}});
+
+      assertEquals(2, speech.getCallCount('cancel'));
+      assertEquals(1, speech.getCallCount('speak'));
+      assertEquals(0, speech.getCallCount('pause'));
     });
 
     test('rate change cancels and restarts speech', () => {
-      emitEvent(app, RATE_EVENT, {detail: {rate: 0.8}});
+      speech.reset();
 
-      assertGT(speechSynthesis.spokenUtterances.length, 0);
-      assertTrue(speechSynthesis.canceled);
-      assertFalse(speechSynthesis.paused);
+      emitEvent(app, ToolbarEvent.RATE);
+
+      assertEquals(2, speech.getCallCount('cancel'));
+      assertEquals(1, speech.getCallCount('speak'));
+      assertEquals(0, speech.getCallCount('pause'));
     });
 
-    test('lock screen cancels speech', () => {
-      chrome.readingMode.onLockScreen();
-      assertTrue(speechSynthesis.canceled);
-      assertFalse(speechSynthesis.paused);
+    test('before speech engine is loaded is not playable', async () => {
+      await microtasksFinished();
+      assertFalse(app.$.toolbar.isReadAloudPlayable);
     });
 
-    suite('isReadAloudPlayable updates', () => {
-      setup(() => {
-        assertTrue(app.isReadAloudPlayable());
-      });
-      test('before utterance.onStarted', () => {
-        app.playSpeech();
-        assertFalse(app.isReadAloudPlayable());
-      });
-      test('after utterance.onStarted', () => {
-        speechSynthesis.triggerUtteranceStartedOnNextSpeak();
-        app.playSpeech();
-        assertTrue(app.isReadAloudPlayable());
-      });
-    });
+    test('after speech engine is loaded is playable', async () => {
+      assertEquals(1, speech.getCallCount('speak'));
 
-    suite('language change to unavailable language', () => {
-      const pageLanguage = 'es';
-      setup(() => {
-        speechSynthesis.triggerErrorEventOnNextSpeak('language-unavailable');
-        chrome.readingMode.onVoiceChange = () => {};
-        app.$.toolbar.updateFonts = () => {};
-        assertFalse(
-            pageLanguage === chrome.readingMode.defaultLanguageForSpeech);
-        assertFalse(
-            app.speechSynthesisLanguage ===
-            chrome.readingMode.defaultLanguageForSpeech);
-        chrome.readingMode.setLanguageForTesting(pageLanguage);
-        app.playSpeech();
-      });
+      speech.getArgs('speak')[0].onstart();
+      await microtasksFinished();
 
-      test('selects default voice', () => {
-        assertFalse(speechSynthesis.speaking);
-        assertTrue(speechSynthesis.canceled);
-        assertFalse(speechSynthesis.paused);
-        assertEquals(
-            app.speechSynthesisLanguage,
-            chrome.readingMode.defaultLanguageForSpeech);
-      });
-    });
-
-    suite('voice change to unavailable voice', () => {
-      setup(() => {
-        speechSynthesis.triggerErrorEventOnNextSpeak('voice-unavailable');
-        chrome.readingMode.onVoiceChange = () => {};
-      });
-
-      test('cancels and selects default voice', () => {
-        emitEvent(app, 'select-voice', {
-          detail: {
-            selectedVoice: {lang: 'en', name: 'Lisie'} as SpeechSynthesisVoice,
-          },
-        });
-
-        assertFalse(speechSynthesis.speaking);
-        assertTrue(speechSynthesis.canceled);
-        assertFalse(speechSynthesis.paused);
-        assertEquals(
-            app.getSpeechSynthesisVoice()?.name,
-            speechSynthesis.getVoices()[0]?.name);
-      });
-
-      test(
-          'with voice still in getVoices() cancels and selects another voice',
-          () => {
-            // Updating the language triggers a font update, which is unneeded
-            // for this test.
-            app.$.toolbar.updateFonts = () => {};
-            chrome.readingMode.setLanguageForTesting('en');
-            emitEvent(app, 'select-voice', {
-              detail: {
-                selectedVoice: {lang: 'en', name: 'Lauren', default:true} as
-                    SpeechSynthesisVoice,
-              },
-            });
-
-            assertFalse(speechSynthesis.speaking);
-            assertTrue(speechSynthesis.canceled);
-            assertFalse(speechSynthesis.paused);
-            assertEquals(
-                app.getSpeechSynthesisVoice()?.name,
-                speechSynthesis.getVoices()[1]?.name);
-          });
-
-      test(
-          'continues to select default voice if no voices available in language',
-          () => {
-            // Updating the language triggers a font update, which is unneeded
-            // for this test.
-            app.$.toolbar.updateFonts = () => {};
-            chrome.readingMode.setLanguageForTesting('elvish');
-
-            emitEvent(app, 'select-voice', {
-              detail: {
-                selectedVoice: {lang: 'en', name: 'Lauren'} as
-                    SpeechSynthesisVoice,
-              },
-            });
-
-            assertFalse(speechSynthesis.speaking);
-            assertTrue(speechSynthesis.canceled);
-            assertFalse(speechSynthesis.paused);
-            assertEquals(
-                app.getSpeechSynthesisVoice()?.name,
-                speechSynthesis.getVoices()[0]?.name);
-          });
-    });
-
-    suite('and voice preview is played', () => {
-      setup(() => {
-        emitEvent(app, 'preview-voice', {detail: {previewVoice: null}});
-      });
-
-      test('cancels speech and plays preview', () => {
-        assertTrue(speechSynthesis.canceled, 'canceled');
-        assertTrue(speechSynthesis.speaking, 'speaking');
-        assertFalse(speechSynthesis.paused, 'paused');
-        assertEquals(speechSynthesis.spokenUtterances.length, 1);
-      });
-
-      test('then resumes speech after voice menu is closed', () => {
-        speechSynthesis.clearSpokenUtterances();
-
-        emitEvent(
-            app, 'voice-menu-close',
-            {detail: {voicePlayingWhenMenuOpened: true}});
-
-        assertTrue(speechSynthesis.canceled);
-        assertFalse(speechSynthesis.paused);
-        assertEquals(
-            speechSynthesis.spokenUtterances.length,
-            paragraph1.length + paragraph2.length);
-      });
+      assertTrue(app.$.toolbar.isReadAloudPlayable);
     });
   });
 });

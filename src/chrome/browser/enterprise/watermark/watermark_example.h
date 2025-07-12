@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_ENTERPRISE_WATERMARK_WATERMARK_EXAMPLE_H_
 #define CHROME_BROWSER_ENTERPRISE_WATERMARK_WATERMARK_EXAMPLE_H_
 
+#include "base/memory/raw_ptr.h"
 #include "chrome/browser/enterprise/watermark/watermark_view.h"
 #include "ui/views/controls/slider.h"
 #include "ui/views/controls/textarea/textarea.h"
@@ -17,6 +18,10 @@ class BoxLayoutView;
 class Checkbox;
 class Label;
 }  // namespace views
+
+namespace enterprise_watermark {
+class WatermarkView;
+}  // namespace enterprise_watermark
 
 struct SliderInfo {
   std::string label;
@@ -74,4 +79,4 @@ class WatermarkTextArea : public views::Textarea {
   raw_ptr<enterprise_watermark::WatermarkView> watermark_view_;
 };
 
-#endif  // UI_VIEWS_EXAMPLES_WATERMARK_EXAMPLE_H_
+#endif  // CHROME_BROWSER_ENTERPRISE_WATERMARK_WATERMARK_EXAMPLE_H_

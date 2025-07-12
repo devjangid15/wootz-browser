@@ -11,12 +11,13 @@
 #include "chrome/browser/ui/aura/accessibility/automation_manager_aura.h"
 #include "chrome/common/extensions/api/accessibility_private.h"
 #include "chrome/common/extensions/extension_constants.h"
+#include "components/input/native_web_keyboard_event.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/input/native_web_keyboard_event.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_host.h"
 #include "extensions/common/constants.h"
+#include "ui/accessibility/accessibility_features.h"
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/events/event.h"
 #include "ui/events/event_constants.h"
@@ -37,8 +38,7 @@ std::string ToString(SwitchAccessCommand command) {
           extensions::api::accessibility_private::SwitchAccessCommand::
               kPrevious);
     case SwitchAccessCommand::kNone:
-      NOTREACHED_IN_MIGRATION();
-      return "";
+      NOTREACHED();
   }
 }
 
@@ -76,7 +76,12 @@ void AccessibilityEventRewriterDelegateImpl::DispatchKeyEventToChromeVox(
     std::unique_ptr<ui::Event> event,
     bool capture) {
   extensions::ExtensionHost* host =
-      GetAccessibilityExtensionHost(extension_misc::kChromeVoxExtensionId);
+      ::features::IsAccessibilityManifestV3EnabledForChromeVox()
+          ? GetAccessibilityOffscreenDocumentHost(
+                extension_misc::kChromeVoxExtensionId)
+          : GetAccessibilityExtensionHost(
+                extension_misc::kChromeVoxExtensionId);
+
   if (!host)
     return;
 
@@ -96,15 +101,14 @@ void AccessibilityEventRewriterDelegateImpl::DispatchMouseEvent(
                         event->source_device_id() == ui::ED_UNKNOWN_DEVICE;
 
   switch (event->type()) {
-    case ui::ET_MOUSE_MOVED:
+    case ui::EventType::kMouseMoved:
       event_type = ax::mojom::Event::kMouseMoved;
       break;
-    case ui::ET_MOUSE_DRAGGED:
+    case ui::EventType::kMouseDragged:
       event_type = ax::mojom::Event::kMouseDragged;
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
-      return;
+      NOTREACHED();
   }
 
   AutomationManagerAura::GetInstance()->HandleEvent(
@@ -174,7 +178,7 @@ void AccessibilityEventRewriterDelegateImpl::OnUnhandledSpokenFeedbackEvent(
 
 bool AccessibilityEventRewriterDelegateImpl::HandleKeyboardEvent(
     content::WebContents* source,
-    const content::NativeWebKeyboardEvent& event) {
+    const input::NativeWebKeyboardEvent& event) {
   OnUnhandledSpokenFeedbackEvent(event.os_event->Clone());
   return true;
 }

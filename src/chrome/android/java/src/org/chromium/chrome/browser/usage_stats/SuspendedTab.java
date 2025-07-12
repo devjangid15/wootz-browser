@@ -26,9 +26,11 @@ import org.chromium.chrome.browser.infobar.InfoBarContainer;
 import org.chromium.chrome.browser.media.MediaCaptureDevicesDispatcherAndroid;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.TabUtils;
 import org.chromium.chrome.browser.tab.TabViewProvider;
 import org.chromium.chrome.browser.tab_ui.TabContentManager;
 import org.chromium.components.browser_ui.styles.SemanticColorUtils;
+import org.chromium.content_public.browser.Visibility;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.base.WindowAndroid;
 
@@ -99,12 +101,9 @@ public class SuspendedTab extends EmptyTabObserver implements UserData, TabViewP
 
         WebContents webContents = mTab.getWebContents();
         if (webContents != null) {
-            webContents.onHide();
-            webContents.suspendAllMediaPlayers();
-            webContents.setAudioMuted(true);
-            if (MediaCaptureDevicesDispatcherAndroid.isCapturingAudio(webContents)
-                    || MediaCaptureDevicesDispatcherAndroid.isCapturingVideo(webContents)
-                    || MediaCaptureDevicesDispatcherAndroid.isCapturingScreen(webContents)) {
+            webContents.updateWebContentsVisibility(Visibility.HIDDEN);
+            TabUtils.pauseMedia(mTab);
+            if (TabUtils.isCapturingForMedia(mTab)) {
                 MediaCaptureDevicesDispatcherAndroid.notifyStopped(webContents);
             }
         }
@@ -138,7 +137,7 @@ public class SuspendedTab extends EmptyTabObserver implements UserData, TabViewP
 
         WebContents webContents = mTab.getWebContents();
         if (webContents != null) {
-            webContents.onShow();
+            webContents.updateWebContentsVisibility(Visibility.VISIBLE);
             webContents.setAudioMuted(false);
         }
 
@@ -181,7 +180,7 @@ public class SuspendedTab extends EmptyTabObserver implements UserData, TabViewP
 
     private void updateFqdnText() {
         Context context = mTab.getContext();
-        TextView explanationText = (TextView) mView.findViewById(R.id.suspended_tab_explanation);
+        TextView explanationText = mView.findViewById(R.id.suspended_tab_explanation);
         explanationText.setText(
                 context.getString(R.string.usage_stats_site_paused_explanation, mFqdn));
         setSettingsLinkClickListener();

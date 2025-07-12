@@ -25,10 +25,10 @@ public class DownloadSharedPreferenceHelper {
     }
 
     private final List<DownloadSharedPreferenceEntry> mDownloadSharedPreferenceEntries =
-            new ArrayList<DownloadSharedPreferenceEntry>();
+            new ArrayList<>();
     private final ObserverList<Observer> mObservers = new ObserverList<>();
 
-    private SharedPreferencesManager mSharedPrefs;
+    private final SharedPreferencesManager mSharedPrefs;
 
     // "Initialization on demand holder idiom"
     private static class LazyHolder {
@@ -171,10 +171,11 @@ public class DownloadSharedPreferenceHelper {
 
     /**
      * Helper method to store all the SharedPreferences entries.
-     * @param forceCommit   Whether SharedPreferences should be updated synchronously.
+     *
+     * @param forceCommit Whether SharedPreferences should be updated synchronously.
      */
     private void storeDownloadSharedPreferenceEntries(boolean forceCommit) {
-        Set<String> entries = new HashSet<String>();
+        Set<String> entries = new HashSet<>();
         for (int i = 0; i < mDownloadSharedPreferenceEntries.size(); ++i) {
             entries.add(mDownloadSharedPreferenceEntries.get(i).getSharedPreferenceString());
         }

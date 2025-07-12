@@ -31,8 +31,6 @@
 #include "components/exo/toast_surface.h"
 #include "components/exo/toast_surface_manager.h"
 #include "components/exo/xdg_shell_surface.h"
-#include "gpu/command_buffer/common/gpu_memory_buffer_support.h"
-#include "gpu/ipc/common/gpu_memory_buffer_impl_native_pixmap.h"
 #include "third_party/khronos/GLES2/gl2.h"
 #include "third_party/khronos/GLES2/gl2ext.h"
 #include "ui/gfx/linux/client_native_pixmap_factory_dmabuf.h"
@@ -41,16 +39,6 @@
 #include "ui/wm/core/coordinate_conversion.h"
 
 namespace exo {
-namespace {
-
-// This flag allows Exo::Display to create Exo::Buffer using GMBHandle instead
-// of GMB. This is required for MappableSI which aims to remove all usages of
-// GMB directly by clients.
-BASE_FEATURE(kAlwaysUseGMBHandleForPixmapExoBuffer,
-             "AlwaysUseGMBHandleForPixmapExoBuffer",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
-}  // namespace
 
 ////////////////////////////////////////////////////////////////////////////////
 // Display, public:
@@ -109,9 +97,7 @@ std::unique_ptr<Buffer> Display::CreateLinuxDMABufBuffer(
   TRACE_EVENT1("exo", "Display::CreateLinuxDMABufBuffer", "size",
                size.ToString());
 
-  gfx::GpuMemoryBufferHandle gmb_handle;
-  gmb_handle.type = gfx::NATIVE_PIXMAP;
-  gmb_handle.native_pixmap_handle = std::move(handle);
+  gfx::GpuMemoryBufferHandle gmb_handle(std::move(handle));
 
   const gfx::BufferUsage buffer_usage = gfx::BufferUsage::GPU_READ;
 
@@ -122,23 +108,9 @@ std::unique_ptr<Buffer> Display::CreateLinuxDMABufBuffer(
   const bool use_zero_copy = true;
   const bool is_overlay_candidate = true;
 
-  if (base::FeatureList::IsEnabled(kAlwaysUseGMBHandleForPixmapExoBuffer)) {
-    return Buffer::CreateBufferFromGMBHandle(
-        std::move(gmb_handle), size, format, buffer_usage, query_type,
-        use_zero_copy, is_overlay_candidate, y_invert);
-  }
-  std::unique_ptr<gfx::GpuMemoryBuffer> gpu_memory_buffer =
-      gpu::GpuMemoryBufferImplNativePixmap::CreateFromHandle(
-          client_native_pixmap_factory_.get(), std::move(gmb_handle), size,
-          format, buffer_usage,
-          gpu::GpuMemoryBufferImpl::DestructionCallback());
-  if (!gpu_memory_buffer) {
-    LOG(ERROR) << "Failed to create GpuMemoryBuffer from handle";
-    return nullptr;
-  }
-  return base::WrapUnique(new Buffer(std::move(gpu_memory_buffer), query_type,
-                                     use_zero_copy, is_overlay_candidate,
-                                     y_invert));
+  return Buffer::CreateBufferFromGMBHandle(
+      std::move(gmb_handle), size, format, buffer_usage, query_type,
+      use_zero_copy, is_overlay_candidate, y_invert);
 }
 
 std::unique_ptr<ShellSurface> Display::CreateShellSurface(Surface* surface) {

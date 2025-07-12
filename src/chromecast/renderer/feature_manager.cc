@@ -142,7 +142,7 @@ bool FeatureManager::FeatureEnabled(const std::string& feature) const {
 const chromecast::shell::mojom::FeaturePtr& FeatureManager::GetFeature(
     const std::string& feature) const {
   auto itor = features_map_.find(feature);
-  DCHECK(itor != features_map_.end());
+  CHECK(itor != features_map_.end());
   return itor->second;
 }
 

@@ -14,48 +14,56 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/browsing_data/core/pref_names.h"
+#include "components/password_manager/core/browser/features/password_features.h"
 #include "components/password_manager/core/browser/password_manager_client.h"
 #include "components/password_manager/core/browser/password_store/password_store_change.h"
 #include "components/password_manager/core/browser/password_store/password_store_interface.h"
 #include "components/password_manager/core/browser/password_sync_util.h"
+#include "components/sync/base/user_selectable_type.h"
 #include "components/sync/service/sync_service.h"
+#include "components/sync/service/sync_user_settings.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "url/gurl.h"
 
 #if BUILDFLAG(IS_ANDROID)
-#include "base/android/build_info.h"
-#include "components/password_manager/core/browser/password_store/split_stores_and_local_upm.h"
+#include "components/password_manager/core/browser/split_stores_and_local_upm.h"
 #endif  // BUILDFLAG(IS_ANDROID)
 
 namespace browsing_data {
 namespace {
 
-// This predicate is only about profile (non-account) passwords, so it is only
-// concerned about whether sync-the-feature is on or off. Account passwords are
-// counted separately.
+// This predicate is only about passwords in the profile store.
 bool IsProfilePasswordSyncEnabled(PrefService* pref_service,
                                   const syncer::SyncService* sync_service) {
-  // TODO(crbug.com/40067058): Clean this up once Sync-the-feature is gone on
-  // all platforms.
-  bool is_pwd_sync_enabled =
-      password_manager::sync_util::IsSyncFeatureEnabledIncludingPasswords(
-          sync_service);
 #if BUILDFLAG(IS_ANDROID)
+  // After login db deprecation there won't be any more users syncing passwords
+  // from the profile store. All users will have split stores.
+  if (base::FeatureList::IsEnabled(
+          password_manager::features::kLoginDbDeprecationAndroid)) {
+    return false;
+  }
+
   // If UsesSplitStoresAndUPMForLocal() is true, the profile store is never
   // synced, only the account store is.
   if (password_manager::UsesSplitStoresAndUPMForLocal(pref_service)) {
     return false;
   }
 
-  std::string gms_version_str =
-      base::android::BuildInfo::GetInstance()->gms_version_code();
-  if (password_manager::IsGmsCoreUpdateRequired(
-          pref_service, is_pwd_sync_enabled, gms_version_str)) {
+  // TODO(crbug.com/344640768): The IsGmsCoreUpdateRequired() check isn't
+  // perfect, it causes the string to say "synced" in cases when it shouldn't.
+  if (password_manager::IsGmsCoreUpdateRequired(pref_service, sync_service)) {
     return false;
   }
-#endif  // BUILDFLAG(IS_ANDROID)
 
-  return is_pwd_sync_enabled;
+  return sync_service &&
+         sync_service->GetUserSettings()->GetSelectedTypes().Has(
+             syncer::UserSelectableType::kPasswords);
+#else
+  // TODO(crbug.com/40067058): Clean this up once Sync-the-feature is gone on
+  // all platforms.
+  return password_manager::sync_util::IsSyncFeatureEnabledIncludingPasswords(
+      sync_service);
+#endif
 }
 
 }  // namespace
@@ -222,8 +230,7 @@ PasswordsCounter::PasswordsCounter(
   account_store_fetcher_ = std::make_unique<PasswordStoreFetcher>(
       account_store,
       base::BindRepeating(&PasswordsCounter::Restart, base::Unretained(this)));
-  DCHECK(profile_store);
-  // |account_store| may be null.
+  // |profile_store| and |account_store| may be null.
 }
 
 PasswordsCounter::~PasswordsCounter() = default;

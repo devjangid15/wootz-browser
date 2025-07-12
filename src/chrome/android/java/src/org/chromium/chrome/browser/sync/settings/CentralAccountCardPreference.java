@@ -5,19 +5,25 @@
 package org.chromium.chrome.browser.sync.settings;
 
 import android.content.Context;
+import android.text.TextUtils;
 import android.util.AttributeSet;
+import android.util.Pair;
+import android.view.View;
 import android.widget.ImageView;
 import android.widget.TextView;
 
 import androidx.preference.Preference;
 import androidx.preference.PreferenceViewHolder;
 
+import org.chromium.build.annotations.Initializer;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.signin.services.DisplayableProfileData;
 import org.chromium.chrome.browser.signin.services.ProfileDataCache;
 import org.chromium.components.signin.base.CoreAccountInfo;
 
 /** A dedicated preference for the account settings top avatar. */
+@NullMarked
 public class CentralAccountCardPreference extends Preference implements ProfileDataCache.Observer {
     private CoreAccountInfo mAccountInfo;
     private ProfileDataCache mProfileDataCache;
@@ -34,6 +40,7 @@ public class CentralAccountCardPreference extends Preference implements ProfileD
      * <p>Must be called before the preference is attached, which is called from the containing
      * settings screen's onViewCreated method.
      */
+    @Initializer
     public void initialize(CoreAccountInfo accountInfo, ProfileDataCache profileDataCache) {
         mAccountInfo = accountInfo;
         mProfileDataCache = profileDataCache;
@@ -60,20 +67,40 @@ public class CentralAccountCardPreference extends Preference implements ProfileD
         DisplayableProfileData profileData =
                 mProfileDataCache.getProfileDataOrDefault(mAccountInfo.getEmail());
 
-        ImageView image = (ImageView) holder.findViewById(R.id.central_account_image);
-        image.setImageDrawable(profileData.getImage());
+        ImageView imageView = (ImageView) holder.findViewById(R.id.central_account_image);
+        imageView.setImageDrawable(profileData.getImage());
 
-        // TODO(b/326574743) Handle when getFullName() returns null.
-        TextView name = (TextView) holder.findViewById(R.id.central_account_name);
-        name.setText(profileData.getFullName());
+        Pair<String, String> primaryAndSecondaryText = getPrimaryAndSecondaryText(profileData);
 
-        TextView email = (TextView) holder.findViewById(R.id.central_account_email);
-        email.setText(profileData.getAccountEmail());
+        TextView primaryText = (TextView) holder.findViewById(R.id.central_account_primary_text);
+        primaryText.setText(primaryAndSecondaryText.first);
+
+        TextView secondaryText =
+                (TextView) holder.findViewById(R.id.central_account_secondary_text);
+        if (!primaryAndSecondaryText.second.isEmpty()) {
+            secondaryText.setText(primaryAndSecondaryText.second);
+            secondaryText.setVisibility(View.VISIBLE);
+        } else {
+            secondaryText.setVisibility(View.GONE);
+        }
     }
 
     /** ProfileDataCache.Observer implementation. */
     @Override
     public void onProfileDataUpdated(String accountEmail) {
         notifyChanged();
+    }
+
+    private Pair<String, String> getPrimaryAndSecondaryText(DisplayableProfileData profileData) {
+        if (!TextUtils.isEmpty(profileData.getFullName())
+                && profileData.hasDisplayableEmailAddress()) {
+            return new Pair<>(profileData.getFullName(), profileData.getAccountEmail());
+        } else if (!TextUtils.isEmpty(profileData.getFullName())) {
+            return new Pair<>(profileData.getFullName(), "");
+        } else if (profileData.hasDisplayableEmailAddress()) {
+            return new Pair<>(profileData.getAccountEmail(), "");
+        }
+        // When email and full name cannot be shown, use the default account string instead.
+        return new Pair<>(getContext().getString(R.string.default_google_account_username), "");
     }
 }

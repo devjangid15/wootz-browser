@@ -8,14 +8,14 @@
 
 #include "base/functional/bind.h"
 #include "base/task/default_delayed_task_handle_delegate.h"
+#include "base/task/thread_pool/thread_pool_instance.h"
 #include "base/time/time.h"
-#include "third_party/abseil-cpp/absl/base/attributes.h"
 
 namespace base {
 
 namespace {
 
-ABSL_CONST_INIT thread_local SequencedTaskRunner::CurrentDefaultHandle*
+constinit thread_local SequencedTaskRunner::CurrentDefaultHandle*
     current_default_handle = nullptr;
 
 }  // namespace
@@ -124,19 +124,23 @@ bool SequencedTaskRunner::DeleteOrReleaseSoonInternal(
     const Location& from_here,
     void (*deleter)(const void*),
     const void* object) {
+  // Allow memory to leak on shutdown. ScopedFizzleBlockShutdownTasks avoids a
+  // DCHECK about posting a task to a potentially BLOCK_SHUTDOWN task runner
+  // after shut down in cleanups that happen as things are reaped in the final
+  // phases of shutdown (ref. crbug.com/420259698; and other instances).
+  ThreadPoolInstance::ScopedFizzleBlockShutdownTasks fizzler;
   return PostNonNestableTask(from_here, BindOnce(deleter, object));
 }
 
 OnTaskRunnerDeleter::OnTaskRunnerDeleter(
     scoped_refptr<SequencedTaskRunner> task_runner)
-    : task_runner_(std::move(task_runner)) {
-}
+    : task_runner_(std::move(task_runner)) {}
 
 OnTaskRunnerDeleter::~OnTaskRunnerDeleter() = default;
 
 OnTaskRunnerDeleter::OnTaskRunnerDeleter(OnTaskRunnerDeleter&&) = default;
 
-OnTaskRunnerDeleter& OnTaskRunnerDeleter::operator=(
-    OnTaskRunnerDeleter&&) = default;
+OnTaskRunnerDeleter& OnTaskRunnerDeleter::operator=(OnTaskRunnerDeleter&&) =
+    default;
 
 }  // namespace base

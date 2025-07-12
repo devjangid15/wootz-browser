@@ -17,9 +17,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/version.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "components/update_client/update_client.h"
-#include "url/gurl.h"
 
 class ComponentsHandler;
 class PluginObserver;
@@ -50,21 +48,17 @@ namespace extensions {
 class AutotestPrivateLoadSmartDimComponentFunction;
 }
 
-namespace wootz_component_updater {
-class WootzOnDemandUpdater;
-}
-
 namespace component_updater {
 
 // Called when a non-blocking call in this module completes.
-using Callback = update_client::Callback;
+using Callback = ::update_client::Callback;
 
 class OnDemandUpdater;
 class UpdateScheduler;
 
-using Configurator = update_client::Configurator;
-using CrxComponent = update_client::CrxComponent;
-using CrxUpdateItem = update_client::CrxUpdateItem;
+using Configurator = ::update_client::Configurator;
+using CrxComponent = ::update_client::CrxComponent;
+using CrxUpdateItem = ::update_client::CrxUpdateItem;
 
 struct ComponentInfo {
   ComponentInfo(const std::string& id,
@@ -138,7 +132,7 @@ struct ComponentRegistration {
 // All methods are safe to call ONLY from the browser's main sequence.
 class ComponentUpdateService {
  public:
-  using Observer = update_client::UpdateClient::Observer;
+  using Observer = ::update_client::UpdateClient::Observer;
 
   // Adds an observer for this class. An observer should not be added more
   // than once. The caller retains the ownership of the observer object.
@@ -200,17 +194,16 @@ class ComponentUpdateService {
 
   virtual ~ComponentUpdateService() = default;
 
- private:
   // Returns details about registered component in the |item| parameter. The
   // function returns true in case of success and false in case of errors.
   virtual bool GetComponentDetails(const std::string& id,
                                    CrxUpdateItem* item) const = 0;
 
+ private:
   friend class screen_ai::ScreenAIDownloaderNonChromeOS;
   friend class speech::SodaInstallerImpl;
   friend class ::ComponentsHandler;
   FRIEND_TEST_ALL_PREFIXES(ComponentInstallerTest, RegisterComponent);
-  FRIEND_TEST_ALL_PREFIXES(ComponentUpdaterTest, ComponentDetails);
   FRIEND_TEST_ALL_PREFIXES(ComponentUpdaterTest, UpdatesDisabled);
 };
 
@@ -226,19 +219,22 @@ class OnDemandUpdater {
   virtual ~OnDemandUpdater() = default;
 
  private:
-  friend class wootz_component_updater::WootzOnDemandUpdater; 
   friend class OnDemandTester;
   friend class policy::ComponentUpdaterPolicyTest;
   friend class ::ComponentsHandler;
+  friend class OptimizationGuideOnDeviceModelInstallerPolicy;
   friend class ::PluginObserver;
   friend class SwReporterOnDemandFetcher;
   friend class SodaComponentInstallerPolicy;
   friend class SodaLanguagePackComponentInstallerPolicy;
+  friend class TranslateKitComponentInstallerPolicy;
+  friend class TranslateKitLanguagePackComponentInstallerPolicy;
   friend class ::extensions::AutotestPrivateLoadSmartDimComponentFunction;
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   friend class ash::SmartDimComponentIntegrationTest;
   friend class CrOSComponentInstaller;
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
+  friend class IwaKeyDistributionComponentInstallerPolicy;
 
   // Triggers an update check for a component. |id| is a value
   // returned by GetCrxComponentID(). If an update for this component is already
@@ -249,9 +245,6 @@ class OnDemandUpdater {
   virtual void OnDemandUpdate(const std::string& id,
                               Priority priority,
                               Callback callback) = 0;
-  virtual void OnDemandUpdate(const std::vector<std::string>& ids,        
-                              Priority priority, Callback callback);                             
-                              
 };
 
 // Creates the component updater.

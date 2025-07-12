@@ -27,9 +27,7 @@ namespace viz {
 class FrameSinkManagerImpl;
 class GmbVideoFramePoolContextProvider;
 class HintSessionFactory;
-class InProcessGpuMemoryBufferManager;
 class OutputSurfaceProvider;
-class ServerSharedBitmapManager;
 class SharedImageInterfaceProvider;
 
 #if BUILDFLAG(IS_ANDROID)
@@ -55,8 +53,10 @@ class VizCompositorThreadRunnerImpl : public VizCompositorThreadRunner {
       base::flat_set<base::PlatformThreadId> thread_ids,
       base::RepeatingClosure* wake_up_closure) override;
   void SetIOThreadId(base::PlatformThreadId io_thread_id) override {}
+  void SetGpuMainThreadId(base::PlatformThreadId gpu_main_thread_id) override {}
   void CreateFrameSinkManager(mojom::FrameSinkManagerParamsPtr params,
                               GpuServiceImpl* gpu_service) override;
+  void RequestBeginFrameForGpuService(bool toggle) override;
 
  private:
   void CreateHintSessionFactoryOnCompositorThread(
@@ -67,6 +67,7 @@ class VizCompositorThreadRunnerImpl : public VizCompositorThreadRunner {
   void CreateFrameSinkManagerOnCompositorThread(
       mojom::FrameSinkManagerParamsPtr params,
       GpuServiceImpl* gpu_service);
+  void RequestBeginFrameForGpuServiceOnCompositorThread(bool toggle);
   void TearDownOnCompositorThread();
 
   std::unique_ptr<VizCompositorThreadType> thread_;
@@ -80,8 +81,6 @@ class VizCompositorThreadRunnerImpl : public VizCompositorThreadRunner {
 
   // Start variables to be accessed only on |task_runner_|.
   std::unique_ptr<HintSessionFactory> hint_session_factory_;
-  std::unique_ptr<ServerSharedBitmapManager> server_shared_bitmap_manager_;
-  std::unique_ptr<InProcessGpuMemoryBufferManager> gpu_memory_buffer_manager_;
   std::unique_ptr<OutputSurfaceProvider> output_surface_provider_;
   // `gmb_video_frame_pool_context_provider_` depends on
   // `gpu_memory_buffer_manager_`. It must be created last, deleted first.

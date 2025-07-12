@@ -26,6 +26,9 @@ const char kOptimizationGuideServiceModelQualtiyDefaultURL[] =
 const char kLoadedHintLocalHistogramString[] =
     "OptimizationGuide.LoadedHint.Result";
 
+const char kOptimizationGuideLanguageOverrideHeaderKey[] =
+    "x-optimization-guide-language-override";
+
 const base::FilePath::CharType kOptimizationGuideHintStore[] =
     FILE_PATH_LITERAL("optimization_guide_hint_cache_store");
 
@@ -39,8 +42,14 @@ const base::FilePath::CharType kOldOptimizationGuidePredictionModelDownloads[] =
 const base::FilePath::CharType kOptimizationGuideModelStoreDirPrefix[] =
     FILE_PATH_LITERAL("optimization_guide_model_store");
 
+const char kOptimizationGuideModelExecutionDebugLogsHeaderKey[] =
+    "X-Model-Execution-Debug-Logs";
+
 const base::FilePath::CharType kWeightsFile[] =
     FILE_PATH_LITERAL("weights.bin");
+
+const base::FilePath::CharType kExperimentalCacheFile[] =
+    FILE_PATH_LITERAL("cache.bin");
 
 const base::FilePath::CharType kTsDataFile[] = FILE_PATH_LITERAL("ts.bin");
 

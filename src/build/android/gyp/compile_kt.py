@@ -73,7 +73,7 @@ def _RunCompiler(args,
     # Pass source paths as response files to avoid extremely long command
     # lines that are tedius to debug.
     source_files_rsp_path = os.path.join(temp_dir, 'files_list.txt')
-    with open(source_files_rsp_path, 'w') as f:
+    with open(source_files_rsp_path, 'w', encoding='utf-8') as f:
       f.write(' '.join(source_files))
     cmd += ['@' + source_files_rsp_path]
 
@@ -154,6 +154,9 @@ def main(argv):
       '-no-stdlib',
       # Avoid depending on the bundled Kotlin reflect libs.
       '-no-reflect',
+      # We typically set a default of 1G for java commands, see
+      # build_utils.JavaCmd. This may help prevent OOMs.
+      '-J-Xmx1G',
   ]
 
   if args.generated_dir:

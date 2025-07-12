@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "base/numerics/clamped_math.h"
+#include "third_party/blink/public/strings/grit/blink_strings.h"
 #include "third_party/blink/renderer/core/css/basic_shape_functions.h"
 #include "third_party/blink/renderer/core/css/css_anchor_query_enums.h"
 #include "third_party/blink/renderer/core/css/css_axis_value.h"
@@ -15,17 +16,20 @@
 #include "third_party/blink/renderer/core/css/css_font_selector.h"
 #include "third_party/blink/renderer/core/css/css_font_variation_value.h"
 #include "third_party/blink/renderer/core/css/css_function_value.h"
+#include "third_party/blink/renderer/core/css/css_gap_decoration_property_utils.h"
 #include "third_party/blink/renderer/core/css/css_grid_template_areas_value.h"
 #include "third_party/blink/renderer/core/css/css_identifier_value.h"
+#include "third_party/blink/renderer/core/css/css_identifier_value_mappings.h"
 #include "third_party/blink/renderer/core/css/css_initial_color_value.h"
 #include "third_party/blink/renderer/core/css/css_layout_function_value.h"
+#include "third_party/blink/renderer/core/css/css_light_dark_value_pair.h"
 #include "third_party/blink/renderer/core/css/css_numeric_literal_value.h"
 #include "third_party/blink/renderer/core/css/css_primitive_value.h"
-#include "third_party/blink/renderer/core/css/css_primitive_value_mappings.h"
 #include "third_party/blink/renderer/core/css/css_quad_value.h"
 #include "third_party/blink/renderer/core/css/css_ratio_value.h"
 #include "third_party/blink/renderer/core/css/css_reflect_value.h"
 #include "third_party/blink/renderer/core/css/css_resolution_units.h"
+#include "third_party/blink/renderer/core/css/css_scoped_keyword_value.h"
 #include "third_party/blink/renderer/core/css/css_string_value.h"
 #include "third_party/blink/renderer/core/css/css_uri_value.h"
 #include "third_party/blink/renderer/core/css/css_value.h"
@@ -37,7 +41,6 @@
 #include "third_party/blink/renderer/core/css/parser/css_parser_mode.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_save_point.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_token.h"
-#include "third_party/blink/renderer/core/css/parser/css_parser_token_range.h"
 #include "third_party/blink/renderer/core/css/parser/css_property_parser.h"
 #include "third_party/blink/renderer/core/css/parser/font_variant_alternates_parser.h"
 #include "third_party/blink/renderer/core/css/parser/font_variant_east_asian_parser.h"
@@ -53,8 +56,10 @@
 #include "third_party/blink/renderer/core/css/style_engine.h"
 #include "third_party/blink/renderer/core/css/zoom_adjusted_pixel_value.h"
 #include "third_party/blink/renderer/core/css_value_keywords.h"
+#include "third_party/blink/renderer/core/frame/deprecation/deprecation.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
+#include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/keywords.h"
 #include "third_party/blink/renderer/core/layout/layout_box.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
@@ -67,7 +72,9 @@
 #include "third_party/blink/renderer/core/style/reference_offset_path_operation.h"
 #include "third_party/blink/renderer/core/style/shape_clip_path_operation.h"
 #include "third_party/blink/renderer/core/style/shape_offset_path_operation.h"
+#include "third_party/blink/renderer/core/style/style_border_shape.h"
 #include "third_party/blink/renderer/core/style/style_overflow_clip_margin.h"
+#include "third_party/blink/renderer/core/style/style_svg_resource.h"
 #include "third_party/blink/renderer/core/style_property_shorthand.h"
 #include "third_party/blink/renderer/core/view_transition/view_transition_style_tracker.h"
 #include "third_party/blink/renderer/platform/geometry/layout_unit.h"
@@ -76,6 +83,7 @@
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
+#include "third_party/blink/renderer/platform/text/platform_locale.h"
 #include "third_party/blink/renderer/platform/text/quotes_data.h"
 
 // Implementations of methods in Longhand subclasses that aren't generated.
@@ -273,8 +281,7 @@ const CSSValue* AnchorName::ParseSingleValue(
     return value;
   }
   return css_parsing_utils::ConsumeCommaSeparatedList(
-      css_parsing_utils::ConsumeDashedIdent<CSSParserTokenStream>, stream,
-      context);
+      css_parsing_utils::ConsumeDashedIdent, stream, context);
 }
 const CSSValue* AnchorName::CSSValueFromComputedStyleInternal(
     const ComputedStyle& style,
@@ -292,12 +299,50 @@ const CSSValue* AnchorName::CSSValueFromComputedStyleInternal(
   return list;
 }
 
+const CSSValue* AnchorScope::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context,
+    const CSSParserLocalContext&) const {
+  if (CSSValue* value =
+          css_parsing_utils::ConsumeIdent<CSSValueID::kNone>(stream)) {
+    return value;
+  }
+  if (CSSValue* value =
+          css_parsing_utils::ConsumeScopedKeywordValue<CSSValueID::kAll>(
+              stream)) {
+    return value;
+  }
+  return css_parsing_utils::ConsumeCommaSeparatedList(
+      css_parsing_utils::ConsumeDashedIdent, stream, context);
+}
+
+const CSSValue* AnchorScope::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  const StyleAnchorScope& anchor_scope = style.AnchorScope();
+  if (anchor_scope.IsNone()) {
+    return CSSIdentifierValue::Create(CSSValueID::kNone);
+  }
+  if (anchor_scope.IsAll()) {
+    return CSSIdentifierValue::Create(CSSValueID::kAll);
+  }
+  CHECK(anchor_scope.Names());
+  CSSValueList* list = CSSValueList::CreateCommaSeparated();
+  for (const Member<const ScopedCSSName>& name :
+       anchor_scope.Names()->GetNames()) {
+    list->Append(*MakeGarbageCollected<CSSCustomIdentValue>(*name));
+  }
+  return list;
+}
+
 const CSSValue* AnimationComposition::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext& context,
     const CSSParserLocalContext&) const {
-  return css_parsing_utils::ConsumeCommaSeparatedList<
-      CSSParserTokenStream, CSSIdentifierValue*(CSSParserTokenStream&)>(
+  return css_parsing_utils::ConsumeCommaSeparatedList<CSSIdentifierValue*(
+      CSSParserTokenStream&)>(
       css_parsing_utils::ConsumeIdent<CSSValueID::kReplace, CSSValueID::kAdd,
                                       CSSValueID::kAccumulate>,
       stream);
@@ -356,8 +401,8 @@ const CSSValue* AnimationDirection::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext&,
     const CSSParserLocalContext&) const {
-  return css_parsing_utils::ConsumeCommaSeparatedList<
-      CSSParserTokenStream, CSSIdentifierValue*(CSSParserTokenStream&)>(
+  return css_parsing_utils::ConsumeCommaSeparatedList<CSSIdentifierValue*(
+      CSSParserTokenStream&)>(
       css_parsing_utils::ConsumeIdent<
           CSSValueID::kNormal, CSSValueID::kAlternate, CSSValueID::kReverse,
           CSSValueID::kAlternateReverse>,
@@ -402,8 +447,8 @@ const CSSValue* AnimationFillMode::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext&,
     const CSSParserLocalContext&) const {
-  return css_parsing_utils::ConsumeCommaSeparatedList<
-      CSSParserTokenStream, CSSIdentifierValue*(CSSParserTokenStream&)>(
+  return css_parsing_utils::ConsumeCommaSeparatedList<CSSIdentifierValue*(
+      CSSParserTokenStream&)>(
       css_parsing_utils::ConsumeIdent<CSSValueID::kNone, CSSValueID::kForwards,
                                       CSSValueID::kBackwards,
                                       CSSValueID::kBoth>,
@@ -483,8 +528,8 @@ const CSSValue* AnimationPlayState::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext&,
     const CSSParserLocalContext&) const {
-  return css_parsing_utils::ConsumeCommaSeparatedList<
-      CSSParserTokenStream, CSSIdentifierValue*(CSSParserTokenStream&)>(
+  return css_parsing_utils::ConsumeCommaSeparatedList<CSSIdentifierValue*(
+      CSSParserTokenStream&)>(
       css_parsing_utils::ConsumeIdent<CSSValueID::kRunning,
                                       CSSValueID::kPaused>,
       stream);
@@ -506,10 +551,9 @@ const CSSValue* AnimationRangeStart::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext& context,
     const CSSParserLocalContext&) const {
-  DCHECK(RuntimeEnabledFeatures::ScrollTimelineEnabled());
   return css_parsing_utils::ConsumeCommaSeparatedList(
       css_parsing_utils::ConsumeAnimationRange, stream, context,
-      /* default_offset_percent */ 0.0);
+      /* default_offset_percent */ 0.0, /*allow_auto=*/false);
 }
 
 const CSSValue* AnimationRangeStart::CSSValueFromComputedStyleInternal(
@@ -529,10 +573,9 @@ const CSSValue* AnimationRangeEnd::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext& context,
     const CSSParserLocalContext&) const {
-  DCHECK(RuntimeEnabledFeatures::ScrollTimelineEnabled());
   return css_parsing_utils::ConsumeCommaSeparatedList(
       css_parsing_utils::ConsumeAnimationRange, stream, context,
-      /* default_offset_percent */ 100.0);
+      /* default_offset_percent */ 100.0, /*allow_auto=*/false);
 }
 
 const CSSValue* AnimationRangeEnd::CSSValueFromComputedStyleInternal(
@@ -561,7 +604,8 @@ const CSSValue* AnimationTimeline::CSSValueFromComputedStyleInternal(
     const LayoutObject*,
     bool allow_visited_style,
     CSSValuePhase value_phase) const {
-  return ComputedStyleUtils::ValueForAnimationTimelineList(style.Animations());
+  return ComputedStyleUtils::ValueForAnimationTimelineList(style.Animations(),
+                                                           style);
 }
 
 const CSSValue* AnimationTimeline::InitialValue() const {
@@ -587,6 +631,312 @@ const CSSValue* AnimationTimingFunction::CSSValueFromComputedStyleInternal(
 
 const CSSValue* AnimationTimingFunction::InitialValue() const {
   return CSSIdentifierValue::Create(CSSValueID::kEase);
+}
+
+const CSSValue* AnimationTriggerRangeStart::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context,
+    const CSSParserLocalContext&) const {
+  return css_parsing_utils::ConsumeCommaSeparatedList(
+      css_parsing_utils::ConsumeAnimationRange, stream, context,
+      /* default_offset_percent */ 0.0, /*allow_auto=*/false);
+}
+
+const CSSValue* AnimationTriggerRangeStart::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return ComputedStyleUtils::ValueForAnimationTriggerRangeStartList(
+      style.Animations(), style);
+}
+
+const CSSValue* AnimationTriggerRangeStart::InitialValue() const {
+  return CSSIdentifierValue::Create(CSSValueID::kNormal);
+}
+
+const CSSValue* AnimationTriggerRangeEnd::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context,
+    const CSSParserLocalContext&) const {
+  return css_parsing_utils::ConsumeCommaSeparatedList(
+      css_parsing_utils::ConsumeAnimationRange, stream, context,
+      /* default_offset_percent */ 100.0, /*allow_auto=*/false);
+}
+
+const CSSValue* AnimationTriggerRangeEnd::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return ComputedStyleUtils::ValueForAnimationTriggerRangeEndList(
+      style.Animations(), style);
+}
+
+const CSSValue* AnimationTriggerRangeEnd::InitialValue() const {
+  return CSSIdentifierValue::Create(CSSValueID::kNormal);
+}
+
+const CSSValue* AnimationTriggerExitRangeStart::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context,
+    const CSSParserLocalContext&) const {
+  return css_parsing_utils::ConsumeCommaSeparatedList(
+      css_parsing_utils::ConsumeAnimationRange, stream, context,
+      /* default_offset_percent */ 0.0, /*allow_auto=*/true);
+}
+
+const CSSValue*
+AnimationTriggerExitRangeStart::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return ComputedStyleUtils::ValueForAnimationTriggerExitRangeStartList(
+      style.Animations(), style);
+}
+
+const CSSValue* AnimationTriggerExitRangeStart::InitialValue() const {
+  return CSSIdentifierValue::Create(CSSValueID::kAuto);
+}
+
+const CSSValue* AnimationTriggerExitRangeEnd::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context,
+    const CSSParserLocalContext&) const {
+  return css_parsing_utils::ConsumeCommaSeparatedList(
+      css_parsing_utils::ConsumeAnimationRange, stream, context,
+      /* default_offset_percent */ 100.0, /*allow_auto=*/true);
+}
+
+const CSSValue* AnimationTriggerExitRangeEnd::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return ComputedStyleUtils::ValueForAnimationTriggerExitRangeEndList(
+      style.Animations(), style);
+}
+
+const CSSValue* AnimationTriggerExitRangeEnd::InitialValue() const {
+  return CSSIdentifierValue::Create(CSSValueID::kAuto);
+}
+
+const CSSValue* AnimationTriggerBehavior::InitialValue() const {
+  return CSSIdentifierValue::Create(CSSValueID::kOnce);
+}
+
+const CSSValue* AnimationTriggerBehavior::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return ComputedStyleUtils::ValueForAnimationTriggerBehaviorList(
+      style.Animations());
+}
+
+const CSSValue* AnimationTriggerBehavior::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext&,
+    const CSSParserLocalContext&) const {
+  return css_parsing_utils::ConsumeCommaSeparatedList<CSSIdentifierValue*(
+      CSSParserTokenStream&)>(
+      css_parsing_utils::ConsumeIdent<CSSValueID::kOnce, CSSValueID::kRepeat,
+                                      CSSValueID::kAlternate,
+                                      CSSValueID::kState>,
+      stream);
+}
+
+const CSSValue* AnimationTriggerTimeline::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context,
+    const CSSParserLocalContext& local_context) const {
+  return css_parsing_utils::ConsumeCommaSeparatedList(
+      css_parsing_utils::ConsumeAnimationTimeline, stream, context);
+}
+
+const CSSValue* AnimationTriggerTimeline::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return ComputedStyleUtils::ValueForAnimationTriggerTimelineList(
+      style.Animations(), style);
+}
+
+const CSSValue* AnimationTriggerTimeline::InitialValue() const {
+  return CSSIdentifierValue::Create(CSSValueID::kAuto);
+}
+
+const CSSValue* TimelineTriggerBehavior::InitialValue() const {
+  return CSSIdentifierValue::Create(CSSValueID::kOnce);
+}
+
+const CSSValue* TimelineTriggerBehavior::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return ComputedStyleUtils::ValueForTimelineTriggerBehaviorList(
+      style.Animations());
+}
+
+const CSSValue* TimelineTriggerBehavior::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext&,
+    const CSSParserLocalContext&) const {
+  return css_parsing_utils::ConsumeCommaSeparatedList<CSSIdentifierValue*(
+      CSSParserTokenStream&)>(
+      css_parsing_utils::ConsumeIdent<CSSValueID::kOnce, CSSValueID::kRepeat,
+                                      CSSValueID::kAlternate,
+                                      CSSValueID::kState>,
+      stream);
+}
+
+const CSSValue* TimelineTriggerName::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context,
+    const CSSParserLocalContext&) const {
+  using css_parsing_utils::ConsumeCommaSeparatedList;
+  using css_parsing_utils::ConsumeSingleTimelineTriggerName;
+  return ConsumeCommaSeparatedList(ConsumeSingleTimelineTriggerName, stream,
+                                   context);
+}
+
+const CSSValue* TimelineTriggerName::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject* layout_object,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  if (const CSSAnimationData* data = style.Animations()) {
+    CSSValueList* list = CSSValueList::CreateCommaSeparated();
+    if (data->TimelineTriggerNameList().empty()) {
+      return InitialValue();
+    }
+    for (const Persistent<const ScopedCSSName>& name :
+         data->TimelineTriggerNameList()) {
+      list->Append(*ComputedStyleUtils::ValueForCustomIdentOrNone(name.Get()));
+    }
+    return list;
+  }
+
+  return InitialValue();
+}
+
+const CSSValue* TimelineTriggerName::InitialValue() const {
+  CSSValueList* list = CSSValueList::CreateCommaSeparated();
+  list->Append(*CSSIdentifierValue::Create(CSSValueID::kNone));
+  return list;
+}
+
+const CSSValue* TimelineTriggerRangeStart::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context,
+    const CSSParserLocalContext&) const {
+  return css_parsing_utils::ConsumeCommaSeparatedList(
+      css_parsing_utils::ConsumeAnimationRange, stream, context,
+      /* default_offset_percent */ 0.0, /*allow_auto=*/false);
+}
+
+const CSSValue* TimelineTriggerRangeStart::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return ComputedStyleUtils::ValueForTimelineTriggerRangeStartList(
+      style.Animations(), style);
+}
+
+const CSSValue* TimelineTriggerRangeStart::InitialValue() const {
+  return CSSIdentifierValue::Create(CSSValueID::kNormal);
+}
+
+const CSSValue* TimelineTriggerRangeEnd::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context,
+    const CSSParserLocalContext&) const {
+  return css_parsing_utils::ConsumeCommaSeparatedList(
+      css_parsing_utils::ConsumeAnimationRange, stream, context,
+      /* default_offset_percent */ 100.0, /*allow_auto=*/false);
+}
+
+const CSSValue* TimelineTriggerRangeEnd::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return ComputedStyleUtils::ValueForTimelineTriggerRangeEndList(
+      style.Animations(), style);
+}
+
+const CSSValue* TimelineTriggerRangeEnd::InitialValue() const {
+  return CSSIdentifierValue::Create(CSSValueID::kNormal);
+}
+
+const CSSValue* TimelineTriggerExitRangeStart::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context,
+    const CSSParserLocalContext&) const {
+  return css_parsing_utils::ConsumeCommaSeparatedList(
+      css_parsing_utils::ConsumeAnimationRange, stream, context,
+      /* default_offset_percent */ 0.0, /*allow_auto=*/true);
+}
+
+const CSSValue*
+TimelineTriggerExitRangeStart::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return ComputedStyleUtils::ValueForTimelineTriggerExitRangeStartList(
+      style.Animations(), style);
+}
+
+const CSSValue* TimelineTriggerExitRangeStart::InitialValue() const {
+  return CSSIdentifierValue::Create(CSSValueID::kAuto);
+}
+
+const CSSValue* TimelineTriggerExitRangeEnd::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context,
+    const CSSParserLocalContext&) const {
+  return css_parsing_utils::ConsumeCommaSeparatedList(
+      css_parsing_utils::ConsumeAnimationRange, stream, context,
+      /* default_offset_percent */ 100.0, /*allow_auto=*/true);
+}
+
+const CSSValue* TimelineTriggerExitRangeEnd::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return ComputedStyleUtils::ValueForTimelineTriggerExitRangeEndList(
+      style.Animations(), style);
+}
+
+const CSSValue* TimelineTriggerExitRangeEnd::InitialValue() const {
+  return CSSIdentifierValue::Create(CSSValueID::kAuto);
+}
+
+const CSSValue* TimelineTriggerTimeline::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context,
+    const CSSParserLocalContext& local_context) const {
+  return css_parsing_utils::ConsumeCommaSeparatedList(
+      css_parsing_utils::ConsumeAnimationTimeline, stream, context);
+}
+
+const CSSValue* TimelineTriggerTimeline::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return ComputedStyleUtils::ValueForTimelineTriggerTimelineList(
+      style.Animations(), style);
+}
+
+const CSSValue* TimelineTriggerTimeline::InitialValue() const {
+  return CSSIdentifierValue::Create(CSSValueID::kAuto);
 }
 
 const CSSValue* AspectRatio::ParseSingleValue(
@@ -663,6 +1013,11 @@ void BackdropFilter::ApplyValue(StyleResolverState& state,
   state.StyleBuilder().SetBackdropFilter(
       StyleBuilderConverter::ConvertFilterOperations(state, value,
                                                      PropertyID()));
+}
+
+bool BackdropFilter::IsAffectedByCurrentColor(
+    const ComputedStyle& style) const {
+  return style.HasBackdropFilter() && style.BackdropFilter().UsesCurrentColor();
 }
 
 const CSSValue* BackfaceVisibility::CSSValueFromComputedStyleInternal(
@@ -774,18 +1129,16 @@ void BackgroundClip::ApplyValue(StyleResolverState& state,
   const auto* value_list = DynamicTo<CSSValueList>(value);
   if (value_list && !value.IsImageSetValue()) {
     // Walk each value and put it into a layer, creating new layers as needed.
-    const auto* curr_val = value_list->begin();
-    while (curr_child || curr_val != value_list->end()) {
-      if (!curr_child) {
-        curr_child = prev_child->EnsureNext();
-      }
-      CSSToStyleMap::MapFillClip(state, curr_child, *curr_val->Get());
-      UseCountBackgroundClip(document, *curr_val->Get());
-      prev_child = curr_child;
-      curr_child = curr_child->Next();
-      // as per https://w3c.github.io/csswg-drafts/css-backgrounds/#layering
-      if (++curr_val == value_list->end() && curr_child) {
-        curr_val = value_list->begin();
+    // As per https://w3c.github.io/csswg-drafts/css-backgrounds/#layering
+    while (curr_child) {
+      for (auto curr_val : *value_list) {
+        if (!curr_child) {
+          curr_child = prev_child->EnsureNext();
+        }
+        CSSToStyleMap::MapFillClip(state, curr_child, *curr_val);
+        UseCountBackgroundClip(document, *curr_val);
+        prev_child = curr_child;
+        curr_child = curr_child->Next();
       }
     }
   } else {
@@ -809,7 +1162,8 @@ const blink::Color BackgroundColor::ColorIncludingFallback(
     bool* is_current_color) const {
   DCHECK(!visited_link);
   const StyleColor& background_color = style.BackgroundColor();
-  if (!style.InForcedColorsMode() && !background_color.HasColorKeyword()) {
+  if (!style.InForcedColorsMode() && !background_color.HasColorKeyword() &&
+      !background_color.IsUnresolvedColorFunction()) {
     // Fast path.
     if (is_current_color) {
       *is_current_color = false;
@@ -834,7 +1188,7 @@ const CSSValue* BackgroundColor::CSSValueFromComputedStyleInternal(
     return cssvalue::CSSColor::Create(style.VisitedDependentColor(*this));
   }
 
-  StyleColor background_color = style.BackgroundColor();
+  const StyleColor& background_color = style.BackgroundColor();
   if (value_phase == CSSValuePhase::kResolvedValue &&
       style.ShouldForceColor(background_color)) {
     return GetCSSPropertyInternalForcedBackgroundColor()
@@ -845,12 +1199,20 @@ const CSSValue* BackgroundColor::CSSValueFromComputedStyleInternal(
                                                       value_phase);
 }
 
+bool BackgroundColor::IsAffectedByCurrentColor(
+    const ComputedStyle& style) const {
+  return style.BackgroundColor().DependsOnCurrentColor();
+}
+
 const CSSValue* BackgroundImage::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext& context,
     const CSSParserLocalContext&) const {
   return css_parsing_utils::ConsumeCommaSeparatedList(
-      css_parsing_utils::ConsumeImageOrNone, stream, context);
+      static_cast<CSSValue* (*)(CSSParserTokenStream&,
+                                const CSSParserContext&)>(
+          css_parsing_utils::ConsumeImageOrNone),
+      stream, context);
 }
 
 const CSSValue* BackgroundImage::CSSValueFromComputedStyleInternal(
@@ -861,6 +1223,11 @@ const CSSValue* BackgroundImage::CSSValueFromComputedStyleInternal(
   const FillLayer& fill_layer = style.BackgroundLayers();
   return ComputedStyleUtils::BackgroundImageOrMaskImage(
       style, allow_visited_style, fill_layer, value_phase);
+}
+
+bool BackgroundImage::IsAffectedByCurrentColor(
+    const ComputedStyle& style) const {
+  return style.BackgroundInternal().AnyLayerUsesCurrentColor();
 }
 
 const CSSValue* BackgroundOrigin::ParseSingleValue(
@@ -890,8 +1257,8 @@ const CSSValue* BackgroundPositionX::ParseSingleValue(
     const CSSParserContext& context,
     const CSSParserLocalContext&) const {
   return css_parsing_utils::ConsumeCommaSeparatedList(
-      css_parsing_utils::ConsumePositionLonghand<
-          CSSValueID::kLeft, CSSValueID::kRight, CSSParserTokenStream>,
+      css_parsing_utils::ConsumePositionLonghand<CSSValueID::kLeft,
+                                                 CSSValueID::kRight>,
       stream, context);
 }
 
@@ -910,8 +1277,8 @@ const CSSValue* BackgroundPositionY::ParseSingleValue(
     const CSSParserContext& context,
     const CSSParserLocalContext&) const {
   return css_parsing_utils::ConsumeCommaSeparatedList(
-      css_parsing_utils::ConsumePositionLonghand<
-          CSSValueID::kTop, CSSValueID::kBottom, CSSParserTokenStream>,
+      css_parsing_utils::ConsumePositionLonghand<CSSValueID::kTop,
+                                                 CSSValueID::kBottom>,
       stream, context);
 }
 
@@ -993,8 +1360,7 @@ const CSSValue* BaselineShift::CSSValueFromComputedStyleInternal(
       return ComputedStyleUtils::ZoomAdjustedPixelValueForLength(
           style.BaselineShift(), style);
   }
-  NOTREACHED_IN_MIGRATION();
-  return nullptr;
+  NOTREACHED();
 }
 
 void BaselineShift::ApplyInherit(StyleResolverState& state) const {
@@ -1020,7 +1386,7 @@ void BaselineShift::ApplyValue(StyleResolverState& state,
         baseline_shift_type = EBaselineShiftType::kSuper;
         break;
       default:
-        NOTREACHED_IN_MIGRATION();
+        NOTREACHED();
     }
     builder.SetBaselineShiftType(baseline_shift_type);
     builder.SetBaselineShift(Length::Fixed());
@@ -1086,7 +1452,7 @@ const blink::Color BorderBottomColor::ColorIncludingFallback(
     const ComputedStyle& style,
     bool* is_current_color) const {
   DCHECK(!visited_link);
-  StyleColor border_bottom_color = style.BorderBottomColor();
+  const StyleColor& border_bottom_color = style.BorderBottomColor();
   if (style.ShouldForceColor(border_bottom_color)) {
     return GetCSSPropertyInternalForcedBorderColor().ColorIncludingFallback(
         false, style, is_current_color);
@@ -1101,7 +1467,7 @@ const CSSValue* BorderBottomColor::CSSValueFromComputedStyleInternal(
     const LayoutObject*,
     bool allow_visited_style,
     CSSValuePhase value_phase) const {
-  StyleColor border_bottom_color = style.BorderBottomColor();
+  const StyleColor& border_bottom_color = style.BorderBottomColor();
   if (value_phase == CSSValuePhase::kResolvedValue &&
       style.ShouldForceColor(border_bottom_color)) {
     return GetCSSPropertyInternalForcedBorderColor().CSSValueFromComputedStyle(
@@ -1111,6 +1477,12 @@ const CSSValue* BorderBottomColor::CSSValueFromComputedStyleInternal(
              ? cssvalue::CSSColor::Create(style.VisitedDependentColor(*this))
              : ComputedStyleUtils::CurrentColorOrValidColor(
                    style, border_bottom_color, value_phase);
+}
+
+bool BorderBottomColor::IsAffectedByCurrentColor(
+    const ComputedStyle& style) const {
+  return style.BorderBottomWidth() &&
+         style.BorderBottomColor().DependsOnCurrentColor();
 }
 
 const CSSValue* BorderBottomLeftRadius::ParseSingleValue(
@@ -1303,6 +1675,12 @@ void BorderImageSource::ApplyValue(StyleResolverState& state,
       state.GetStyleImage(CSSPropertyID::kBorderImageSource, value));
 }
 
+bool BorderImageSource::IsAffectedByCurrentColor(
+    const ComputedStyle& style) const {
+  return style.BorderImageSource() &&
+         style.BorderImageSource()->DependsOnCurrentColor();
+}
+
 const CSSValue* BorderImageWidth::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext& context,
@@ -1371,7 +1749,7 @@ const blink::Color BorderLeftColor::ColorIncludingFallback(
     const ComputedStyle& style,
     bool* is_current_color) const {
   DCHECK(!visited_link);
-  StyleColor border_left_color = style.BorderLeftColor();
+  const StyleColor& border_left_color = style.BorderLeftColor();
   if (style.ShouldForceColor(border_left_color)) {
     return GetCSSPropertyInternalForcedBorderColor().ColorIncludingFallback(
         false, style, is_current_color);
@@ -1386,7 +1764,7 @@ const CSSValue* BorderLeftColor::CSSValueFromComputedStyleInternal(
     const LayoutObject*,
     bool allow_visited_style,
     CSSValuePhase value_phase) const {
-  StyleColor border_left_color = style.BorderLeftColor();
+  const StyleColor& border_left_color = style.BorderLeftColor();
   if (value_phase == CSSValuePhase::kResolvedValue &&
       style.ShouldForceColor(border_left_color)) {
     return GetCSSPropertyInternalForcedBorderColor().CSSValueFromComputedStyle(
@@ -1396,6 +1774,12 @@ const CSSValue* BorderLeftColor::CSSValueFromComputedStyleInternal(
              ? cssvalue::CSSColor::Create(style.VisitedDependentColor(*this))
              : ComputedStyleUtils::CurrentColorOrValidColor(
                    style, border_left_color, value_phase);
+}
+
+bool BorderLeftColor::IsAffectedByCurrentColor(
+    const ComputedStyle& style) const {
+  return style.BorderLeftWidth() &&
+         style.BorderLeftColor().DependsOnCurrentColor();
 }
 
 const CSSValue* BorderLeftStyle::ParseSingleValue(
@@ -1442,7 +1826,7 @@ const blink::Color BorderRightColor::ColorIncludingFallback(
     const ComputedStyle& style,
     bool* is_current_color) const {
   DCHECK(!visited_link);
-  StyleColor border_right_color = style.BorderRightColor();
+  const StyleColor& border_right_color = style.BorderRightColor();
   if (style.ShouldForceColor(border_right_color)) {
     return GetCSSPropertyInternalForcedBorderColor().ColorIncludingFallback(
         false, style, is_current_color);
@@ -1457,7 +1841,7 @@ const CSSValue* BorderRightColor::CSSValueFromComputedStyleInternal(
     const LayoutObject*,
     bool allow_visited_style,
     CSSValuePhase value_phase) const {
-  StyleColor border_right_color = style.BorderRightColor();
+  const StyleColor& border_right_color = style.BorderRightColor();
   if (value_phase == CSSValuePhase::kResolvedValue &&
       style.ShouldForceColor(border_right_color)) {
     return GetCSSPropertyInternalForcedBorderColor().CSSValueFromComputedStyle(
@@ -1467,6 +1851,12 @@ const CSSValue* BorderRightColor::CSSValueFromComputedStyleInternal(
              ? cssvalue::CSSColor::Create(style.VisitedDependentColor(*this))
              : ComputedStyleUtils::CurrentColorOrValidColor(
                    style, border_right_color, value_phase);
+}
+
+bool BorderRightColor::IsAffectedByCurrentColor(
+    const ComputedStyle& style) const {
+  return style.BorderRightWidth() &&
+         style.BorderRightColor().DependsOnCurrentColor();
 }
 
 const CSSValue* BorderRightStyle::ParseSingleValue(
@@ -1527,7 +1917,7 @@ const blink::Color BorderTopColor::ColorIncludingFallback(
     const ComputedStyle& style,
     bool* is_current_color) const {
   DCHECK(!visited_link);
-  StyleColor border_top_color = style.BorderTopColor();
+  const StyleColor& border_top_color = style.BorderTopColor();
   if (style.ShouldForceColor(border_top_color)) {
     return GetCSSPropertyInternalForcedBorderColor().ColorIncludingFallback(
         false, style, is_current_color);
@@ -1542,7 +1932,7 @@ const CSSValue* BorderTopColor::CSSValueFromComputedStyleInternal(
     const LayoutObject*,
     bool allow_visited_style,
     CSSValuePhase value_phase) const {
-  StyleColor border_top_color = style.BorderTopColor();
+  const StyleColor& border_top_color = style.BorderTopColor();
   if (value_phase == CSSValuePhase::kResolvedValue &&
       style.ShouldForceColor(border_top_color)) {
     return GetCSSPropertyInternalForcedBorderColor().CSSValueFromComputedStyle(
@@ -1552,6 +1942,12 @@ const CSSValue* BorderTopColor::CSSValueFromComputedStyleInternal(
              ? cssvalue::CSSColor::Create(style.VisitedDependentColor(*this))
              : ComputedStyleUtils::ComputedStyleUtils::CurrentColorOrValidColor(
                    style, border_top_color, value_phase);
+}
+
+bool BorderTopColor::IsAffectedByCurrentColor(
+    const ComputedStyle& style) const {
+  return style.BorderTopWidth() &&
+         style.BorderTopColor().DependsOnCurrentColor();
 }
 
 const CSSValue* BorderTopLeftRadius::ParseSingleValue(
@@ -1617,6 +2013,48 @@ const CSSValue* BorderTopWidth::CSSValueFromComputedStyleInternal(
   return ZoomAdjustedPixelValue(style.BorderTopWidth(), style);
 }
 
+const CSSValue* BorderShape::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context,
+    const CSSParserLocalContext&) const {
+  if (stream.Peek().GetType() == kIdentToken &&
+      stream.Peek().Id() == CSSValueID::kNone) {
+    return css_parsing_utils::ConsumeIdent(stream);
+  }
+
+  // TODO(nrosenthal) parse the <<geometry-box>>.
+  CSSValue* outer_shape = css_parsing_utils::ConsumeBasicShape(stream, context);
+  if (!outer_shape) {
+    return nullptr;
+  }
+
+  CSSValue* inner_shape = css_parsing_utils::ConsumeBasicShape(stream, context);
+  return inner_shape
+             ? MakeGarbageCollected<CSSValuePair>(
+                   outer_shape, inner_shape, CSSValuePair::kDropIdenticalValues)
+             : outer_shape;
+}
+
+const CSSValue* BorderShape::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  if (!style.HasBorderShape()) {
+    return CSSIdentifierValue::Create(CSSValueID::kNone);
+  }
+  const StyleBorderShape& border_shape = *style.BorderShape();
+  const CSSValue* outer_shape =
+      ValueForBasicShape(style, &border_shape.OuterShape());
+  if (!border_shape.HasSeparateInnerShape()) {
+    return outer_shape;
+  }
+
+  return MakeGarbageCollected<CSSValuePair>(
+      outer_shape, ValueForBasicShape(style, &border_shape.InnerShape()),
+      CSSValuePair::kDropIdenticalValues);
+}
+
 const CSSValue* Bottom::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext& context,
@@ -1624,7 +2062,7 @@ const CSSValue* Bottom::ParseSingleValue(
   return css_parsing_utils::ConsumeMarginOrOffset(
       stream, context,
       css_parsing_utils::UnitlessUnlessShorthand(local_context),
-      static_cast<CSSAnchorQueryTypes>(CSSAnchorQueryType::kAnchor));
+      kCSSAnchorQueryTypesAll);
 }
 
 bool Bottom::IsLayoutDependent(const ComputedStyle* style,
@@ -1637,8 +2075,19 @@ const CSSValue* Bottom::CSSValueFromComputedStyleInternal(
     const LayoutObject* layout_object,
     bool allow_visited_style,
     CSSValuePhase value_phase) const {
-  return ComputedStyleUtils::ValueForPositionOffset(style, *this,
-                                                    layout_object);
+  return ComputedStyleUtils::ValueForPositionOffset(style, *this, layout_object,
+                                                    value_phase);
+}
+
+const CSSValue* BoxDecorationBreak::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  if (style.BoxDecorationBreak() == EBoxDecorationBreak::kSlice) {
+    return CSSIdentifierValue::Create(CSSValueID::kSlice);
+  }
+  return CSSIdentifierValue::Create(CSSValueID::kClone);
 }
 
 const CSSValue* BoxShadow::ParseSingleValue(
@@ -1656,6 +2105,10 @@ const CSSValue* BoxShadow::CSSValueFromComputedStyleInternal(
     CSSValuePhase value_phase) const {
   return ComputedStyleUtils::ValueForShadowList(style.BoxShadow(), style, true,
                                                 value_phase);
+}
+
+bool BoxShadow::IsAffectedByCurrentColor(const ComputedStyle& style) const {
+  return style.ShadowListHasCurrentColor(style.BoxShadow());
 }
 
 const CSSValue* BoxSizing::CSSValueFromComputedStyleInternal(
@@ -1709,6 +2162,14 @@ const CSSValue* CaptionSide::CSSValueFromComputedStyleInternal(
   return CSSIdentifierValue::Create(style.CaptionSide());
 }
 
+const CSSValue* CaretAnimation::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return CSSIdentifierValue::Create(style.CaretAnimation());
+}
+
 const CSSValue* CaretColor::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext& context,
@@ -1719,16 +2180,25 @@ const CSSValue* CaretColor::ParseSingleValue(
   return css_parsing_utils::ConsumeColor(stream, context);
 }
 
+const CSSValue* CaretShape::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return CSSIdentifierValue::Create(style.CaretShape());
+}
+
 const blink::Color CaretColor::ColorIncludingFallback(
     bool visited_link,
     const ComputedStyle& style,
     bool* is_current_color) const {
   DCHECK(!visited_link);
-  StyleAutoColor auto_color = style.CaretColor();
+  const StyleAutoColor& auto_color = style.CaretColor();
   // TODO(rego): We may want to adjust the caret color if it's the same as
   // the background to ensure good visibility and contrast.
-  StyleColor result = auto_color.IsAutoColor() ? StyleColor::CurrentColor()
-                                               : auto_color.ToStyleColor();
+  const StyleColor result = auto_color.IsAutoColor()
+                                ? StyleColor::CurrentColor()
+                                : auto_color.ToStyleColor();
   if (style.ShouldForceColor(result)) {
     return style.GetInternalForcedCurrentColor(is_current_color);
   }
@@ -1745,11 +2215,12 @@ const CSSValue* CaretColor::CSSValueFromComputedStyleInternal(
     return cssvalue::CSSColor::Create(style.VisitedDependentColor(*this));
   }
 
-  StyleAutoColor auto_color = style.CaretColor();
+  const StyleAutoColor& auto_color = style.CaretColor();
   // TODO(rego): We may want to adjust the caret color if it's the same as
   // the background to ensure good visibility and contrast.
-  StyleColor result = auto_color.IsAutoColor() ? StyleColor::CurrentColor()
-                                               : auto_color.ToStyleColor();
+  const StyleColor result = auto_color.IsAutoColor()
+                                ? StyleColor::CurrentColor()
+                                : auto_color.ToStyleColor();
   if (value_phase == CSSValuePhase::kResolvedValue &&
       style.ShouldForceColor(result)) {
     return cssvalue::CSSColor::Create(style.GetInternalForcedCurrentColor());
@@ -1757,6 +2228,10 @@ const CSSValue* CaretColor::CSSValueFromComputedStyleInternal(
 
   return ComputedStyleUtils::ValueForStyleAutoColor(style, style.CaretColor(),
                                                     value_phase);
+}
+
+bool CaretColor::IsAffectedByCurrentColor(const ComputedStyle& style) const {
+  return style.CaretColor().DependsOnCurrentColor();
 }
 
 const CSSValue* Clear::CSSValueFromComputedStyleInternal(
@@ -1769,13 +2244,13 @@ const CSSValue* Clear::CSSValueFromComputedStyleInternal(
 
 namespace {
 
-CSSValue* ConsumeClipComponent(CSSParserTokenRange& range,
+CSSValue* ConsumeClipComponent(CSSParserTokenStream& stream,
                                const CSSParserContext& context) {
-  if (range.Peek().Id() == CSSValueID::kAuto) {
-    return css_parsing_utils::ConsumeIdent(range);
+  if (stream.Peek().Id() == CSSValueID::kAuto) {
+    return css_parsing_utils::ConsumeIdent(stream);
   }
   return css_parsing_utils::ConsumeLength(
-      range, context, CSSPrimitiveValue::ValueRange::kAll,
+      stream, context, CSSPrimitiveValue::ValueRange::kAll,
       css_parsing_utils::UnitlessQuirk::kAllow);
 }
 
@@ -1792,31 +2267,32 @@ const CSSValue* Clip::ParseSingleValue(CSSParserTokenStream& stream,
     return nullptr;
   }
 
-  CSSParserSavePoint savepoint(stream);
-  CSSParserTokenRange args = css_parsing_utils::ConsumeFunction(stream);
+  CSSParserTokenStream::RestoringBlockGuard guard(stream);
+  stream.ConsumeWhitespace();
   // rect(t, r, b, l) || rect(t r b l)
-  CSSValue* top = ConsumeClipComponent(args, context);
+  CSSValue* top = ConsumeClipComponent(stream, context);
   if (!top) {
     return nullptr;
   }
-  bool needs_comma = css_parsing_utils::ConsumeCommaIncludingWhitespace(args);
-  CSSValue* right = ConsumeClipComponent(args, context);
+  bool needs_comma = css_parsing_utils::ConsumeCommaIncludingWhitespace(stream);
+  CSSValue* right = ConsumeClipComponent(stream, context);
   if (!right || (needs_comma &&
-                 !css_parsing_utils::ConsumeCommaIncludingWhitespace(args))) {
+                 !css_parsing_utils::ConsumeCommaIncludingWhitespace(stream))) {
     return nullptr;
   }
-  CSSValue* bottom = ConsumeClipComponent(args, context);
-  if (!bottom || (needs_comma &&
-                  !css_parsing_utils::ConsumeCommaIncludingWhitespace(args))) {
+  CSSValue* bottom = ConsumeClipComponent(stream, context);
+  if (!bottom ||
+      (needs_comma &&
+       !css_parsing_utils::ConsumeCommaIncludingWhitespace(stream))) {
     return nullptr;
   }
-  CSSValue* left = ConsumeClipComponent(args, context);
-  if (!left || !args.AtEnd()) {
-    // NOTE: This AtEnd() is fine, because we test args, not stream.
-    // But we need the savepoint to rewind in that case.
+  CSSValue* left = ConsumeClipComponent(stream, context);
+  if (!left || !stream.AtEnd()) {
+    // NOTE: This AtEnd() is fine, because we test within the
+    // RestoringBlockGuard. But we need the stream to rewind in that case.
     return nullptr;
   }
-  savepoint.Release();
+  guard.Release();
   return MakeGarbageCollected<CSSQuadValue>(top, right, bottom, left,
                                             CSSQuadValue::kSerializeAsRect);
 }
@@ -1900,7 +2376,8 @@ const CSSValue* ClipPath::CSSValueFromComputedStyleInternal(
     }
     if (operation->GetType() == ClipPathOperation::kReference) {
       AtomicString url = To<ReferenceClipPathOperation>(operation)->Url();
-      return MakeGarbageCollected<cssvalue::CSSURIValue>(CSSUrlData(url));
+      return MakeGarbageCollected<cssvalue::CSSURIValue>(
+          *MakeGarbageCollected<CSSUrlData>(url));
     }
   }
   return CSSIdentifierValue::Create(CSSValueID::kNone);
@@ -1974,24 +2451,23 @@ void Color::ApplyValue(StyleResolverState& state,
     builder.SetColor(builder.InitialColorForColorScheme());
   } else {
     StyleColor color = StyleBuilderConverter::ConvertStyleColor(state, value);
-    if (color.IsUnresolvedColorMixFunction()) {
-      // color-mix with currentcolor is a special case for this property.
+    if (color.IsUnresolvedColorFunction()) {
+      // Unresolved color functions are a special case for this property.
       // currentColor used in the color property value refers to the parent's
       // computed currentColor which means we can fully resolve currentColor at
       // ApplyValue time to get the correct resolved and used values for the
-      // color property, even for the color-mix() function.
-      // For typed OM, currentColor and color-mix() functions containing
+      // color property in all cases.
+      // For typed OM, currentColor and color functions containing
       // currentColor should have been preserved for values in
       // computedStyleMap().
       // See crbug.com/1099874
-      color = StyleColor(color.GetUnresolvedColorMix().Resolve(
-          state.ParentStyle()->Color().GetColor()));
+      color = StyleColor(color.Resolve(state.ParentStyle()->Color().GetColor(),
+                                       mojom::blink::ColorScheme::kLight));
     } else if (color.IsCurrentColor()) {
       // As per the spec, 'color: currentColor' is treated as 'color: inherit'
       ApplyInherit(state);
       builder.SetColorIsCurrentColor(true);
-      if (state.UsesHighlightPseudoInheritance() &&
-          state.OriginatingElementStyle()) {
+      if (state.IsForHighlight() && state.OriginatingElementStyle()) {
         builder.SetColor(state.OriginatingElementStyle()->Color());
       }
       return;
@@ -2174,6 +2650,14 @@ const CSSValue* ColumnFill::CSSValueFromComputedStyleInternal(
   return CSSIdentifierValue::Create(style.GetColumnFill());
 }
 
+const CSSValue* ColumnWrap::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return CSSIdentifierValue::Create(style.ColumnWrap());
+}
+
 const CSSValue* ColumnGap::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext& context,
@@ -2193,7 +2677,8 @@ const CSSValue* ColumnRuleColor::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext& context,
     const CSSParserLocalContext&) const {
-  return css_parsing_utils::ConsumeColor(stream, context);
+  return css_parsing_utils::ConsumeGapDecorationPropertyList(
+      stream, context, CSSGapDecorationPropertyType::kColor);
 }
 
 const blink::Color ColumnRuleColor::ColorIncludingFallback(
@@ -2201,7 +2686,8 @@ const blink::Color ColumnRuleColor::ColorIncludingFallback(
     const ComputedStyle& style,
     bool* is_current_color) const {
   DCHECK(!visited_link);
-  StyleColor column_rule_color = style.ColumnRuleColor();
+  const StyleColor& column_rule_color =
+      style.ColumnRuleColor().GetLegacyValue();
   if (style.ShouldForceColor(column_rule_color)) {
     return style.GetInternalForcedCurrentColor(is_current_color);
   }
@@ -2214,10 +2700,77 @@ const CSSValue* ColumnRuleColor::CSSValueFromComputedStyleInternal(
     const LayoutObject*,
     bool allow_visited_style,
     CSSValuePhase value_phase) const {
-  return allow_visited_style
-             ? cssvalue::CSSColor::Create(style.VisitedDependentColor(*this))
-             : ComputedStyleUtils::CurrentColorOrValidColor(
-                   style, style.ColumnRuleColor(), value_phase);
+  // For 'column-rule-color' we only apply :visited styles when one color is
+  // supplied by the author rather than a list of colors.
+  if (allow_visited_style && style.ColumnRuleColor().HasSingleValue()) {
+    // With GapDecorations enabled, `ColumnRuleColor` is a list. We need to make
+    // sure that when `allow_visited_style` is true, we return a list like we do
+    // when `allow_visited_style` is false.
+    if (RuntimeEnabledFeatures::CSSGapDecorationEnabled()) {
+      CSSValueList* wrapper_list = CSSValueList::CreateSpaceSeparated();
+      wrapper_list->Append(
+          *cssvalue::CSSColor::Create(style.VisitedDependentColor(*this)));
+      return wrapper_list;
+    }
+
+    return cssvalue::CSSColor::Create(style.VisitedDependentColor(*this));
+  }
+
+  return ComputedStyleUtils::ValueForGapDecorationColorDataList(
+      style.ColumnRuleColor(), style, value_phase);
+}
+
+bool ColumnRuleColor::IsAffectedByCurrentColor(
+    const ComputedStyle& style) const {
+  return style.HasGapRule() &&
+         CSSGapDecorationUtils::RuleColorMaybeDependsOnCurrentColor(
+             style.ColumnRuleColor());
+}
+
+const CSSValue* RowRuleColor::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context,
+    const CSSParserLocalContext&) const {
+  return css_parsing_utils::ConsumeGapDecorationPropertyList(
+      stream, context, CSSGapDecorationPropertyType::kColor);
+}
+
+const blink::Color RowRuleColor::ColorIncludingFallback(
+    bool visited_link,
+    const ComputedStyle& style,
+    bool* is_current_color) const {
+  DCHECK(!visited_link);
+  const StyleColor& row_rule_color = style.RowRuleColor().GetLegacyValue();
+  // TODO(crbug.com/357648037): Update to force any colors that appear in a list
+  // value.
+  if (style.ShouldForceColor(row_rule_color)) {
+    return style.GetInternalForcedCurrentColor(is_current_color);
+  }
+  return row_rule_color.Resolve(style.GetCurrentColor(),
+                                style.UsedColorScheme(), is_current_color);
+}
+
+const CSSValue* RowRuleColor::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return ComputedStyleUtils::ValueForGapDecorationColorDataList(
+      style.RowRuleColor(), style, value_phase);
+}
+
+bool RowRuleColor::IsAffectedByCurrentColor(const ComputedStyle& style) const {
+  return style.HasGapRule() &&
+         CSSGapDecorationUtils::RuleColorMaybeDependsOnCurrentColor(
+             style.RowRuleColor());
+}
+
+const CSSValue* ColumnRuleStyle::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context,
+    const CSSParserLocalContext&) const {
+  return css_parsing_utils::ConsumeGapDecorationPropertyList(
+      stream, context, CSSGapDecorationPropertyType::kStyle);
 }
 
 const CSSValue* ColumnRuleStyle::CSSValueFromComputedStyleInternal(
@@ -2225,15 +2778,33 @@ const CSSValue* ColumnRuleStyle::CSSValueFromComputedStyleInternal(
     const LayoutObject*,
     bool allow_visited_style,
     CSSValuePhase value_phase) const {
-  return CSSIdentifierValue::Create(style.ColumnRuleStyle());
+  return ComputedStyleUtils::ValueForGapDecorationStyleDataList(
+      style.ColumnRuleStyle(), style, value_phase);
+}
+
+const CSSValue* RowRuleStyle::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context,
+    const CSSParserLocalContext&) const {
+  return css_parsing_utils::ConsumeGapDecorationPropertyList(
+      stream, context, CSSGapDecorationPropertyType::kStyle);
+}
+
+const CSSValue* RowRuleStyle::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return ComputedStyleUtils::ValueForGapDecorationStyleDataList(
+      style.RowRuleStyle(), style, value_phase);
 }
 
 const CSSValue* ColumnRuleWidth::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext& context,
     const CSSParserLocalContext&) const {
-  return css_parsing_utils::ConsumeLineWidth(
-      stream, context, css_parsing_utils::UnitlessQuirk::kForbid);
+  return css_parsing_utils::ConsumeGapDecorationPropertyList(
+      stream, context, CSSGapDecorationPropertyType::kWidth);
 }
 
 const CSSValue* ColumnRuleWidth::CSSValueFromComputedStyleInternal(
@@ -2241,7 +2812,25 @@ const CSSValue* ColumnRuleWidth::CSSValueFromComputedStyleInternal(
     const LayoutObject*,
     bool allow_visited_style,
     CSSValuePhase value_phase) const {
-  return ZoomAdjustedPixelValue(style.ColumnRuleWidth(), style);
+  return ComputedStyleUtils::ValueForGapDecorationWidthDataList(
+      style.ColumnRuleWidth(), style, value_phase);
+}
+
+const CSSValue* RowRuleWidth::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context,
+    const CSSParserLocalContext&) const {
+  return css_parsing_utils::ConsumeGapDecorationPropertyList(
+      stream, context, CSSGapDecorationPropertyType::kWidth);
+}
+
+const CSSValue* RowRuleWidth::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return ComputedStyleUtils::ValueForGapDecorationWidthDataList(
+      style.RowRuleWidth(), style, value_phase);
 }
 
 const CSSValue* ColumnSpan::ParseSingleValue(
@@ -2266,7 +2855,7 @@ const CSSValue* ColumnWidth::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext& context,
     const CSSParserLocalContext&) const {
-  return css_parsing_utils::ConsumeColumnWidth(stream, context);
+  return css_parsing_utils::ConsumeColumnLength(stream, context);
 }
 
 const CSSValue* ColumnWidth::CSSValueFromComputedStyleInternal(
@@ -2278,6 +2867,24 @@ const CSSValue* ColumnWidth::CSSValueFromComputedStyleInternal(
     return CSSIdentifierValue::Create(CSSValueID::kAuto);
   }
   return ZoomAdjustedPixelValue(style.ColumnWidth(), style);
+}
+
+const CSSValue* ColumnHeight::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context,
+    const CSSParserLocalContext&) const {
+  return css_parsing_utils::ConsumeColumnLength(stream, context);
+}
+
+const CSSValue* ColumnHeight::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  if (style.HasAutoColumnHeight()) {
+    return CSSIdentifierValue::Create(CSSValueID::kAuto);
+  }
+  return ZoomAdjustedPixelValue(style.ColumnHeight(), style);
 }
 
 // none | strict | content | [ size || layout || style || paint ]
@@ -2299,10 +2906,10 @@ const CSSValue* Contain::ParseSingleValue(CSSParserTokenStream& stream,
   CSSIdentifierValue* layout = nullptr;
   CSSIdentifierValue* style = nullptr;
   CSSIdentifierValue* paint = nullptr;
+  CSSIdentifierValue* view_transition = nullptr;
   while (true) {
     id = stream.Peek().Id();
     if ((id == CSSValueID::kSize ||
-
          id == CSSValueID::kInlineSize) &&
         !size) {
       size = css_parsing_utils::ConsumeIdent(stream);
@@ -2312,6 +2919,9 @@ const CSSValue* Contain::ParseSingleValue(CSSParserTokenStream& stream,
       style = css_parsing_utils::ConsumeIdent(stream);
     } else if (id == CSSValueID::kPaint && !paint) {
       paint = css_parsing_utils::ConsumeIdent(stream);
+    } else if (id == CSSValueID::kViewTransition && !view_transition &&
+               RuntimeEnabledFeatures::ScopedViewTransitionsEnabled()) {
+      view_transition = css_parsing_utils::ConsumeIdent(stream);
     } else {
       break;
     }
@@ -2328,6 +2938,9 @@ const CSSValue* Contain::ParseSingleValue(CSSParserTokenStream& stream,
   }
   if (paint) {
     list->Append(*paint);
+  }
+  if (view_transition) {
+    list->Append(*view_transition);
   }
   if (!list->length()) {
     return nullptr;
@@ -2367,6 +2980,9 @@ const CSSValue* Contain::CSSValueFromComputedStyleInternal(
   }
   if (style.Contain() & kContainsPaint) {
     list->Append(*CSSIdentifierValue::Create(CSSValueID::kPaint));
+  }
+  if (style.Contain() & kContainsViewTransition) {
+    list->Append(*CSSIdentifierValue::Create(CSSValueID::kViewTransition));
   }
   DCHECK(list->length());
   return list;
@@ -2447,7 +3063,7 @@ const CSSValue* ContainerType::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext& context,
     const CSSParserLocalContext&) const {
-  return css_parsing_utils::ConsumeContainerType(stream);
+  return css_parsing_utils::ConsumeContainerType(stream, context);
 }
 
 const CSSValue* ContainerType::CSSValueFromComputedStyleInternal(
@@ -2471,25 +3087,35 @@ const CSSValue* ContainerType::CSSValueFromComputedStyleInternal(
   if (style.ContainerType() & kContainerTypeScrollState) {
     values->Append(*CSSIdentifierValue::Create(CSSValueID::kScrollState));
   }
+  if (style.ContainerType() & kContainerTypeAnchored) {
+    values->Append(*CSSIdentifierValue::Create(CSSValueID::kAnchored));
+  }
   return values;
 }
 
 namespace {
 
-CSSValue* ConsumeAttr(CSSParserTokenRange args,
+CSSValue* ConsumeAttr(CSSParserTokenStream& stream,
                       const CSSParserContext& context) {
-  if (args.Peek().GetType() != kIdentToken) {
-    return nullptr;
+  DCHECK(!RuntimeEnabledFeatures::CSSAdvancedAttrFunctionEnabled());
+
+  AtomicString attr_name;
+  {
+    CSSParserTokenStream::BlockGuard guard(stream);
+    stream.ConsumeWhitespace();
+    if (stream.Peek().GetType() != kIdentToken) {
+      return nullptr;
+    }
+
+    attr_name = stream.ConsumeIncludingWhitespace().Value().ToAtomicString();
+    if (!stream.AtEnd()) {
+      // NOTE: This AtEnd() is fine, because we are inside a function block
+      // (i.e., inside a BlockGuard).
+      return nullptr;
+    }
   }
 
-  AtomicString attr_name =
-      args.ConsumeIncludingWhitespace().Value().ToAtomicString();
-  if (!args.AtEnd()) {
-    // NOTE: This AtEnd() is fine, because we don't take in the entire
-    // stream here, just the contents of a function.
-    return nullptr;
-  }
-
+  stream.ConsumeWhitespace();
   if (context.IsHTMLDocument()) {
     attr_name = attr_name.LowerASCII();
   }
@@ -2500,59 +3126,71 @@ CSSValue* ConsumeAttr(CSSParserTokenRange args,
   return attr_value;
 }
 
-CSSValue* ConsumeCounterContent(CSSParserTokenRange args,
+CSSValue* ConsumeCounterContent(CSSParserTokenStream& stream,
                                 const CSSParserContext& context,
                                 bool counters) {
-  CSSCustomIdentValue* identifier =
-      css_parsing_utils::ConsumeCustomIdent(args, context);
-  if (!identifier) {
-    return nullptr;
-  }
-
+  CSSCustomIdentValue* identifier;
+  CSSCustomIdentValue* list_style = nullptr;
   CSSStringValue* separator = nullptr;
-  if (!counters) {
-    separator = MakeGarbageCollected<CSSStringValue>(String());
-  } else {
-    if (!css_parsing_utils::ConsumeCommaIncludingWhitespace(args) ||
-        args.Peek().GetType() != kStringToken) {
+
+  {
+    CSSParserTokenStream::RestoringBlockGuard guard(stream);
+    stream.ConsumeWhitespace();
+
+    identifier = css_parsing_utils::ConsumeCustomIdent(stream, context);
+    if (!identifier) {
       return nullptr;
     }
-    separator = MakeGarbageCollected<CSSStringValue>(
-        args.ConsumeIncludingWhitespace().Value().ToString());
-  }
 
-  CSSCustomIdentValue* list_style = nullptr;
-  if (css_parsing_utils::ConsumeCommaIncludingWhitespace(args)) {
-    // Note: CSS3 spec doesn't allow 'none' but CSS2.1 allows it. We currently
-    // allow it for backward compatibility.
-    // See https://github.com/w3c/csswg-drafts/issues/5795 for details.
-    if (args.Peek().Id() == CSSValueID::kNone) {
-      list_style =
-          MakeGarbageCollected<CSSCustomIdentValue>(AtomicString("none"));
-      args.ConsumeIncludingWhitespace();
+    if (!counters) {
+      separator = MakeGarbageCollected<CSSStringValue>(String());
     } else {
-      list_style = css_parsing_utils::ConsumeCounterStyleName(args, context);
+      if (!css_parsing_utils::ConsumeCommaIncludingWhitespace(stream) ||
+          stream.Peek().GetType() != kStringToken) {
+        return nullptr;
+      }
+      separator = MakeGarbageCollected<CSSStringValue>(
+          stream.ConsumeIncludingWhitespace().Value().ToString());
     }
-  } else {
-    list_style = MakeGarbageCollected<CSSCustomIdentValue>(keywords::kDecimal);
-  }
 
-  if (!list_style || !args.AtEnd()) {
-    // NOTE: This AtEnd() is fine, because we don't take in the entire
-    // stream here, just the contents of a function.
-    return nullptr;
+    if (css_parsing_utils::ConsumeCommaIncludingWhitespace(stream)) {
+      // Note: CSS3 spec doesn't allow 'none' but CSS2.1 allows it. We currently
+      // allow it for backward compatibility.
+      // See https://github.com/w3c/csswg-drafts/issues/5795 for details.
+      if (stream.Peek().Id() == CSSValueID::kNone) {
+        list_style =
+            MakeGarbageCollected<CSSCustomIdentValue>(AtomicString("none"));
+        stream.ConsumeIncludingWhitespace();
+      } else {
+        list_style =
+            css_parsing_utils::ConsumeCounterStyleName(stream, context);
+      }
+    } else {
+      list_style =
+          MakeGarbageCollected<CSSCustomIdentValue>(keywords::kDecimal);
+    }
+
+    if (!list_style || !stream.AtEnd()) {
+      // NOTE: This AtEnd() is fine, because we are inside a function block
+      // (i.e., inside a RestoringBlockGuard).
+      return nullptr;
+    }
+    guard.Release();
   }
+  stream.ConsumeWhitespace();
   return MakeGarbageCollected<cssvalue::CSSCounterValue>(identifier, list_style,
                                                          separator);
 }
 
-}  // namespace
-
-const CSSValue* Content::ParseSingleValue(CSSParserTokenStream& stream,
-                                          const CSSParserContext& context,
-                                          const CSSParserLocalContext&) const {
+const CSSValue* ParseContentValue(CSSParserTokenStream& stream,
+                                  const CSSParserContext& context) {
   if (css_parsing_utils::IdentMatches<CSSValueID::kNone, CSSValueID::kNormal>(
           stream.Peek().Id())) {
+    return css_parsing_utils::ConsumeIdent(stream);
+  }
+  if (context.GetMode() == kUASheetMode &&
+      css_parsing_utils::IdentMatches<
+          CSSValueID::kInternalPartialInterestContent>(stream.Peek().Id())) {
     return css_parsing_utils::ConsumeIdent(stream);
   }
 
@@ -2571,15 +3209,13 @@ const CSSValue* Content::ParseSingleValue(CSSParserTokenStream& stream,
       parsed_value = css_parsing_utils::ConsumeString(stream);
     }
     if (!parsed_value) {
-      if (stream.Peek().FunctionId() == CSSValueID::kAttr) {
-        parsed_value =
-            ConsumeAttr(css_parsing_utils::ConsumeFunction(stream), context);
+      if (stream.Peek().FunctionId() == CSSValueID::kAttr &&
+          !RuntimeEnabledFeatures::CSSAdvancedAttrFunctionEnabled()) {
+        parsed_value = ConsumeAttr(stream, context);
       } else if (stream.Peek().FunctionId() == CSSValueID::kCounter) {
-        parsed_value = ConsumeCounterContent(
-            css_parsing_utils::ConsumeFunction(stream), context, false);
+        parsed_value = ConsumeCounterContent(stream, context, false);
       } else if (stream.Peek().FunctionId() == CSSValueID::kCounters) {
-        parsed_value = ConsumeCounterContent(
-            css_parsing_utils::ConsumeFunction(stream), context, true);
+        parsed_value = ConsumeCounterContent(stream, context, true);
       }
     }
     if (!parsed_value) {
@@ -2603,37 +3239,43 @@ const CSSValue* Content::ParseSingleValue(CSSParserTokenStream& stream,
   }
   outer_list->Append(*values);
   if (alt_text_present) {
-    CSSValueList* alt_text_values = CSSValueList::CreateSpaceSeparated();
-    CSSValue* alt_text = nullptr;
-    if (RuntimeEnabledFeatures::CSSContentMultiArgAltTextEnabled()) {
-      do {
-        CSSParserSavePoint savepoint(stream);
-        if (stream.Peek().FunctionId() == CSSValueID::kAttr) {
-          alt_text =
-              ConsumeAttr(css_parsing_utils::ConsumeFunction(stream), context);
-        } else {
-          alt_text = css_parsing_utils::ConsumeString(stream);
-          if (!alt_text) {
-            break;
-          }
-        }
-        alt_text_values->Append(*alt_text);
-        savepoint.Release();
-      } while (!stream.AtEnd());
-      if (!alt_text_values->length()) {
-        return nullptr;
+    CSSValueList* alt_values = CSSValueList::CreateSpaceSeparated();
+    do {
+      CSSParserSavePoint savepoint(stream);
+      CSSValue* alt_value = nullptr;
+      if (stream.Peek().FunctionId() == CSSValueID::kAttr &&
+          !RuntimeEnabledFeatures::CSSAdvancedAttrFunctionEnabled()) {
+        alt_value = ConsumeAttr(stream, context);
+      } else if (RuntimeEnabledFeatures::CSSAltCounterEnabled() &&
+                 stream.Peek().FunctionId() == CSSValueID::kCounter) {
+        alt_value = ConsumeCounterContent(stream, context, false);
+      } else if (RuntimeEnabledFeatures::CSSAltCounterEnabled() &&
+                 stream.Peek().FunctionId() == CSSValueID::kCounters) {
+        alt_value = ConsumeCounterContent(stream, context, true);
+      } else {
+        alt_value = css_parsing_utils::ConsumeString(stream);
       }
-    } else {
-      alt_text = css_parsing_utils::ConsumeString(stream);
-      if (!alt_text) {
-        return nullptr;
+      if (!alt_value) {
+        break;
       }
-      alt_text_values->Append(*alt_text);
+      alt_values->Append(*alt_value);
+      savepoint.Release();
+    } while (!stream.AtEnd());
+    if (!alt_values->length()) {
+      return nullptr;
     }
 
-    outer_list->Append(*alt_text_values);
+    outer_list->Append(*alt_values);
   }
   return outer_list;
+}
+
+}  // namespace
+
+const CSSValue* Content::ParseSingleValue(CSSParserTokenStream& stream,
+                                          const CSSParserContext& context,
+                                          const CSSParserLocalContext&) const {
+  return ParseContentValue(stream, context);
 }
 
 const CSSValue* Content::CSSValueFromComputedStyleInternal(
@@ -2660,17 +3302,33 @@ namespace {
 String GetStringFromAttributeOrStringValue(const CSSValue& value,
                                            StyleResolverState& state,
                                            ComputedStyleBuilder& builder) {
-  String string;
+  String string = g_empty_string;
   if (const auto* function_value = DynamicTo<CSSFunctionValue>(value)) {
+    DCHECK(!RuntimeEnabledFeatures::CSSAdvancedAttrFunctionEnabled());
     DCHECK_EQ(function_value->FunctionType(), CSSValueID::kAttr);
-    builder.SetHasAttrContent();
+    builder.SetHasAttrFunction();
     // TODO: Can a namespace be specified for an attr(foo)?
     QualifiedName attr(
         To<CSSCustomIdentValue>(function_value->Item(0)).Value());
-    const AtomicString& attr_value = state.GetElement().getAttribute(attr);
+    const AtomicString& attr_value =
+        state.GetUltimateOriginatingElementOrSelf().getAttribute(attr);
     string = attr_value.IsNull() ? g_empty_string : attr_value.GetString();
   } else {
-    string = To<CSSStringValue>(value).Value();
+    // We should be able to assume at this point that `value` is a
+    // CSSStringValue, since all other types of CSSValues produced in
+    // Content::ParseSingleValue should have been handled by Content::ApplyValue
+    // before reaching this point. However, as observed in crbug.com/348304397
+    // there is some unexpected type that is not getting handled. The following
+    // two DCHECKs are intended to help investigate this. The first DCHECK tests
+    // the theory that the unexpected type is coming from ConsumeImage, where a
+    // light-dark() function in a UA shadow DOM could cause a
+    // CSSLightDarkValuePair to be created. The second DCHECK will hit if this
+    // first theory is wrong and `value` has some other unexpected type.
+    DCHECK(!IsA<CSSLightDarkValuePair>(value));
+    DCHECK(IsA<CSSStringValue>(value));
+    if (const auto* string_value = DynamicTo<CSSStringValue>(value)) {
+      string = string_value->Value();
+    }
   }
   return string;
 }
@@ -2684,9 +3342,23 @@ void Content::ApplyValue(StyleResolverState& state,
   ComputedStyleBuilder& builder = state.StyleBuilder();
   if (auto* identifier_value = DynamicTo<CSSIdentifierValue>(value)) {
     DCHECK(identifier_value->GetValueID() == CSSValueID::kNormal ||
-           identifier_value->GetValueID() == CSSValueID::kNone);
+           identifier_value->GetValueID() == CSSValueID::kNone ||
+           identifier_value->GetValueID() ==
+               CSSValueID::kInternalPartialInterestContent);
     if (identifier_value->GetValueID() == CSSValueID::kNone) {
       builder.SetContent(MakeGarbageCollected<NoneContentData>());
+    } else if (identifier_value->GetValueID() ==
+                   CSSValueID::kInternalPartialInterestContent &&
+               RuntimeEnabledFeatures::HTMLInterestForAttributeEnabled(
+                   state.GetDocument().GetExecutionContext())) {
+      String hint_text = state.GetDocument().GetCachedLocale().QueryString(
+          IDS_PARTIAL_INTEREST_TARGET_ACTIVATION_HINT,
+          Element::GetPartialInterestForActivationHotkey());
+      auto* content =
+          MakeGarbageCollected<TextContentData>(StrCat({"{", hint_text, "}"}));
+      auto* alt_content = MakeGarbageCollected<AltTextContentData>(hint_text);
+      content->SetNext(alt_content);
+      builder.SetContent(content);
     } else {
       builder.SetContent(nullptr);
     }
@@ -2712,8 +3384,7 @@ void Content::ApplyValue(StyleResolverState& state,
       QuoteType quote_type;
       switch (item_identifier_value->GetValueID()) {
         default:
-          NOTREACHED_IN_MIGRATION();
-          [[fallthrough]];
+          NOTREACHED();
         case CSSValueID::kOpenQuote:
           quote_type = QuoteType::kOpen;
           break;
@@ -2733,7 +3404,7 @@ void Content::ApplyValue(StyleResolverState& state,
           GetStringFromAttributeOrStringValue(*item, state, builder);
       if (prev_content && prev_content->IsText()) {
         TextContentData* text_content = To<TextContentData>(prev_content);
-        text_content->SetText(text_content->GetText() + string);
+        text_content->SetText(StrCat({text_content->GetText(), string}));
         continue;
       }
       next_content = MakeGarbageCollected<TextContentData>(string);
@@ -2752,14 +3423,102 @@ void Content::ApplyValue(StyleResolverState& state,
   if (outer_list.length() > 1) {
     CHECK_EQ(outer_list.length(), 2U);
     for (auto& item : To<CSSValueList>(outer_list.Item(1))) {
-      auto* alt_content = MakeGarbageCollected<AltTextContentData>(
-          GetStringFromAttributeOrStringValue(*item, state, builder));
+      ContentData* alt_content = nullptr;
+      if (const auto* counter_value =
+              DynamicTo<cssvalue::CSSCounterValue>(item.Get())) {
+        alt_content = MakeGarbageCollected<AltCounterContentData>(
+            AtomicString(counter_value->Identifier()),
+            counter_value->ListStyle(),
+            AtomicString(counter_value->Separator()),
+            counter_value->GetTreeScope());
+      } else {
+        alt_content = MakeGarbageCollected<AltTextContentData>(
+            GetStringFromAttributeOrStringValue(*item, state, builder));
+      }
       prev_content->SetNext(alt_content);
       prev_content = alt_content;
     }
   }
   DCHECK(first_content);
   builder.SetContent(first_content);
+}
+
+const CSSValue* CornerBottomLeftShape::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context,
+    const CSSParserLocalContext&) const {
+  return css_parsing_utils::ConsumeCornerShape(stream, context);
+}
+const CSSValue* CornerBottomLeftShape::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return ComputedStyleUtils::ValueForCornerShape(style.CornerBottomLeftShape());
+}
+const CSSValue* CornerBottomRightShape::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context,
+    const CSSParserLocalContext&) const {
+  return css_parsing_utils::ConsumeCornerShape(stream, context);
+}
+const CSSValue* CornerBottomRightShape::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return ComputedStyleUtils::ValueForCornerShape(
+      style.CornerBottomRightShape());
+}
+const CSSValue* CornerEndStartShape::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context,
+    const CSSParserLocalContext&) const {
+  return css_parsing_utils::ConsumeCornerShape(stream, context);
+}
+const CSSValue* CornerEndEndShape::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context,
+    const CSSParserLocalContext&) const {
+  return css_parsing_utils::ConsumeCornerShape(stream, context);
+}
+const CSSValue* CornerStartEndShape::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context,
+    const CSSParserLocalContext&) const {
+  return css_parsing_utils::ConsumeCornerShape(stream, context);
+}
+const CSSValue* CornerStartStartShape::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context,
+    const CSSParserLocalContext&) const {
+  return css_parsing_utils::ConsumeCornerShape(stream, context);
+}
+const CSSValue* CornerTopLeftShape::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context,
+    const CSSParserLocalContext&) const {
+  return css_parsing_utils::ConsumeCornerShape(stream, context);
+}
+const CSSValue* CornerTopLeftShape::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return ComputedStyleUtils::ValueForCornerShape(style.CornerTopLeftShape());
+}
+const CSSValue* CornerTopRightShape::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context,
+    const CSSParserLocalContext&) const {
+  return css_parsing_utils::ConsumeCornerShape(stream, context);
+}
+const CSSValue* CornerTopRightShape::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return ComputedStyleUtils::ValueForCornerShape(style.CornerTopRightShape());
 }
 
 const int kCounterIncrementDefaultValue = 1;
@@ -2827,15 +3586,27 @@ const CSSValue* Cursor::ParseSingleValue(CSSParserTokenStream& stream,
   while (CSSValue* image = css_parsing_utils::ConsumeImage(
              stream, context,
              css_parsing_utils::ConsumeGeneratedImagePolicy::kForbid)) {
-    double num;
     gfx::Point hot_spot(-1, -1);
     bool hot_spot_specified = false;
-    if (css_parsing_utils::ConsumeNumberRaw(stream, context, num)) {
-      hot_spot.set_x(ClampTo<int>(num));
-      if (!css_parsing_utils::ConsumeNumberRaw(stream, context, num)) {
+    if (const CSSPrimitiveValue* x_value = css_parsing_utils::ConsumeNumber(
+            stream, context, CSSPrimitiveValue::ValueRange::kAll)) {
+      // TODO(crbug.com/406935603): Support storing non-simplified calc()
+      // expressions for hotspots.
+      std::optional<double> x = x_value->GetValueIfKnown();
+      if (!x.has_value()) {
         return nullptr;
       }
-      hot_spot.set_y(ClampTo<int>(num));
+      hot_spot.set_x(ClampTo<int>(x.value()));
+      const CSSPrimitiveValue* y_value = css_parsing_utils::ConsumeNumber(
+          stream, context, CSSPrimitiveValue::ValueRange::kAll);
+      if (!y_value) {
+        return nullptr;
+      }
+      std::optional<double> y = y_value->GetValueIfKnown();
+      if (!y.has_value()) {
+        return nullptr;
+      }
+      hot_spot.set_y(ClampTo<int>(y.value()));
       hot_spot_specified = true;
     }
 
@@ -2913,12 +3684,14 @@ void Cursor::ApplyInitial(StyleResolverState& state) const {
   ComputedStyleBuilder& builder = state.StyleBuilder();
   builder.ClearCursorList();
   builder.SetCursor(ComputedStyleInitialValues::InitialCursor());
+  builder.SetCursorIsInherited(false);
 }
 
 void Cursor::ApplyInherit(StyleResolverState& state) const {
   ComputedStyleBuilder& builder = state.StyleBuilder();
   builder.SetCursor(state.ParentStyle()->Cursor());
   builder.SetCursorList(state.ParentStyle()->Cursors());
+  builder.SetCursorIsInherited(true);
 }
 
 void Cursor::ApplyValue(StyleResolverState& state,
@@ -2941,6 +3714,8 @@ void Cursor::ApplyValue(StyleResolverState& state,
   } else {
     builder.SetCursor(To<CSSIdentifierValue>(value).ConvertTo<ECursor>());
   }
+
+  builder.SetCursorIsInherited(false);
 }
 
 const CSSValue* Cx::ParseSingleValue(CSSParserTokenStream& stream,
@@ -3012,9 +3787,11 @@ static bool IsDisplayOutside(CSSValueID id) {
 }
 
 static bool IsDisplayInside(CSSValueID id) {
-  return (id >= CSSValueID::kFlowRoot && id <= CSSValueID::kGrid) ||
-         id == CSSValueID::kMath || id == CSSValueID::kFlow ||
-         id == CSSValueID::kRuby;
+  if (id == CSSValueID::kMasonry) {
+    return RuntimeEnabledFeatures::CSSMasonryLayoutEnabled();
+  }
+  return (id >= CSSValueID::kFlowRoot && id <= CSSValueID::kMasonry) ||
+         id == CSSValueID::kMath || id == CSSValueID::kRuby;
 }
 
 static bool IsDisplayBox(CSSValueID id) {
@@ -3023,12 +3800,13 @@ static bool IsDisplayBox(CSSValueID id) {
 }
 
 static bool IsDisplayInternal(CSSValueID id) {
-  return (id >= CSSValueID::kTableRowGroup &&
-          id <= CSSValueID::kTableCaption) ||
-         id == CSSValueID::kRubyText;
+  return id >= CSSValueID::kTableRowGroup && id <= CSSValueID::kRubyText;
 }
 
 static bool IsDisplayLegacy(CSSValueID id) {
+  if (id == CSSValueID::kInlineMasonry) {
+    return RuntimeEnabledFeatures::CSSMasonryLayoutEnabled();
+  }
   return id >= CSSValueID::kInlineBlock && id <= CSSValueID::kWebkitInlineFlex;
 }
 
@@ -3070,7 +3848,11 @@ std::optional<DisplayValidationResult> ValidateDisplayKeywords(
   return result;
 }
 
-void DropDisplayKeywords(DisplayValidationResult& result) {
+// Drop redundant keywords, and update to backward-compatible keywords.
+// e.g. {outside:"block", inside:"flow"} ==> {outside:"block", inside:null}
+//      {outside:"inline", inside:"flow-root"} ==>
+//          {outside:null, inside:"inline-block"}
+void AdjustDisplayKeywords(DisplayValidationResult& result) {
   CSSValueID outside =
       result.outside ? result.outside->GetValueID() : CSSValueID::kInvalid;
   CSSValueID inside =
@@ -3084,9 +3866,26 @@ void DropDisplayKeywords(DisplayValidationResult& result) {
     case CSSValueID::kFlex:
     case CSSValueID::kFlowRoot:
     case CSSValueID::kGrid:
+    case CSSValueID::kMasonry:
     case CSSValueID::kTable:
       if (outside == CSSValueID::kBlock) {
         result.outside = nullptr;
+      } else if (outside == CSSValueID::kInline && !result.list_item) {
+        CSSValueID new_id = CSSValueID::kInvalid;
+        if (inside == CSSValueID::kFlex) {
+          new_id = CSSValueID::kInlineFlex;
+        } else if (inside == CSSValueID::kFlowRoot) {
+          new_id = CSSValueID::kInlineBlock;
+        } else if (inside == CSSValueID::kGrid) {
+          new_id = CSSValueID::kInlineGrid;
+        } else if (inside == CSSValueID::kMasonry) {
+          new_id = CSSValueID::kInlineGrid;
+        } else if (inside == CSSValueID::kTable) {
+          new_id = CSSValueID::kInlineTable;
+        }
+        CHECK_NE(new_id, CSSValueID::kInvalid);
+        result.outside = nullptr;
+        result.inside = CSSIdentifierValue::Create(new_id);
       }
       break;
     case CSSValueID::kMath:
@@ -3132,7 +3931,7 @@ const CSSValue* ParseDisplayMultipleKeywords(
     }
   }
 
-  DropDisplayKeywords(*result);
+  AdjustDisplayKeywords(*result);
   CSSValueList* result_list = CSSValueList::CreateSpaceSeparated();
   if (result->outside) {
     result_list->Append(*result->outside);
@@ -3159,14 +3958,17 @@ const CSSValue* Display::ParseSingleValue(CSSParserTokenStream& stream,
   if (id != CSSValueID::kInvalid) {
     const CSSIdentifierValue* value = css_parsing_utils::ConsumeIdent(stream);
     if (stream.Peek().Id() != CSSValueID::kInvalid) {
+      context.Count(WebFeature::kCssDisplayPropertyMultipleValues);
       return ParseDisplayMultipleKeywords(stream, value);
     }
 
     // The property has only one keyword (or one keyword and then junk,
     // in which case the caller will abort for us).
-    if (id == CSSValueID::kListItem || IsDisplayBox(id) ||
-        IsDisplayInternal(id) || IsDisplayLegacy(id) || IsDisplayInside(id) ||
-        IsDisplayOutside(id)) {
+    if (id == CSSValueID::kFlow) {
+      return CSSIdentifierValue::Create(CSSValueID::kBlock);
+    } else if (id == CSSValueID::kListItem || IsDisplayBox(id) ||
+               IsDisplayInternal(id) || IsDisplayLegacy(id) ||
+               IsDisplayInside(id) || IsDisplayOutside(id)) {
       return value;
     } else {
       return nullptr;
@@ -3187,20 +3989,23 @@ const CSSValue* Display::ParseSingleValue(CSSParserTokenStream& stream,
     return nullptr;
   }
 
-  CSSParserSavePoint savepoint(stream);
-  CSSParserTokenRange args = css_parsing_utils::ConsumeFunction(stream);
-  CSSCustomIdentValue* name =
-      css_parsing_utils::ConsumeCustomIdent(args, context);
+  CSSCustomIdentValue* name;
+  {
+    CSSParserTokenStream::RestoringBlockGuard guard(stream);
+    stream.ConsumeWhitespace();
+    name = css_parsing_utils::ConsumeCustomIdent(stream, context);
 
-  // If we didn't get a custom-ident or didn't exhaust the function arguments
-  // return nothing.
-  // NOTE: This AtEnd() is fine, because we test args, not stream.
-  // But we need the savepoint to rewind in that case.
-  if (!name || !args.AtEnd()) {
-    return nullptr;
+    // If we didn't get a custom-ident or didn't exhaust the function arguments
+    // return nothing.
+    // NOTE: This AtEnd() is fine, because we are inside a RestoringBlockGuard
+    // (i.e., we are testing the end of the argument list).
+    if (!name || !stream.AtEnd()) {
+      return nullptr;
+    }
+
+    guard.Release();
   }
-
-  savepoint.Release();
+  stream.ConsumeWhitespace();
   return MakeGarbageCollected<cssvalue::CSSLayoutFunctionValue>(
       name, /* is_inline */ function == CSSValueID::kInlineLayout);
 }
@@ -3319,6 +4124,9 @@ void Display::ApplyValue(StyleResolverState& state,
       builder.SetDisplay(is_block ? EDisplay::kFlex : EDisplay::kInlineFlex);
     } else if (inside == CSSValueID::kGrid) {
       builder.SetDisplay(is_block ? EDisplay::kGrid : EDisplay::kInlineGrid);
+    } else if (inside == CSSValueID::kMasonry) {
+      builder.SetDisplay(is_block ? EDisplay::kMasonry
+                                  : EDisplay::kInlineMasonry);
     } else if (inside == CSSValueID::kMath) {
       builder.SetDisplay(is_block ? EDisplay::kBlockMath : EDisplay::kMath);
     } else if (inside == CSSValueID::kRuby) {
@@ -3345,53 +4153,75 @@ const CSSValue* DominantBaseline::CSSValueFromComputedStyleInternal(
   return CSSIdentifierValue::Create(style.DominantBaseline());
 }
 
-// TODO(sesse): Get rid of this templatization.
-template <class T>
-  requires std::is_same_v<T, CSSParserTokenStream> ||
-           std::is_same_v<T, CSSParserTokenRange>
-static const CSSValue* DynamicRangeLimit_ParseInternal(
-    T& range,
-    const CSSParserContext& context,
-    const CSSParserLocalContext& local_context) {
-  if (const CSSValue* const keyword_value = css_parsing_utils::ConsumeIdent<
-          CSSValueID::kStandard, CSSValueID::kHigh,
-          CSSValueID::kConstrainedHigh>(range)) {
-    return keyword_value;
-  }
-
-  if (range.Peek().FunctionId() != CSSValueID::kDynamicRangeLimitMix) {
-    return nullptr;
-  }
-
-  CSSParserTokenRange function_range =
-      css_parsing_utils::ConsumeFunction(range);
-  const CSSValue* const limit1 =
-      DynamicRangeLimit_ParseInternal(function_range, context, local_context);
-  if (limit1 == nullptr ||
-      !css_parsing_utils::ConsumeCommaIncludingWhitespace(function_range)) {
-    return nullptr;
-  }
-  const CSSValue* const limit2 =
-      DynamicRangeLimit_ParseInternal(function_range, context, local_context);
-  if (limit2 == nullptr ||
-      !css_parsing_utils::ConsumeCommaIncludingWhitespace(function_range)) {
-    return nullptr;
-  }
-  const CSSPrimitiveValue* const percentage = css_parsing_utils::ConsumePercent(
-      function_range, context, CSSPrimitiveValue::ValueRange::kNonNegative);
-  if (percentage == nullptr) {
-    return nullptr;
-  }
-
-  return MakeGarbageCollected<cssvalue::CSSDynamicRangeLimitMixValue>(
-      limit1, limit2, percentage);
-}
-
 const CSSValue* DynamicRangeLimit::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext& context,
     const CSSParserLocalContext& local_context) const {
-  return DynamicRangeLimit_ParseInternal(stream, context, local_context);
+  if (const CSSValue* const keyword_value =
+          css_parsing_utils::ConsumeIdent<CSSValueID::kStandard,
+                                          CSSValueID::kNoLimit,
+                                          CSSValueID::kConstrained>(stream)) {
+    return keyword_value;
+  }
+
+  if (stream.Peek().FunctionId() != CSSValueID::kDynamicRangeLimitMix) {
+    return nullptr;
+  }
+
+  HeapVector<Member<const CSSValue>> limits;
+  HeapVector<Member<const CSSPrimitiveValue>> percentages;
+  bool all_percentages_zero = true;
+  {
+    CSSParserTokenStream::BlockGuard guard(stream);
+    while (true) {
+      stream.ConsumeWhitespace();
+
+      const CSSValue* limit =
+          DynamicRangeLimit::ParseSingleValue(stream, context, local_context);
+      if (limit == nullptr) {
+        return nullptr;
+      }
+      limits.push_back(limit);
+      stream.ConsumeWhitespace();
+
+      const CSSPrimitiveValue* percentage = css_parsing_utils::ConsumePercent(
+          stream, context, CSSPrimitiveValue::ValueRange::kNonNegative);
+      if (!percentage) {
+        return nullptr;
+      }
+      percentages.push_back(percentage);
+      stream.ConsumeWhitespace();
+
+      // Reject literal negative values and values > 100%, and track if all
+      // percentage values are zero.
+      if (auto* numeric = DynamicTo<CSSNumericLiteralValue>(percentage)) {
+        float numeric_percentage = numeric->ComputePercentage();
+        if (numeric_percentage < 0.f || numeric_percentage > 100.f) {
+          return nullptr;
+        }
+        all_percentages_zero &= numeric_percentage == 0.0f;
+      } else {
+        all_percentages_zero = false;
+      }
+
+      // If there is no comma then require that we be at the end of the
+      // functional.
+      if (!css_parsing_utils::ConsumeCommaIncludingWhitespace(stream)) {
+        if (!stream.AtEnd()) {
+          return nullptr;
+        }
+        break;
+      }
+    }
+  }
+
+  // If all values are literally zero, reject at parse time.
+  if (all_percentages_zero) {
+    return nullptr;
+  }
+
+  return MakeGarbageCollected<cssvalue::CSSDynamicRangeLimitMixValue>(
+      std::move(limits), std::move(percentages));
 }
 
 const CSSValue* DynamicRangeLimit::CSSValueFromComputedStyleInternal(
@@ -3404,47 +4234,32 @@ const CSSValue* DynamicRangeLimit::CSSValueFromComputedStyleInternal(
     return CSSIdentifierValue::Create(CSSValueID::kStandard);
   }
   if (limit.constrained_high_mix == 1.f) {
-    return CSSIdentifierValue::Create(CSSValueID::kConstrainedHigh);
+    return CSSIdentifierValue::Create(CSSValueID::kConstrained);
   }
-  if (limit.standard_mix == 0.f && limit.constrained_high_mix == 0.f) {
-    return CSSIdentifierValue::Create(CSSValueID::kHigh);
+  float high_mix = 1.f - limit.standard_mix - limit.constrained_high_mix;
+  if (high_mix == 1.f) {
+    return CSSIdentifierValue::Create(CSSValueID::kNoLimit);
   }
-  const float high_mix = 1 - limit.standard_mix - limit.constrained_high_mix;
-  if (limit.standard_mix == 0.f) {
-    return MakeGarbageCollected<cssvalue::CSSDynamicRangeLimitMixValue>(
-        CSSIdentifierValue::Create(CSSValueID::kConstrainedHigh),
-        CSSIdentifierValue::Create(CSSValueID::kHigh),
-        CSSNumericLiteralValue::Create(
-            100 * high_mix, CSSPrimitiveValue::UnitType::kPercentage));
+  HeapVector<Member<const CSSValue>> limits;
+  HeapVector<Member<const CSSPrimitiveValue>> percentages;
+  if (limit.standard_mix != 0.f) {
+    limits.push_back(CSSIdentifierValue::Create(CSSValueID::kStandard));
+    percentages.push_back(CSSNumericLiteralValue::Create(
+        100 * limit.standard_mix, CSSPrimitiveValue::UnitType::kPercentage));
   }
-  if (limit.constrained_high_mix == 0.f) {
-    return MakeGarbageCollected<cssvalue::CSSDynamicRangeLimitMixValue>(
-        CSSIdentifierValue::Create(CSSValueID::kStandard),
-        CSSIdentifierValue::Create(CSSValueID::kHigh),
-        CSSNumericLiteralValue::Create(
-            100 * high_mix, CSSPrimitiveValue::UnitType::kPercentage));
+  if (limit.constrained_high_mix != 0.f) {
+    limits.push_back(CSSIdentifierValue::Create(CSSValueID::kConstrained));
+    percentages.push_back(CSSNumericLiteralValue::Create(
+        100 * limit.constrained_high_mix,
+        CSSPrimitiveValue::UnitType::kPercentage));
   }
-  if (high_mix == 0.f) {
-    return MakeGarbageCollected<cssvalue::CSSDynamicRangeLimitMixValue>(
-        CSSIdentifierValue::Create(CSSValueID::kStandard),
-        CSSIdentifierValue::Create(CSSValueID::kConstrainedHigh),
-        CSSNumericLiteralValue::Create(
-            100 * limit.constrained_high_mix,
-            CSSPrimitiveValue::UnitType::kPercentage));
+  if (high_mix != 0.f) {
+    limits.push_back(CSSIdentifierValue::Create(CSSValueID::kNoLimit));
+    percentages.push_back(CSSNumericLiteralValue::Create(
+        100 * high_mix, CSSPrimitiveValue::UnitType::kPercentage));
   }
-  // If there is a bit of all three, nest two binary mixtures:
-  // mix(standard, mix(constrained-high, high, b%), a%)
-  // where b% must take into account that a% will also be applied to it.
   return MakeGarbageCollected<cssvalue::CSSDynamicRangeLimitMixValue>(
-      CSSIdentifierValue::Create(CSSValueID::kStandard),
-      MakeGarbageCollected<cssvalue::CSSDynamicRangeLimitMixValue>(
-          CSSIdentifierValue::Create(CSSValueID::kConstrainedHigh),
-          CSSIdentifierValue::Create(CSSValueID::kHigh),
-          CSSNumericLiteralValue::Create(
-              100 * (1 - limit.constrained_high_mix / (1 - limit.standard_mix)),
-              CSSPrimitiveValue::UnitType::kPercentage)),
-      CSSNumericLiteralValue::Create(100 * (1 - limit.standard_mix),
-                                     CSSPrimitiveValue::UnitType::kPercentage));
+      std::move(limits), std::move(percentages));
 }
 
 const CSSValue* EmptyCells::CSSValueFromComputedStyleInternal(
@@ -3480,6 +4295,18 @@ const blink::Color Fill::ColorIncludingFallback(bool visited_link,
   }
   return fill_color.Resolve(style.GetCurrentColor(), style.UsedColorScheme(),
                             is_current_color);
+}
+
+void Fill::ApplyValue(StyleResolverState& state,
+                      const CSSValue& value,
+                      ValueMode) const {
+  state.StyleBuilder().SetFillPaint(StyleBuilderConverter::ConvertSVGPaint(
+      state, value, false, PropertyID()));
+}
+
+bool Fill::IsAffectedByCurrentColor(const ComputedStyle& style) const {
+  return style.FillPaint().HasColor() &&
+         style.FillPaint().GetColor().DependsOnCurrentColor();
 }
 
 const CSSValue* FillOpacity::ParseSingleValue(
@@ -3527,18 +4354,32 @@ void Filter::ApplyValue(StyleResolverState& state,
       state, value, PropertyID()));
 }
 
+bool Filter::IsAffectedByCurrentColor(const ComputedStyle& style) const {
+  return style.Filter().UsesCurrentColor();
+}
+
 const CSSValue* FlexBasis::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext& context,
     const CSSParserLocalContext&) const {
+  // TODO(https://crbug.com/353538495): This should really use
+  // css_parsing_utils::ValidWidthOrHeightKeyword.
   if (css_parsing_utils::IdentMatches<
           CSSValueID::kAuto, CSSValueID::kContent, CSSValueID::kMinContent,
           CSSValueID::kMaxContent, CSSValueID::kFitContent>(
           stream.Peek().Id())) {
     return css_parsing_utils::ConsumeIdent(stream);
   }
+
+  if (RuntimeEnabledFeatures::LayoutStretchEnabled() &&
+      CSSValueID::kStretch == stream.Peek().Id()) {
+    return css_parsing_utils::ConsumeIdent(stream);
+  }
+
   return css_parsing_utils::ConsumeLengthOrPercent(
-      stream, context, CSSPrimitiveValue::ValueRange::kNonNegative);
+      stream, context, CSSPrimitiveValue::ValueRange::kNonNegative,
+      css_parsing_utils::UnitlessQuirk::kForbid, kCSSAnchorQueryTypesNone,
+      css_parsing_utils::AllowCalcSize::kAllowWithAutoAndContent);
 }
 
 const CSSValue* FlexBasis::CSSValueFromComputedStyleInternal(
@@ -3600,7 +4441,97 @@ const CSSValue* FlexWrap::CSSValueFromComputedStyleInternal(
     const LayoutObject*,
     bool allow_visited_style,
     CSSValuePhase value_phase) const {
-  return CSSIdentifierValue::Create(style.FlexWrap());
+  const StyleFlexWrapData& data = style.FlexWrap();
+  if (!data.IsBalanced()) {
+    return CSSIdentifierValue::Create(data.GetWrapMode());
+  }
+
+  const uint16_t min_line_count = data.MinLineCount();
+  switch (data.GetWrapMode()) {
+    case FlexWrapMode::kNowrap:
+      NOTREACHED();
+    case FlexWrapMode::kWrap:
+      if (min_line_count > 1u) {
+        CSSValueList* list = CSSValueList::CreateSpaceSeparated();
+        list->Append(*CSSIdentifierValue::Create(CSSValueID::kBalance));
+        list->Append(*CSSNumericLiteralValue::Create(
+            min_line_count, CSSPrimitiveValue::UnitType::kNumber));
+        return list;
+      }
+      return CSSIdentifierValue::Create(CSSValueID::kBalance);
+    case FlexWrapMode::kWrapReverse: {
+      CSSValueList* list = CSSValueList::CreateSpaceSeparated();
+      list->Append(*CSSIdentifierValue::Create(CSSValueID::kWrapReverse));
+      list->Append(*CSSIdentifierValue::Create(CSSValueID::kBalance));
+      if (min_line_count > 1u) {
+        list->Append(*CSSNumericLiteralValue::Create(
+            min_line_count, CSSPrimitiveValue::UnitType::kNumber));
+      }
+      return list;
+    }
+  }
+}
+
+const CSSValue* FlexWrap::ParseSingleValue(CSSParserTokenStream& stream,
+                                           const CSSParserContext& context,
+                                           const CSSParserLocalContext&) const {
+  // flex-wrap: nowrap | [ [ wrap | wrap-reverse ] || balance <integer [1,∞]>?]
+  if (CSSValue* value =
+          css_parsing_utils::ConsumeIdent<CSSValueID::kNowrap>(stream)) {
+    return value;
+  }
+
+  CSSIdentifierValue* wrap_value = nullptr;
+  CSSIdentifierValue* balance_value = nullptr;
+  CSSPrimitiveValue* min_line_count_value = nullptr;
+
+  do {
+    if (!wrap_value) {
+      wrap_value =
+          css_parsing_utils::ConsumeIdent<CSSValueID::kWrap,
+                                          CSSValueID::kWrapReverse>(stream);
+      if (wrap_value) {
+        continue;
+      }
+    }
+    if (!balance_value && RuntimeEnabledFeatures::FlexWrapBalanceEnabled()) {
+      balance_value =
+          css_parsing_utils::ConsumeIdent<CSSValueID::kBalance>(stream);
+      if (balance_value) {
+        min_line_count_value = css_parsing_utils::ConsumeIntegerOrNumberCalc(
+            stream, context, CSSPrimitiveValue::ValueRange::kPositiveInteger);
+        continue;
+      }
+    }
+    break;
+  } while (!stream.AtEnd());
+
+  if (!balance_value) {
+    return wrap_value;
+  }
+  // Coerce "wrap balance" to "balance".
+  if (wrap_value && wrap_value->GetValueID() == CSSValueID::kWrap) {
+    wrap_value = nullptr;
+  }
+  // Coerce "balance 1" to "balance".
+  if (const auto* value =
+          DynamicTo<CSSNumericLiteralValue>(min_line_count_value)) {
+    if (value->ComputeInteger() == 1u) {
+      min_line_count_value = nullptr;
+    }
+  }
+  if (!wrap_value && !min_line_count_value) {
+    return balance_value;
+  }
+  CSSValueList* list = CSSValueList::CreateSpaceSeparated();
+  if (wrap_value) {
+    list->Append(*wrap_value);
+  }
+  list->Append(*balance_value);
+  if (min_line_count_value) {
+    list->Append(*min_line_count_value);
+  }
+  return list;
 }
 
 const CSSValue* FlexWrap::InitialValue() const {
@@ -3629,7 +4560,7 @@ const blink::Color FloodColor::ColorIncludingFallback(
     bool visited_link,
     const ComputedStyle& style,
     bool* is_current_color) const {
-  StyleColor flood_color = style.FloodColor();
+  const StyleColor& flood_color = style.FloodColor();
   if (style.ShouldForceColor(flood_color)) {
     return style.GetInternalForcedCurrentColor(is_current_color);
   }
@@ -3643,6 +4574,10 @@ const CSSValue* FloodColor::CSSValueFromComputedStyleInternal(
     CSSValuePhase value_phase) const {
   return ComputedStyleUtils::CurrentColorOrValidColor(style, style.FloodColor(),
                                                       value_phase);
+}
+
+bool FloodColor::IsAffectedByCurrentColor(const ComputedStyle& style) const {
+  return style.FloodColor().DependsOnCurrentColor();
 }
 
 const CSSValue* FloodOpacity::ParseSingleValue(
@@ -3663,9 +4598,9 @@ const CSSValue* FloodOpacity::CSSValueFromComputedStyleInternal(
 
 const CSSValue* FontFamily::ParseSingleValue(
     CSSParserTokenStream& stream,
-    const CSSParserContext&,
+    const CSSParserContext& context,
     const CSSParserLocalContext&) const {
-  return css_parsing_utils::ConsumeFontFamily(stream);
+  return css_parsing_utils::ConsumeFontFamily(stream, context);
 }
 
 const CSSValue* FontFamily::CSSValueFromComputedStyleInternal(
@@ -3686,7 +4621,7 @@ void FontFamily::ApplyInherit(StyleResolverState& state) const {
   state.GetFontBuilder().SetFamilyDescription(
       state.ParentFontDescription().GetFamilyDescription());
   CSSFontSelector* selector = static_cast<CSSFontSelector*>(
-      state.ParentStyle()->GetFont().GetFontSelector());
+      state.ParentStyle()->GetFont()->GetFontSelector());
   const TreeScope* tree_scope = selector ? selector->GetTreeScope() : nullptr;
   state.GetFontBuilder().SetFamilyTreeScope(tree_scope);
 }
@@ -3961,7 +4896,7 @@ cssvalue::CSSFontVariationValue* ConsumeFontVariationTag(
   // Feature tag name consists of 4-letter characters.
   static const wtf_size_t kTagNameLength = 4;
 
-  const CSSParserToken& token = stream.ConsumeIncludingWhitespace();
+  const CSSParserToken& token = stream.Peek();
   // Feature tag name comes first
   if (token.GetType() != kStringToken) {
     return nullptr;
@@ -3970,6 +4905,7 @@ cssvalue::CSSFontVariationValue* ConsumeFontVariationTag(
     return nullptr;
   }
   AtomicString tag = token.Value().ToAtomicString();
+  stream.ConsumeIncludingWhitespace();
   for (wtf_size_t i = 0; i < kTagNameLength; ++i) {
     // Limits the range of characters to 0x20-0x7E, following the tag name
     // rules defined in the OpenType specification.
@@ -3978,13 +4914,12 @@ cssvalue::CSSFontVariationValue* ConsumeFontVariationTag(
       return nullptr;
     }
   }
-
-  double tag_value = 0;
-  if (!css_parsing_utils::ConsumeNumberRaw(stream, context, tag_value)) {
-    return nullptr;
+  if (const CSSPrimitiveValue* tag_value = css_parsing_utils::ConsumeNumber(
+          stream, context, CSSPrimitiveValue::ValueRange::kAll)) {
+    return MakeGarbageCollected<cssvalue::CSSFontVariationValue>(tag,
+                                                                 tag_value);
   }
-  return MakeGarbageCollected<cssvalue::CSSFontVariationValue>(
-      tag, ClampTo<float>(tag_value));
+  return nullptr;
 }
 
 }  // namespace
@@ -4071,7 +5006,6 @@ const CSSValue* FontVariantEmoji::CSSValueFromComputedStyleInternal(
     const LayoutObject*,
     bool allow_visited_style,
     CSSValuePhase value_phase) const {
-  DCHECK(RuntimeEnabledFeatures::FontVariantEmojiEnabled());
   return CSSIdentifierValue::Create(style.GetFontDescription().VariantEmoji());
 }
 
@@ -4118,8 +5052,7 @@ void InternalVisitedColor::ApplyValue(StyleResolverState& state,
       identifier_value->GetValueID() == CSSValueID::kCurrentcolor) {
     ApplyInherit(state);
     builder.SetInternalVisitedColorIsCurrentColor(true);
-    if (state.UsesHighlightPseudoInheritance() &&
-        state.OriginatingElementStyle()) {
+    if (state.IsForHighlight() && state.OriginatingElementStyle()) {
       builder.SetInternalVisitedColor(
           state.OriginatingElementStyle()->InternalVisitedColor());
     }
@@ -4129,15 +5062,15 @@ void InternalVisitedColor::ApplyValue(StyleResolverState& state,
     DCHECK_EQ(state.GetElement(), state.GetDocument().documentElement());
     builder.SetInternalVisitedColor(builder.InitialColorForColorScheme());
   } else {
-    // color-mix with currentcolor is a special case for this property.
+    // Unresolved color functions are a special case for this property.
     // See Color::ApplyValue.
     // Using Color instead of InternalVisitedColor here, see
     // https://bugs.chromium.org/p/chromium/issues/detail?id=1236297#c5.
     StyleColor color =
         StyleBuilderConverter::ConvertStyleColor(state, value, true);
-    if (color.IsUnresolvedColorMixFunction()) {
-      color = StyleColor(color.GetUnresolvedColorMix().Resolve(
-          state.ParentStyle()->Color().GetColor()));
+    if (color.IsUnresolvedColorFunction()) {
+      color = StyleColor(color.Resolve(state.ParentStyle()->Color().GetColor(),
+                                       mojom::blink::ColorScheme::kLight));
     }
     builder.SetInternalVisitedColor(color);
   }
@@ -4461,7 +5394,7 @@ const CSSValue* Height::CSSValueFromComputedStyleInternal(
                                                              style);
 }
 
-const CSSValue* PopoverShowDelay::ParseSingleValue(
+const CSSValue* InterestShowDelay::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext& context,
     const CSSParserLocalContext& local_context) const {
@@ -4469,16 +5402,16 @@ const CSSValue* PopoverShowDelay::ParseSingleValue(
       stream, context, CSSPrimitiveValue::ValueRange::kNonNegative);
 }
 
-const CSSValue* PopoverShowDelay::CSSValueFromComputedStyleInternal(
+const CSSValue* InterestShowDelay::CSSValueFromComputedStyleInternal(
     const ComputedStyle& style,
     const LayoutObject* layout_object,
     bool allow_visited_style,
     CSSValuePhase value_phase) const {
-  return CSSNumericLiteralValue::Create(style.PopoverShowDelay(),
+  return CSSNumericLiteralValue::Create(style.InterestShowDelay(),
                                         CSSPrimitiveValue::UnitType::kSeconds);
 }
 
-const CSSValue* PopoverHideDelay::ParseSingleValue(
+const CSSValue* InterestHideDelay::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext& context,
     const CSSParserLocalContext& local_context) const {
@@ -4486,12 +5419,12 @@ const CSSValue* PopoverHideDelay::ParseSingleValue(
       stream, context, CSSPrimitiveValue::ValueRange::kNonNegative);
 }
 
-const CSSValue* PopoverHideDelay::CSSValueFromComputedStyleInternal(
+const CSSValue* InterestHideDelay::CSSValueFromComputedStyleInternal(
     const ComputedStyle& style,
     const LayoutObject* layout_object,
     bool allow_visited_style,
     CSSValuePhase value_phase) const {
-  return CSSNumericLiteralValue::Create(style.PopoverHideDelay(),
+  return CSSNumericLiteralValue::Create(style.InterestHideDelay(),
                                         CSSPrimitiveValue::UnitType::kSeconds);
 }
 
@@ -4600,54 +5533,55 @@ bool InlineSize::IsLayoutDependent(const ComputedStyle* style,
   return layout_object && (layout_object->IsBox() || layout_object->IsSVG());
 }
 
-const CSSValue* InsetArea::ParseSingleValue(
+const CSSValue* PositionArea::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext&,
     const CSSParserLocalContext&) const {
   if (stream.Peek().Id() == CSSValueID::kNone) {
     return css_parsing_utils::ConsumeIdent(stream);
   }
-  return css_parsing_utils::ConsumeInsetArea(stream);
+  return css_parsing_utils::ConsumePositionArea(stream);
 }
 
-const CSSValue* InsetArea::CSSValueFromComputedStyleInternal(
+const CSSValue* PositionArea::CSSValueFromComputedStyleInternal(
     const ComputedStyle& style,
     const LayoutObject*,
     bool allow_visited_style,
     CSSValuePhase value_phase) const {
-  return ComputedStyleUtils::ValueForInsetArea(style.GetInsetArea());
+  return ComputedStyleUtils::ValueForPositionArea(style.GetPositionArea());
 }
 
 namespace {
 
-void ComputeAnchorEdgeOffsetsForInsetArea(StyleResolverState& state,
-                                          blink::InsetArea inset_area) {
+void ComputeAnchorEdgeOffsetsForPositionArea(
+    StyleResolverState& state,
+    blink::PositionArea position_area) {
   if (AnchorEvaluator* evaluator =
           state.CssToLengthConversionData().GetAnchorEvaluator()) {
-    state.SetInsetAreaOffsets(evaluator->ComputeInsetAreaOffsetsForLayout(
-        state.StyleBuilder().PositionAnchor(), inset_area));
+    state.SetPositionAreaOffsets(evaluator->ComputePositionAreaOffsetsForLayout(
+        state.StyleBuilder().PositionAnchor(), position_area));
   }
   state.StyleBuilder().SetHasAnchorFunctions();
 }
 
 }  // namespace
 
-void InsetArea::ApplyValue(StyleResolverState& state,
-                           const CSSValue& value,
-                           ValueMode) const {
-  blink::InsetArea inset_area =
-      StyleBuilderConverter::ConvertInsetArea(state, value);
-  state.StyleBuilder().SetInsetArea(inset_area);
-  if (!inset_area.IsNone()) {
-    ComputeAnchorEdgeOffsetsForInsetArea(state, inset_area);
+void PositionArea::ApplyValue(StyleResolverState& state,
+                              const CSSValue& value,
+                              ValueMode) const {
+  blink::PositionArea position_area =
+      StyleBuilderConverter::ConvertPositionArea(state, value);
+  state.StyleBuilder().SetPositionArea(position_area);
+  if (!position_area.IsNone()) {
+    ComputeAnchorEdgeOffsetsForPositionArea(state, position_area);
   }
 }
 
-void InsetArea::ApplyInherit(StyleResolverState& state) const {
-  blink::InsetArea inset_area = state.ParentStyle()->GetInsetArea();
-  state.StyleBuilder().SetInsetArea(inset_area);
-  if (!inset_area.IsNone()) {
-    ComputeAnchorEdgeOffsetsForInsetArea(state, inset_area);
+void PositionArea::ApplyInherit(StyleResolverState& state) const {
+  blink::PositionArea position_area = state.ParentStyle()->GetPositionArea();
+  state.StyleBuilder().SetPositionArea(position_area);
+  if (!position_area.IsNone()) {
+    ComputeAnchorEdgeOffsetsForPositionArea(state, position_area);
   }
 }
 
@@ -4657,7 +5591,7 @@ const CSSValue* InsetBlockEnd::ParseSingleValue(
     const CSSParserLocalContext&) const {
   return css_parsing_utils::ConsumeMarginOrOffset(
       stream, context, css_parsing_utils::UnitlessQuirk::kForbid,
-      static_cast<CSSAnchorQueryTypes>(CSSAnchorQueryType::kAnchor));
+      kCSSAnchorQueryTypesAll);
 }
 
 bool InsetBlockEnd::IsLayoutDependent(const ComputedStyle* style,
@@ -4671,7 +5605,7 @@ const CSSValue* InsetBlockStart::ParseSingleValue(
     const CSSParserLocalContext&) const {
   return css_parsing_utils::ConsumeMarginOrOffset(
       stream, context, css_parsing_utils::UnitlessQuirk::kForbid,
-      static_cast<CSSAnchorQueryTypes>(CSSAnchorQueryType::kAnchor));
+      kCSSAnchorQueryTypesAll);
 }
 
 bool InsetBlockStart::IsLayoutDependent(const ComputedStyle* style,
@@ -4685,7 +5619,7 @@ const CSSValue* InsetInlineEnd::ParseSingleValue(
     const CSSParserLocalContext&) const {
   return css_parsing_utils::ConsumeMarginOrOffset(
       stream, context, css_parsing_utils::UnitlessQuirk::kForbid,
-      static_cast<CSSAnchorQueryTypes>(CSSAnchorQueryType::kAnchor));
+      kCSSAnchorQueryTypesAll);
 }
 
 bool InsetInlineEnd::IsLayoutDependent(const ComputedStyle* style,
@@ -4699,7 +5633,7 @@ const CSSValue* InsetInlineStart::ParseSingleValue(
     const CSSParserLocalContext&) const {
   return css_parsing_utils::ConsumeMarginOrOffset(
       stream, context, css_parsing_utils::UnitlessQuirk::kForbid,
-      static_cast<CSSAnchorQueryTypes>(CSSAnchorQueryType::kAnchor));
+      kCSSAnchorQueryTypesAll);
 }
 
 bool InsetInlineStart::IsLayoutDependent(const ComputedStyle* style,
@@ -4713,7 +5647,8 @@ const blink::Color InternalVisitedBackgroundColor::ColorIncludingFallback(
     bool* is_current_color) const {
   DCHECK(visited_link);
 
-  StyleColor visited_background_color = style.InternalVisitedBackgroundColor();
+  const StyleColor& visited_background_color =
+      style.InternalVisitedBackgroundColor();
   if (style.ShouldForceColor(visited_background_color)) {
     return GetCSSPropertyInternalForcedBackgroundColor().ColorIncludingFallback(
         true, style, is_current_color);
@@ -4750,7 +5685,8 @@ const blink::Color InternalVisitedBorderLeftColor::ColorIncludingFallback(
     const ComputedStyle& style,
     bool* is_current_color) const {
   DCHECK(visited_link);
-  StyleColor visited_border_left_color = style.InternalVisitedBorderLeftColor();
+  const StyleColor& visited_border_left_color =
+      style.InternalVisitedBorderLeftColor();
   if (style.ShouldForceColor(visited_border_left_color)) {
     return GetCSSPropertyInternalForcedBorderColor().ColorIncludingFallback(
         true, style, is_current_color);
@@ -4773,7 +5709,8 @@ const blink::Color InternalVisitedBorderTopColor::ColorIncludingFallback(
     const ComputedStyle& style,
     bool* is_current_color) const {
   DCHECK(visited_link);
-  StyleColor visited_border_top_color = style.InternalVisitedBorderTopColor();
+  const StyleColor& visited_border_top_color =
+      style.InternalVisitedBorderTopColor();
   if (style.ShouldForceColor(visited_border_top_color)) {
     return GetCSSPropertyInternalForcedBorderColor().ColorIncludingFallback(
         true, style, is_current_color);
@@ -4796,9 +5733,10 @@ const blink::Color InternalVisitedCaretColor::ColorIncludingFallback(
     const ComputedStyle& style,
     bool* is_current_color) const {
   DCHECK(visited_link);
-  StyleAutoColor auto_color = style.InternalVisitedCaretColor();
-  StyleColor result = auto_color.IsAutoColor() ? StyleColor::CurrentColor()
-                                               : auto_color.ToStyleColor();
+  const StyleAutoColor& auto_color = style.InternalVisitedCaretColor();
+  const StyleColor result = auto_color.IsAutoColor()
+                                ? StyleColor::CurrentColor()
+                                : auto_color.ToStyleColor();
   if (style.ShouldForceColor(result)) {
     return style.GetInternalForcedVisitedCurrentColor(is_current_color);
   }
@@ -4819,7 +5757,7 @@ const blink::Color InternalVisitedBorderRightColor::ColorIncludingFallback(
     const ComputedStyle& style,
     bool* is_current_color) const {
   DCHECK(visited_link);
-  StyleColor visited_border_right_color =
+  const StyleColor& visited_border_right_color =
       style.InternalVisitedBorderRightColor();
   if (style.ShouldForceColor(visited_border_right_color)) {
     return GetCSSPropertyInternalForcedBorderColor().ColorIncludingFallback(
@@ -4843,7 +5781,7 @@ const blink::Color InternalVisitedBorderBottomColor::ColorIncludingFallback(
     const ComputedStyle& style,
     bool* is_current_color) const {
   DCHECK(visited_link);
-  StyleColor visited_border_bottom_color =
+  const StyleColor& visited_border_bottom_color =
       style.InternalVisitedBorderBottomColor();
   if (style.ShouldForceColor(visited_border_bottom_color)) {
     return GetCSSPropertyInternalForcedBorderColor().ColorIncludingFallback(
@@ -4922,12 +5860,63 @@ const blink::Color InternalVisitedFill::ColorIncludingFallback(
                                     style.UsedColorScheme(), is_current_color);
 }
 
+const CSSValue* ColumnRuleBreak::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return CSSIdentifierValue::Create(style.ColumnRuleBreak());
+}
+
+const CSSValue* RowRuleBreak::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return CSSIdentifierValue::Create(style.RowRuleBreak());
+}
+
+const CSSValue* ColumnRuleOutset::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context,
+    const CSSParserLocalContext&) const {
+  return css_parsing_utils::ConsumeLengthOrPercent(
+      stream, context, CSSPrimitiveValue::ValueRange::kAll);
+}
+
+const CSSValue* ColumnRuleOutset::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return ComputedStyleUtils::ZoomAdjustedPixelValueForLength(
+      style.ColumnRuleOutset(), style);
+}
+
+const CSSValue* RowRuleOutset::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context,
+    const CSSParserLocalContext&) const {
+  return css_parsing_utils::ConsumeLengthOrPercent(
+      stream, context, CSSPrimitiveValue::ValueRange::kAll);
+}
+
+const CSSValue* RowRuleOutset::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return ComputedStyleUtils::ZoomAdjustedPixelValueForLength(
+      style.RowRuleOutset(), style);
+}
+
 const blink::Color InternalVisitedColumnRuleColor::ColorIncludingFallback(
     bool visited_link,
     const ComputedStyle& style,
     bool* is_current_color) const {
   DCHECK(visited_link);
-  StyleColor visited_column_rule_color = style.InternalVisitedColumnRuleColor();
+  const StyleColor& visited_column_rule_color =
+      style.InternalVisitedColumnRuleColor().GetLegacyValue();
   if (style.ShouldForceColor(visited_column_rule_color)) {
     return style.GetInternalForcedVisitedCurrentColor(is_current_color);
   }
@@ -4948,7 +5937,7 @@ const blink::Color InternalVisitedOutlineColor::ColorIncludingFallback(
     const ComputedStyle& style,
     bool* is_current_color) const {
   DCHECK(visited_link);
-  StyleColor visited_outline_color = style.InternalVisitedOutlineColor();
+  const StyleColor& visited_outline_color = style.InternalVisitedOutlineColor();
   if (style.ShouldForceColor(visited_outline_color)) {
     return GetCSSPropertyInternalForcedOutlineColor().ColorIncludingFallback(
         true, style, is_current_color);
@@ -5000,7 +5989,7 @@ const blink::Color InternalVisitedTextDecorationColor::ColorIncludingFallback(
     const ComputedStyle& style,
     bool* is_current_color) const {
   DCHECK(visited_link);
-  StyleColor visited_decoration_color =
+  const StyleColor& visited_decoration_color =
       style.DecorationColorIncludingFallback(visited_link);
   if (style.ShouldForceColor(visited_decoration_color)) {
     return style.GetInternalForcedVisitedCurrentColor(is_current_color);
@@ -5022,7 +6011,7 @@ const blink::Color InternalVisitedTextEmphasisColor::ColorIncludingFallback(
     const ComputedStyle& style,
     bool* is_current_color) const {
   DCHECK(visited_link);
-  StyleColor visited_text_emphasis_color =
+  const StyleColor& visited_text_emphasis_color =
       style.InternalVisitedTextEmphasisColor();
   if (style.ShouldForceColor(visited_text_emphasis_color)) {
     return style.GetInternalForcedVisitedCurrentColor(is_current_color);
@@ -5044,7 +6033,8 @@ const blink::Color InternalVisitedTextFillColor::ColorIncludingFallback(
     const ComputedStyle& style,
     bool* is_current_color) const {
   DCHECK(visited_link);
-  StyleColor visited_text_fill_color = style.InternalVisitedTextFillColor();
+  const StyleColor& visited_text_fill_color =
+      style.InternalVisitedTextFillColor();
   if (style.ShouldForceColor(visited_text_fill_color)) {
     return style.GetInternalForcedVisitedCurrentColor(is_current_color);
   }
@@ -5065,7 +6055,8 @@ const blink::Color InternalVisitedTextStrokeColor::ColorIncludingFallback(
     const ComputedStyle& style,
     bool* is_current_color) const {
   DCHECK(visited_link);
-  StyleColor visited_text_stroke_color = style.InternalVisitedTextStrokeColor();
+  const StyleColor& visited_text_stroke_color =
+      style.InternalVisitedTextStrokeColor();
   if (style.ShouldForceColor(visited_text_stroke_color)) {
     return style.GetInternalForcedVisitedCurrentColor(is_current_color);
   }
@@ -5086,7 +6077,7 @@ const blink::Color InternalForcedBackgroundColor::ColorIncludingFallback(
     const ComputedStyle& style,
     bool* is_current_color) const {
   blink::Color forced_current_color;
-  int alpha;
+  float alpha;
   bool alpha_is_current_color;
   if (visited_link) {
     forced_current_color = style.GetInternalForcedVisitedCurrentColor(
@@ -5094,20 +6085,20 @@ const blink::Color InternalForcedBackgroundColor::ColorIncludingFallback(
     alpha = style.InternalVisitedBackgroundColor()
                 .Resolve(style.GetInternalVisitedCurrentColor(),
                          style.UsedColorScheme(), &alpha_is_current_color)
-                .AlphaAsInteger();
+                .Alpha();
   } else {
     forced_current_color = style.GetInternalForcedCurrentColor(
         /* No is_current_color because we might not be forced_current_color */);
     alpha = style.BackgroundColor()
                 .Resolve(style.GetCurrentColor(), style.UsedColorScheme(),
                          &alpha_is_current_color)
-                .AlphaAsInteger();
+                .Alpha();
   }
 
   bool result_is_current_color;
-  blink::Color result = style.InternalForcedBackgroundColor().ResolveWithAlpha(
-      forced_current_color, style.UsedColorScheme(), alpha,
-      &result_is_current_color);
+  blink::Color result = style.InternalForcedBackgroundColor().Resolve(
+      forced_current_color, style.UsedColorScheme(), &result_is_current_color);
+  result.SetAlpha(alpha);
 
   if (is_current_color) {
     *is_current_color = alpha_is_current_color || result_is_current_color;
@@ -5296,6 +6287,22 @@ const CSSValue* InternalForcedVisitedColor::ParseSingleValue(
   return css_parsing_utils::ConsumeColorMaybeQuirky(stream, context);
 }
 
+const CSSValue* Interactivity::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return CSSIdentifierValue::Create(style.Interactivity());
+}
+
+const CSSValue* InterpolateSize::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return CSSIdentifierValue::Create(style.InterpolateSize());
+}
+
 const CSSValue* Isolation::CSSValueFromComputedStyleInternal(
     const ComputedStyle& style,
     const LayoutObject*,
@@ -5396,7 +6403,7 @@ const CSSValue* Left::ParseSingleValue(
   return css_parsing_utils::ConsumeMarginOrOffset(
       stream, context,
       css_parsing_utils::UnitlessUnlessShorthand(local_context),
-      static_cast<CSSAnchorQueryTypes>(CSSAnchorQueryType::kAnchor));
+      kCSSAnchorQueryTypesAll);
 }
 
 bool Left::IsLayoutDependent(const ComputedStyle* style,
@@ -5409,15 +6416,15 @@ const CSSValue* Left::CSSValueFromComputedStyleInternal(
     const LayoutObject* layout_object,
     bool allow_visited_style,
     CSSValuePhase value_phase) const {
-  return ComputedStyleUtils::ValueForPositionOffset(style, *this,
-                                                    layout_object);
+  return ComputedStyleUtils::ValueForPositionOffset(style, *this, layout_object,
+                                                    value_phase);
 }
 
 const CSSValue* LetterSpacing::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext& context,
     const CSSParserLocalContext&) const {
-  return css_parsing_utils::ParseSpacing(stream, context);
+  return css_parsing_utils::ParseLetterSpacing(stream, context);
 }
 
 const CSSValue* LetterSpacing::CSSValueFromComputedStyleInternal(
@@ -5425,6 +6432,16 @@ const CSSValue* LetterSpacing::CSSValueFromComputedStyleInternal(
     const LayoutObject*,
     bool allow_visited_style,
     CSSValuePhase value_phase) const {
+  if (RuntimeEnabledFeatures::CSSLetterSpacingPercentageEnabled()) {
+    const Length& spacing = style.SpecifiedLetterSpacing();
+    if (spacing.IsFixed()) {
+      if (spacing.IsZero()) {
+        return CSSIdentifierValue::Create(CSSValueID::kNormal);
+      }
+      return ZoomAdjustedPixelValue(spacing.Pixels(), style);
+    }
+    return CSSPrimitiveValue::Create(spacing, style.Zoom());
+  }
   if (!style.LetterSpacing()) {
     return CSSIdentifierValue::Create(CSSValueID::kNormal);
   }
@@ -5442,7 +6459,7 @@ const blink::Color LightingColor::ColorIncludingFallback(
     bool visited_link,
     const ComputedStyle& style,
     bool* is_current_color) const {
-  StyleColor lighting_color = style.LightingColor();
+  const StyleColor& lighting_color = style.LightingColor();
   if (style.ShouldForceColor(lighting_color)) {
     return style.GetInternalForcedCurrentColor(is_current_color);
   }
@@ -5458,6 +6475,10 @@ const CSSValue* LightingColor::CSSValueFromComputedStyleInternal(
       style, style.LightingColor(), value_phase);
 }
 
+bool LightingColor::IsAffectedByCurrentColor(const ComputedStyle& style) const {
+  return style.LightingColor().DependsOnCurrentColor();
+}
+
 const CSSValue* LineBreak::CSSValueFromComputedStyleInternal(
     const ComputedStyle& style,
     const LayoutObject*,
@@ -5466,11 +6487,17 @@ const CSSValue* LineBreak::CSSValueFromComputedStyleInternal(
   return CSSIdentifierValue::Create(style.GetLineBreak());
 }
 
+void LineClamp::ApplyInitial(StyleResolverState& state) const {
+  // initial needs to be customized so it doesn't default to `auto`.
+  state.StyleBuilder().SetStandardLineClamp(0);
+}
+
 const CSSValue* LineClamp::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext& context,
     const CSSParserLocalContext&) const {
-  if (stream.Peek().Id() == CSSValueID::kNone) {
+  if (stream.Peek().Id() == CSSValueID::kNone ||
+      stream.Peek().Id() == CSSValueID::kAuto) {
     return css_parsing_utils::ConsumeIdent(stream);
   } else {
     return css_parsing_utils::ConsumePositiveInteger(stream, context);
@@ -5482,6 +6509,9 @@ const CSSValue* LineClamp::CSSValueFromComputedStyleInternal(
     const LayoutObject*,
     bool allow_visited_style,
     CSSValuePhase value_phase) const {
+  if (style.HasAutoStandardLineClamp()) {
+    return CSSIdentifierValue::Create(CSSValueID::kAuto);
+  }
   if (style.StandardLineClamp() == 0) {
     return CSSIdentifierValue::Create(CSSValueID::kNone);
   }
@@ -5531,6 +6561,12 @@ void ListStyleImage::ApplyValue(StyleResolverState& state,
                                 ValueMode) const {
   state.StyleBuilder().SetListStyleImage(
       state.GetStyleImage(CSSPropertyID::kListStyleImage, value));
+}
+
+bool ListStyleImage::IsAffectedByCurrentColor(
+    const ComputedStyle& style) const {
+  return style.ListStyleImage() &&
+         style.ListStyleImage()->DependsOnCurrentColor();
 }
 
 const CSSValue* ListStylePosition::CSSValueFromComputedStyleInternal(
@@ -5594,7 +6630,20 @@ void ListStyleType::ApplyValue(StyleResolverState& state,
 
   DCHECK(value.IsCustomIdentValue());
   const auto& custom_ident_value = To<CSSCustomIdentValue>(value);
-  state.SetHasTreeScopedReference();
+  // “The non-overridable counter-style names are the keywords decimal,
+  // disc, square, circle, disclosure-open, and disclosure-closed.”
+  //
+  // NOTE: Keep in sync with ConsumeCounterStyleNameInPrelude().
+  //
+  // https://drafts.csswg.org/css-counter-styles/#the-counter-style-rule
+  if (custom_ident_value.Value() != keywords::kDecimal &&
+      custom_ident_value.Value() != keywords::kDisc &&
+      custom_ident_value.Value() != keywords::kSquare &&
+      custom_ident_value.Value() != keywords::kCircle &&
+      custom_ident_value.Value() != keywords::kDisclosureOpen &&
+      custom_ident_value.Value() != keywords::kDisclosureClosed) {
+    state.SetHasTreeScopedReference();
+  }
   builder.SetListStyleType(ListStyleTypeData::CreateCounterStyle(
       custom_ident_value.Value(), custom_ident_value.GetTreeScope()));
 }
@@ -5609,7 +6658,8 @@ const CSSValue* MarginBlockEnd::ParseSingleValue(
     const CSSParserContext& context,
     const CSSParserLocalContext&) const {
   return css_parsing_utils::ConsumeMarginOrOffset(
-      stream, context, css_parsing_utils::UnitlessQuirk::kForbid);
+      stream, context, css_parsing_utils::UnitlessQuirk::kForbid,
+      static_cast<CSSAnchorQueryTypes>(CSSAnchorQueryType::kAnchorSize));
 }
 
 bool MarginBlockStart::IsLayoutDependent(const ComputedStyle* style,
@@ -5622,7 +6672,8 @@ const CSSValue* MarginBlockStart::ParseSingleValue(
     const CSSParserContext& context,
     const CSSParserLocalContext&) const {
   return css_parsing_utils::ConsumeMarginOrOffset(
-      stream, context, css_parsing_utils::UnitlessQuirk::kForbid);
+      stream, context, css_parsing_utils::UnitlessQuirk::kForbid,
+      static_cast<CSSAnchorQueryTypes>(CSSAnchorQueryType::kAnchorSize));
 }
 
 const CSSValue* MarginBottom::ParseSingleValue(
@@ -5630,7 +6681,8 @@ const CSSValue* MarginBottom::ParseSingleValue(
     const CSSParserContext& context,
     const CSSParserLocalContext&) const {
   return css_parsing_utils::ConsumeMarginOrOffset(
-      stream, context, css_parsing_utils::UnitlessQuirk::kAllow);
+      stream, context, css_parsing_utils::UnitlessQuirk::kAllow,
+      static_cast<CSSAnchorQueryTypes>(CSSAnchorQueryType::kAnchorSize));
 }
 
 bool MarginBottom::IsLayoutDependent(const ComputedStyle* style,
@@ -5662,7 +6714,8 @@ const CSSValue* MarginInlineEnd::ParseSingleValue(
     const CSSParserContext& context,
     const CSSParserLocalContext&) const {
   return css_parsing_utils::ConsumeMarginOrOffset(
-      stream, context, css_parsing_utils::UnitlessQuirk::kForbid);
+      stream, context, css_parsing_utils::UnitlessQuirk::kForbid,
+      static_cast<CSSAnchorQueryTypes>(CSSAnchorQueryType::kAnchorSize));
 }
 
 bool MarginInlineStart::IsLayoutDependent(const ComputedStyle* style,
@@ -5675,7 +6728,8 @@ const CSSValue* MarginInlineStart::ParseSingleValue(
     const CSSParserContext& context,
     const CSSParserLocalContext&) const {
   return css_parsing_utils::ConsumeMarginOrOffset(
-      stream, context, css_parsing_utils::UnitlessQuirk::kForbid);
+      stream, context, css_parsing_utils::UnitlessQuirk::kForbid,
+      static_cast<CSSAnchorQueryTypes>(CSSAnchorQueryType::kAnchorSize));
 }
 
 const CSSValue* MarginLeft::ParseSingleValue(
@@ -5683,7 +6737,8 @@ const CSSValue* MarginLeft::ParseSingleValue(
     const CSSParserContext& context,
     const CSSParserLocalContext&) const {
   return css_parsing_utils::ConsumeMarginOrOffset(
-      stream, context, css_parsing_utils::UnitlessQuirk::kAllow);
+      stream, context, css_parsing_utils::UnitlessQuirk::kAllow,
+      static_cast<CSSAnchorQueryTypes>(CSSAnchorQueryType::kAnchorSize));
 }
 
 bool MarginLeft::IsLayoutDependent(const ComputedStyle* style,
@@ -5711,7 +6766,8 @@ const CSSValue* MarginRight::ParseSingleValue(
     const CSSParserContext& context,
     const CSSParserLocalContext&) const {
   return css_parsing_utils::ConsumeMarginOrOffset(
-      stream, context, css_parsing_utils::UnitlessQuirk::kAllow);
+      stream, context, css_parsing_utils::UnitlessQuirk::kAllow,
+      static_cast<CSSAnchorQueryTypes>(CSSAnchorQueryType::kAnchorSize));
 }
 
 bool MarginRight::IsLayoutDependent(const ComputedStyle* style,
@@ -5739,7 +6795,8 @@ const CSSValue* MarginTop::ParseSingleValue(
     const CSSParserContext& context,
     const CSSParserLocalContext&) const {
   return css_parsing_utils::ConsumeMarginOrOffset(
-      stream, context, css_parsing_utils::UnitlessQuirk::kAllow);
+      stream, context, css_parsing_utils::UnitlessQuirk::kAllow,
+      static_cast<CSSAnchorQueryTypes>(CSSAnchorQueryType::kAnchorSize));
 }
 
 bool MarginTop::IsLayoutDependent(const ComputedStyle* style,
@@ -5780,6 +6837,14 @@ const CSSValue* MarkerEnd::CSSValueFromComputedStyleInternal(
   return ComputedStyleUtils::ValueForSVGResource(style.MarkerEndResource());
 }
 
+void MarkerEnd::ApplyValue(StyleResolverState& state,
+                           const CSSValue& value,
+                           ValueMode) const {
+  state.StyleBuilder().SetMarkerEndResource(
+      StyleBuilderConverter::ConvertElementReference(state, value,
+                                                     PropertyID()));
+}
+
 const CSSValue* MarkerMid::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext& context,
@@ -5796,6 +6861,14 @@ const CSSValue* MarkerMid::CSSValueFromComputedStyleInternal(
     bool allow_visited_style,
     CSSValuePhase value_phase) const {
   return ComputedStyleUtils::ValueForSVGResource(style.MarkerMidResource());
+}
+
+void MarkerMid::ApplyValue(StyleResolverState& state,
+                           const CSSValue& value,
+                           ValueMode) const {
+  state.StyleBuilder().SetMarkerMidResource(
+      StyleBuilderConverter::ConvertElementReference(state, value,
+                                                     PropertyID()));
 }
 
 const CSSValue* MarkerStart::ParseSingleValue(
@@ -5816,12 +6889,52 @@ const CSSValue* MarkerStart::CSSValueFromComputedStyleInternal(
   return ComputedStyleUtils::ValueForSVGResource(style.MarkerStartResource());
 }
 
+void MarkerStart::ApplyValue(StyleResolverState& state,
+                             const CSSValue& value,
+                             ValueMode) const {
+  state.StyleBuilder().SetMarkerStartResource(
+      StyleBuilderConverter::ConvertElementReference(state, value,
+                                                     PropertyID()));
+}
+
 const CSSValue* MaskType::CSSValueFromComputedStyleInternal(
     const ComputedStyle& style,
     const LayoutObject*,
     bool allow_visited_style,
     CSSValuePhase value_phase) const {
   return CSSIdentifierValue::Create(style.MaskType());
+}
+
+const CSSValue* MasonryDirection::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return CSSIdentifierValue::Create(style.MasonryDirection());
+}
+
+const CSSValue* MasonryFill::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return CSSIdentifierValue::Create(style.MasonryFill());
+}
+
+const CSSValue* ItemTolerance::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context,
+    const CSSParserLocalContext&) const {
+  return css_parsing_utils::ConsumeItemTolerance(stream, context);
+}
+
+const CSSValue* ItemTolerance::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return ComputedStyleUtils::ValueForItemTolerance(style.ItemTolerance(),
+                                                   style);
 }
 
 const CSSValue* MathShift::CSSValueFromComputedStyleInternal(
@@ -5938,7 +7051,8 @@ const CSSValue* MinBlockSize::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext& context,
     const CSSParserLocalContext&) const {
-  return css_parsing_utils::ConsumeWidthOrHeight(stream, context);
+  return css_parsing_utils::ConsumeWidthOrHeight(
+      stream, context, css_parsing_utils::UnitlessQuirk::kForbid);
 }
 
 const CSSValue* MinHeight::ParseSingleValue(
@@ -5968,7 +7082,8 @@ const CSSValue* MinInlineSize::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext& context,
     const CSSParserLocalContext&) const {
-  return css_parsing_utils::ConsumeWidthOrHeight(stream, context);
+  return css_parsing_utils::ConsumeWidthOrHeight(
+      stream, context, css_parsing_utils::UnitlessQuirk::kForbid);
 }
 
 const CSSValue* MinWidth::ParseSingleValue(CSSParserTokenStream& stream,
@@ -6039,7 +7154,8 @@ const CSSValue* ObjectViewBox::ParseSingleValue(
     return css_parsing_utils::ConsumeIdent(stream);
   }
   auto* css_value = css_parsing_utils::ConsumeBasicShape(
-      stream, context, css_parsing_utils::AllowPathValue::kForbid);
+      stream, context, css_parsing_utils::AllowPathValue::kForbid,
+      css_parsing_utils::AllowShapeValue::kForbid);
 
   if (!css_value || css_value->IsBasicShapeInsetValue() ||
       css_value->IsBasicShapeRectValue() ||
@@ -6136,7 +7252,8 @@ const CSSValue* OffsetPath::CSSValueFromComputedStyleInternal(
         To<ReferenceOffsetPathOperation>(*operation);
     CSSValueList* list = CSSValueList::CreateSpaceSeparated();
     AtomicString url = reference_operation.Url();
-    list->Append(*MakeGarbageCollected<cssvalue::CSSURIValue>(CSSUrlData(url)));
+    list->Append(*MakeGarbageCollected<cssvalue::CSSURIValue>(
+        *MakeGarbageCollected<CSSUrlData>(url)));
     CoordBox coord_box = reference_operation.GetCoordBox();
     if (coord_box != CoordBox::kBorderBox) {
       list->Append(*CSSIdentifierValue::Create(coord_box));
@@ -6233,7 +7350,6 @@ const CSSValue* OriginTrialTestProperty::CSSValueFromComputedStyleInternal(
     bool allow_visited_style,
     CSSValuePhase value_phase) const {
   return CSSIdentifierValue::Create(style.OriginTrialTestProperty());
-  ;
 }
 
 const CSSValue* Orphans::ParseSingleValue(CSSParserTokenStream& stream,
@@ -6277,7 +7393,7 @@ const CSSValue* AccentColor::CSSValueFromComputedStyleInternal(
     const LayoutObject*,
     bool allow_visited_style,
     CSSValuePhase value_phase) const {
-  StyleAutoColor auto_color = style.AccentColor();
+  const StyleAutoColor& auto_color = style.AccentColor();
   if (auto_color.IsAutoColor()) {
     return CSSIdentifierValue::Create(CSSValueID::kAuto);
   }
@@ -6286,12 +7402,16 @@ const CSSValue* AccentColor::CSSValueFromComputedStyleInternal(
                                                     value_phase);
 }
 
+bool AccentColor::IsAffectedByCurrentColor(const ComputedStyle& style) const {
+  return style.AccentColor().DependsOnCurrentColor();
+}
+
 const blink::Color OutlineColor::ColorIncludingFallback(
     bool visited_link,
     const ComputedStyle& style,
     bool* is_current_color) const {
   DCHECK(!visited_link);
-  StyleColor outline_color = style.OutlineColor();
+  const StyleColor& outline_color = style.OutlineColor();
   if (style.ShouldForceColor(outline_color)) {
     return GetCSSPropertyInternalForcedOutlineColor().ColorIncludingFallback(
         false, style, is_current_color);
@@ -6305,7 +7425,7 @@ const CSSValue* OutlineColor::CSSValueFromComputedStyleInternal(
     const LayoutObject*,
     bool allow_visited_style,
     CSSValuePhase value_phase) const {
-  StyleColor outline_color = style.OutlineColor();
+  const StyleColor& outline_color = style.OutlineColor();
   if (value_phase == CSSValuePhase::kResolvedValue &&
       style.ShouldForceColor(outline_color)) {
     return GetCSSPropertyInternalForcedOutlineColor().CSSValueFromComputedStyle(
@@ -6315,6 +7435,10 @@ const CSSValue* OutlineColor::CSSValueFromComputedStyleInternal(
              ? cssvalue::CSSColor::Create(style.VisitedDependentColor(*this))
              : ComputedStyleUtils::CurrentColorOrValidColor(
                    style, outline_color, value_phase);
+}
+
+bool OutlineColor::IsAffectedByCurrentColor(const ComputedStyle& style) const {
+  return style.HasOutlineWithCurrentColor();
 }
 
 const CSSValue* OutlineOffset::ParseSingleValue(
@@ -6469,7 +7593,7 @@ const CSSValue* OverflowClipMargin::ParseSingleValue(
     if (!length) {
       length = CSSPrimitiveValue::CreateFromLength(Length::Fixed(0), 1.f);
     }
-  } else if (reference_box && length && length->IsZero()) {
+  } else if (reference_box && length && length->GetValueIfKnown() == 0.0) {
     length = nullptr;
   }
 
@@ -6617,9 +7741,10 @@ const CSSValue* PaddingBottom::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext& context,
     const CSSParserLocalContext&) const {
-  return ConsumeLengthOrPercent(stream, context,
-                                CSSPrimitiveValue::ValueRange::kNonNegative,
-                                css_parsing_utils::UnitlessQuirk::kAllow);
+  return css_parsing_utils::ConsumeLengthOrPercent(
+      stream, context, CSSPrimitiveValue::ValueRange::kNonNegative,
+      css_parsing_utils::UnitlessQuirk::kAllow, kCSSAnchorQueryTypesNone,
+      css_parsing_utils::AllowCalcSize::kForbid);
 }
 
 bool PaddingBottom::IsLayoutDependent(const ComputedStyle* style,
@@ -6674,9 +7799,10 @@ const CSSValue* PaddingLeft::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext& context,
     const CSSParserLocalContext&) const {
-  return ConsumeLengthOrPercent(stream, context,
-                                CSSPrimitiveValue::ValueRange::kNonNegative,
-                                css_parsing_utils::UnitlessQuirk::kAllow);
+  return css_parsing_utils::ConsumeLengthOrPercent(
+      stream, context, CSSPrimitiveValue::ValueRange::kNonNegative,
+      css_parsing_utils::UnitlessQuirk::kAllow, kCSSAnchorQueryTypesNone,
+      css_parsing_utils::AllowCalcSize::kForbid);
 }
 
 bool PaddingLeft::IsLayoutDependent(const ComputedStyle* style,
@@ -6703,9 +7829,10 @@ const CSSValue* PaddingRight::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext& context,
     const CSSParserLocalContext&) const {
-  return ConsumeLengthOrPercent(stream, context,
-                                CSSPrimitiveValue::ValueRange::kNonNegative,
-                                css_parsing_utils::UnitlessQuirk::kAllow);
+  return css_parsing_utils::ConsumeLengthOrPercent(
+      stream, context, CSSPrimitiveValue::ValueRange::kNonNegative,
+      css_parsing_utils::UnitlessQuirk::kAllow, kCSSAnchorQueryTypesNone,
+      css_parsing_utils::AllowCalcSize::kForbid);
 }
 
 bool PaddingRight::IsLayoutDependent(const ComputedStyle* style,
@@ -6732,9 +7859,10 @@ const CSSValue* PaddingTop::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext& context,
     const CSSParserLocalContext&) const {
-  return ConsumeLengthOrPercent(stream, context,
-                                CSSPrimitiveValue::ValueRange::kNonNegative,
-                                css_parsing_utils::UnitlessQuirk::kAllow);
+  return css_parsing_utils::ConsumeLengthOrPercent(
+      stream, context, CSSPrimitiveValue::ValueRange::kNonNegative,
+      css_parsing_utils::UnitlessQuirk::kAllow, kCSSAnchorQueryTypesNone,
+      css_parsing_utils::AllowCalcSize::kForbid);
 }
 
 bool PaddingTop::IsLayoutDependent(const ComputedStyle* style,
@@ -6785,7 +7913,12 @@ const CSSValue* ViewTransitionName::ParseSingleValue(
     return css_parsing_utils::ConsumeIdent(stream);
   }
   if (stream.Peek().Id() == CSSValueID::kAuto) {
-    return nullptr;
+    return RuntimeEnabledFeatures::CSSViewTransitionAutoNameEnabled()
+               ? css_parsing_utils::ConsumeIdent(stream)
+               : nullptr;
+  }
+  if (stream.Peek().Id() == CSSValueID::kMatchElement) {
+    return css_parsing_utils::ConsumeIdent(stream);
   }
   return css_parsing_utils::ConsumeCustomIdent(stream, context);
 }
@@ -6795,10 +7928,20 @@ const CSSValue* ViewTransitionName::CSSValueFromComputedStyleInternal(
     const LayoutObject*,
     bool allow_visited_style,
     CSSValuePhase value_phase) const {
-  if (style.ViewTransitionName().IsNull()) {
+  if (!style.ViewTransitionName()) {
     return CSSIdentifierValue::Create(CSSValueID::kNone);
   }
-  return MakeGarbageCollected<CSSCustomIdentValue>(style.ViewTransitionName());
+  if (style.ViewTransitionName()->IsAuto()) {
+    CHECK(RuntimeEnabledFeatures::CSSViewTransitionAutoNameEnabled());
+    return CSSIdentifierValue::Create(CSSValueID::kAuto);
+  }
+  if (style.ViewTransitionName()->IsMatchElement()) {
+    return CSSIdentifierValue::Create(CSSValueID::kMatchElement);
+  }
+
+  CHECK(style.ViewTransitionName()->IsCustom());
+  return MakeGarbageCollected<CSSCustomIdentValue>(
+      style.ViewTransitionName()->CustomName());
 }
 
 const CSSValue* ViewTransitionClass::ParseSingleValue(
@@ -6820,14 +7963,46 @@ const CSSValue* ViewTransitionClass::CSSValueFromComputedStyleInternal(
     const LayoutObject*,
     bool allow_visited_style,
     CSSValuePhase value_phase) const {
-  if (style.ViewTransitionClass().empty()) {
+  const auto& view_transition_class = style.ViewTransitionClass();
+  if (!view_transition_class || view_transition_class->GetNames().empty()) {
     return CSSIdentifierValue::Create(CSSValueID::kNone);
   }
   CSSValueList* ident_list = CSSValueList::CreateSpaceSeparated();
-  for (const auto& class_name : style.ViewTransitionClass()) {
-    ident_list->Append(*MakeGarbageCollected<CSSCustomIdentValue>(class_name));
+  for (const auto& class_name : view_transition_class->GetNames()) {
+    auto* value =
+        MakeGarbageCollected<CSSCustomIdentValue>(class_name->GetName());
+    value->EnsureScopedValue(class_name->GetTreeScope());
+    ident_list->Append(*value);
   }
   return ident_list;
+}
+
+const CSSValue* ViewTransitionGroup::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context,
+    const CSSParserLocalContext&) const {
+  auto id = stream.Peek().Id();
+  if (id == CSSValueID::kNormal || id == CSSValueID::kNearest ||
+      id == CSSValueID::kContain) {
+    return css_parsing_utils::ConsumeIdent(stream);
+  }
+  return css_parsing_utils::ConsumeCustomIdent(stream, context);
+}
+
+const CSSValue* ViewTransitionGroup::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  if (style.ViewTransitionGroup().IsNormal()) {
+    return CSSIdentifierValue::Create(CSSValueID::kNormal);
+  } else if (style.ViewTransitionGroup().IsNearest()) {
+    return CSSIdentifierValue::Create(CSSValueID::kNearest);
+  } else if (style.ViewTransitionGroup().IsContain()) {
+    return CSSIdentifierValue::Create(CSSValueID::kContain);
+  }
+  return MakeGarbageCollected<CSSCustomIdentValue>(
+      style.ViewTransitionGroup().CustomName());
 }
 
 const CSSValue* PaintOrder::ParseSingleValue(
@@ -6885,7 +8060,7 @@ const CSSValue* PaintOrder::ParseSingleValue(
       }
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
 
   return paint_order_list;
@@ -6922,14 +8097,16 @@ const CSSValue* Perspective::ParseSingleValue(
       stream, context, CSSPrimitiveValue::ValueRange::kNonNegative);
   bool use_legacy_parsing = localContext.UseAliasParsing();
   if (!parsed_value && use_legacy_parsing) {
-    double perspective;
-    if (!css_parsing_utils::ConsumeNumberRaw(stream, context, perspective) ||
-        perspective < 0.0) {
-      return nullptr;
+    if (const CSSPrimitiveValue* number_value =
+            css_parsing_utils::ConsumeNumber(
+                stream, context, CSSPrimitiveValue::ValueRange::kNonNegative)) {
+      std::optional<double> number = number_value->GetValueIfKnown();
+      if (number.has_value()) {
+        context.Count(WebFeature::kUnitlessPerspectiveInPerspectiveProperty);
+        parsed_value = CSSNumericLiteralValue::Create(
+            number.value(), CSSPrimitiveValue::UnitType::kPixels);
+      }
     }
-    context.Count(WebFeature::kUnitlessPerspectiveInPerspectiveProperty);
-    parsed_value = CSSNumericLiteralValue::Create(
-        perspective, CSSPrimitiveValue::UnitType::kPixels);
   }
   return parsed_value;
 }
@@ -7004,85 +8181,42 @@ const CSSValue* Position::CSSValueFromComputedStyleInternal(
   return CSSIdentifierValue::Create(style.PositionInternal());
 }
 
-const CSSValue* PositionTryOptions::ParseSingleValue(
+const CSSValue* PositionTryFallbacks::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext& context,
     const CSSParserLocalContext&) const {
-  return css_parsing_utils::ConsumePositionTryOptions(stream, context);
+  return css_parsing_utils::ConsumePositionTryFallbacks(stream, context);
 }
 
-const CSSValue* PositionTryOptions::CSSValueFromComputedStyleInternal(
+const CSSValue* PositionTryFallbacks::CSSValueFromComputedStyleInternal(
     const ComputedStyle& style,
     const LayoutObject*,
     bool allow_visited_style,
     CSSValuePhase value_phase) const {
-  if (const blink::PositionTryOptions* options =
-          style.GetPositionTryOptions()) {
-    CSSValueList* option_list = CSSValueList::CreateCommaSeparated();
-    for (const PositionTryOption& option : options->GetOptions()) {
-      // inset-area( <inset-area> )
-      if (!option.GetInsetArea().IsNone()) {
-        auto* function =
-            MakeGarbageCollected<CSSFunctionValue>(CSSValueID::kInsetArea);
-        function->Append(
-            *ComputedStyleUtils::ValueForInsetArea(option.GetInsetArea()));
-        option_list->Append(*function);
-        continue;
-      }
-      // [<dashed-ident> || <try-tactic>]
-      CSSValueList* option_value = CSSValueList::CreateSpaceSeparated();
-      if (const ScopedCSSName* name = option.GetPositionTryName()) {
-        option_value->Append(*MakeGarbageCollected<CSSCustomIdentValue>(*name));
-      }
-      const TryTacticList& tactic_list = option.GetTryTactic();
-      for (TryTactic tactic : tactic_list) {
-        if (tactic != TryTactic::kNone) {
-          option_value->Append(*CSSIdentifierValue::Create(tactic));
-        }
-      }
-      option_list->Append(*option_value);
-    }
-    return option_list;
+  if (const blink::PositionTryFallbacks* fallbacks =
+          style.GetPositionTryFallbacks()) {
+    return ComputedStyleUtils::ValueForPositionTryFallbacks(*fallbacks);
   }
   return CSSIdentifierValue::Create(CSSValueID::kNone);
 }
 
-void PositionTryOptions::ApplyValue(StyleResolverState& state,
-                                    const CSSValue& value,
-                                    ValueMode) const {
+void PositionTryFallbacks::ApplyValue(StyleResolverState& state,
+                                      const CSSValue& value,
+                                      ValueMode) const {
   if (value.IsIdentifierValue()) {
     DCHECK(To<CSSIdentifierValue>(value).GetValueID() == CSSValueID::kNone);
     // Just represent as nullptr.
+    state.StyleBuilder().SetPositionTryFallbacks(nullptr);
     return;
   }
-  HeapVector<PositionTryOption> options;
-  for (const auto& option : To<CSSValueList>(value)) {
-    // inset-area( <inset-area> )
-    if (const auto* function = DynamicTo<CSSFunctionValue>(option.Get())) {
-      CHECK_EQ(1u, function->length());
-      blink::InsetArea inset_area =
-          StyleBuilderConverter::ConvertInsetArea(state, function->First());
-      options.push_back(PositionTryOption(inset_area));
-      continue;
-    }
-    // [<dashed-ident> || <try-tactic>]
-    const ScopedCSSName* scoped_name = nullptr;
-    TryTacticList tactic_list = {TryTactic::kNone};
-    wtf_size_t tactic_index = 0;
-    for (const auto& name_or_tactic : To<CSSValueList>(*option)) {
-      if (const auto* name = DynamicTo<CSSCustomIdentValue>(*name_or_tactic)) {
-        scoped_name = StyleBuilderConverter::ConvertCustomIdent(state, *name);
-        continue;
-      }
-      CHECK_LT(tactic_index, tactic_list.size());
-      tactic_list[tactic_index++] =
-          To<CSSIdentifierValue>(*name_or_tactic).ConvertTo<TryTactic>();
-    }
-    options.push_back(PositionTryOption(scoped_name, tactic_list));
+  HeapVector<PositionTryFallback> fallbacks;
+  for (const auto& fallback : To<CSSValueList>(value)) {
+    fallbacks.push_back(StyleBuilderConverter::ConvertSinglePositionTryFallback(
+        state, *fallback));
   }
-  DCHECK(!options.empty());
-  state.StyleBuilder().SetPositionTryOptions(
-      MakeGarbageCollected<blink::PositionTryOptions>(options));
+  DCHECK(!fallbacks.empty());
+  state.StyleBuilder().SetPositionTryFallbacks(
+      MakeGarbageCollected<blink::PositionTryFallbacks>(fallbacks));
 }
 
 const CSSValue* PositionTryOrder::InitialValue() const {
@@ -7161,12 +8295,28 @@ const CSSValue* R::CSSValueFromComputedStyleInternal(
   return ComputedStyleUtils::ZoomAdjustedPixelValueForLength(style.R(), style);
 }
 
-const CSSValue* ReadingOrderItems::CSSValueFromComputedStyleInternal(
+const CSSValue* ReadingFlow::CSSValueFromComputedStyleInternal(
     const ComputedStyle& style,
     const LayoutObject*,
     bool,
     CSSValuePhase) const {
-  return CSSIdentifierValue::Create(style.ReadingOrderItems());
+  return CSSIdentifierValue::Create(style.ReadingFlow());
+}
+
+const CSSValue* ReadingOrder::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context,
+    const CSSParserLocalContext&) const {
+  return css_parsing_utils::ConsumeInteger(stream, context);
+}
+
+const CSSValue* ReadingOrder::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool,
+    CSSValuePhase) const {
+  return CSSNumericLiteralValue::Create(style.ReadingOrder(),
+                                        CSSPrimitiveValue::UnitType::kNumber);
 }
 
 const CSSValue* Resize::CSSValueFromComputedStyleInternal(
@@ -7205,7 +8355,7 @@ const CSSValue* Right::ParseSingleValue(
   return css_parsing_utils::ConsumeMarginOrOffset(
       stream, context,
       css_parsing_utils::UnitlessUnlessShorthand(local_context),
-      static_cast<CSSAnchorQueryTypes>(CSSAnchorQueryType::kAnchor));
+      kCSSAnchorQueryTypesAll);
 }
 
 bool Right::IsLayoutDependent(const ComputedStyle* style,
@@ -7218,8 +8368,8 @@ const CSSValue* Right::CSSValueFromComputedStyleInternal(
     const LayoutObject* layout_object,
     bool allow_visited_style,
     CSSValuePhase value_phase) const {
-  return ComputedStyleUtils::ValueForPositionOffset(style, *this,
-                                                    layout_object);
+  return ComputedStyleUtils::ValueForPositionOffset(style, *this, layout_object,
+                                                    value_phase);
 }
 
 const CSSValue* Rotate::ParseSingleValue(CSSParserTokenStream& stream,
@@ -7271,7 +8421,12 @@ const CSSValue* Rotate::CSSValueFromComputedStyleInternal(
       style.Rotate()->Z() != 1) {
     const cssvalue::CSSAxisValue* axis =
         MakeGarbageCollected<cssvalue::CSSAxisValue>(
-            style.Rotate()->X(), style.Rotate()->Y(), style.Rotate()->Z());
+            MakeGarbageCollected<CSSNumericLiteralValue>(
+                style.Rotate()->X(), CSSPrimitiveValue::UnitType::kNumber),
+            MakeGarbageCollected<CSSNumericLiteralValue>(
+                style.Rotate()->Y(), CSSPrimitiveValue::UnitType::kNumber),
+            MakeGarbageCollected<CSSNumericLiteralValue>(
+                style.Rotate()->Z(), CSSPrimitiveValue::UnitType::kNumber));
     list->Append(*axis);
   }
   list->Append(*CSSNumericLiteralValue::Create(
@@ -7291,6 +8446,14 @@ const CSSValue* RowGap::CSSValueFromComputedStyleInternal(
     bool allow_visited_style,
     CSSValuePhase value_phase) const {
   return ComputedStyleUtils::ValueForGapLength(style.RowGap(), style);
+}
+
+const CSSValue* GapRulePaintOrder::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return CSSIdentifierValue::Create(style.GapRulePaintOrder());
 }
 
 const CSSValue* Rx::ParseSingleValue(CSSParserTokenStream& stream,
@@ -7351,10 +8514,15 @@ const CSSValue* Scale::ParseSingleValue(CSSParserTokenStream& stream,
   if (y_scale) {
     CSSPrimitiveValue* z_scale = css_parsing_utils::ConsumeNumberOrPercent(
         stream, context, CSSPrimitiveValue::ValueRange::kAll);
-    if (z_scale && z_scale->GetDoubleValue() != 1.0) {
+    if (z_scale &&
+        (!z_scale->IsNumericLiteralValue() ||
+         To<CSSNumericLiteralValue>(z_scale)->DoubleValue() != 1.0)) {
       list->Append(*y_scale);
       list->Append(*z_scale);
-    } else if (x_scale->GetDoubleValue() != y_scale->GetDoubleValue()) {
+    } else if (!x_scale->IsNumericLiteralValue() ||
+               !y_scale->IsNumericLiteralValue() ||
+               To<CSSNumericLiteralValue>(x_scale)->DoubleValue() !=
+                   To<CSSNumericLiteralValue>(y_scale)->DoubleValue()) {
       list->Append(*y_scale);
     }
   }
@@ -7390,12 +8558,20 @@ const CSSValue* Scale::CSSValueFromComputedStyleInternal(
   return list;
 }
 
-const CSSValue* ScrollMarkers::CSSValueFromComputedStyleInternal(
+const CSSValue* ScrollTargetGroup::CSSValueFromComputedStyleInternal(
     const ComputedStyle& style,
     const LayoutObject*,
     bool allow_visited_style,
     CSSValuePhase value_phase) const {
-  return CSSIdentifierValue::Create(style.ScrollMarkers());
+  return CSSIdentifierValue::Create(style.ScrollTargetGroup());
+}
+
+const CSSValue* ScrollMarkerGroup::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return CSSIdentifierValue::Create(style.ScrollMarkerGroup());
 }
 
 // https://www.w3.org/TR/css-scrollbars/
@@ -7843,48 +9019,12 @@ const CSSValue* ScrollStartY::CSSValueFromComputedStyleInternal(
   return ComputedStyleUtils::ValueForScrollStart(style, style.ScrollStartY());
 }
 
-const CSSValue* ScrollStartTargetBlock::ParseSingleValue(
-    CSSParserTokenStream& stream,
-    const CSSParserContext& context,
-    const CSSParserLocalContext&) const {
-  return css_parsing_utils::ConsumeScrollStartTarget(stream);
-}
-
-const CSSValue* ScrollStartTargetInline::ParseSingleValue(
-    CSSParserTokenStream& stream,
-    const CSSParserContext& context,
-    const CSSParserLocalContext&) const {
-  return css_parsing_utils::ConsumeScrollStartTarget(stream);
-}
-
-const CSSValue* ScrollStartTargetX::ParseSingleValue(
-    CSSParserTokenStream& stream,
-    const CSSParserContext& context,
-    const CSSParserLocalContext&) const {
-  return css_parsing_utils::ConsumeScrollStartTarget(stream);
-}
-
-const CSSValue* ScrollStartTargetX::CSSValueFromComputedStyleInternal(
+const CSSValue* ScrollInitialTarget::CSSValueFromComputedStyleInternal(
     const ComputedStyle& style,
     const LayoutObject*,
     bool allow_visited_style,
     CSSValuePhase value_phase) const {
-  return CSSIdentifierValue::Create(style.ScrollStartTargetX());
-}
-
-const CSSValue* ScrollStartTargetY::ParseSingleValue(
-    CSSParserTokenStream& stream,
-    const CSSParserContext& context,
-    const CSSParserLocalContext&) const {
-  return css_parsing_utils::ConsumeScrollStartTarget(stream);
-}
-
-const CSSValue* ScrollStartTargetY::CSSValueFromComputedStyleInternal(
-    const ComputedStyle& style,
-    const LayoutObject*,
-    bool allow_visited_style,
-    CSSValuePhase value_phase) const {
-  return CSSIdentifierValue::Create(style.ScrollStartTargetY());
+  return CSSIdentifierValue::Create(style.ScrollInitialTarget());
 }
 
 const CSSValue* ScrollTimelineAxis::ParseSingleValue(
@@ -7993,6 +9133,7 @@ const CSSValue* ShapeOutside::ParseSingleValue(
   CSSValue* box_value = css_parsing_utils::ConsumeShapeBox(stream);
   CSSValue* shape_value = css_parsing_utils::ConsumeBasicShape(
       stream, context, css_parsing_utils::AllowPathValue::kForbid,
+      css_parsing_utils::AllowShapeValue::kForbid,
       css_parsing_utils::AllowBasicShapeRectValue::kForbid,
       css_parsing_utils::AllowBasicShapeXYWHValue::kForbid);
   if (shape_value) {
@@ -8067,8 +9208,7 @@ static gfx::SizeF GetPageSizeFromName(
     case CSSValueID::kLedger:
       return gfx::SizeF(InchToPx(11), InchToPx(17));
     default:
-      NOTREACHED_IN_MIGRATION();
-      return gfx::SizeF(0, 0);
+      NOTREACHED();
   }
 }
 
@@ -8205,7 +9345,7 @@ const blink::Color StopColor::ColorIncludingFallback(
     bool visited_link,
     const ComputedStyle& style,
     bool* is_current_color) const {
-  StyleColor stop_color = style.StopColor();
+  const StyleColor& stop_color = style.StopColor();
   if (style.ShouldForceColor(stop_color)) {
     return style.GetInternalForcedCurrentColor(is_current_color);
   }
@@ -8219,6 +9359,10 @@ const CSSValue* StopColor::CSSValueFromComputedStyleInternal(
     CSSValuePhase value_phase) const {
   return ComputedStyleUtils::CurrentColorOrValidColor(style, style.StopColor(),
                                                       value_phase);
+}
+
+bool StopColor::IsAffectedByCurrentColor(const ComputedStyle& style) const {
+  return style.StopColor().DependsOnCurrentColor();
 }
 
 const CSSValue* StopOpacity::ParseSingleValue(
@@ -8263,6 +9407,18 @@ const blink::Color Stroke::ColorIncludingFallback(
   }
   return stroke_color.Resolve(style.GetCurrentColor(), style.UsedColorScheme(),
                               is_current_color);
+}
+
+void Stroke::ApplyValue(StyleResolverState& state,
+                        const CSSValue& value,
+                        ValueMode) const {
+  state.StyleBuilder().SetStrokePaint(StyleBuilderConverter::ConvertSVGPaint(
+      state, value, false, PropertyID()));
+}
+
+bool Stroke::IsAffectedByCurrentColor(const ComputedStyle& style) const {
+  return style.StrokePaint().HasColor() &&
+         style.StrokePaint().GetColor().DependsOnCurrentColor();
 }
 
 const CSSValue* StrokeDasharray::ParseSingleValue(
@@ -8507,22 +9663,10 @@ const CSSValue* TextBoxEdge::CSSValueFromComputedStyleInternal(
     bool allow_visited_style,
     CSSValuePhase value_phase) const {
   const blink::TextBoxEdge& text_box_edge = style.GetTextBoxEdge();
-  if (text_box_edge.Under() == text_box_edge.Over()) {
+  if (text_box_edge.IsUnderDefault()) {
     return CSSIdentifierValue::Create(text_box_edge.Over());
   }
-  if (text_box_edge.Under() == ::blink::TextBoxEdge::Type::kText) {
-    using enum ::blink::TextBoxEdge::Type;
-    switch (text_box_edge.Over()) {
-      case kCap:
-      case kEx:
-        return CSSIdentifierValue::Create(text_box_edge.Over());
-      case kAlphabetic:
-        break;
-      case kLeading:
-      case kText:
-        NOTREACHED_NORETURN();
-    }
-  }
+
   CSSValueList* list = CSSValueList::CreateSpaceSeparated();
   list->Append(*CSSIdentifierValue::Create(text_box_edge.Over()));
   list->Append(*CSSIdentifierValue::Create(text_box_edge.Under()));
@@ -8564,7 +9708,7 @@ const blink::Color TextDecorationColor::ColorIncludingFallback(
     const ComputedStyle& style,
     bool* is_current_color) const {
   DCHECK(!visited_link);
-  StyleColor decoration_color =
+  const StyleColor& decoration_color =
       style.DecorationColorIncludingFallback(visited_link);
   if (style.ShouldForceColor(decoration_color)) {
     return style.GetInternalForcedCurrentColor(is_current_color);
@@ -8580,6 +9724,12 @@ const CSSValue* TextDecorationColor::CSSValueFromComputedStyleInternal(
     CSSValuePhase value_phase) const {
   return ComputedStyleUtils::CurrentColorOrValidColor(
       style, style.TextDecorationColor(), value_phase);
+}
+
+bool TextDecorationColor::IsAffectedByCurrentColor(
+    const ComputedStyle& style) const {
+  return style.HasAppliedTextDecorations() &&
+         style.TextDecorationColor().DependsOnCurrentColor();
 }
 
 const CSSValue* TextDecorationLine::ParseSingleValue(
@@ -8646,6 +9796,20 @@ const CSSValue* TextDecorationThickness::CSSValueFromComputedStyleInternal(
       style.GetTextDecorationThickness().Thickness(), style);
 }
 
+const CSSValue* TextGrow::ParseSingleValue(CSSParserTokenStream& stream,
+                                           const CSSParserContext& context,
+                                           const CSSParserLocalContext&) const {
+  return css_parsing_utils::ConsumeFitText(stream, context);
+}
+
+const CSSValue* TextGrow::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return ComputedStyleUtils::ValueForFitText(style, style.TextGrow());
+}
+
 const CSSValue* TextIndent::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext& context,
@@ -8685,7 +9849,7 @@ void TextIndent::ApplyValue(StyleResolverState& state,
       length_or_percentage_value = list_primitive_value->ConvertToLength(
           state.CssToLengthConversionData());
     } else {
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
     }
   }
 
@@ -8750,6 +9914,25 @@ const CSSValue* TextShadow::CSSValueFromComputedStyleInternal(
     CSSValuePhase value_phase) const {
   return ComputedStyleUtils::ValueForShadowList(style.TextShadow(), style,
                                                 false, value_phase);
+}
+
+bool TextShadow::IsAffectedByCurrentColor(const ComputedStyle& style) const {
+  return style.ShadowListHasCurrentColor(style.TextShadow());
+}
+
+const CSSValue* TextShrink::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context,
+    const CSSParserLocalContext&) const {
+  return css_parsing_utils::ConsumeFitText(stream, context);
+}
+
+const CSSValue* TextShrink::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return ComputedStyleUtils::ValueForFitText(style, style.TextShrink());
 }
 
 const CSSValue* TextSizeAdjust::ParseSingleValue(
@@ -8900,7 +10083,7 @@ const CSSValue* Top::ParseSingleValue(
   return css_parsing_utils::ConsumeMarginOrOffset(
       stream, context,
       css_parsing_utils::UnitlessUnlessShorthand(local_context),
-      static_cast<CSSAnchorQueryTypes>(CSSAnchorQueryType::kAnchor));
+      kCSSAnchorQueryTypesAll);
 }
 
 bool Top::IsLayoutDependent(const ComputedStyle* style,
@@ -8913,8 +10096,8 @@ const CSSValue* Top::CSSValueFromComputedStyleInternal(
     const LayoutObject* layout_object,
     bool allow_visited_style,
     CSSValuePhase value_phase) const {
-  return ComputedStyleUtils::ValueForPositionOffset(style, *this,
-                                                    layout_object);
+  return ComputedStyleUtils::ValueForPositionOffset(style, *this, layout_object,
+                                                    value_phase);
 }
 
 namespace {
@@ -9237,11 +10420,11 @@ const CSSValue* Translate::ParseSingleValue(
     CSSPrimitiveValue* translate_z = css_parsing_utils::ConsumeLength(
         stream, context, CSSPrimitiveValue::ValueRange::kAll);
 
-    if (translate_z && translate_z->IsZero()) {
+    if (translate_z && translate_z->GetValueIfKnown() == 0.0) {
       translate_z = nullptr;
     }
-    if (translate_y->IsZero() && !translate_y->HasPercentage() &&
-        !translate_z) {
+    if (translate_y->GetValueIfKnown() == 0.0 &&
+        !translate_y->HasPercentage() && !translate_z) {
       return list;
     }
 
@@ -9353,8 +10536,7 @@ const CSSValue* VerticalAlign::CSSValueFromComputedStyleInternal(
       return ComputedStyleUtils::ZoomAdjustedPixelValueForLength(
           style.GetVerticalAlignLength(), style);
   }
-  NOTREACHED_IN_MIGRATION();
-  return nullptr;
+  NOTREACHED();
 }
 
 void VerticalAlign::ApplyInherit(StyleResolverState& state) const {
@@ -9416,8 +10598,7 @@ const CSSValue* ViewTimelineInset::ParseSingleValue(
     const CSSParserLocalContext&) const {
   using css_parsing_utils::ConsumeCommaSeparatedList;
   using css_parsing_utils::ConsumeSingleTimelineInset;
-  return ConsumeCommaSeparatedList(
-      ConsumeSingleTimelineInset<CSSParserTokenStream>, stream, context);
+  return ConsumeCommaSeparatedList(ConsumeSingleTimelineInset, stream, context);
 }
 
 const CSSValue* ViewTimelineInset::CSSValueFromComputedStyleInternal(
@@ -9604,13 +10785,11 @@ const CSSValue* WebkitBoxAlign::CSSValueFromComputedStyleInternal(
 
 const CSSValue* WebkitBoxDecorationBreak::CSSValueFromComputedStyleInternal(
     const ComputedStyle& style,
-    const LayoutObject*,
+    const LayoutObject* layout_object,
     bool allow_visited_style,
     CSSValuePhase value_phase) const {
-  if (style.BoxDecorationBreak() == EBoxDecorationBreak::kSlice) {
-    return CSSIdentifierValue::Create(CSSValueID::kSlice);
-  }
-  return CSSIdentifierValue::Create(CSSValueID::kClone);
+  return GetCSSPropertyBoxDecorationBreak().CSSValueFromComputedStyleInternal(
+      style, layout_object, allow_visited_style, value_phase);
 }
 
 const CSSValue* WebkitBoxDirection::CSSValueFromComputedStyleInternal(
@@ -9718,6 +10897,12 @@ const CSSValue* WebkitBoxReflect::CSSValueFromComputedStyleInternal(
       style.BoxReflect(), style, allow_visited_style, value_phase);
 }
 
+bool WebkitBoxReflect::IsAffectedByCurrentColor(
+    const ComputedStyle& style) const {
+  return style.BoxReflect() && style.BoxReflect()->Mask().HasImage() &&
+         style.BoxReflect()->Mask().GetImage()->DependsOnCurrentColor();
+}
+
 const CSSValue* InternalFontSizeDelta::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext& context,
@@ -9768,8 +10953,12 @@ const CSSValue* WebkitLineClamp::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext& context,
     const CSSParserLocalContext&) const {
-  // When specifying number of lines, don't allow 0 as a valid value.
-  return css_parsing_utils::ConsumePositiveInteger(stream, context);
+  if (stream.Peek().Id() == CSSValueID::kNone) {
+    return css_parsing_utils::ConsumeIdent(stream);
+  } else {
+    // When specifying number of lines, don't allow 0 as a valid value.
+    return css_parsing_utils::ConsumePositiveInteger(stream, context);
+  }
 }
 
 const CSSValue* WebkitLineClamp::CSSValueFromComputedStyleInternal(
@@ -9890,6 +11079,12 @@ void WebkitMaskBoxImageSource::ApplyValue(StyleResolverState& state,
       state.GetStyleImage(CSSPropertyID::kWebkitMaskBoxImageSource, value));
 }
 
+bool WebkitMaskBoxImageSource::IsAffectedByCurrentColor(
+    const ComputedStyle& style) const {
+  return style.MaskBoxImageSource() &&
+         style.MaskBoxImageSource()->DependsOnCurrentColor();
+}
+
 const CSSValue* WebkitMaskBoxImageWidth::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext& context,
@@ -9972,7 +11167,10 @@ const CSSValue* MaskImage::ParseSingleValue(
     const CSSParserContext& context,
     const CSSParserLocalContext&) const {
   return css_parsing_utils::ConsumeCommaSeparatedList(
-      css_parsing_utils::ConsumeImageOrNone, stream, context);
+      static_cast<CSSValue* (*)(CSSParserTokenStream&,
+                                const CSSParserContext&)>(
+          css_parsing_utils::ConsumeImageOrNone),
+      stream, context);
 }
 
 const CSSValue* MaskImage::CSSValueFromComputedStyleInternal(
@@ -9983,6 +11181,10 @@ const CSSValue* MaskImage::CSSValueFromComputedStyleInternal(
   const FillLayer& fill_layer = style.MaskLayers();
   return ComputedStyleUtils::BackgroundImageOrMaskImage(
       style, allow_visited_style, fill_layer, value_phase);
+}
+
+bool MaskImage::IsAffectedByCurrentColor(const ComputedStyle& style) const {
+  return style.MaskLayers().AnyLayerUsesCurrentColor();
 }
 
 const CSSValue* MaskMode::ParseSingleValue(CSSParserTokenStream& stream,
@@ -10040,8 +11242,8 @@ const CSSValue* WebkitMaskPositionX::ParseSingleValue(
     const CSSParserContext& context,
     const CSSParserLocalContext&) const {
   return css_parsing_utils::ConsumeCommaSeparatedList(
-      css_parsing_utils::ConsumePositionLonghand<
-          CSSValueID::kLeft, CSSValueID::kRight, CSSParserTokenStream>,
+      css_parsing_utils::ConsumePositionLonghand<CSSValueID::kLeft,
+                                                 CSSValueID::kRight>,
       Stream, context);
 }
 
@@ -10065,8 +11267,8 @@ const CSSValue* WebkitMaskPositionY::ParseSingleValue(
     const CSSParserContext& context,
     const CSSParserLocalContext&) const {
   return css_parsing_utils::ConsumeCommaSeparatedList(
-      css_parsing_utils::ConsumePositionLonghand<
-          CSSValueID::kTop, CSSValueID::kBottom, CSSParserTokenStream>,
+      css_parsing_utils::ConsumePositionLonghand<CSSValueID::kTop,
+                                                 CSSValueID::kBottom>,
       stream, context);
 }
 
@@ -10154,7 +11356,7 @@ void WebkitPerspectiveOriginY::ApplyInherit(StyleResolverState& state) const {
       state.ParentStyle()->PerspectiveOrigin().Y());
 }
 
-const CSSValue* WebkitPrintColorAdjust::CSSValueFromComputedStyleInternal(
+const CSSValue* PrintColorAdjust::CSSValueFromComputedStyleInternal(
     const ComputedStyle& style,
     const LayoutObject*,
     bool allow_visited_style,
@@ -10172,6 +11374,14 @@ const CSSValue* WebkitRtlOrdering::CSSValueFromComputedStyleInternal(
                                         : CSSValueID::kLogical);
 }
 
+const CSSValue* RubyAlign::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return CSSIdentifierValue::Create(style.RubyAlign());
+}
+
 const CSSValue* WebkitRubyPosition::CSSValueFromComputedStyleInternal(
     const ComputedStyle& style,
     const LayoutObject*,
@@ -10183,8 +11393,24 @@ const CSSValue* WebkitRubyPosition::CSSValueFromComputedStyleInternal(
     case blink::RubyPosition::kUnder:
       return CSSIdentifierValue::Create(CSSValueID::kAfter);
   }
-  NOTREACHED_IN_MIGRATION();
-  return CSSIdentifierValue::Create(CSSValueID::kOver);
+  NOTREACHED();
+}
+
+const CSSValue* RubyPosition::ParseSingleValue(
+    CSSParserTokenStream& stream,
+    const CSSParserContext& context,
+    const CSSParserLocalContext&) const {
+  CSSValueID value_id = stream.Peek().Id();
+  if (css_parsing_utils::IdentMatches<CSSValueID::kOver, CSSValueID::kUnder>(
+          value_id)) {
+    return css_parsing_utils::ConsumeIdent(stream);
+  }
+  if (value_id == CSSValueID::kAlternate) {
+    context.Count(WebFeature::kRubyPositionAlternate);
+  } else if (value_id == CSSValueID::kInterCharacter) {
+    context.Count(WebFeature::kRubyPositionInterCharacter);
+  }
+  return nullptr;
 }
 
 const CSSValue* RubyPosition::CSSValueFromComputedStyleInternal(
@@ -10206,7 +11432,7 @@ const blink::Color WebkitTapHighlightColor::ColorIncludingFallback(
     bool visited_link,
     const ComputedStyle& style,
     bool* is_current_color) const {
-  StyleColor highlight_color = style.TapHighlightColor();
+  const StyleColor& highlight_color = style.TapHighlightColor();
   if (style.ShouldForceColor(highlight_color)) {
     return visited_link
                ? style.GetInternalForcedVisitedCurrentColor(is_current_color)
@@ -10222,6 +11448,11 @@ const CSSValue* WebkitTapHighlightColor::CSSValueFromComputedStyleInternal(
     CSSValuePhase value_phase) const {
   return ComputedStyleUtils::CurrentColorOrValidColor(
       style, style.TapHighlightColor(), value_phase);
+}
+
+bool WebkitTapHighlightColor::IsAffectedByCurrentColor(
+    const ComputedStyle& style) const {
+  return style.TapHighlightColor().DependsOnCurrentColor();
 }
 
 const CSSValue* WebkitTextCombine::CSSValueFromComputedStyleInternal(
@@ -10264,7 +11495,7 @@ const blink::Color TextEmphasisColor::ColorIncludingFallback(
     const ComputedStyle& style,
     bool* is_current_color) const {
   DCHECK(!visited_link);
-  StyleColor text_emphasis_color = style.TextEmphasisColor();
+  const StyleColor& text_emphasis_color = style.TextEmphasisColor();
   if (style.ShouldForceColor(text_emphasis_color)) {
     return style.GetInternalForcedCurrentColor(is_current_color);
   }
@@ -10281,12 +11512,24 @@ const CSSValue* TextEmphasisColor::CSSValueFromComputedStyleInternal(
       style, style.TextEmphasisColor(), value_phase);
 }
 
-// [ over | under ] && [ right | left ]?
+bool TextEmphasisColor::IsAffectedByCurrentColor(
+    const ComputedStyle& style) const {
+  return style.GetTextEmphasisMark() != TextEmphasisMark::kNone &&
+         style.TextEmphasisColor().DependsOnCurrentColor();
+}
+
+// auto | ([ over | under ] && [ right | left ]?)
 // If [ right | left ] is omitted, it defaults to right.
 const CSSValue* TextEmphasisPosition::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext& context,
     const CSSParserLocalContext&) const {
+  if (RuntimeEnabledFeatures::TextEmphasisPositionAutoEnabled() &&
+      stream.Peek().Id() == CSSValueID::kAuto) {
+    CSSValueList* list = CSSValueList::CreateSpaceSeparated();
+    list->Append(*css_parsing_utils::ConsumeIdent(stream));
+    return list;
+  }
   CSSIdentifierValue* values[2] = {
       css_parsing_utils::ConsumeIdent<CSSValueID::kOver, CSSValueID::kUnder,
                                       CSSValueID::kRight, CSSValueID::kLeft>(
@@ -10322,8 +11565,7 @@ const CSSValue* TextEmphasisPosition::ParseSingleValue(
         left_right = value;
         break;
       default:
-        NOTREACHED_IN_MIGRATION();
-        break;
+        NOTREACHED();
     }
   }
   if (!over_under) {
@@ -10357,6 +11599,11 @@ const CSSValue* TextEmphasisPosition::CSSValueFromComputedStyleInternal(
     case blink::TextEmphasisPosition::kUnderLeft:
       list->Append(*CSSIdentifierValue::Create(CSSValueID::kUnder));
       list->Append(*CSSIdentifierValue::Create(CSSValueID::kLeft));
+      break;
+    case blink::TextEmphasisPosition::kAuto:
+      if (RuntimeEnabledFeatures::TextEmphasisPositionAutoEnabled()) {
+        list->Append(*CSSIdentifierValue::Create(CSSValueID::kAuto));
+      }
       break;
   }
   return list;
@@ -10414,8 +11661,7 @@ const CSSValue* TextEmphasisStyle::CSSValueFromComputedStyleInternal(
       return MakeGarbageCollected<CSSStringValue>(
           style.TextEmphasisCustomMark());
     case TextEmphasisMark::kAuto:
-      NOTREACHED_IN_MIGRATION();
-      [[fallthrough]];
+      NOTREACHED();
     case TextEmphasisMark::kDot:
     case TextEmphasisMark::kCircle:
     case TextEmphasisMark::kDoubleCircle:
@@ -10429,8 +11675,7 @@ const CSSValue* TextEmphasisStyle::CSSValueFromComputedStyleInternal(
       return list;
     }
   }
-  NOTREACHED_IN_MIGRATION();
-  return nullptr;
+  NOTREACHED();
 }
 
 void TextEmphasisStyle::ApplyInitial(StyleResolverState& state) const {
@@ -10511,7 +11756,7 @@ const blink::Color WebkitTextFillColor::ColorIncludingFallback(
     const ComputedStyle& style,
     bool* is_current_color) const {
   DCHECK(!visited_link);
-  StyleColor text_fill_color = style.TextFillColor();
+  const StyleColor& text_fill_color = style.TextFillColor();
   if (style.ShouldForceColor(text_fill_color)) {
     return style.GetInternalForcedCurrentColor(is_current_color);
   }
@@ -10559,7 +11804,7 @@ const blink::Color WebkitTextStrokeColor::ColorIncludingFallback(
     const ComputedStyle& style,
     bool* is_current_color) const {
   DCHECK(!visited_link);
-  StyleColor text_stroke_color = style.TextStrokeColor();
+  const StyleColor& text_stroke_color = style.TextStrokeColor();
   if (style.ShouldForceColor(text_stroke_color)) {
     return style.GetInternalForcedCurrentColor(is_current_color);
   }
@@ -10574,6 +11819,12 @@ const CSSValue* WebkitTextStrokeColor::CSSValueFromComputedStyleInternal(
     CSSValuePhase value_phase) const {
   return ComputedStyleUtils::CurrentColorOrValidColor(
       style, style.TextStrokeColor(), value_phase);
+}
+
+bool WebkitTextStrokeColor::IsAffectedByCurrentColor(
+    const ComputedStyle& style) const {
+  return style.TextStrokeWidth() &&
+         style.TextStrokeColor().DependsOnCurrentColor();
 }
 
 const CSSValue* WebkitTextStrokeWidth::ParseSingleValue(
@@ -10600,9 +11851,9 @@ const CSSValue* TimelineScope::ParseSingleValue(
     return css_parsing_utils::ConsumeIdent(stream);
   }
   using css_parsing_utils::ConsumeCommaSeparatedList;
-  using css_parsing_utils::ConsumeCustomIdent;
+  using css_parsing_utils::ConsumeDashedIdent;
   return ConsumeCommaSeparatedList<CSSCustomIdentValue*(
-      CSSParserTokenStream&, const CSSParserContext&)>(ConsumeCustomIdent,
+      CSSParserTokenStream&, const CSSParserContext&)>(ConsumeDashedIdent,
                                                        stream, context);
 }
 
@@ -10704,12 +11955,20 @@ const CSSValue* WhiteSpaceCollapse::CSSValueFromComputedStyleInternal(
   return CSSIdentifierValue::Create(style.GetWhiteSpaceCollapse());
 }
 
-const CSSValue* TextWrap::CSSValueFromComputedStyleInternal(
+const CSSValue* TextWrapMode::CSSValueFromComputedStyleInternal(
     const ComputedStyle& style,
     const LayoutObject*,
     bool allow_visited_style,
     CSSValuePhase value_phase) const {
-  return CSSIdentifierValue::Create(style.GetTextWrap());
+  return CSSIdentifierValue::Create(style.GetTextWrapMode());
+}
+
+const CSSValue* TextWrapStyle::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style,
+    CSSValuePhase value_phase) const {
+  return CSSIdentifierValue::Create(style.GetTextWrapStyle());
 }
 
 const CSSValue* Widows::ParseSingleValue(CSSParserTokenStream& stream,
@@ -10805,11 +12064,8 @@ const CSSValue* WillChange::ParseSingleValue(
       }
     }
 
-    if (stream.AtEnd()) {
-      break;
-    }
     if (!css_parsing_utils::ConsumeCommaIncludingWhitespace(stream)) {
-      return nullptr;
+      break;
     }
   }
 
@@ -10831,6 +12087,8 @@ void WillChange::ApplyInitial(StyleResolverState& state) const {
   builder.SetWillChangeContents(false);
   builder.SetWillChangeScrollPosition(false);
   builder.SetWillChangeProperties(Vector<CSSPropertyID>());
+  builder.SetSubtreeWillChangeContents(
+      state.ParentStyle()->SubtreeWillChangeContents());
 }
 
 void WillChange::ApplyInherit(StyleResolverState& state) const {
@@ -10839,6 +12097,8 @@ void WillChange::ApplyInherit(StyleResolverState& state) const {
   builder.SetWillChangeScrollPosition(
       state.ParentStyle()->WillChangeScrollPosition());
   builder.SetWillChangeProperties(state.ParentStyle()->WillChangeProperties());
+  builder.SetSubtreeWillChangeContents(
+      state.ParentStyle()->SubtreeWillChangeContents());
 }
 
 void WillChange::ApplyValue(StyleResolverState& state,
@@ -10862,7 +12122,7 @@ void WillChange::ApplyValue(StyleResolverState& state,
                  CSSValueID::kScrollPosition) {
         will_change_scroll_position = true;
       } else {
-        NOTREACHED_IN_MIGRATION();
+        NOTREACHED();
       }
     }
   }
@@ -10882,11 +12142,22 @@ const CSSValue* WordBreak::CSSValueFromComputedStyleInternal(
   return CSSIdentifierValue::Create(style.WordBreak());
 }
 
+void WordBreak::ApplyValue(StyleResolverState& state,
+                           const CSSValue& value,
+                           ValueMode) const {
+  blink::EWordBreak word_break =
+      To<CSSIdentifierValue>(value).ConvertTo<blink::EWordBreak>();
+  if (word_break == EWordBreak::kAutoPhrase) {
+    UseCounter::Count(state.GetDocument(), WebFeature::kCSSWordBreakAutoPhrase);
+  }
+  state.StyleBuilder().SetWordBreak(word_break);
+}
+
 const CSSValue* WordSpacing::ParseSingleValue(
     CSSParserTokenStream& stream,
     const CSSParserContext& context,
     const CSSParserLocalContext&) const {
-  return css_parsing_utils::ParseSpacing(stream, context);
+  return css_parsing_utils::ParseWordSpacing(stream, context);
 }
 
 const CSSValue* WordSpacing::CSSValueFromComputedStyleInternal(
@@ -10918,6 +12189,21 @@ void WritingMode::ApplyValue(StyleResolverState& state,
                              ValueMode) const {
   state.SetWritingMode(
       To<CSSIdentifierValue>(value).ConvertTo<blink::WritingMode>());
+}
+
+void TextSizeAdjust::ApplyInitial(StyleResolverState& state) const {
+  state.SetTextSizeAdjust(ComputedStyleInitialValues::InitialTextSizeAdjust());
+}
+
+void TextSizeAdjust::ApplyInherit(StyleResolverState& state) const {
+  state.SetTextSizeAdjust(state.ParentStyle()->GetTextSizeAdjust());
+}
+
+void TextSizeAdjust::ApplyValue(StyleResolverState& state,
+                                const CSSValue& value,
+                                ValueMode) const {
+  state.SetTextSizeAdjust(
+      StyleBuilderConverter::ConvertTextSizeAdjust(state, value));
 }
 
 const CSSValue* X::ParseSingleValue(CSSParserTokenStream& stream,
@@ -10991,9 +12277,9 @@ const CSSValue* Zoom::ParseSingleValue(CSSParserTokenStream& stream,
   if (zoom) {
     if (!(token.Id() == CSSValueID::kNormal ||
           (token.GetType() == kNumberToken &&
-           To<CSSPrimitiveValue>(zoom)->GetDoubleValue() == 1) ||
+           To<CSSPrimitiveValue>(zoom)->GetValueIfKnown() == 1.0) ||
           (token.GetType() == kPercentageToken &&
-           To<CSSPrimitiveValue>(zoom)->GetDoubleValue() == 100))) {
+           To<CSSPrimitiveValue>(zoom)->GetValueIfKnown() == 100.0))) {
       context.Count(WebFeature::kCSSZoomNotEqualToOne);
     }
   }

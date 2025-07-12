@@ -2,16 +2,23 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "services/screen_ai/screen_ai_library_wrapper_impl.h"
 
+#include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/metrics/histogram_macros.h"
 #include "ui/accessibility/accessibility_features.h"
 
 namespace screen_ai {
 
 namespace {
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 void HandleLibraryLogging(int severity, const char* message) {
   switch (severity) {
     case logging::LOGGING_VERBOSE:
@@ -65,7 +72,7 @@ bool ScreenAILibraryWrapperImpl::Load(const base::FilePath& library_path) {
   }
 #endif
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   if (!LoadFunction(set_logger_, "SetLogger")) {
     return false;
   }
@@ -83,18 +90,15 @@ bool ScreenAILibraryWrapperImpl::Load(const base::FilePath& library_path) {
     return false;
   }
 
-  // Layout Extraction functions.
-  if (features::IsLayoutExtractionEnabled()) {
-    if (!LoadFunction(init_layout_extraction_, "InitLayoutExtraction") ||
-        !LoadFunction(extract_layout_, "ExtractLayout")) {
-      return false;
-    }
-  }
-
   if (!LoadFunction(init_ocr_, "InitOCRUsingCallback") ||
+      !LoadFunction(get_max_image_dimension_, "GetMaxImageDimension") ||
       !LoadFunction(perform_ocr_, "PerformOCR")) {
     return false;
   }
+
+  // TODO(crbug.com/412553116): Move to the the above block and make it
+  // mandatory after updating library min version.
+  LoadFunction(set_ocr_light_mode_, "SetOCRLightMode");
 
   // Main Content Extraction functions.
   if (!LoadFunction(init_main_content_extraction_,
@@ -106,7 +110,7 @@ bool ScreenAILibraryWrapperImpl::Load(const base::FilePath& library_path) {
   return true;
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 NO_SANITIZE("cfi-icall")
 void ScreenAILibraryWrapperImpl::ScreenAILibraryWrapperImpl::SetLogger() {
   CHECK(set_logger_);
@@ -138,19 +142,33 @@ void ScreenAILibraryWrapperImpl::EnableDebugMode() {
 }
 
 NO_SANITIZE("cfi-icall")
-bool ScreenAILibraryWrapperImpl::InitLayoutExtraction() {
-  CHECK(init_layout_extraction_);
-  return init_layout_extraction_();
+uint32_t ScreenAILibraryWrapperImpl::GetMaxImageDimension() {
+  CHECK(get_max_image_dimension_);
+  return get_max_image_dimension_();
 }
 
 NO_SANITIZE("cfi-icall")
 bool ScreenAILibraryWrapperImpl::InitOCR() {
+  SCOPED_UMA_HISTOGRAM_TIMER(
+      "Accessibility.ScreenAI.OCR.InitializationLatency");
   CHECK(init_ocr_);
   return init_ocr_();
 }
 
 NO_SANITIZE("cfi-icall")
+void ScreenAILibraryWrapperImpl::SetOCRLightMode(bool enabled) {
+  // TODO(crbug.com/412553116): Change to CHECK after updating library min
+  // version.
+  if (!set_ocr_light_mode_) {
+    return;
+  }
+  set_ocr_light_mode_(enabled);
+}
+
+NO_SANITIZE("cfi-icall")
 bool ScreenAILibraryWrapperImpl::InitMainContentExtraction() {
+  SCOPED_UMA_HISTOGRAM_TIMER(
+      "Accessibility.ScreenAI.MainContentExtraction.InitializationLatency");
   CHECK(init_main_content_extraction_);
   return init_main_content_extraction_();
 }
@@ -169,34 +187,6 @@ ScreenAILibraryWrapperImpl::PerformOcr(const SkBitmap& image) {
   // deleter results in crash on Linux official build.
   std::unique_ptr<char> library_buffer(
       perform_ocr_(image, annotation_proto_length));
-
-  if (!library_buffer) {
-    return annotation_proto;
-  }
-
-  annotation_proto = chrome_screen_ai::VisualAnnotation();
-  if (!annotation_proto->ParseFromArray(library_buffer.get(),
-                                        annotation_proto_length)) {
-    annotation_proto.reset();
-  }
-
-  free_library_allocated_char_array_(library_buffer.release());
-  return annotation_proto;
-}
-
-NO_SANITIZE("cfi-icall")
-std::optional<chrome_screen_ai::VisualAnnotation>
-ScreenAILibraryWrapperImpl::ExtractLayout(const SkBitmap& image) {
-  CHECK(extract_layout_);
-  CHECK(free_library_allocated_char_array_);
-
-  std::optional<chrome_screen_ai::VisualAnnotation> annotation_proto;
-
-  uint32_t annotation_proto_length = 0;
-  // Memory allocated in `library_buffer` should be release only using
-  // `free_library_allocated_char_array_` function.
-  std::unique_ptr<char> library_buffer(
-      extract_layout_(image, annotation_proto_length));
 
   if (!library_buffer) {
     return annotation_proto;

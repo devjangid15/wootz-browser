@@ -52,27 +52,22 @@ class JsSandboxIsolate {
 
   jboolean EvaluateJavascript(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jstring>& jcode,
       const base::android::JavaParamRef<jobject>& j_callback);
   jboolean EvaluateJavascriptWithFd(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
       const jint fd,
       const jlong length,
       const jlong offset,
       const base::android::JavaParamRef<jobject>& j_callback,
       const base::android::JavaParamRef<jobject>& pfd);
-  void DestroyNative(JNIEnv* env,
-                     const base::android::JavaParamRef<jobject>& obj);
+  void DestroyNative(JNIEnv* env);
   jboolean ProvideNamedData(JNIEnv* env,
-                            const base::android::JavaParamRef<jobject>& obj,
                             const base::android::JavaParamRef<jstring>& jname,
                             const jint fd,
                             const jint length);
   // May enable or disable inspection, as needed.
   void SetConsoleEnabled(JNIEnv* env,
-                         const base::android::JavaParamRef<jobject>& obj,
                          jboolean enable);
 
  private:
@@ -83,7 +78,7 @@ class JsSandboxIsolate {
   // Will enabled or disable inspection depending on whether any dynamic
   // features require it (for example, console logging).
   void EvaluateJavascriptOnThread(
-      const std::string code,
+      std::string code,
       scoped_refptr<JsSandboxIsolateCallback> callback);
   void PromiseFulfillCallback(scoped_refptr<JsSandboxIsolateCallback> callback,
                               gin::Arguments* args);
@@ -95,7 +90,7 @@ class JsSandboxIsolate {
   void NotifyInitComplete();
   void CreateCancelableTaskTracker();
   void PostEvaluationToIsolateThread(
-      const std::string code,
+      std::string code,
       scoped_refptr<JsSandboxIsolateCallback> callback);
   void PostFileDescriptorReadToIsolateThread(
       int fd,

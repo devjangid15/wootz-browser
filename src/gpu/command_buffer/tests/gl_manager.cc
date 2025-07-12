@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "gpu/command_buffer/tests/gl_manager.h"
 
 #include <GLES2/gl2.h>
@@ -25,7 +30,6 @@
 #include "gpu/command_buffer/client/transfer_buffer.h"
 #include "gpu/command_buffer/common/constants.h"
 #include "gpu/command_buffer/common/context_creation_attribs.h"
-#include "gpu/command_buffer/common/gpu_memory_buffer_support.h"
 #include "gpu/command_buffer/common/sync_token.h"
 #include "gpu/command_buffer/service/command_buffer_direct.h"
 #include "gpu/command_buffer/service/context_group.h"
@@ -40,7 +44,6 @@
 #include "gpu/ipc/service/gpu_memory_buffer_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/buffer_format_util.h"
-#include "ui/gfx/gpu_memory_buffer.h"
 #include "ui/gl/gl_context.h"
 #include "ui/gl/gl_share_group.h"
 #include "ui/gl/gl_surface.h"
@@ -63,119 +66,6 @@ void InitializeGpuPreferencesForTestingFromCommandLine(
   preferences->enable_gpu_service_logging_gpu =
       command_line.HasSwitch(switches::kEnableGPUServiceLoggingGPU);
 }
-
-class GpuMemoryBufferImplTest : public gfx::GpuMemoryBuffer {
- public:
-  GpuMemoryBufferImplTest(base::RefCountedBytes* bytes,
-                          const gfx::Size& size,
-                          gfx::BufferFormat format)
-      : mapped_(false), bytes_(bytes), size_(size), format_(format) {}
-
-  // Overridden from gfx::GpuMemoryBuffer:
-  bool Map() override {
-    DCHECK(!mapped_);
-    mapped_ = true;
-    return true;
-  }
-  void* memory(size_t plane) override {
-    DCHECK(mapped_);
-    DCHECK_LT(plane, gfx::NumberOfPlanesForLinearBufferFormat(format_));
-    return bytes_->as_vector().data() +
-           gfx::BufferOffsetForBufferFormat(size_, format_, plane);
-  }
-  void Unmap() override {
-    DCHECK(mapped_);
-    mapped_ = false;
-  }
-  gfx::Size GetSize() const override { return size_; }
-  gfx::BufferFormat GetFormat() const override { return format_; }
-  int stride(size_t plane) const override {
-    DCHECK_LT(plane, gfx::NumberOfPlanesForLinearBufferFormat(format_));
-    return gfx::RowSizeForBufferFormat(size_.width(), format_, plane);
-  }
-  gfx::GpuMemoryBufferId GetId() const override {
-    NOTREACHED_IN_MIGRATION();
-    return gfx::GpuMemoryBufferId(0);
-  }
-  gfx::GpuMemoryBufferType GetType() const override {
-    return gfx::NATIVE_PIXMAP;
-  }
-  gfx::GpuMemoryBufferHandle CloneHandle() const override {
-    NOTREACHED_IN_MIGRATION();
-    return gfx::GpuMemoryBufferHandle();
-  }
-  void OnMemoryDump(
-      base::trace_event::ProcessMemoryDump* pmd,
-      const base::trace_event::MemoryAllocatorDumpGuid& buffer_dump_guid,
-      uint64_t tracing_process_id,
-      int importance) const override {}
-
-  base::RefCountedBytes* bytes() { return bytes_.get(); }
-
- private:
-  bool mapped_;
-  scoped_refptr<base::RefCountedBytes> bytes_;
-  const gfx::Size size_;
-  gfx::BufferFormat format_;
-};
-
-#if BUILDFLAG(IS_MAC)
-class IOSurfaceGpuMemoryBuffer : public gfx::GpuMemoryBuffer {
- public:
-  IOSurfaceGpuMemoryBuffer(const gfx::Size& size, gfx::BufferFormat format)
-      : mapped_(false), size_(size), format_(format) {
-    iosurface_ = gfx::CreateIOSurface(size, gfx::BufferFormat::BGRA_8888);
-  }
-
-  ~IOSurfaceGpuMemoryBuffer() override = default;
-
-  // Overridden from gfx::GpuMemoryBuffer:
-  bool Map() override {
-    DCHECK(!mapped_);
-    mapped_ = true;
-    return true;
-  }
-  void* memory(size_t plane) override {
-    DCHECK(mapped_);
-    DCHECK_LT(plane, gfx::NumberOfPlanesForLinearBufferFormat(format_));
-    return IOSurfaceGetBaseAddressOfPlane(iosurface_.get(), plane);
-  }
-  void Unmap() override {
-    DCHECK(mapped_);
-    mapped_ = false;
-  }
-  gfx::Size GetSize() const override { return size_; }
-  gfx::BufferFormat GetFormat() const override { return format_; }
-  int stride(size_t plane) const override {
-    DCHECK_LT(plane, gfx::NumberOfPlanesForLinearBufferFormat(format_));
-    return IOSurfaceGetWidthOfPlane(iosurface_.get(), plane);
-  }
-  gfx::GpuMemoryBufferId GetId() const override {
-    NOTREACHED_IN_MIGRATION();
-    return gfx::GpuMemoryBufferId(0);
-  }
-  gfx::GpuMemoryBufferType GetType() const override {
-    return gfx::IO_SURFACE_BUFFER;
-  }
-  gfx::GpuMemoryBufferHandle CloneHandle() const override {
-    NOTREACHED_IN_MIGRATION();
-    return gfx::GpuMemoryBufferHandle();
-  }
-  void OnMemoryDump(
-      base::trace_event::ProcessMemoryDump* pmd,
-      const base::trace_event::MemoryAllocatorDumpGuid& buffer_dump_guid,
-      uint64_t tracing_process_id,
-      int importance) const override {}
-
-  IOSurfaceRef iosurface() { return iosurface_.get(); }
-
- private:
-  bool mapped_;
-  base::apple::ScopedCFTypeRef<IOSurfaceRef> iosurface_;
-  const gfx::Size size_;
-  gfx::BufferFormat format_;
-};
-#endif  // BUILDFLAG(IS_MAC)
 
 class CommandBufferCheckLostContext : public CommandBufferDirect {
  public:
@@ -234,21 +124,6 @@ GLManager::~GLManager() {
       base_context_ = nullptr;
     }
   }
-}
-
-std::unique_ptr<gfx::GpuMemoryBuffer> GLManager::CreateGpuMemoryBuffer(
-    const gfx::Size& size,
-    gfx::BufferFormat format) {
-#if BUILDFLAG(IS_MAC)
-  if (use_iosurface_memory_buffers_) {
-    return base::WrapUnique<gfx::GpuMemoryBuffer>(
-        new IOSurfaceGpuMemoryBuffer(size, format));
-  }
-#endif  // BUILDFLAG(IS_MAC)
-  std::vector<uint8_t> data(gfx::BufferSizeForBufferFormat(size, format), 0);
-  auto bytes = base::RefCountedBytes::TakeVector(&data);
-  return base::WrapUnique<gfx::GpuMemoryBuffer>(
-      new GpuMemoryBufferImplTest(bytes.get(), size, format));
 }
 
 void GLManager::Initialize(const GLManager::Options& options) {
@@ -315,11 +190,11 @@ void GLManager::InitializeWithWorkaroundsImpl(
     // Always mark the passthrough command decoder as supported so that tests do
     // not unexpectedly use the wrong command decoder
     context_group = new gles2::ContextGroup(
-        gpu_preferences_, true, nullptr /* memory_tracker */,
-        translator_cache_.get(), &completeness_cache_, feature_info,
-        options.bind_generates_resource, nullptr /* progress_reporter */,
-        gpu_feature_info, discardable_manager_.get(),
-        passthrough_discardable_manager_.get(), &shared_image_manager_);
+        gpu_preferences_, /*memory_tracker=*/nullptr, translator_cache_.get(),
+        &completeness_cache_, feature_info, options.bind_generates_resource,
+        /*progress_reporter=*/nullptr, gpu_feature_info,
+        discardable_manager_.get(), passthrough_discardable_manager_.get(),
+        &shared_image_manager_);
   }
 
   command_buffer_.reset(
@@ -528,29 +403,29 @@ const GLCapabilities& GLManager::GetGLCapabilities() const {
 }
 
 void GLManager::SignalQuery(uint32_t query, base::OnceClosure callback) {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void GLManager::CancelAllQueries() {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void GLManager::CreateGpuFence(uint32_t gpu_fence_id, ClientGpuFence source) {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void GLManager::GetGpuFence(
     uint32_t gpu_fence_id,
     base::OnceCallback<void(std::unique_ptr<gfx::GpuFence>)> callback) {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void GLManager::SetLock(base::Lock*) {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void GLManager::EnsureWorkVisible() {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 gpu::CommandBufferNamespace GLManager::GetNamespaceID() const {
@@ -562,31 +437,28 @@ CommandBufferId GLManager::GetCommandBufferID() const {
 }
 
 void GLManager::FlushPendingWork() {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 uint64_t GLManager::GenerateFenceSyncRelease() {
-  NOTREACHED_IN_MIGRATION();
-  return 0;
+  NOTREACHED();
 }
 
 bool GLManager::IsFenceSyncReleased(uint64_t release) {
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 }
 
 void GLManager::SignalSyncToken(const gpu::SyncToken& sync_token,
                                 base::OnceClosure callback) {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void GLManager::WaitSyncToken(const gpu::SyncToken& sync_token) {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 bool GLManager::CanWaitUnverifiedSyncToken(const gpu::SyncToken& sync_token) {
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 }
 
 ContextType GLManager::GetContextType() const {

@@ -8,21 +8,25 @@ import android.app.Activity;
 
 import org.chromium.base.BuildInfo;
 import org.chromium.base.supplier.ObservableSupplier;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
+import org.chromium.chrome.browser.multiwindow.MultiWindowModeStateDispatcher;
 
+@NullMarked
 public class FullscreenHtmlApiHandlerFactory {
 
     /** Creates an instance of {@link FullscreenHtmlApiHandlerBase}. */
     static FullscreenHtmlApiHandlerBase createInstance(
             Activity activity,
             ObservableSupplier<Boolean> areControlsHidden,
-            boolean exitFullscreenOnStop) {
+            boolean exitFullscreenOnStop,
+            MultiWindowModeStateDispatcher multiWindowDispatcher) {
         if (isFullscreenApiMigrationEnabled()) {
             return new FullscreenHtmlApiHandlerCompat(
-                    activity, areControlsHidden, exitFullscreenOnStop);
+                    activity, areControlsHidden, exitFullscreenOnStop, multiWindowDispatcher);
         }
         return new FullscreenHtmlApiHandlerLegacy(
-                activity, areControlsHidden, exitFullscreenOnStop);
+                activity, areControlsHidden, exitFullscreenOnStop, multiWindowDispatcher);
     }
 
     private static boolean isFullscreenApiMigrationEnabled() {

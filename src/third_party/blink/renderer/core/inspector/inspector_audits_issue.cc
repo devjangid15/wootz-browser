@@ -8,11 +8,13 @@
 #include "services/network/public/mojom/blocked_by_response_reason.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/capture_source_location.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_security_policy_violation_event_init.h"
+#include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_node_ids.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
+#include "third_party/blink/renderer/core/html/forms/html_select_element.h"
 #include "third_party/blink/renderer/core/inspector/identifiers_factory.h"
 #include "third_party/blink/renderer/core/inspector/protocol/audits.h"
 #include "third_party/blink/renderer/core/inspector/protocol/network.h"
@@ -95,10 +97,6 @@ protocol::Audits::GenericIssueErrorType
 AuditsIssue::GenericIssueErrorTypeToProtocol(
     mojom::blink::GenericIssueErrorType error_type) {
   switch (error_type) {
-    case mojom::blink::GenericIssueErrorType::
-        kCrossOriginPortalPostMessageError:
-      return protocol::Audits::GenericIssueErrorTypeEnum::
-          CrossOriginPortalPostMessageError;
     case mojom::blink::GenericIssueErrorType::kFormLabelForNameError:
       return protocol::Audits::GenericIssueErrorTypeEnum::FormLabelForNameError;
     case mojom::blink::GenericIssueErrorType::kFormDuplicateIdForInputError:
@@ -143,17 +141,13 @@ AuditsIssue::GenericIssueErrorTypeToProtocol(
 
 void AuditsIssue::ReportCorsIssue(
     ExecutionContext* execution_context,
-    int64_t identifier,
     RendererCorsIssueCode code,
     String url,
     String initiator_origin,
     String failedParameter,
     std::optional<base::UnguessableToken> issue_id) {
-  String devtools_request_id =
-      IdentifiersFactory::SubresourceRequestId(identifier);
   std::unique_ptr<protocol::Audits::AffectedRequest> affected_request =
       protocol::Audits::AffectedRequest::create()
-          .setRequestId(devtools_request_id)
           .setUrl(url)
           .build();
   auto protocol_cors_error_status =
@@ -168,7 +162,7 @@ void AuditsIssue::ReportCorsIssue(
           .setCorsErrorStatus(std::move(protocol_cors_error_status))
           .build();
   cors_issue_details->setInitiatorOrigin(initiator_origin);
-  auto location = CaptureSourceLocation(execution_context);
+  auto* location = CaptureSourceLocation(execution_context);
   if (location) {
     cors_issue_details->setLocation(CreateProtocolLocation(*location));
   }
@@ -251,17 +245,21 @@ BuildAttributionReportingIssueType(AttributionReportingIssueType type) {
     case AttributionReportingIssueType::kNoRegisterOsTriggerHeader:
       return protocol::Audits::AttributionReportingIssueTypeEnum::
           NoRegisterOsTriggerHeader;
+    case AttributionReportingIssueType::
+        kNavigationRegistrationUniqueScopeAlreadySet:
+      return protocol::Audits::AttributionReportingIssueTypeEnum::
+          NavigationRegistrationUniqueScopeAlreadySet;
   }
 }
 
 }  // namespace
 
-void AuditsIssue::ReportAttributionIssue(
-    ExecutionContext* execution_context,
-    AttributionReportingIssueType type,
-    Element* element,
-    const String& request_id,
-    const String& invalid_parameter) {
+void AuditsIssue::ReportAttributionIssue(ExecutionContext* execution_context,
+                                         AttributionReportingIssueType type,
+                                         Element* element,
+                                         const String& request_url,
+                                         const String& request_id,
+                                         const String& invalid_parameter) {
   auto details = protocol::Audits::AttributionReportingIssueDetails::create()
                      .setViolationType(BuildAttributionReportingIssueType(type))
                      .build();
@@ -269,10 +267,13 @@ void AuditsIssue::ReportAttributionIssue(
   if (element) {
     details->setViolatingNodeId(element->GetDomNodeId());
   }
-  if (!request_id.IsNull()) {
-    details->setRequest(protocol::Audits::AffectedRequest::create()
-                            .setRequestId(request_id)
-                            .build());
+  if (!request_url.IsNull()) {
+    auto request =
+        protocol::Audits::AffectedRequest::create().setUrl(request_url).build();
+    if (!request_id.IsNull()) {
+      request->setRequestId(request_id);
+    }
+    details->setRequest(std::move(request));
   }
   if (!invalid_parameter.IsNull()) {
     details->setInvalidParameter(invalid_parameter);
@@ -319,8 +320,19 @@ protocol::Audits::BlockedByResponseReason BlockedByResponseReasonToProtocol(
         kCorpNotSameOriginAfterDefaultedToSameOriginByCoep:
       return protocol::Audits::BlockedByResponseReasonEnum::
           CorpNotSameOriginAfterDefaultedToSameOriginByCoep;
+    case network::mojom::BlockedByResponseReason::
+        kCorpNotSameOriginAfterDefaultedToSameOriginByDip:
+      return protocol::Audits::BlockedByResponseReasonEnum::
+          CorpNotSameOriginAfterDefaultedToSameOriginByDip;
+    case network::mojom::BlockedByResponseReason::
+        kCorpNotSameOriginAfterDefaultedToSameOriginByCoepAndDip:
+      return protocol::Audits::BlockedByResponseReasonEnum::
+          CorpNotSameOriginAfterDefaultedToSameOriginByCoepAndDip;
     case network::mojom::BlockedByResponseReason::kCorpNotSameSite:
       return protocol::Audits::BlockedByResponseReasonEnum::CorpNotSameSite;
+    case network::mojom::BlockedByResponseReason::kSRIMessageSignatureMismatch:
+      return protocol::Audits::BlockedByResponseReasonEnum::
+          SRIMessageSignatureMismatch;
   }
 }
 
@@ -444,6 +456,9 @@ protocol::Audits::ContentSecurityPolicyViolationType CSPViolationTypeToProtocol(
     case ContentSecurityPolicyViolationType::kURLViolation:
       return protocol::Audits::ContentSecurityPolicyViolationTypeEnum::
           KURLViolation;
+    case ContentSecurityPolicyViolationType::kSRIViolation:
+      return protocol::Audits::ContentSecurityPolicyViolationTypeEnum::
+          KSRIViolation;
   }
 }
 
@@ -453,7 +468,7 @@ void AuditsIssue::ReportSharedArrayBufferIssue(
     ExecutionContext* execution_context,
     bool shared_buffer_transfer_allowed,
     SharedArrayBufferIssueType issue_type) {
-  auto source_location = CaptureSourceLocation(execution_context);
+  auto* source_location = CaptureSourceLocation(execution_context);
   auto sab_issue_details =
       protocol::Audits::SharedArrayBufferIssueDetails::create()
           .setSourceCodeLocation(CreateProtocolLocation(*source_location))
@@ -476,7 +491,7 @@ void AuditsIssue::ReportSharedArrayBufferIssue(
 // static
 void AuditsIssue::ReportDeprecationIssue(ExecutionContext* execution_context,
                                          String type) {
-  auto source_location = CaptureSourceLocation(execution_context);
+  auto* source_location = CaptureSourceLocation(execution_context);
   auto deprecation_issue_details =
       protocol::Audits::DeprecationIssueDetails::create()
           .setSourceCodeLocation(CreateProtocolLocation(*source_location))
@@ -519,7 +534,7 @@ protocol::Audits::ClientHintIssueReason ClientHintIssueReasonToProtocol(
 // static
 void AuditsIssue::ReportClientHintIssue(LocalDOMWindow* local_dom_window,
                                         ClientHintIssueReason reason) {
-  auto source_location = CaptureSourceLocation(local_dom_window);
+  auto* source_location = CaptureSourceLocation(local_dom_window);
   auto client_hint_issue_details =
       protocol::Audits::ClientHintIssueDetails::create()
           .setSourceCodeLocation(CreateProtocolLocation(*source_location))
@@ -664,6 +679,42 @@ void AuditsIssue::ReportGenericIssue(
 
   frame->DomWindow()->AddInspectorIssue(AuditsIssue(std::move(issue)));
 }
+void AuditsIssue::ReportPartitioningBlobURLIssue(
+    LocalDOMWindow* window,
+    String blob_url,
+    mojom::blink::PartitioningBlobURLInfo info) {
+  protocol::String partitioning_blob_url_info_string;
+  switch (info) {
+    case mojom::blink::PartitioningBlobURLInfo::kEnforceNoopenerForNavigation:
+      partitioning_blob_url_info_string = protocol::Audits::
+          PartitioningBlobURLInfoEnum::EnforceNoopenerForNavigation;
+      break;
+    case mojom::blink::PartitioningBlobURLInfo::kBlockedCrossPartitionFetching:
+      // This is logged from the browser process and not used in the renderer.
+    default:
+      NOTREACHED();
+  }
+
+  auto partitioning_blob_url_issue_details =
+      protocol::Audits::PartitioningBlobURLIssueDetails::create()
+          .setUrl(blob_url)
+          .setPartitioningBlobURLInfo(partitioning_blob_url_info_string)
+          .build();
+
+  auto protocol_issue_details =
+      protocol::Audits::InspectorIssueDetails::create()
+          .setPartitioningBlobURLIssueDetails(
+              std::move(partitioning_blob_url_issue_details))
+          .build();
+
+  auto issue = protocol::Audits::InspectorIssue::create()
+                   .setCode(protocol::Audits::InspectorIssueCodeEnum::
+                                PartitioningBlobURLIssue)
+                   .setDetails(std::move(protocol_issue_details))
+                   .build();
+
+  window->AddInspectorIssue(AuditsIssue(std::move(issue)));
+}
 
 void AuditsIssue::ReportPropertyRuleIssue(
     Document* document,
@@ -778,6 +829,103 @@ void AuditsIssue::ReportStylesheetLoadingRequestFailedIssue(
 
   document->GetExecutionContext()->AddInspectorIssue(
       AuditsIssue(std::move(issue)));
+}
+
+namespace {
+
+protocol::Audits::ElementAccessibilityIssueReason
+ElementAccessibilityIssueReasonToProtocol(
+    ElementAccessibilityIssueReason reason) {
+  switch (reason) {
+    case ElementAccessibilityIssueReason::kDisallowedSelectChild:
+      return protocol::Audits::ElementAccessibilityIssueReasonEnum::
+          DisallowedSelectChild;
+    case ElementAccessibilityIssueReason::kDisallowedOptGroupChild:
+      return protocol::Audits::ElementAccessibilityIssueReasonEnum::
+          DisallowedOptGroupChild;
+    case ElementAccessibilityIssueReason::kNonPhrasingContentOptionChild:
+      return protocol::Audits::ElementAccessibilityIssueReasonEnum::
+          NonPhrasingContentOptionChild;
+    case ElementAccessibilityIssueReason::kInteractiveContentOptionChild:
+      return protocol::Audits::ElementAccessibilityIssueReasonEnum::
+          InteractiveContentOptionChild;
+    case ElementAccessibilityIssueReason::kInteractiveContentLegendChild:
+      return protocol::Audits::ElementAccessibilityIssueReasonEnum::
+          InteractiveContentLegendChild;
+    case ElementAccessibilityIssueReason::kInteractiveContentSummaryDescendant:
+      return protocol::Audits::ElementAccessibilityIssueReasonEnum::
+          InteractiveContentSummaryDescendant;
+    case ElementAccessibilityIssueReason::kValidChild:
+      NOTREACHED();
+  }
+}
+
+}  // namespace
+
+// static
+void AuditsIssue::ReportElementAccessibilityIssue(
+    Document* document,
+    DOMNodeId node_id,
+    ElementAccessibilityIssueReason issue_reason,
+    bool has_disallowed_attributes) {
+  if (!document->GetExecutionContext()) {
+    return;
+  }
+
+  auto select_accessibility_issue_details =
+      protocol::Audits::ElementAccessibilityIssueDetails::create()
+          .setNodeId(node_id)
+          .setElementAccessibilityIssueReason(
+              ElementAccessibilityIssueReasonToProtocol(issue_reason))
+          .setHasDisallowedAttributes(has_disallowed_attributes)
+          .build();
+
+  auto details = protocol::Audits::InspectorIssueDetails::create()
+                     .setElementAccessibilityIssueDetails(
+                         std::move(select_accessibility_issue_details))
+                     .build();
+
+  auto issue = protocol::Audits::InspectorIssue::create()
+                   .setCode(protocol::Audits::InspectorIssueCodeEnum::
+                                ElementAccessibilityIssue)
+                   .setDetails(std::move(details))
+                   .build();
+
+  document->GetExecutionContext()->AddInspectorIssue(
+      AuditsIssue(std::move(issue)));
+}
+
+// static
+void AuditsIssue::ReportUserReidentificationIssue(
+    LocalFrame* frame,
+    std::optional<std::string> devtools_request_id,
+    const KURL& affected_request_url) {
+  auto reidentification_issue_details =
+      protocol::Audits::UserReidentificationIssueDetails::create()
+          .setType(protocol::Audits::UserReidentificationIssueTypeEnum::
+                       BlockedSubresource)
+          .setRequest(
+              protocol::Audits::AffectedRequest::create()
+                  .setRequestId(devtools_request_id.has_value()
+                                    ? WTF::String(devtools_request_id.value())
+                                    : WTF::String())
+                  .setUrl(affected_request_url)
+                  .build())
+          .build();
+
+  auto protocol_issue_details =
+      protocol::Audits::InspectorIssueDetails::create()
+          .setUserReidentificationIssueDetails(
+              std::move(reidentification_issue_details))
+          .build();
+
+  auto issue = protocol::Audits::InspectorIssue::create()
+                   .setCode(protocol::Audits::InspectorIssueCodeEnum::
+                                UserReidentificationIssue)
+                   .setDetails(std::move(protocol_issue_details))
+                   .build();
+
+  frame->DomWindow()->AddInspectorIssue(AuditsIssue(std::move(issue)));
 }
 
 AuditsIssue AuditsIssue::CreateContentSecurityPolicyIssue(

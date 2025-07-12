@@ -21,10 +21,16 @@ import static androidx.browser.customtabs.CustomTabsIntent.EXTRA_ACTIVITY_SIDE_S
 import static androidx.browser.customtabs.CustomTabsIntent.EXTRA_ACTIVITY_SIDE_SHEET_ENABLE_MAXIMIZATION;
 import static androidx.browser.customtabs.CustomTabsIntent.EXTRA_ACTIVITY_SIDE_SHEET_POSITION;
 import static androidx.browser.customtabs.CustomTabsIntent.EXTRA_ACTIVITY_SIDE_SHEET_ROUNDED_CORNERS_POSITION;
+import static androidx.browser.customtabs.CustomTabsIntent.EXTRA_CLOSE_BUTTON_ENABLED;
 import static androidx.browser.customtabs.CustomTabsIntent.EXTRA_CLOSE_BUTTON_POSITION;
 import static androidx.browser.customtabs.CustomTabsIntent.EXTRA_INITIAL_ACTIVITY_HEIGHT_PX;
 import static androidx.browser.customtabs.CustomTabsIntent.EXTRA_INITIAL_ACTIVITY_WIDTH_PX;
+import static androidx.browser.customtabs.CustomTabsIntent.EXTRA_NETWORK;
+import static androidx.browser.customtabs.CustomTabsIntent.EXTRA_TITLE_VISIBILITY_STATE;
 import static androidx.browser.customtabs.CustomTabsIntent.EXTRA_TOOLBAR_CORNER_RADIUS_DP;
+import static androidx.browser.trusted.LaunchHandlerClientMode.FOCUS_EXISTING;
+import static androidx.browser.trusted.LaunchHandlerClientMode.NAVIGATE_EXISTING;
+import static androidx.browser.trusted.LaunchHandlerClientMode.NAVIGATE_NEW;
 
 import android.app.Activity;
 import android.app.ActivityOptions;
@@ -34,6 +40,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.drawable.Drawable;
+import android.net.Network;
 import android.net.Uri;
 import android.os.Bundle;
 import android.text.TextUtils;
@@ -50,8 +57,12 @@ import androidx.browser.customtabs.CustomTabsIntent.ActivityHeightResizeBehavior
 import androidx.browser.customtabs.CustomTabsIntent.ActivitySideSheetDecorationType;
 import androidx.browser.customtabs.CustomTabsIntent.ActivitySideSheetRoundedCornersPosition;
 import androidx.browser.customtabs.CustomTabsIntent.CloseButtonPosition;
+import androidx.browser.customtabs.CustomTabsIntent.OpenInBrowserState;
 import androidx.browser.customtabs.CustomTabsSessionToken;
+import androidx.browser.customtabs.ExperimentalOpenInBrowser;
 import androidx.browser.customtabs.TrustedWebUtils;
+import androidx.browser.trusted.FileHandlingData;
+import androidx.browser.trusted.LaunchHandlerClientMode;
 import androidx.browser.trusted.ScreenOrientation;
 import androidx.browser.trusted.TrustedWebActivityDisplayMode;
 import androidx.browser.trusted.TrustedWebActivityIntentBuilder;
@@ -64,36 +75,43 @@ import org.chromium.base.IntentUtils;
 import org.chromium.base.LocaleUtils;
 import org.chromium.base.Log;
 import org.chromium.base.ResettersForTesting;
-import org.chromium.base.cached_flags.BooleanCachedFieldTrialParameter;
-import org.chromium.base.cached_flags.StringCachedFieldTrialParameter;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.base.version_info.VersionInfo;
+import org.chromium.blink.mojom.DisplayMode;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.IntentHandler;
 import org.chromium.chrome.browser.browserservices.intents.BrowserServicesIntentDataProvider;
 import org.chromium.chrome.browser.browserservices.intents.ColorProvider;
 import org.chromium.chrome.browser.browserservices.intents.CustomButtonParams;
+import org.chromium.chrome.browser.browserservices.intents.SessionHolder;
 import org.chromium.chrome.browser.customtabs.CustomTabsFeatureUsage.CustomTabsFeature;
 import org.chromium.chrome.browser.flags.ActivityType;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
-import org.chromium.chrome.browser.page_insights.PageInsightsCoordinator;
 import org.chromium.chrome.browser.share.ShareUtils;
+import org.chromium.chrome.browser.toolbar.adaptive.AdaptiveToolbarButtonVariant;
 import org.chromium.chrome.browser.ui.google_bottom_bar.GoogleBottomBarCoordinator;
+import org.chromium.chrome.browser.ui.google_bottom_bar.proto.IntentParams.GoogleBottomBarIntentParams;
+import org.chromium.chrome.browser.ui.web_app_header.WebAppHeaderUtils;
 import org.chromium.components.browser_ui.widget.TintedDrawable;
+import org.chromium.components.embedder_support.util.Origin;
 import org.chromium.components.embedder_support.util.UrlConstants;
 import org.chromium.device.mojom.ScreenOrientationLockType;
+import org.chromium.net.NetId;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 /**
  * A model class that parses the incoming intent for Custom Tabs specific customization data.
  *
- * Lifecycle: is activity-scoped, i.e. one instance per CustomTabActivity instance. Must be
+ * <p>Lifecycle: is activity-scoped, i.e. one instance per CustomTabActivity instance. Must be
  * re-created when color scheme changes, which happens automatically since color scheme change leads
  * to activity re-creation.
  */
@@ -105,27 +123,6 @@ public class CustomTabIntentDataProvider extends BrowserServicesIntentDataProvid
     public @interface LaunchSourceType {
         int OTHER = -1;
         int MEDIA_LAUNCHER_ACTIVITY = 3;
-    }
-
-    // These values are persisted to logs. Entries should not be renumbered and numeric values
-    // should never be reused.
-    @IntDef({
-        ShareOptionLocation.TOOLBAR,
-        ShareOptionLocation.MENU,
-        ShareOptionLocation.TOOLBAR_FULL_MENU_FALLBACK,
-        ShareOptionLocation.NO_SPACE,
-        ShareOptionLocation.SHARE_DISABLED,
-        ShareOptionLocation.NUM_ENTRIES
-    })
-    private @interface ShareOptionLocation {
-        int TOOLBAR = 0;
-        int MENU = 1;
-        int TOOLBAR_FULL_MENU_FALLBACK = 2;
-        int NO_SPACE = 3;
-        int SHARE_DISABLED = 4;
-
-        // Must be the last one.
-        int NUM_ENTRIES = 5;
     }
 
     @IntDef({
@@ -193,29 +190,24 @@ public class CustomTabIntentDataProvider extends BrowserServicesIntentDataProvid
     static final String EXTRA_AUTO_TRANSLATE_LANGUAGE =
             "androidx.browser.customtabs.extra.AUTO_TRANSLATE_LANGUAGE";
 
-    /**
-     * Parameter that, if true, indicates that the {@link EXTRA_AUTO_TRANSLATE_LANGUAGE} should be
-     * automatically allowed from any first party package name.
-     */
-    public static final BooleanCachedFieldTrialParameter AUTO_TRANSLATE_ALLOW_ALL_FIRST_PARTIES =
-            ChromeFeatureList.newBooleanCachedFieldTrialParameter(
-                    ChromeFeatureList.CCT_AUTO_TRANSLATE, "allow_all_first_parties", false);
+    public static final String EXTRA_OPEN_IN_BROWSER_STATE =
+            "androidx.browser.customtabs.extra.OPEN_IN_BROWSER_STATE";
 
-    /**
-     * Parameter that lists a pipe ("|") separated list of package names from which the {@link
-     * EXTRA_AUTO_TRANSLATE_LANGUAGE} should be allowed. This defaults to a single list item
-     * consisting of the package name of the Android Google Search App.
-     */
-    public static final StringCachedFieldTrialParameter AUTO_TRANSLATE_PACKAGE_NAME_ALLOWLIST =
-            ChromeFeatureList.newStringCachedFieldTrialParameter(
-                    ChromeFeatureList.CCT_AUTO_TRANSLATE,
-                    "package_names_allowlist",
-                    "com.google.android.googlequicksearchbox");
+    @VisibleForTesting
+    static final String EXTRA_OPEN_IN_BROWSER_BUTTON_ALLOWED =
+            "androidx.browser.customtabs.extra.OPEN_IN_BROWSER_BUTTON_ALLOWED";
 
-    /** Pipe ("|") separated list of package names allowed to use the interactive Omnibox. */
-    public static final StringCachedFieldTrialParameter OMNIBOX_ALLOWED_PACKAGE_NAMES =
-            ChromeFeatureList.newStringCachedFieldTrialParameter(
-                    ChromeFeatureList.SEARCH_IN_CCT, "omnibox_allowed_package_names", null);
+    @IntDef({
+        CustomTabsButtonState.BUTTON_STATE_OFF,
+        CustomTabsButtonState.BUTTON_STATE_ON,
+        CustomTabsButtonState.BUTTON_STATE_DEFAULT
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface CustomTabsButtonState {
+        int BUTTON_STATE_OFF = CustomTabsIntent.SHARE_STATE_OFF;
+        int BUTTON_STATE_ON = CustomTabsIntent.SHARE_STATE_ON;
+        int BUTTON_STATE_DEFAULT = CustomTabsIntent.SHARE_STATE_DEFAULT;
+    }
 
     private static final String EXTRA_TWA_DISCLOSURE_UI =
             "androidx.browser.trusted.extra.DISCLOSURE_VERSION";
@@ -253,6 +245,17 @@ public class CustomTabIntentDataProvider extends BrowserServicesIntentDataProvid
             "androidx.browser.customtabs.extra.INITIAL_ACTIVITY_HEIGHT_IN_PIXEL";
 
     /**
+     * Extra that, if set, corresponds to the timestamp (in SystemClock.uptimeMillis()) when the TWA
+     * launcher Activity was created. Used to measure the full startup duration.
+     */
+    public static final String EXTRA_TWA_STARTUP_UPTIME_MS =
+            "org.chromium.chrome.browser.customtabs.trusted.STARTUP_UPTIME_MILLIS";
+
+    /** Extra that, if set, corresponds to the integer version of android_browser_helper. */
+    public static final String EXTRA_ANDROID_BROWSER_HELPER_VERSION =
+            "org.chromium.chrome.browser.ANDROID_BROWSER_HELPER_VERSION";
+
+    /**
      * Extra that, if set, allows you to interact with the background app when a PCCT is launched.
      * Note: Deprecated. Use {@link CustomTabsIntent#isBackgroundInteractionEnabled(Intent)}.
      */
@@ -268,36 +271,13 @@ public class CustomTabIntentDataProvider extends BrowserServicesIntentDataProvid
     public static final String EXTRA_TOOLBAR_CORNER_RADIUS_IN_PIXEL_LEGACY =
             "androidx.browser.customtabs.extra.TOOLBAR_CORNER_RADIUS_IN_PIXEL";
 
-    private static final String DEFAULT_POLICY_PARAM_NAME = "default_policy";
     private static final String DEFAULT_POLICY_USE_DENYLIST = "use-denylist";
     private static final String DEFAULT_POLICY_USE_ALLOWLIST = "use-allowlist";
-    private static final String ALLOWLIST_ENTRIES_PARAM_NAME = "allowlist_entries";
-    private static final String DENYLIST_ENTRIES_PARAM_NAME = "denylist_entries";
-
-    public static final StringCachedFieldTrialParameter THIRD_PARTIES_DEFAULT_POLICY =
-            ChromeFeatureList.newStringCachedFieldTrialParameter(
-                    ChromeFeatureList.CCT_RESIZABLE_FOR_THIRD_PARTIES,
-                    DEFAULT_POLICY_PARAM_NAME,
-                    DEFAULT_POLICY_USE_DENYLIST);
-    public static final StringCachedFieldTrialParameter DENYLIST_ENTRIES =
-            ChromeFeatureList.newStringCachedFieldTrialParameter(
-                    ChromeFeatureList.CCT_RESIZABLE_FOR_THIRD_PARTIES,
-                    DENYLIST_ENTRIES_PARAM_NAME,
-                    "");
-    public static final StringCachedFieldTrialParameter ALLOWLIST_ENTRIES =
-            ChromeFeatureList.newStringCachedFieldTrialParameter(
-                    ChromeFeatureList.CCT_RESIZABLE_FOR_THIRD_PARTIES,
-                    ALLOWLIST_ENTRIES_PARAM_NAME,
-                    "");
-
-    // TODO(b/306597895): Remove the String when Page Insights Hub (Chrome Side Implementation)
-    // experiment is completed
-    public static final String EXTRA_PAGE_INSIGHTS_OVERFLOW_ITEM_TITLE =
-            "org.chromium.chrome.browser.customtabs.extra.PAGE_INSIGHTS_OVERFLOW_ITEM_TITLE";
 
     /**
      * Extra that specifies the {@link PendingIntent} to be sent when the user swipes up from the
      * secondary (bottom) toolbar.
+     *
      * <p>Use {@link CustomTabsIntent.Builder#setSecondaryToolbarSwipeUpGesture(PendingIntent)} or
      * {@link CustomTabsIntent#EXTRA_SECONDARY_TOOLBAR_SWIPE_UP_GESTURE} as this is deprecated.
      */
@@ -306,17 +286,30 @@ public class CustomTabIntentDataProvider extends BrowserServicesIntentDataProvid
             "androidx.browser.customtabs.extra.SECONDARY_TOOLBAR_SWIPE_UP_ACTION";
 
     /**
-     * Allow user gestures on content area to be used not only for scrolling contents
-     * but also for resizing CCT. Used for Partial Custom Tab Bottom Sheet only.
+     * Allow user gestures on content area to be used not only for scrolling contents but also for
+     * resizing CCT. Used for Partial Custom Tab Bottom Sheet only.
      */
     public static final String EXTRA_ACTIVITY_SCROLL_CONTENT_RESIZE =
             "androidx.browser.customtabs.extra.ACTIVITY_SCROLL_CONTENT_RESIZE";
 
+    @IntDef({
+        OpenInBrowserButtonState.OPEN_IN_BROWSER_STATE_OFF,
+        OpenInBrowserButtonState.OPEN_IN_BROWSER_STATE_ON,
+        OpenInBrowserButtonState.OPEN_IN_BROWSER_STATE_DEFAULT
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    @ExperimentalOpenInBrowser
+    public @interface OpenInBrowserButtonState {
+        int OPEN_IN_BROWSER_STATE_OFF = CustomTabsIntent.OPEN_IN_BROWSER_STATE_OFF;
+        int OPEN_IN_BROWSER_STATE_ON = CustomTabsIntent.OPEN_IN_BROWSER_STATE_ON;
+        int OPEN_IN_BROWSER_STATE_DEFAULT = CustomTabsIntent.OPEN_IN_BROWSER_STATE_DEFAULT;
+    }
+
     private final Intent mIntent;
-    private final CustomTabsSessionToken mSession;
+    private final SessionHolder<CustomTabsSessionToken> mSession;
     private final boolean mIsTrustedIntent;
     private final Intent mKeepAliveServiceIntent;
-    private Bundle mAnimationBundle;
+    private final Bundle mAnimationBundle;
 
     private final int mUiType;
     private final int mTitleVisibilityState;
@@ -327,25 +320,30 @@ public class CustomTabIntentDataProvider extends BrowserServicesIntentDataProvid
     private final boolean mDisableDownload;
     private final @ActivityType int mActivityType;
     @Nullable private final List<String> mTrustedWebActivityAdditionalOrigins;
+    @Nullable private Set<Origin> mAllTrustedWebActivityOrigins;
     @Nullable private final TrustedWebActivityDisplayMode mTrustedWebActivityDisplayMode;
     @Nullable private String mUrlToLoad;
 
-    private boolean mEnableUrlBarHiding;
+    private final boolean mEnableUrlBarHiding;
     private boolean mInteractWithBackground;
     private List<CustomButtonParams> mCustomButtonParams;
     private Drawable mCloseButtonIcon;
-    private List<Pair<String, PendingIntent>> mMenuEntries = new ArrayList<>();
+    private final boolean mIsCloseButtonEnabled;
+    private final List<Pair<String, PendingIntent>> mMenuEntries = new ArrayList<>();
     private boolean mShowShareItemInMenu;
-    private List<CustomButtonParams> mToolbarButtons = new ArrayList<>(1);
-    private List<CustomButtonParams> mBottombarButtons = new ArrayList<>(2);
-    private List<CustomButtonParams> mGoogleBottomBarButtons = new ArrayList<>();
-    private RemoteViews mRemoteViews;
-    @ActivitySideSheetDecorationType private int mSideSheetDecorationType;
-    @ActivitySideSheetRoundedCornersPosition private int mSideSheetRoundedCornersPosition;
-    private int[] mClickableViewIds;
-    private PendingIntent mRemoteViewsPendingIntent;
-    private PendingIntent mSecondaryToolbarSwipeUpPendingIntent;
+    private final List<CustomButtonParams> mToolbarButtons = new ArrayList<>(1);
+    private final List<CustomButtonParams> mBottombarButtons = new ArrayList<>(2);
+    private final List<CustomButtonParams> mGoogleBottomBarButtons = new ArrayList<>();
+    private final RemoteViews mRemoteViews;
+    @ActivitySideSheetDecorationType private final int mSideSheetDecorationType;
+    @ActivitySideSheetRoundedCornersPosition private final int mSideSheetRoundedCornersPosition;
+    private final int[] mClickableViewIds;
+    private final PendingIntent mRemoteViewsPendingIntent;
+    private final PendingIntent mSecondaryToolbarSwipeUpPendingIntent;
     private PendingIntent.OnFinished mOnFinishedForTesting;
+    private @DisplayMode.EnumType int mResolvedDisplayMode = DisplayMode.UNDEFINED;
+    private final @OpenInBrowserState int mOpenInBrowserState;
+    private final int mShareState;
 
     /** Whether this CustomTabActivity was explicitly started by another Chrome Activity. */
     private final boolean mIsOpenedByChrome;
@@ -370,29 +368,33 @@ public class CustomTabIntentDataProvider extends BrowserServicesIntentDataProvid
     private final boolean mIsPartialCustomTabFixedHeight;
     private final boolean mContentScrollMayResizeTab;
 
+    /**
+     * {@link Network} to be bound when launching a custom tab or tabs that have been pre-created.
+     */
+    @Nullable private final Network mNetwork;
+
     /** Add extras to customize menu items for opening Reader Mode UI custom tab from Chrome. */
-    public static void addReaderModeUIExtras(Intent intent) {
+    public static void addReaderModeUiExtras(Intent intent) {
         intent.putExtra(EXTRA_UI_TYPE, CustomTabsUiType.READER_MODE);
         IntentUtils.addTrustedIntentExtras(intent);
     }
 
     /**
-     * Evaluates whether the passed Intent and/or CustomTabsSessionToken are
-     * from a trusted source. Trusted in this case means from the app itself or
-     * via a first-party application.
+     * Evaluates whether the passed Intent and/or CustomTabsSessionToken are from a trusted source.
+     * Trusted in this case means from the app itself or via a first-party application.
      *
      * @param intent The Intent used to start the custom tabs activity, or null.
      * @param session The connected session for the custom tabs activity, or null.
      * @return True if the intent or session are trusted.
      */
-    public static boolean isTrustedCustomTab(Intent intent, CustomTabsSessionToken session) {
+    public static boolean isTrustedCustomTab(Intent intent, SessionHolder<?> session) {
         if (IntentHandler.wasIntentSenderChrome(intent)) return true;
         String packageName = getClientPackageNameFromSessionOrCallingActivity(intent, session);
         return CustomTabsConnection.getInstance().isFirstParty(packageName);
     }
 
     static @Nullable String getClientPackageNameFromSessionOrCallingActivity(
-            Intent intent, CustomTabsSessionToken session) {
+            Intent intent, SessionHolder<?> session) {
         String packageNameFromSession =
                 CustomTabsConnection.getInstance().getClientPackageNameForSession(session);
         if (!TextUtils.isEmpty(packageNameFromSession)) return packageNameFromSession;
@@ -406,7 +408,7 @@ public class CustomTabIntentDataProvider extends BrowserServicesIntentDataProvid
     }
 
     public static void configureIntentForResizableCustomTab(Context context, Intent intent) {
-        CustomTabsSessionToken session = CustomTabsSessionToken.getSessionTokenFromIntent(intent);
+        SessionHolder<?> session = SessionHolder.getSessionHolderFromIntent(intent);
         boolean isTrustedCustomTab = isTrustedCustomTab(intent, session);
         String packageName = getClientPackageNameFromSessionOrCallingActivity(intent, session);
         @Px
@@ -485,6 +487,11 @@ public class CustomTabIntentDataProvider extends BrowserServicesIntentDataProvid
                 : roundedCornersPosition;
     }
 
+    private static boolean getIsCloseButtonEnabled(Intent intent, int uiType) {
+        return IntentUtils.safeGetBooleanExtra(intent, EXTRA_CLOSE_BUTTON_ENABLED, true)
+                && uiType != CustomTabsUiType.POPUP;
+    }
+
     /**
      * Extracts the name that identifies the embedding app from the referrer.
      *
@@ -523,7 +530,8 @@ public class CustomTabIntentDataProvider extends BrowserServicesIntentDataProvid
         if (intent == null) assert false;
         mIntent = intent;
 
-        mSession = CustomTabsSessionToken.getSessionTokenFromIntent(intent);
+        CustomTabsSessionToken token = CustomTabsSessionToken.getSessionTokenFromIntent(intent);
+        mSession = token != null ? new SessionHolder<>(token) : null;
         mIsTrustedIntent = isTrustedCustomTab(intent, mSession);
 
         mAnimationBundle =
@@ -532,11 +540,13 @@ public class CustomTabIntentDataProvider extends BrowserServicesIntentDataProvid
 
         mKeepAliveServiceIntent = IntentUtils.safeGetParcelableExtra(intent, EXTRA_KEEP_ALIVE);
 
+        mNetwork = IntentUtils.safeGetParcelableExtra(intent, EXTRA_NETWORK);
+
         mIsOpenedByChrome = IntentHandler.wasIntentSenderChrome(intent);
 
         final int requestedUiType =
                 IntentUtils.safeGetIntExtra(intent, EXTRA_UI_TYPE, CustomTabsUiType.DEFAULT);
-        mUiType = verifiedUiType(requestedUiType);
+        mUiType = getCustomTabsUiType(requestedUiType);
 
         mColorProvider = new CustomTabColorProviderImpl(intent, context, colorScheme);
 
@@ -549,23 +559,48 @@ public class CustomTabIntentDataProvider extends BrowserServicesIntentDataProvid
                 IntentUtils.safeGetBooleanExtra(
                         intent, EXTRA_ACTIVITY_SCROLL_CONTENT_RESIZE, false);
 
-        Bitmap bitmap =
-                IntentUtils.safeGetParcelableExtra(
-                        intent, CustomTabsIntent.EXTRA_CLOSE_BUTTON_ICON);
-        if (bitmap != null && !checkCloseButtonSize(context, bitmap)) {
-            IntentUtils.safeRemoveExtra(intent, CustomTabsIntent.EXTRA_CLOSE_BUTTON_ICON);
-            bitmap.recycle();
-            bitmap = null;
+        mIsCloseButtonEnabled = getIsCloseButtonEnabled(intent, mUiType);
+        if (mIsCloseButtonEnabled) {
+            // TODO(crbug.com/393437143): Potentially reuse the close button code from Auth Tab.
+            Bitmap bitmap =
+                    IntentUtils.safeGetParcelableExtra(
+                            intent, CustomTabsIntent.EXTRA_CLOSE_BUTTON_ICON);
+            if (bitmap != null && !checkCloseButtonSize(context, bitmap)) {
+                IntentUtils.safeRemoveExtra(intent, CustomTabsIntent.EXTRA_CLOSE_BUTTON_ICON);
+                bitmap.recycle();
+                bitmap = null;
+            }
+            if (bitmap == null) {
+                mCloseButtonIcon =
+                        TintedDrawable.constructTintedDrawable(context, R.drawable.btn_close);
+            } else {
+                mCloseButtonIcon = new TintedDrawable(context, bitmap);
+            }
         }
-        if (bitmap == null) {
-            mCloseButtonIcon =
-                    TintedDrawable.constructTintedDrawable(context, R.drawable.btn_close);
+
+        mOpenInBrowserState =
+                IntentUtils.safeGetIntExtra(
+                        intent,
+                        EXTRA_OPEN_IN_BROWSER_STATE,
+                        OpenInBrowserButtonState.OPEN_IN_BROWSER_STATE_DEFAULT);
+        if (mUiType == CustomTabsUiType.POPUP) {
+            mShareState = CustomTabsIntent.SHARE_STATE_OFF;
         } else {
-            mCloseButtonIcon = new TintedDrawable(context, bitmap);
+            boolean usingInteractiveOmnibox =
+                    CustomTabsConnection.getInstance().shouldEnableOmniboxForIntent(this);
+            int defState =
+                    usingInteractiveOmnibox
+                            ? CustomTabsIntent.SHARE_STATE_OFF
+                            : CustomTabsIntent.SHARE_STATE_DEFAULT;
+            mShareState =
+                    IntentUtils.safeGetIntExtra(
+                            intent, CustomTabsIntent.EXTRA_SHARE_STATE, defState);
         }
 
         List<Bundle> menuItems =
                 IntentUtils.getParcelableArrayListExtra(intent, CustomTabsIntent.EXTRA_MENU_ITEMS);
+
+        addOpenInBrowserOption(intent, context);
         updateExtraMenuItems(menuItems);
         // Disable CCT share options for automotive. See b/300292495.
         if (ShareUtils.enableShareForAutomotive(true)) {
@@ -579,16 +614,28 @@ public class CustomTabIntentDataProvider extends BrowserServicesIntentDataProvid
                                 TrustedWebUtils.EXTRA_LAUNCH_AS_TRUSTED_WEB_ACTIVITY,
                                 false);
 
-        mActivityType = isTwa ? ActivityType.TRUSTED_WEB_ACTIVITY : ActivityType.CUSTOM_TAB;
+        mActivityType =
+                isTwa
+                        ? ActivityType.TRUSTED_WEB_ACTIVITY
+                        : isAuthTab() ? ActivityType.AUTH_TAB : ActivityType.CUSTOM_TAB;
         mTrustedWebActivityAdditionalOrigins =
                 IntentUtils.safeGetStringArrayListExtra(
                         intent, TrustedWebActivityIntentBuilder.EXTRA_ADDITIONAL_TRUSTED_ORIGINS);
+
+        // Do not fill in `mAllTrustedWebActivityOrigins` yet, because we cannot `getUrlToLoad()`
+        // until native is loaded.
+
         mTrustedWebActivityDisplayMode = resolveTwaDisplayMode();
-        mTitleVisibilityState =
+
+        int intentVisibilityState =
                 IntentUtils.safeGetIntExtra(
                         intent,
                         CustomTabsIntent.EXTRA_TITLE_VISIBILITY_STATE,
                         CustomTabsIntent.NO_TITLE);
+        mTitleVisibilityState =
+                BrowserServicesIntentDataProvider.customTabIntentTitleBarVisibility(
+                        intentVisibilityState, isTwa);
+
         mRemoteViews =
                 IntentUtils.safeGetParcelableExtra(intent, CustomTabsIntent.EXTRA_REMOTEVIEWS);
         mClickableViewIds =
@@ -668,11 +715,12 @@ public class CustomTabIntentDataProvider extends BrowserServicesIntentDataProvid
                 context.getResources()
                         .getDimensionPixelSize(R.dimen.custom_tabs_default_corner_radius);
         int radiusPx =
-                IntentUtils.safeGetIntExtra(intent, EXTRA_TOOLBAR_CORNER_RADIUS_IN_PIXEL_LEGACY, 0);
-        if (radiusPx > 0) return radiusPx;
+                IntentUtils.safeGetIntExtra(
+                        intent, EXTRA_TOOLBAR_CORNER_RADIUS_IN_PIXEL_LEGACY, -1);
+        if (radiusPx >= 0) return radiusPx;
 
-        int radiusDp = IntentUtils.safeGetIntExtra(intent, EXTRA_TOOLBAR_CORNER_RADIUS_DP, 0);
-        if (radiusDp > 0) {
+        int radiusDp = IntentUtils.safeGetIntExtra(intent, EXTRA_TOOLBAR_CORNER_RADIUS_DP, -1);
+        if (radiusDp >= 0) {
             return Math.round(radiusDp * context.getResources().getDisplayMetrics().density);
         }
 
@@ -702,35 +750,24 @@ public class CustomTabIntentDataProvider extends BrowserServicesIntentDataProvid
 
     private void updateExtraMenuItems(List<Bundle> menuItems) {
         if (menuItems == null) return;
-        boolean isPageInsightsHubEnabled = isPageInsightsHubEnabled();
-        String pihOverflowMenuItemTitle =
-                IntentUtils.safeGetStringExtra(mIntent, EXTRA_PAGE_INSIGHTS_OVERFLOW_ITEM_TITLE);
         for (int i = 0; i < Math.min(MAX_CUSTOM_MENU_ITEMS, menuItems.size()); i++) {
             Bundle bundle = menuItems.get(i);
             String title = IntentUtils.safeGetString(bundle, CustomTabsIntent.KEY_MENU_ITEM_TITLE);
             PendingIntent pendingIntent =
                     IntentUtils.safeGetParcelable(bundle, CustomTabsIntent.KEY_PENDING_INTENT);
-            if (TextUtils.isEmpty(title)
-                    || pendingIntent == null
-                    // Discard Page Insights overflow menu item provided by embedder if the Chrome
-                    // implementation is enabled
-                    || (isPageInsightsHubEnabled && title.equals(pihOverflowMenuItemTitle))) {
+            if (TextUtils.isEmpty(title) || pendingIntent == null) {
                 continue;
             }
-            mMenuEntries.add(new Pair<String, PendingIntent>(title, pendingIntent));
+            mMenuEntries.add(new Pair<>(title, pendingIntent));
         }
-    }
-
-    private boolean isPageInsightsHubEnabled() {
-        return (PageInsightsCoordinator.isFeatureEnabled()
-                && CustomTabsConnection.getInstance().shouldEnablePageInsightsForIntent(this));
     }
 
     /**
      * Triggers the client-defined action when the user clicks a custom menu item.
+     *
      * @param activity The {@link Activity} to use for sending the {@link PendingIntent}.
-     * @param menuIndex The index that the menu item is shown in the result of
-     *                  {@link #getMenuTitles()}.
+     * @param menuIndex The index that the menu item is shown in the result of {@link
+     *     #getMenuTitles()}.
      * @param url The URL to attach as additional data to the {@link PendingIntent}.
      * @param title The title to attach as additional data to the {@link PendingIntent}.
      */
@@ -745,7 +782,7 @@ public class CustomTabIntentDataProvider extends BrowserServicesIntentDataProvid
             String menuTitle = mMenuEntries.get(menuIndex).first;
             PendingIntent pendingIntent = mMenuEntries.get(menuIndex).second;
             ActivityOptions options = ActivityOptions.makeBasic();
-            ApiCompatibilityUtils.setActivityOptionsBackgroundActivityStartMode(options);
+            ApiCompatibilityUtils.setActivityOptionsBackgroundActivityStartAllowAlways(options);
             pendingIntent.send(
                     activity,
                     0,
@@ -771,11 +808,19 @@ public class CustomTabIntentDataProvider extends BrowserServicesIntentDataProvid
     }
 
     /**
-     * Get the verified UI type, according to the intent extras, and whether the intent is trusted.
+     * Get the verified custom tabs UI type, according to the intent extras, and whether
+     * the intent is trusted.
+     *
+     * If the intent extras include a valid EXTRA_NETWORK, consider that the custom tab is
+     * used for captive portal scenarios especially and the UI hides the "Open in Chrome browser"
+     * menu item accordingly.
+     *
      * @param requestedUiType requested UI type in the intent, unqualified
      * @return verified UI type
      */
-    private int verifiedUiType(int requestedUiType) {
+    @BrowserServicesIntentDataProvider.CustomTabsUiType
+    private int getCustomTabsUiType(int requestedUiType) {
+        if (mNetwork != null) return CustomTabsUiType.NETWORK_BOUND_TAB;
         if (!isTrustedIntent()) {
             if (VersionInfo.isLocalBuild()) Log.w(TAG, FIRST_PARTY_PITFALL_MSG);
             return CustomTabsUiType.DEFAULT;
@@ -785,43 +830,82 @@ public class CustomTabIntentDataProvider extends BrowserServicesIntentDataProvid
     }
 
     /**
-     * Gets custom buttons from the intent and updates {@link #mCustomButtonParams},
-     * {@link #mBottombarButtons} and {@link #mToolbarButtons}.
+     * Gets custom buttons from the intent and updates {@link #mCustomButtonParams}, {@link
+     * #mBottombarButtons} and {@link #mToolbarButtons}.
      */
     private void retrieveCustomButtons(Intent intent, Context context) {
         assert mCustomButtonParams == null;
         mCustomButtonParams = CustomButtonParamsImpl.fromIntent(context, intent);
-        boolean isGoogleBottomBarEnabled = isGoogleBottomBarEnabled(this);
+        Set<Integer> googleBottomBarSupportedCustomButtonParamIds =
+                getGoogleBottomBarSupportedCustomButtonParamIds();
         for (CustomButtonParams params : mCustomButtonParams) {
-            if (isGoogleBottomBarEnabled
-                    && GoogleBottomBarCoordinator.isSupported(params.getId())) {
+            if (googleBottomBarSupportedCustomButtonParamIds.contains(params.getId())) {
                 mGoogleBottomBarButtons.add(params);
                 params.updateShowOnToolbar(false);
             } else if (!params.showOnToolbar()) {
                 mBottombarButtons.add(params);
-            } else if (mToolbarButtons.size() < getMaxCustomToolbarItems()) {
+            } else if (canAddMoreToolbarItems()) {
                 mToolbarButtons.add(params);
             } else {
                 Log.w(TAG, "Only %d items are allowed in the toolbar", getMaxCustomToolbarItems());
             }
         }
 
-        if (isGoogleBottomBarEnabled) {
-            List<Bundle> googleBottomBarButtonBundles =
-                    CustomTabsConnection.getInstance().getGoogleBottomBarButtons(this);
-            List<CustomButtonParams> googleBottomBarButtons =
-                    CustomButtonParamsImpl.fromBundleList(
-                            context, googleBottomBarButtonBundles, /* tinted= */ false);
-            for (CustomButtonParams params : googleBottomBarButtons) {
-                if (GoogleBottomBarCoordinator.isSupported(params.getId())) {
-                    params.updateShowOnToolbar(false);
-                    mCustomButtonParams.add(params);
-                    mGoogleBottomBarButtons.add(params);
-                } else {
-                    Log.w(TAG, "Unused GoogleBottomBarButton id: %s", params.getId());
-                }
+        for (CustomButtonParams params :
+                getAdditionalSupportedGoogleBottomBarCustomButtonParams(context)) {
+            params.updateShowOnToolbar(false);
+            mCustomButtonParams.add(params);
+            mGoogleBottomBarButtons.add(params);
+        }
+    }
+
+    private boolean canAddMoreToolbarItems() {
+        return mToolbarButtons.size() < getMaxCustomToolbarItems();
+    }
+
+    /**
+     * Determines which buttons should be displayed in the Google Bottom Bar.
+     *
+     * @return A set of integers representing the customButtonParamIds of the buttons that should be
+     *     displayed in the Google Bottom Bar. If the Google Bottom Bar is not enabled, an empty set
+     *     is returned.
+     */
+    private Set<Integer> getGoogleBottomBarSupportedCustomButtonParamIds() {
+        if (!isGoogleBottomBarEnabled(this)) {
+            return Set.of();
+        }
+        GoogleBottomBarIntentParams intentParams =
+                CustomTabsConnection.getInstance().getGoogleBottomBarIntentParams(this);
+        return GoogleBottomBarCoordinator.getSupportedCustomButtonParamIds(intentParams);
+    }
+
+    /**
+     * Retrieves a list of additional CustomButtonParams that are only supported for the Google
+     * Bottom Bar and should never be shown on the CCT toolbar.
+     *
+     * @param context Current context.
+     * @return A list of {@link CustomButtonParams}. If the Google Bottom Bar is not enabled, or no
+     *     supported buttons are found, an empty list is returned.
+     */
+    private List<CustomButtonParams> getAdditionalSupportedGoogleBottomBarCustomButtonParams(
+            Context context) {
+        List<CustomButtonParams> supportedGoogleBottomBarCustomButtonParams = new ArrayList<>();
+        if (!isGoogleBottomBarEnabled(this)) {
+            return supportedGoogleBottomBarCustomButtonParams;
+        }
+        List<Bundle> googleBottomBarButtonBundles =
+                CustomTabsConnection.getInstance().getGoogleBottomBarButtons(this);
+        List<CustomButtonParams> googleBottomBarButtons =
+                CustomButtonParamsImpl.fromBundleList(
+                        context, googleBottomBarButtonBundles, /* tinted= */ false);
+        for (CustomButtonParams params : googleBottomBarButtons) {
+            if (GoogleBottomBarCoordinator.isSupported(params.getId())) {
+                supportedGoogleBottomBarCustomButtonParams.add(params);
+            } else {
+                Log.w(TAG, "Unused GoogleBottomBarButton id: %s", params.getId());
             }
         }
+        return supportedGoogleBottomBarCustomButtonParams;
     }
 
     private static boolean isGoogleBottomBarEnabled(BrowserServicesIntentDataProvider provider) {
@@ -841,40 +925,31 @@ public class CustomTabIntentDataProvider extends BrowserServicesIntentDataProvid
      * <p>Shows share options according to the following rules:
      *
      * <ul>
-     *   <li>If {@link CustomTabsIntent#SHARE_STATE_ON} or
-     *   {@link CustomTabsIntent#SHARE_STATE_DEFAULT}, add to the top toolbar if empty, otherwise
-     *   add to the overflow menu if it is not customized.
+     *   <li>If {@link CustomTabsIntent#SHARE_STATE_ON} or {@link
+     *       CustomTabsIntent#SHARE_STATE_DEFAULT}, add to the top toolbar if empty, otherwise add
+     *       to the overflow menu if it is not customized.
      *   <li>If {@link CustomTabsIntent#SHARE_STATE_OFF}, add to the overflow menu depending on
-     *   {@link CustomTabsIntent#EXTRA_DEFAULT_SHARE_MENU_ITEM}.
+     *       {@link CustomTabsIntent#EXTRA_DEFAULT_SHARE_MENU_ITEM}.
      * </ul>
      */
     private void addShareOption(Intent intent, Context context) {
-        int shareState =
-                IntentUtils.safeGetIntExtra(
-                        intent,
-                        CustomTabsIntent.EXTRA_SHARE_STATE,
-                        CustomTabsIntent.SHARE_STATE_DEFAULT);
-        if (shareState == CustomTabsIntent.SHARE_STATE_DEFAULT) {
-            if (mToolbarButtons.isEmpty()) {
+        if (mShareState == CustomTabsIntent.SHARE_STATE_DEFAULT) {
+            if (mToolbarButtons.isEmpty()
+                    || (isCpaOnlyOpenInBrowserDefault() && canAddMoreToolbarItems())) {
                 mToolbarButtons.add(
                         CustomButtonParamsImpl.createShareButton(
                                 context, getColorProvider().getToolbarColor()));
-                logShareOptionLocation(ShareOptionLocation.TOOLBAR);
             } else if (mMenuEntries.isEmpty()) {
                 mShowShareItemInMenu = true;
-                logShareOptionLocation(ShareOptionLocation.TOOLBAR_FULL_MENU_FALLBACK);
-            } else {
-                logShareOptionLocation(ShareOptionLocation.NO_SPACE);
             }
-        } else if (shareState == CustomTabsIntent.SHARE_STATE_ON) {
-            if (mToolbarButtons.isEmpty()) {
+        } else if (mShareState == CustomTabsIntent.SHARE_STATE_ON) {
+            if (mToolbarButtons.isEmpty()
+                    || (isCpaOnlyOpenInBrowserDefault() && canAddMoreToolbarItems())) {
                 mToolbarButtons.add(
                         CustomButtonParamsImpl.createShareButton(
                                 context, getColorProvider().getToolbarColor()));
-                logShareOptionLocation(ShareOptionLocation.TOOLBAR);
             } else {
                 mShowShareItemInMenu = true;
-                logShareOptionLocation(ShareOptionLocation.MENU);
             }
         } else {
             mShowShareItemInMenu =
@@ -882,19 +957,44 @@ public class CustomTabIntentDataProvider extends BrowserServicesIntentDataProvid
                             intent,
                             CustomTabsIntent.EXTRA_DEFAULT_SHARE_MENU_ITEM,
                             mIsOpenedByChrome && mUiType == CustomTabsUiType.DEFAULT);
-            if (mShowShareItemInMenu) {
-                logShareOptionLocation(ShareOptionLocation.MENU);
-            } else {
-                logShareOptionLocation(ShareOptionLocation.SHARE_DISABLED);
-            }
         }
     }
 
-    private static void logShareOptionLocation(@ShareOptionLocation int shareOptionLocation) {
-        RecordHistogram.recordEnumeratedHistogram(
-                "CustomTabs.ShareOptionLocation",
-                shareOptionLocation,
-                ShareOptionLocation.NUM_ENTRIES);
+    private void addOpenInBrowserOption(Intent intent, Context context) {
+        boolean usingInteractiveOmnibox =
+                CustomTabsConnection.getInstance().shouldEnableOmniboxForIntent(this);
+
+        int openInBrowserState =
+                IntentUtils.safeGetIntExtra(
+                        intent,
+                        EXTRA_OPEN_IN_BROWSER_STATE,
+                        CustomTabsButtonState.BUTTON_STATE_DEFAULT);
+
+        if (openInBrowserState == CustomTabsButtonState.BUTTON_STATE_ON
+                && !ChromeFeatureList.sCctOpenInBrowserButtonIfEnabledByEmbedder.isEnabled()) {
+            openInBrowserState = CustomTabsButtonState.BUTTON_STATE_DEFAULT;
+        }
+
+        if (openInBrowserState == CustomTabsButtonState.BUTTON_STATE_DEFAULT) {
+            if (usingInteractiveOmnibox) {
+                openInBrowserState = CustomTabsButtonState.BUTTON_STATE_ON;
+            } else if (ChromeFeatureList.sCctOpenInBrowserButtonIfAllowedByEmbedder.isEnabled()
+                    && IntentUtils.safeGetBooleanExtra(
+                            intent, EXTRA_OPEN_IN_BROWSER_BUTTON_ALLOWED, false)) {
+                openInBrowserState = CustomTabsButtonState.BUTTON_STATE_ON;
+            } else {
+                openInBrowserState = CustomTabsButtonState.BUTTON_STATE_OFF;
+            }
+        }
+
+        if (openInBrowserState == CustomTabsButtonState.BUTTON_STATE_ON) {
+            if (mToolbarButtons.isEmpty()
+                    || (isCpaOnlyOpenInBrowserDefault() && canAddMoreToolbarItems())) {
+                mToolbarButtons.add(
+                        CustomButtonParamsImpl.createOpenInBrowserButton(
+                                context, getColorProvider().getToolbarColor()));
+            }
+        }
     }
 
     private String resolveUrlToLoad(Intent intent) {
@@ -966,19 +1066,19 @@ public class CustomTabIntentDataProvider extends BrowserServicesIntentDataProvid
     /**
      * Logs the usage of intents of all CCT features to a large enum histogram in order to track
      * usage by apps.
+     *
      * @param intent The intent used to launch the CCT.
      * @param colorScheme The requested color scheme to use with the CCT.
      * @param isUsingDynamicFeatures Whether the intent specified Features to dynamically enable or
-     *                               disable.
+     *     disable.
      */
     private void logCustomTabFeatures(
             Intent intent, int colorScheme, boolean isUsingDynamicFeatures) {
-        if (!CustomTabsFeatureUsage.isEnabled()) return;
         CustomTabsFeatureUsage featureUsage = new CustomTabsFeatureUsage();
 
         // Ordering: Log all the features ordered by CustomTabsFeature enum, when they apply.
         if (mAnimationBundle != null) {
-            featureUsage.log(CustomTabsFeature.EXTRA_ACTION_BUTTON_BUNDLE);
+            featureUsage.log(CustomTabsFeature.EXTRA_EXIT_ANIMATION_BUNDLE);
         }
         if (IntentUtils.safeHasExtra(intent, CustomTabsIntent.EXTRA_TINT_ACTION_BUTTON)) {
             featureUsage.log(CustomTabsFeature.EXTRA_TINT_ACTION_BUTTON);
@@ -989,7 +1089,9 @@ public class CustomTabIntentDataProvider extends BrowserServicesIntentDataProvid
         if (mInteractWithBackground) {
             featureUsage.log(CustomTabsFeature.EXTRA_ENABLE_BACKGROUND_INTERACTION);
         }
-        if (mCloseButtonIcon != null) featureUsage.log(CustomTabsFeature.EXTRA_CLOSE_BUTTON_ICON);
+        if (IntentUtils.safeHasExtra(intent, CustomTabsIntent.EXTRA_CLOSE_BUTTON_ICON)) {
+            featureUsage.log(CustomTabsFeature.EXTRA_CLOSE_BUTTON_ICON);
+        }
         if (getCloseButtonPosition() != CLOSE_BUTTON_POSITION_DEFAULT) {
             featureUsage.log(CustomTabsFeature.EXTRA_CLOSE_BUTTON_POSITION);
         }
@@ -1067,7 +1169,7 @@ public class CustomTabIntentDataProvider extends BrowserServicesIntentDataProvid
         if (IntentUtils.safeHasExtra(intent, CustomTabsIntent.EXTRA_SHARE_STATE)) {
             featureUsage.log(CustomTabsFeature.EXTRA_SHARE_STATE);
         }
-        if (mTitleVisibilityState != CustomTabsIntent.NO_TITLE) {
+        if (IntentUtils.safeHasExtra(intent, EXTRA_TITLE_VISIBILITY_STATE)) {
             featureUsage.log(CustomTabsFeature.EXTRA_TITLE_VISIBILITY_STATE);
         }
         if (IntentUtils.safeHasExtra(intent, CustomTabsIntent.EXTRA_TOOLBAR_ITEMS)) {
@@ -1101,14 +1203,23 @@ public class CustomTabIntentDataProvider extends BrowserServicesIntentDataProvid
         if (IntentUtils.safeHasExtra(intent, EXTRA_ACTIVITY_SIDE_SHEET_POSITION)) {
             featureUsage.log(CustomTabsFeature.EXTRA_ACTIVITY_SIDE_SHEET_POSITION);
         }
-        if (CustomTabsConnection.getInstance().shouldEnablePageInsightsForIntent(this)) {
-            featureUsage.log(CustomTabsFeature.EXTRA_ENABLE_PAGE_INSIGHTS_HUB);
-        }
         if (CustomTabsConnection.getInstance().shouldEnableGoogleBottomBarForIntent(this)) {
             featureUsage.log(CustomTabsFeature.EXTRA_ENABLE_GOOGLE_BOTTOM_BAR);
         }
         if (CustomTabsConnection.getInstance().hasExtraGoogleBottomBarButtons(this)) {
             featureUsage.log(CustomTabsFeature.EXTRA_GOOGLE_BOTTOM_BAR_BUTTONS);
+        }
+        if (mNetwork != null) featureUsage.log(CustomTabsFeature.EXTRA_NETWORK);
+        if (IntentUtils.safeHasExtra(intent, EXTRA_OPEN_IN_BROWSER_STATE)) {
+            featureUsage.log(CustomTabsFeature.EXTRA_OPEN_IN_BROWSER_STATE);
+        }
+        if (IntentUtils.safeHasExtra(
+                intent, TrustedWebActivityIntentBuilder.EXTRA_LAUNCH_HANDLER_CLIENT_MODE)) {
+            featureUsage.log(CustomTabsFeature.EXTRA_LAUNCH_HANDLER);
+        }
+        if (IntentUtils.safeHasExtra(
+                intent, TrustedWebActivityIntentBuilder.EXTRA_FILE_HANDLING_DATA)) {
+            featureUsage.log(CustomTabsFeature.EXTRA_FILE_HANDLERS);
         }
     }
 
@@ -1128,7 +1239,7 @@ public class CustomTabIntentDataProvider extends BrowserServicesIntentDataProvid
     }
 
     @Override
-    public @Nullable CustomTabsSessionToken getSession() {
+    public @Nullable SessionHolder<CustomTabsSessionToken> getSession() {
         return mSession;
     }
 
@@ -1191,14 +1302,13 @@ public class CustomTabIntentDataProvider extends BrowserServicesIntentDataProvid
                 : 0;
     }
 
-    @Deprecated
     @Override
     public boolean isTrustedIntent() {
         return mIsTrustedIntent;
     }
 
     @Override
-    public @Nullable String getUrlToLoad() {
+    public String getUrlToLoad() {
         if (mUrlToLoad == null) {
             mUrlToLoad = resolveUrlToLoad(getIntent());
         }
@@ -1226,7 +1336,7 @@ public class CustomTabIntentDataProvider extends BrowserServicesIntentDataProvid
     }
 
     @Override
-    public int getTitleVisibilityState() {
+    public @TitleVisibility int getTitleVisibilityState() {
         return mTitleVisibilityState;
     }
 
@@ -1335,14 +1445,9 @@ public class CustomTabIntentDataProvider extends BrowserServicesIntentDataProvid
         return !mDisableDownload;
     }
 
-    @Override
-    public boolean isIncognito() {
-        return false;
-    }
-
     @Nullable
     @Override
-    public TrustedWebActivityDisplayMode getTwaDisplayMode() {
+    public TrustedWebActivityDisplayMode getProvidedTwaDisplayMode() {
         return mTrustedWebActivityDisplayMode;
     }
 
@@ -1350,6 +1455,29 @@ public class CustomTabIntentDataProvider extends BrowserServicesIntentDataProvid
     @Nullable
     public List<String> getTrustedWebActivityAdditionalOrigins() {
         return mTrustedWebActivityAdditionalOrigins;
+    }
+
+    @Override
+    @Nullable
+    public Set<Origin> getAllTrustedWebActivityOrigins() {
+        // Lazily compute this, since `getUrlToLoad()` requires native to be loaded.
+        if (mAllTrustedWebActivityOrigins != null) {
+            return mAllTrustedWebActivityOrigins;
+        }
+
+        mAllTrustedWebActivityOrigins = new HashSet<>();
+        Origin initialOrigin = Origin.create(getUrlToLoad());
+        if (initialOrigin != null) mAllTrustedWebActivityOrigins.add(initialOrigin);
+        if (mTrustedWebActivityAdditionalOrigins != null) {
+            for (String originAsString : mTrustedWebActivityAdditionalOrigins) {
+                Origin origin = Origin.create(originAsString);
+                if (origin == null) continue;
+
+                mAllTrustedWebActivityOrigins.add(origin);
+            }
+        }
+
+        return mAllTrustedWebActivityOrigins;
     }
 
     @Override
@@ -1371,10 +1499,16 @@ public class CustomTabIntentDataProvider extends BrowserServicesIntentDataProvid
     }
 
     private boolean isAllowedToAutoTranslate() {
-        if (!ChromeFeatureList.sCctAutoTranslate.isEnabled()) return false;
-        if (mIsTrustedIntent && AUTO_TRANSLATE_ALLOW_ALL_FIRST_PARTIES.getValue()) return true;
+        if (!ChromeFeatureList.sCctAutoTranslate.isEnabled()) {
+            return false;
+        }
+        if (mIsTrustedIntent
+                && ChromeFeatureList.sCctAutoTranslateAllowAllFirstParties.getValue()) {
+            return true;
+        }
         return isPackageNameInList(
-                getClientPackageName(), AUTO_TRANSLATE_PACKAGE_NAME_ALLOWLIST.getValue());
+                getClientPackageName(),
+                ChromeFeatureList.sCctAutoTranslatePackageNamesAllowlist.getValue());
     }
 
     @Override
@@ -1455,11 +1589,16 @@ public class CustomTabIntentDataProvider extends BrowserServicesIntentDataProvid
 
     static boolean isAllowedThirdParty(String packageName) {
         if (packageName == null) return false;
-        String defaultPolicy = THIRD_PARTIES_DEFAULT_POLICY.getValue();
+        String defaultPolicy =
+                ChromeFeatureList.sCctResizableForThirdPartiesDefaultPolicy.getValue();
         if (defaultPolicy.equals(DEFAULT_POLICY_USE_ALLOWLIST)) {
-            return isPackageNameInList(packageName, ALLOWLIST_ENTRIES.getValue());
+            return isPackageNameInList(
+                    packageName,
+                    ChromeFeatureList.sCctResizableForThirdPartiesAllowlistEntries.getValue());
         } else if (defaultPolicy.equals(DEFAULT_POLICY_USE_DENYLIST)) {
-            return !isPackageNameInList(packageName, DENYLIST_ENTRIES.getValue());
+            return !isPackageNameInList(
+                    packageName,
+                    ChromeFeatureList.sCctResizableForThirdPartiesDenylistEntries.getValue());
         }
         assert false : "We can't get here since the default policy is use denylist.";
         return false;
@@ -1467,6 +1606,7 @@ public class CustomTabIntentDataProvider extends BrowserServicesIntentDataProvid
 
     @Override
     public @CloseButtonPosition int getCloseButtonPosition() {
+        if (!mIsCloseButtonEnabled) return CLOSE_BUTTON_POSITION_DEFAULT;
         return IntentUtils.safeGetIntExtra(
                 mIntent, EXTRA_CLOSE_BUTTON_POSITION, CLOSE_BUTTON_POSITION_DEFAULT);
     }
@@ -1514,12 +1654,132 @@ public class CustomTabIntentDataProvider extends BrowserServicesIntentDataProvid
 
     @Override
     public boolean isInteractiveOmniboxAllowed() {
-        if (!ChromeFeatureList.sSearchInCCT.isEnabled()) return false;
-        if (isIncognito()) return false;
+        if (isOffTheRecord()) return false;
         if (isPartialCustomTab()) return false;
         if (BuildInfo.getInstance().isAutomotive) return false;
 
-        return isPackageNameInList(
-                getClientPackageName(), OMNIBOX_ALLOWED_PACKAGE_NAMES.getValue());
+        return true;
+    }
+
+    @Override
+    public boolean isInteractiveOmniboxEnabled() {
+        return ChromeFeatureList.sSearchInCCT.isEnabled()
+                && isPackageNameInList(
+                        getClientPackageName(),
+                        ChromeFeatureList.sSearchinCctOmniboxAllowedPackageNames.getValue());
+    }
+
+    @Override
+    public long getTargetNetwork() {
+        return mNetwork != null ? mNetwork.getNetworkHandle() : NetId.INVALID;
+    }
+
+    @Override
+    public boolean isCloseButtonEnabled() {
+        return mIsCloseButtonEnabled;
+    }
+
+    @Override
+    public @LaunchHandlerClientMode.ClientMode int getLaunchHandlerClientMode() {
+        @LaunchHandlerClientMode.ClientMode
+        int clientMode =
+                IntentUtils.safeGetIntExtra(
+                        mIntent,
+                        TrustedWebActivityIntentBuilder.EXTRA_LAUNCH_HANDLER_CLIENT_MODE,
+                        LaunchHandlerClientMode.AUTO);
+
+        if (Arrays.asList(NAVIGATE_EXISTING, FOCUS_EXISTING, NAVIGATE_NEW).contains(clientMode)) {
+            return clientMode;
+        } else {
+            return LaunchHandlerClientMode.AUTO;
+        }
+    }
+
+    @Override
+    public @Nullable FileHandlingData getFileHandlingData() {
+        Bundle bundle =
+                IntentUtils.safeGetBundleExtra(
+                        getIntent(), TrustedWebActivityIntentBuilder.EXTRA_FILE_HANDLING_DATA);
+        if (bundle == null) return null;
+        try {
+            return FileHandlingData.fromBundle(bundle);
+        } catch (Throwable e) {
+            // Catch unparcelling errors potentially thrown by AndroidX bundle parsing code
+            return null;
+        }
+    }
+
+    @Override
+    public int getResolvedDisplayMode() {
+        if (!isTrustedWebActivity()) {
+            return DisplayMode.UNDEFINED;
+        }
+
+        if (mResolvedDisplayMode != DisplayMode.UNDEFINED) {
+            return mResolvedDisplayMode;
+        }
+
+        mResolvedDisplayMode = resolveDisplayMode();
+        return mResolvedDisplayMode;
+    }
+
+    @ExperimentalOpenInBrowser
+    @Override
+    public @OpenInBrowserState int getOpenInBrowserButtonState() {
+        return mOpenInBrowserState;
+    }
+
+    @Override
+    public int getShareButtonState() {
+        return mShareState;
+    }
+
+    @Override
+    public boolean isOptionalButtonSupported() {
+        return ChromeFeatureList.sCctAdaptiveButton.isEnabled()
+                && !isTrustedWebActivity()
+                && mUiType == CustomTabsUiType.DEFAULT;
+    }
+
+    private @DisplayMode.EnumType int resolveDisplayMode() {
+        TrustedWebActivityDisplayMode displayMode = getProvidedTwaDisplayMode();
+        if (displayMode == null) {
+            return DisplayMode.STANDALONE;
+        }
+
+        if (displayMode instanceof TrustedWebActivityDisplayMode.ImmersiveMode) {
+            return DisplayMode.FULLSCREEN;
+        }
+
+        // `browser` display mode web apps are not installable by default, because by the spec they
+        // should be opened in a new tab or browser window, but in Chrome they can be forcefully
+        // installed via app menu. In this case display mode should resolve to the first supported
+        // display mode in the "fullscreen -> standalone -> minimal-ui -> browser" fallback chain.
+        boolean shouldUseMinimalUi =
+                displayMode instanceof TrustedWebActivityDisplayMode.MinimalUiMode
+                        || displayMode instanceof TrustedWebActivityDisplayMode.BrowserMode;
+        if (WebAppHeaderUtils.isMinimalUiFlagEnabled() && shouldUseMinimalUi) {
+            return DisplayMode.MINIMAL_UI;
+        }
+
+        return DisplayMode.STANDALONE;
+    }
+
+    @Override
+    public long getTwaStartupUptimeMillis() {
+        if (!isTrustedWebActivity()) return 0;
+        return IntentUtils.safeGetLongExtra(getIntent(), EXTRA_TWA_STARTUP_UPTIME_MS, 0);
+    }
+
+    @Override
+    public int getAndroidBrowserHelperVersion() {
+        return IntentUtils.safeGetIntExtra(getIntent(), EXTRA_ANDROID_BROWSER_HELPER_VERSION, 0);
+    }
+
+    private boolean isCpaOnlyOpenInBrowserDefault() {
+        return ChromeFeatureList.sCctAdaptiveButtonContextualOnly.getValue()
+                && ChromeFeatureList.sCctAdaptiveButtonEnableOpenInBrowser.getValue()
+                && ChromeFeatureList.sCctAdaptiveButtonDefaultVariant.getValue()
+                        == AdaptiveToolbarButtonVariant.OPEN_IN_BROWSER;
     }
 }

@@ -6,11 +6,12 @@
 #define CHROME_BROWSER_UI_COMMERCE_MOCK_COMMERCE_UI_TAB_HELPER_H_
 
 #include "chrome/browser/ui/commerce/commerce_ui_tab_helper.h"
+#include "components/tabs/public/tab_interface.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
-namespace content {
-class WebContents;
-}  // namespace content
+namespace tabs {
+class TabInterface;
+}  // namespace tabs
 
 namespace views {
 class View;
@@ -18,8 +19,11 @@ class View;
 
 class MockCommerceUiTabHelper : public commerce::CommerceUiTabHelper {
  public:
-  static void CreateForWebContents(content::WebContents* content);
-  explicit MockCommerceUiTabHelper(content::WebContents* content);
+  // Anytime a CommerceUiTabHelper would be created, a MockCommerceUiTabHelper
+  // is created instead, until the return value goes out of scope.
+  static ui::UserDataFactory::ScopedOverride ReplaceFactory();
+
+  MockCommerceUiTabHelper(tabs::TabInterface& tab, SidePanelRegistry* registry);
   ~MockCommerceUiTabHelper() override;
 
   const gfx::Image& GetValidProductImage();
@@ -27,10 +31,18 @@ class MockCommerceUiTabHelper : public commerce::CommerceUiTabHelper {
   const gfx::Image& GetInvalidProductImage();
 
   MOCK_METHOD(const gfx::Image&, GetProductImage, ());
+  MOCK_METHOD(bool, ShouldShowDiscountsIconView, ());
   MOCK_METHOD(bool, ShouldShowPriceTrackingIconView, ());
   MOCK_METHOD(bool, ShouldShowPriceInsightsIconView, ());
   MOCK_METHOD(bool, ShouldShowProductSpecificationsIconView, ());
+  MOCK_METHOD(void, OnProductSpecificationsIconClicked, (), (override));
   MOCK_METHOD(bool, IsPriceTracking, ());
+  MOCK_METHOD(bool, IsInRecommendedSet, (), (override));
+  MOCK_METHOD(std::u16string,
+              GetProductSpecificationsLabel,
+              (bool is_added),
+              (override));
+  MOCK_METHOD(std::u16string, GetComparisonSetName, (), (override));
   MOCK_METHOD(void,
               SetPriceTrackingState,
               (bool enable,
@@ -39,15 +51,17 @@ class MockCommerceUiTabHelper : public commerce::CommerceUiTabHelper {
               (override));
   MOCK_METHOD(std::unique_ptr<views::View>,
               CreateShoppingInsightsWebView,
-              (),
+              (SidePanelEntryScope & scope),
               (override));
   MOCK_METHOD(const std::optional<commerce::PriceInsightsInfo>&,
               GetPriceInsightsInfo,
               ());
   MOCK_METHOD(bool, ShouldExpandPageActionIcon, (PageActionIconType type));
-  MOCK_METHOD(PriceInsightsIconView::PriceInsightsIconLabelType,
+  MOCK_METHOD(PriceInsightsIconLabelType,
               GetPriceInsightsIconLabelTypeForPage,
               ());
+  MOCK_METHOD(const std::vector<commerce::DiscountInfo>&, GetDiscounts, ());
+  MOCK_METHOD(GURL, GetComparisonTableURL, ());
 
  private:
   gfx::Image valid_product_image_;

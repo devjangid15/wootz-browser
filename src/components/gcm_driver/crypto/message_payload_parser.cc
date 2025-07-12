@@ -6,6 +6,7 @@
 
 #include <string_view>
 
+#include "base/check_op.h"
 #include "base/containers/span.h"
 #include "base/numerics/byte_conversions.h"
 #include "components/gcm_driver/crypto/gcm_decryption_result.h"
@@ -39,8 +40,7 @@ MessagePayloadParser::MessagePayloadParser(std::string_view message) {
   salt_ = std::string(message.substr(0, kSaltSize));
   message.remove_prefix(kSaltSize);
 
-  record_size_ =
-      base::numerics::U32FromBigEndian(base::as_byte_span(message).first<4>());
+  record_size_ = base::U32FromBigEndian(base::as_byte_span(message).first<4>());
   message.remove_prefix(sizeof(record_size_));
 
   if (record_size_ < kMinimumRecordSize) {
@@ -49,7 +49,7 @@ MessagePayloadParser::MessagePayloadParser(std::string_view message) {
   }
 
   uint8_t public_key_length =
-      base::numerics::U8FromBigEndian(base::as_byte_span(message).first<1>());
+      base::U8FromBigEndian(base::as_byte_span(message).first<1>());
   message.remove_prefix(sizeof(public_key_length));
 
   if (public_key_length != kUncompressedPointSize) {

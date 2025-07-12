@@ -13,48 +13,42 @@ import androidx.test.filters.SmallTest;
 
 import org.junit.After;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.Feature;
-import org.chromium.base.test.util.Features;
-import org.chromium.base.test.util.Features.DisableFeatures;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
 import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
-import org.chromium.chrome.browser.profiles.OTRProfileID;
+import org.chromium.chrome.browser.profiles.OtrProfileId;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
+import org.chromium.components.browser_ui.notifications.NotificationProxyUtils;
+import org.chromium.components.download.DownloadDangerType;
 import org.chromium.components.offline_items_collection.ContentId;
 import org.chromium.components.offline_items_collection.LegacyHelpers;
 import org.chromium.components.offline_items_collection.OfflineItem.Progress;
 import org.chromium.components.offline_items_collection.OfflineItemProgressUnit;
 import org.chromium.components.offline_items_collection.PendingState;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.url.GURL;
 
 import java.util.UUID;
 
 /** Tests of {@link DownloadNotificationService}. */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@DisableFeatures({ChromeFeatureList.DOWNLOADS_MIGRATE_TO_JOBS_API})
 @Batch(Batch.UNIT_TESTS)
 public class DownloadNotificationServiceTest {
     private static final ContentId ID1 =
             LegacyHelpers.buildLegacyContentId(false, UUID.randomUUID().toString());
 
-    @Rule public TestRule mFeaturesProcessor = new Features.JUnitProcessor();
-
     private MockDownloadNotificationService mDownloadNotificationService;
     private DownloadForegroundServiceManagerTest.MockDownloadForegroundServiceManager
             mDownloadForegroundServiceManager;
-    private OTRProfileID mPrimaryOTRProfileID = OTRProfileID.getPrimaryOTRProfileID();
+    private final OtrProfileId mPrimaryOtrProfileId = OtrProfileId.getPrimaryOtrProfileId();
 
     @Before
     public void setUp() {
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mDownloadNotificationService = new MockDownloadNotificationService();
                     mDownloadForegroundServiceManager =
@@ -63,12 +57,14 @@ public class DownloadNotificationServiceTest {
                     mDownloadNotificationService.setDownloadForegroundServiceManager(
                             mDownloadForegroundServiceManager);
                 });
+        NotificationProxyUtils.setNotificationEnabledForTest(true);
     }
 
     @After
     public void tearDown() {
         ChromeSharedPreferences.getInstance()
                 .removeKey(ChromePreferenceKeys.DOWNLOAD_PENDING_DOWNLOAD_NOTIFICATIONS);
+        NotificationProxyUtils.setNotificationEnabledForTest(null);
     }
 
     @Test
@@ -84,7 +80,7 @@ public class DownloadNotificationServiceTest {
                 100L,
                 1L,
                 1L,
-                mPrimaryOTRProfileID,
+                mPrimaryOtrProfileId,
                 true,
                 false,
                 null,
@@ -104,7 +100,7 @@ public class DownloadNotificationServiceTest {
                 "test",
                 /* isResumable= */ true,
                 /* isAutoResumable= */ false,
-                mPrimaryOTRProfileID,
+                mPrimaryOtrProfileId,
                 false,
                 null,
                 null,
@@ -126,7 +122,7 @@ public class DownloadNotificationServiceTest {
                 100L,
                 1L,
                 1L,
-                mPrimaryOTRProfileID,
+                mPrimaryOtrProfileId,
                 true,
                 false,
                 null,
@@ -145,7 +141,7 @@ public class DownloadNotificationServiceTest {
                 "",
                 "test",
                 1L,
-                mPrimaryOTRProfileID,
+                mPrimaryOtrProfileId,
                 true,
                 true,
                 null,
@@ -172,7 +168,7 @@ public class DownloadNotificationServiceTest {
                 100L,
                 1L,
                 1L,
-                mPrimaryOTRProfileID,
+                mPrimaryOtrProfileId,
                 true,
                 false,
                 null,
@@ -192,7 +188,7 @@ public class DownloadNotificationServiceTest {
                 "test",
                 /* isResumable= */ true,
                 /* isAutoResumable= */ true,
-                mPrimaryOTRProfileID,
+                mPrimaryOtrProfileId,
                 false,
                 null,
                 null,
@@ -227,7 +223,7 @@ public class DownloadNotificationServiceTest {
                 100L,
                 1L,
                 1L,
-                mPrimaryOTRProfileID,
+                mPrimaryOtrProfileId,
                 true,
                 false,
                 null,
@@ -247,7 +243,7 @@ public class DownloadNotificationServiceTest {
                 "test",
                 /* isResumable= */ false,
                 /* isAutoResumable= */ true,
-                mPrimaryOTRProfileID,
+                mPrimaryOtrProfileId,
                 false,
                 null,
                 null,
@@ -256,6 +252,123 @@ public class DownloadNotificationServiceTest {
                 false,
                 PendingState.PENDING_NETWORK);
         assertEquals(1, mDownloadNotificationService.getNotificationIds().size());
+        assertFalse(
+                mDownloadForegroundServiceManager.mDownloadUpdateQueue.containsKey(
+                        notificationId1));
+    }
+
+    @Test
+    @SmallTest
+    @UiThreadTest
+    @Feature({"Download"})
+    public void testDownloadDangerousAndValidated() {
+        // Download is in-progress.
+        mDownloadNotificationService.notifyDownloadProgress(
+                ID1,
+                "dangerous.apk",
+                new Progress(1, 100L, OfflineItemProgressUnit.PERCENTAGE),
+                100L,
+                1L,
+                1L,
+                mPrimaryOtrProfileId,
+                true,
+                false,
+                null,
+                null,
+                false);
+        mDownloadForegroundServiceManager.onServiceConnected();
+
+        assertEquals(1, mDownloadNotificationService.getNotificationIds().size());
+        int notificationId1 = mDownloadNotificationService.getLastNotificationId();
+        assertTrue(
+                mDownloadForegroundServiceManager.mDownloadUpdateQueue.containsKey(
+                        notificationId1));
+
+        // Download receives an update that it is dangerous.
+        mDownloadNotificationService.notifyDownloadDangerous(
+                ID1,
+                "dangerous.apk",
+                null,
+                false,
+                mPrimaryOtrProfileId,
+                true,
+                false,
+                DownloadDangerType.DANGEROUS_CONTENT);
+
+        assertEquals(1, mDownloadNotificationService.getNotificationIds().size());
+        // The dangerous notification is not in the queue because it is not active.
+        assertFalse(
+                mDownloadForegroundServiceManager.mDownloadUpdateQueue.containsKey(
+                        notificationId1));
+
+        // Download is validated and gets a progress update.
+        mDownloadNotificationService.notifyDownloadProgress(
+                ID1,
+                "dangerous.apk",
+                new Progress(1, 100L, OfflineItemProgressUnit.PERCENTAGE),
+                100L,
+                1L,
+                1L,
+                mPrimaryOtrProfileId,
+                true,
+                false,
+                null,
+                null,
+                false);
+        assertEquals(1, mDownloadNotificationService.getNotificationIds().size());
+        assertTrue(
+                mDownloadForegroundServiceManager.mDownloadUpdateQueue.containsKey(
+                        notificationId1));
+    }
+
+    @Test
+    @SmallTest
+    @UiThreadTest
+    @Feature({"Download"})
+    public void testDownloadDangerousAndRemoved() {
+        // Download is in-progress.
+        mDownloadNotificationService.notifyDownloadProgress(
+                ID1,
+                "dangerous.apk",
+                new Progress(1, 100L, OfflineItemProgressUnit.PERCENTAGE),
+                100L,
+                1L,
+                1L,
+                mPrimaryOtrProfileId,
+                true,
+                false,
+                null,
+                null,
+                false);
+        mDownloadForegroundServiceManager.onServiceConnected();
+
+        assertEquals(1, mDownloadNotificationService.getNotificationIds().size());
+        int notificationId1 = mDownloadNotificationService.getLastNotificationId();
+        assertTrue(
+                mDownloadForegroundServiceManager.mDownloadUpdateQueue.containsKey(
+                        notificationId1));
+
+        // Download receives an update that it is dangerous.
+        mDownloadNotificationService.notifyDownloadDangerous(
+                ID1,
+                "dangerous.apk",
+                null,
+                false,
+                mPrimaryOtrProfileId,
+                true,
+                false,
+                DownloadDangerType.DANGEROUS_CONTENT);
+
+        assertEquals(1, mDownloadNotificationService.getNotificationIds().size());
+        // The dangerous notification is not in the queue because it is not active.
+        assertFalse(
+                mDownloadForegroundServiceManager.mDownloadUpdateQueue.containsKey(
+                        notificationId1));
+
+        // Download is cancelled.
+        mDownloadNotificationService.notifyDownloadCanceled(ID1, false);
+
+        assertEquals(0, mDownloadNotificationService.getNotificationIds().size());
         assertFalse(
                 mDownloadForegroundServiceManager.mDownloadUpdateQueue.containsKey(
                         notificationId1));

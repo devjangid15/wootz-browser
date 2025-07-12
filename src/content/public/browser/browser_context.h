@@ -21,14 +21,19 @@
 #include "base/supports_user_data.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/k_anonymity_service_delegate.h"
+#include "content/public/browser/prefetch_handle.h"
+#include "content/public/browser/prefetch_priority.h"
+#include "content/public/browser/prefetch_request_status_listener.h"
 #include "content/public/browser/zoom_level_delegate.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
-#include "services/network/public/mojom/network_context.mojom-forward.h"
+#include "net/http/http_no_vary_search_data.h"
+#include "net/http/http_request_headers.h"
 #include "third_party/blink/public/mojom/blob/blob.mojom-forward.h"
 #include "third_party/blink/public/mojom/push_messaging/push_messaging.mojom-forward.h"
 #include "third_party/blink/public/mojom/push_messaging/push_messaging_status.mojom-forward.h"
 #include "third_party/perfetto/include/perfetto/tracing/traced_value_forward.h"
+#include "url/origin.h"
 
 class GURL;
 
@@ -196,6 +201,44 @@ class CONTENT_EXPORT BrowserContext : public base::SupportsUserData {
 
   StoragePartition* GetDefaultStoragePartition();
 
+  // Starts a prefetch network request for the given `url`.
+  // `embedder_histogram_suffix` is used for generating internal histogram names
+  // recorded per trigger. `priority` is an optimization hint of how quickly
+  // this prefetch should be available. `ttl` (Time-To-Live) specifies how long
+  // prefetched data remains valid in the cache. After this period, the data is
+  // reset. `should_disable_block_until_head_timeout` specifies whether we
+  // should have a timeout when this prefetch blocks the navigation until its
+  // head is determined. Returns `PrefetchHandle` to control prefetch resources.
+  // This can be null when it can't add `PrefetchContainer` to
+  // `PrefetchService`.
+  std::unique_ptr<content::PrefetchHandle> StartBrowserPrefetchRequest(
+      const GURL& url,
+      const std::string& embedder_histogram_suffix,
+      bool javascript_enabled,
+      std::optional<net::HttpNoVarySearchData> no_vary_search_hint,
+      std::optional<PrefetchPriority> priority,
+      const net::HttpRequestHeaders& additional_headers,
+      std::unique_ptr<PrefetchRequestStatusListener> request_status_listener,
+      base::TimeDelta ttl,
+      bool should_append_variations_header,
+      bool should_disable_block_until_head_timeout);
+
+  // Updates the "Accept Language" header that the prefetch service delegate
+  // will use.
+  void UpdatePrefetchServiceDelegateAcceptLanguageHeader(
+      std::string accept_language_header);
+
+  // Returns `true` if a new prefetch request with `url` and
+  // `no_vary_search_hint` has a duplicate in the prefetch cache and thus the
+  // caller can choose not to start the prefetch request.
+  //
+  // Note: This is currently used for WebView initiated prefetches
+  // so consideration should be taken if updating the
+  // underlying implementation (or its dependencies).
+  bool IsPrefetchDuplicate(
+      GURL& url,
+      std::optional<net::HttpNoVarySearchData> no_vary_search_hint);
+
   using BlobCallback = base::OnceCallback<void(std::unique_ptr<BlobHandle>)>;
   using BlobContextGetter =
       base::RepeatingCallback<base::WeakPtr<storage::BlobStorageContext>()>;
@@ -314,6 +357,11 @@ class CONTENT_EXPORT BrowserContext : public base::SupportsUserData {
   // Deprecated. Do not add new callers.
   // TODO(crbug.com/40604019): Get rid of ResourceContext.
   ResourceContext* GetResourceContext() const;
+
+  // Grant third-party cookie access to certain sites that the user visited in
+  // the past, according to the popup heuristics described at
+  // https://github.com/amaliev/3pcd-exemption-heuristics/blob/main/explainer.md
+  void BackfillPopupHeuristicGrants(base::OnceCallback<void(bool)> callback);
 
   base::WeakPtr<BrowserContext> GetWeakPtr();
 
@@ -453,6 +501,12 @@ class CONTENT_EXPORT BrowserContext : public base::SupportsUserData {
   // Returns the OriginTrialsControllerDelegate associated with the context if
   // any, nullptr otherwise.
   virtual OriginTrialsControllerDelegate* GetOriginTrialsControllerDelegate();
+
+#if BUILDFLAG(IS_ANDROID)
+  // Returns extra request headers to be set when navigation happens for `url`.
+  // This function is designed for the headers provided by WebView.loadUrl().
+  virtual std::string GetExtraHeadersForUrl(const GURL& url);
+#endif  // BUILDFLAG(IS_ANDROID)
 
  private:
   // Please don't add more fields to BrowserContext.

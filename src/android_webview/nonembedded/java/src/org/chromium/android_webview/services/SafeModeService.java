@@ -28,7 +28,6 @@ import org.chromium.base.BuildInfo;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.PackageUtils;
-import org.chromium.base.compat.ApiHelperForP;
 
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -59,9 +58,9 @@ public final class SafeModeService extends Service {
      */
     @VisibleForTesting
     public static class TrustedPackage {
-        private String mPackageName;
-        private byte[] mReleaseCertHash;
-        private byte[] mDebugCertHash;
+        private final String mPackageName;
+        private final byte[] mReleaseCertHash;
+        private final byte[] mDebugCertHash;
 
         /**
          * Represents the identity of a package trusted by this service.
@@ -107,11 +106,9 @@ public final class SafeModeService extends Service {
             }
             final Context context = ContextUtils.getApplicationContext();
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                return ApiHelperForP.hasSigningCertificate(
-                        context.getPackageManager(),
-                        packageName,
-                        expectedCertHash,
-                        PackageManager.CERT_INPUT_SHA256);
+                PackageManager pm = context.getPackageManager();
+                return pm.hasSigningCertificate(
+                        packageName, expectedCertHash, PackageManager.CERT_INPUT_SHA256);
             }
             PackageInfo info =
                     PackageUtils.getPackageInfo(packageName, PackageManager.GET_SIGNATURES);

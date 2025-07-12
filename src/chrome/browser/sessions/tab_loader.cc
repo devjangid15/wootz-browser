@@ -486,7 +486,7 @@ void TabLoader::MarkTabAsLoadInitiated(WebContents* contents) {
   // This can only be called for a tab that is waiting to be loaded so this
   // should never fail.
   auto it = FindTabToLoad(contents);
-  DCHECK(it != tabs_to_load_.end());
+  CHECK(it != tabs_to_load_.end());
   tabs_to_load_.erase(it);
   delegate_->RemoveTabForScoring(contents);
 
@@ -543,7 +543,7 @@ void TabLoader::MarkTabAsDeferred(content::WebContents* contents) {
   // This can only be called for a tab that is waiting to be loaded so this
   // should never fail.
   auto it = FindTabToLoad(contents);
-  DCHECK(it != tabs_to_load_.end());
+  CHECK(it != tabs_to_load_.end());
   tabs_to_load_.erase(it);
   delegate_->RemoveTabForScoring(contents);
 }

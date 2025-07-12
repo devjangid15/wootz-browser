@@ -140,11 +140,17 @@ class MockVideoDecoder : public VideoDecoder {
         // Simulate the case where outputs are only returned when key arrives.
         waiting_cb_.Run(WaitingReason::kNoDecryptionKey);
       } else {
-        scoped_refptr<gpu::ClientSharedImage>
-            shared_images[VideoFrame::kMaxPlanes] = {
-                gpu::ClientSharedImage::CreateForTesting()};
-        scoped_refptr<VideoFrame> frame = VideoFrame::WrapSharedImages(
-            PIXEL_FORMAT_ARGB, shared_images, gpu::SyncToken(), 0,
+        gpu::SharedImageMetadata metadata;
+        metadata.format = viz::SinglePlaneFormat::kRGBA_8888;
+        metadata.size = config_.coded_size();
+        metadata.color_space = gfx::ColorSpace::CreateSRGB();
+        metadata.surface_origin = kTopLeft_GrSurfaceOrigin;
+        metadata.alpha_type = kOpaque_SkAlphaType;
+        metadata.usage = gpu::SharedImageUsageSet();
+        scoped_refptr<gpu::ClientSharedImage> shared_image =
+            gpu::ClientSharedImage::CreateForTesting(metadata);
+        scoped_refptr<VideoFrame> frame = VideoFrame::WrapSharedImage(
+            PIXEL_FORMAT_ARGB, shared_image, gpu::SyncToken(),
             GetReleaseMailboxCB(), config_.coded_size(), config_.visible_rect(),
             config_.natural_size(), buffer->timestamp());
         frame->metadata().power_efficient = true;
@@ -193,8 +199,7 @@ class FakeMojoMediaClient : public MojoMediaClient {
       mojom::CommandBufferIdPtr command_buffer_id,
       RequestOverlayInfoCB request_overlay_info_cb,
       const gfx::ColorSpace& target_color_space,
-      mojo::PendingRemote<stable::mojom::StableVideoDecoder> oop_video_decoder)
-      override {
+      mojo::PendingRemote<mojom::VideoDecoder> oop_video_decoder) override {
     return create_video_decoder_cb_.Run(media_log);
   }
 
@@ -233,7 +238,7 @@ class MojoVideoDecoderIntegrationTest : public ::testing::Test {
     video_decoder_receivers_.Add(
         std::make_unique<MojoVideoDecoderService>(
             &mojo_media_client_, &mojo_cdm_service_context_,
-            mojo::PendingRemote<stable::mojom::StableVideoDecoder>()),
+            mojo::PendingRemote<mojom::VideoDecoder>()),
         remote_video_decoder.InitWithNewPipeAndPassReceiver());
     return remote_video_decoder;
   }
@@ -319,7 +324,7 @@ class MojoVideoDecoderIntegrationTest : public ::testing::Test {
     auto buffer = CreateKeyframe(timestamp_ms);
 
     const uint8_t kFakeKeyId[] = {0x4b, 0x65, 0x79, 0x20, 0x49, 0x44};
-    const uint8_t kFakeIv[DecryptConfig::kDecryptionKeySize] = {0};
+    const uint8_t kFakeIv[DecryptConfig::kDecryptionKeySize] = {};
     buffer->set_decrypt_config(DecryptConfig::CreateCencConfig(
         std::string(reinterpret_cast<const char*>(kFakeKeyId),
                     std::size(kFakeKeyId)),

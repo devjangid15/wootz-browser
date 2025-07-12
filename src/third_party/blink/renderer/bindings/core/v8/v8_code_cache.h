@@ -9,17 +9,14 @@
 
 #include "third_party/blink/public/mojom/v8_cache_options.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_source_location_type.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_compile_hints_common.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/platform/bindings/v8_binding_macros.h"
 #include "third_party/blink/renderer/platform/loader/fetch/url_loader/cached_metadata_handler.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "v8/include/v8.h"
-
-namespace WTF {
-class TextEncoding;
-class TextPosition;
-}  // namespace WTF
 
 namespace blink {
 
@@ -29,6 +26,7 @@ class ClassicScript;
 class KURL;
 class ModuleRecordProduceCacheData;
 class ScriptState;
+class TextEncoding;
 
 class CORE_EXPORT V8CodeCache final {
   STATIC_ONLY(V8CodeCache);
@@ -45,6 +43,7 @@ class CORE_EXPORT V8CodeCache final {
     kProduceCodeCache,
   };
 
+  static uint32_t TagForBundledCodeCache();
   static uint32_t TagForCodeCache(const CachedMetadataHandler*);
   static uint32_t TagForTimeStamp(const CachedMetadataHandler*);
   static uint32_t TagForCompileHints(const CachedMetadataHandler*);
@@ -55,6 +54,8 @@ class CORE_EXPORT V8CodeCache final {
   // Returns true iff the CachedMetadataHandler contains a hot time stamp or a
   // compile hints cache containing a hot timestamp.
   static bool HasHotTimestamp(const CachedMetadataHandler* cache_handler);
+  static bool HasHotTimestamp(const CachedMetadata& data,
+                              const String& encoding);
 
   // Returns true iff the CachedMetadataHandler contains a code cache
   // that can be consumed by V8.
@@ -71,25 +72,31 @@ class CORE_EXPORT V8CodeCache final {
   static bool HasHotCompileHints(const CachedMetadata& data,
                                  const String& encoding);
 
-  // `can_use_compile_hints` may be set to true only if we're compiling a script
-  // in a LocalMainFrame.
+  // `can_use_crowdsourced_compile_hints` may be set to true only if we're
+  // compiling a script in a LocalMainFrame.
   static std::tuple<v8::ScriptCompiler::CompileOptions,
                     ProduceCacheOptions,
                     v8::ScriptCompiler::NoCacheReason>
-  GetCompileOptions(mojom::blink::V8CacheOptions,
-                    const ClassicScript&,
-                    bool might_generate_compile_hints = false,
-                    bool can_use_compile_hints = false);
+  GetCompileOptions(
+      mojom::blink::V8CacheOptions cache_options,
+      const ClassicScript&,
+      bool might_generate_crowdsourced_compile_hints = false,
+      bool can_use_crowdsourced_compile_hints = false,
+      v8_compile_hints::MagicCommentMode v8_compile_hints_magic_comment_mode =
+          v8_compile_hints::MagicCommentMode::kNone);
   static std::tuple<v8::ScriptCompiler::CompileOptions,
                     ProduceCacheOptions,
                     v8::ScriptCompiler::NoCacheReason>
-  GetCompileOptions(mojom::blink::V8CacheOptions,
-                    const CachedMetadataHandler*,
-                    size_t source_text_length,
-                    ScriptSourceLocationType,
-                    const KURL& url,
-                    bool might_generate_compile_hints = false,
-                    bool can_use_compile_hints = false);
+  GetCompileOptions(
+      mojom::blink::V8CacheOptions cache_options,
+      const CachedMetadataHandler*,
+      size_t source_text_length,
+      ScriptSourceLocationType,
+      const KURL& url,
+      bool might_generate_crowdsourced_compile_hints = false,
+      bool can_use_crowdsourced_compile_hints = false,
+      v8_compile_hints::MagicCommentMode v8_compile_hints_magic_comment_mode =
+          v8_compile_hints::MagicCommentMode::kNone);
 
   static bool IsFull(const CachedMetadata* metadata);
 
@@ -125,7 +132,7 @@ class CORE_EXPORT V8CodeCache final {
       ScriptState*,
       const String& script_string,
       const KURL& source_url,
-      const WTF::TextEncoding&,
+      const TextEncoding&,
       OpaqueMode);
 
   // These values are persisted to logs. Entries should not be renumbered and
@@ -157,7 +164,27 @@ class CORE_EXPORT V8CodeCache final {
   static void RecordCacheGetStatistics(GetMetadataType metadata_type);
 
   static void RecordCacheSetStatistics(SetMetadataType metadata_type);
+
+ private:
+  static std::tuple<v8::ScriptCompiler::CompileOptions,
+                    ProduceCacheOptions,
+                    v8::ScriptCompiler::NoCacheReason>
+  GetCompileOptionsInternal(mojom::blink::V8CacheOptions cache_options,
+                            const CachedMetadataHandler*,
+                            size_t source_text_length,
+                            ScriptSourceLocationType,
+                            const KURL& url,
+                            bool might_generate_crowdsourced_compile_hints,
+                            bool can_use_crowdsourced_compile_hints);
 };
+
+inline base::span<const uint8_t> ToSpan(
+    const v8::ScriptCompiler::CachedData& data) {
+  // SAFETY: v8::ScriptCompiler::CachedData ensures its `data` and `length`
+  // are safe.
+  return UNSAFE_BUFFERS(
+      base::span(data.data, static_cast<size_t>(data.length)));
+}
 
 }  // namespace blink
 

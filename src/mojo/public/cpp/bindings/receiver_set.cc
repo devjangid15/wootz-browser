@@ -160,7 +160,7 @@ void ReceiverSetState::OnDisconnect(ReceiverId id,
                                     uint32_t custom_reason_code,
                                     const std::string& description) {
   auto it = entries_.find(id);
-  DCHECK(it != entries_.end());
+  CHECK(it != entries_.end());
 
   // We keep the Entry alive throughout error dispatch.
   std::unique_ptr<Entry> entry = std::move(it->second);

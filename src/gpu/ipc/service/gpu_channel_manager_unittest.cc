@@ -8,6 +8,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "base/strings/stringprintf.h"
 #include "base/test/test_trace_processor.h"
 #include "base/test/trace_event_analyzer.h"
 #include "base/test/trace_test_utils.h"
@@ -34,10 +35,6 @@ class GpuChannelManagerTest : public GpuChannelTestCommon {
       : GpuChannelTestCommon(true /* use_stub_bindings */) {}
   ~GpuChannelManagerTest() override = default;
 
-  GpuChannelManager::GpuPeakMemoryMonitor* gpu_peak_memory_monitor() {
-    return &channel_manager()->peak_memory_monitor_;
-  }
-
   // Returns the peak memory usage from the channel_manager(). This will stop
   // tracking for |sequence_number|.
   uint64_t GetManagersPeakMemoryUsage(uint32_t sequence_num) {
@@ -54,7 +51,7 @@ class GpuChannelManagerTest : public GpuChannelTestCommon {
     // Set default as max so that invalid cases can properly test 0u returns.
     uint64_t peak_memory = kUInt64_T_Max;
     auto allocation =
-        channel_manager()->peak_memory_monitor_.GetPeakMemoryUsage(
+        channel_manager()->peak_memory_monitor_->GetPeakMemoryUsage(
             sequence_num, &peak_memory);
     return peak_memory;
   }
@@ -64,9 +61,8 @@ class GpuChannelManagerTest : public GpuChannelTestCommon {
   void OnMemoryAllocatedChange(CommandBufferId id,
                                uint64_t old_size,
                                uint64_t new_size) {
-    static_cast<MemoryTracker::Observer*>(gpu_peak_memory_monitor())
-        ->OnMemoryAllocatedChange(id, old_size, new_size,
-                                  GpuPeakMemoryAllocationSource::UNKNOWN);
+    channel_manager()->peak_memory_monitor()->OnMemoryAllocatedChange(
+        id, old_size, new_size, GpuPeakMemoryAllocationSource::UNKNOWN);
   }
 
 #if BUILDFLAG(IS_ANDROID)

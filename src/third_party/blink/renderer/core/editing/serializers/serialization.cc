@@ -128,19 +128,20 @@ class EmptyLocalFrameClientWithFailingLoaderFactory final
  public:
   scoped_refptr<network::SharedURLLoaderFactory> GetURLLoaderFactory()
       override {
-    // TODO(crbug.com/1413912): CreateSanitizedFragmentFromMarkupWithContext may
+    // TODO(crbug.com/1413912): CreateFragmentFromMarkupWithContext may
     // call this method for data: URL resources. But ResourceLoader::Start()
     // don't need to call GetURLLoaderFactory() for data: URL because
     // ResourceLoader handles the data: URL resource load without the returned
     // SharedURLLoaderFactory.
-    // Note: Non-data: URL resource can't be loaded because the CORS check in
-    // BaseFetchContext::CanRequestInternal fails for non-data: URL resources.
+    // Note: Non-data: URL resource can't be loaded because the security checks
+    // in BaseFetchContext::CanRequestInternal fails for non-data: URL
+    // resources.
     return base::MakeRefCounted<network::SingleRequestURLLoaderFactory>(
         WTF::BindOnce(
             [](const network::ResourceRequest& resource_request,
                mojo::PendingReceiver<network::mojom::URLLoader> receiver,
                mojo::PendingRemote<network::mojom::URLLoaderClient> client) {
-              NOTREACHED_IN_MIGRATION();
+              NOTREACHED();
             }));
   }
 };
@@ -683,6 +684,9 @@ DocumentFragment* CreateFragmentForInnerOuterHTML(
         markup, document, *fragment, *context_element, parser_content_policy,
         parser_behavior, &log_tag_stats);
     if (parsed_fast_path) {
+      fragment->SetHoldsUnnotifiedChildren(true);
+      fragment->ParserFinishedBuildingDocumentFragment(
+          DocumentFragment::ShouldNotifyInsertedNodes::kSkip);
       LogFastPathParserTotalTime(parse_timer.Elapsed());
 #if DCHECK_IS_ON()
       // As a sanity check for the fast-path, create another fragment using
@@ -707,8 +711,8 @@ DocumentFragment* CreateFragmentForInnerOuterHTML(
     return fragment;
   }
 
-  bool was_valid = fragment->ParseXML(markup, context_element,
-                                      parser_content_policy, &exception_state);
+  bool was_valid = fragment->ParseXML(markup, context_element, exception_state,
+                                      parser_content_policy);
   if (!was_valid) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kSyntaxError,
@@ -745,7 +749,7 @@ DocumentFragment* CreateFragmentForTransformToFragment(
     fragment->ParserAppendChild(Text::Create(output_doc, source_string));
   } else {
     bool successful_parse =
-        fragment->ParseXML(source_string, nullptr,
+        fragment->ParseXML(source_string, nullptr, IGNORE_EXCEPTION,
                            kAllowScriptingContentAndDoNotMarkAlreadyStarted);
     if (!successful_parse)
       return nullptr;
@@ -858,14 +862,17 @@ void MergeWithNextTextNode(Text* text_node, ExceptionState& exception_state) {
     return;
 
   text_node->appendData(text_next->data());
-  if (text_next->parentNode())  // Might have been removed by mutation event.
+  if (text_next->parentNode()) {
+    // Might have been removed by synchronous event.
     text_next->remove(exception_state);
+  }
 }
 
 static Document* CreateStagingDocumentForMarkupSanitization(
     AgentGroupScheduler& agent_group_scheduler) {
   Page* page = Page::CreateNonOrdinary(GetStaticEmptyChromeClientInstance(),
-                                       agent_group_scheduler);
+                                       agent_group_scheduler,
+                                       /*color_provider_colors=*/nullptr);
 
   page->GetSettings().SetScriptEnabled(false);
   page->GetSettings().SetPluginsEnabled(false);
@@ -881,8 +888,9 @@ static Document* CreateStagingDocumentForMarkupSanitization(
       nullptr,  // Frame* parent
       nullptr,  // Frame* previous_sibling
       FrameInsertType::kInsertInConstructor, blink::LocalFrameToken(),
-      nullptr,  // WindowAgentFactory*
-      nullptr   // InterfaceRegistry*
+      nullptr,            // WindowAgentFactory*
+      nullptr,            // InterfaceRegistry*
+      mojo::NullRemote()  // BrowserInterfaceBroker
   );
   // Don't leak the actual viewport size to unsanitized markup
   LocalFrameView* frame_view =

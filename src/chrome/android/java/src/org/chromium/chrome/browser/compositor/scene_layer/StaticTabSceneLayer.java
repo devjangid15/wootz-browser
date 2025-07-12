@@ -9,15 +9,18 @@ import androidx.annotation.VisibleForTesting;
 import org.jni_zero.JNINamespace;
 import org.jni_zero.NativeMethods;
 
+import org.chromium.build.annotations.Nullable;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.cc.input.OffsetTag;
 import org.chromium.chrome.browser.compositor.layouts.components.LayoutTab;
 import org.chromium.chrome.browser.layouts.scene_layer.SceneLayer;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab_ui.TabContentManager;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 
 /** A SceneLayer to render a static tab. */
+@NullMarked
 @JNINamespace("android")
 public class StaticTabSceneLayer extends SceneLayer {
     /**
@@ -49,9 +52,6 @@ public class StaticTabSceneLayer extends SceneLayer {
         float y =
                 model.get(LayoutTab.CONTENT_OFFSET)
                         + model.get(LayoutTab.RENDER_Y) * LayoutTab.sDpToPx;
-        
-        // the page content window never moves, it is fixed at the top
-        y = 0;
 
         // Check isActiveLayout to prevent pushing a TAB_ID for a static layer that may already be
         // invalidated by the next layout.
@@ -59,19 +59,19 @@ public class StaticTabSceneLayer extends SceneLayer {
                 .updateTabLayer(
                         mNativePtr,
                         StaticTabSceneLayer.this,
-                        model.get(LayoutTab.IS_ACTIVE_LAYOUT_SUPPLIER).isActiveLayout()
+                        model.get(LayoutTab.IS_ACTIVE_LAYOUT)
                                 ? model.get(LayoutTab.TAB_ID)
                                 : Tab.INVALID_TAB_ID,
                         model.get(LayoutTab.CAN_USE_LIVE_TEXTURE),
                         model.get(LayoutTab.BACKGROUND_COLOR),
                         x,
                         y,
-                        model.get(LayoutTab.STATIC_TO_VIEW_BLEND),
-                        model.get(LayoutTab.SATURATION));
+                        model.get(LayoutTab.CONTENT_OFFSET_TAG));
     }
 
     /**
      * Set {@link TabContentManager}.
+     *
      * @param tabContentManager {@link TabContentManager} to set.
      */
     public void setTabContentManager(TabContentManager tabContentManager) {
@@ -106,8 +106,7 @@ public class StaticTabSceneLayer extends SceneLayer {
                 int backgroundColor,
                 float x,
                 float y,
-                float staticToViewBlend,
-                float saturation);
+                @Nullable OffsetTag contentLayerOffsetToken);
 
         void setTabContentManager(
                 long nativeStaticTabSceneLayer,

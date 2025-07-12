@@ -17,27 +17,27 @@ export interface SettingsRoutes {
   ADDRESSES: Route;
   ADVANCED: Route;
   AI: Route;
+  AI_TAB_ORGANIZATION: Route;
   APPEARANCE: Route;
   AUTOFILL: Route;
+  AUTOFILL_AI: Route;
   BASIC: Route;
   CAPTIONS: Route;
-  CERTIFICATES: Route;
-  CHROME_CLEANUP: Route;
   CLEAR_BROWSER_DATA: Route;
+  COMPARE: Route;
   COOKIES: Route;
   DEFAULT_BROWSER: Route;
   DOWNLOADS: Route;
   EDIT_DICTIONARY: Route;
   FONTS: Route;
-  // <if expr="_google_chrome">
-  GET_MOST_CHROME: Route;
-  // </if>
-  IMPORT_DATA: Route;
-  INCOMPATIBLE_APPLICATIONS: Route;
+  GEMINI: Route;
+  GLIC_SECTION: Route;
+  HISTORY_SEARCH: Route;
+  INCOGNITO_TRACKING_PROTECTIONS: Route;
   LANGUAGES: Route;
   MANAGE_PROFILE: Route;
+  OFFER_WRITING_HELP: Route;
   ON_STARTUP: Route;
-  PAGE_CONTENT: Route;
   PASSKEYS: Route;
   PAYMENTS: Route;
   PEOPLE: Route;
@@ -52,14 +52,11 @@ export interface SettingsRoutes {
   PRIVACY_SANDBOX_MANAGE_TOPICS: Route;
   RESET: Route;
   RESET_DIALOG: Route;
-  SAFETY_CHECK: Route;
   SAFETY_HUB: Route;
   SEARCH: Route;
   SEARCH_ENGINES: Route;
   SECURITY: Route;
   SECURITY_KEYS: Route;
-  SECURITY_KEYS_PHONES: Route;
-  SIGN_OUT: Route;
   SITE_SETTINGS: Route;
   SITE_SETTINGS_ADS: Route;
   SITE_SETTINGS_ALL: Route;
@@ -77,14 +74,16 @@ export interface SettingsRoutes {
   SITE_SETTINGS_COOKIES: Route;
   SITE_SETTINGS_FEDERATED_IDENTITY_API: Route;
   SITE_SETTINGS_HANDLERS: Route;
+  SITE_SETTINGS_HAND_TRACKING: Route;
   SITE_SETTINGS_HID_DEVICES: Route;
   SITE_SETTINGS_IDLE_DETECTION: Route;
   SITE_SETTINGS_IMAGES: Route;
   SITE_SETTINGS_KEYBOARD_LOCK: Route;
   SITE_SETTINGS_LOCAL_FONTS: Route;
+  SITE_SETTINGS_LOCAL_NETWORK_ACCESS: Route;
   SITE_SETTINGS_MIXEDSCRIPT: Route;
   SITE_SETTINGS_JAVASCRIPT: Route;
-  SITE_SETTINGS_JAVASCRIPT_JIT: Route;
+  SITE_SETTINGS_JAVASCRIPT_OPTIMIZER: Route;
   SITE_SETTINGS_SENSORS: Route;
   SITE_SETTINGS_SOUND: Route;
   SITE_SETTINGS_LOCATION: Route;
@@ -93,18 +92,19 @@ export interface SettingsRoutes {
   SITE_SETTINGS_FILE_SYSTEM_WRITE: Route;
   SITE_SETTINGS_FILE_SYSTEM_WRITE_DETAILS: Route;
   SITE_SETTINGS_NOTIFICATIONS: Route;
-  SITE_SETTINGS_OFFER_WRITING_HELP: Route;
   SITE_SETTINGS_PAYMENT_HANDLER: Route;
   SITE_SETTINGS_PDF_DOCUMENTS: Route;
   SITE_SETTINGS_POINTER_LOCK: Route;
   SITE_SETTINGS_POPUPS: Route;
   SITE_SETTINGS_PROTECTED_CONTENT: Route;
   SITE_SETTINGS_SERIAL_PORTS: Route;
+  SITE_SETTINGS_SMART_CARD_READERS: Route;
   SITE_SETTINGS_SITE_DATA: Route;
   SITE_SETTINGS_SITE_DETAILS: Route;
   SITE_SETTINGS_STORAGE_ACCESS: Route;
   SITE_SETTINGS_USB_DEVICES: Route;
   SITE_SETTINGS_VR: Route;
+  SITE_SETTINGS_WEB_APP_INSTALLATION: Route;
   SITE_SETTINGS_WINDOW_MANAGEMENT: Route;
   SITE_SETTINGS_ZOOM_LEVELS: Route;
   SITE_SETTINGS_WEB_PRINTING: Route;
@@ -112,8 +112,13 @@ export interface SettingsRoutes {
   SYNC: Route;
   SYNC_ADVANCED: Route;
   SYSTEM: Route;
-  TRACKING_PROTECTION: Route;
   TRIGGERED_RESET_DIALOG: Route;
+
+  // <if expr="not is_chromeos">
+  ACCOUNT: Route;
+  IMPORT_DATA: Route;
+  SIGN_OUT: Route;
+  // </if>
 }
 
 /** Class for navigable routes. */
@@ -122,6 +127,10 @@ export class Route {
   parent: Route|null = null;
   depth: number = 0;
   title: string|undefined;
+
+  // Whether this route's contents have migrated to the new Settings plugin
+  // architecture. See crug.com/424223101 for details.
+  hasMigratedToPlugin: boolean = false;
 
   /**
    * Whether this route corresponds to a navigable dialog. Those routes must
@@ -447,7 +456,7 @@ export class Router {
    * @param urlPath The url path (only).
    */
   recordMetrics(urlPath: string) {
-    assert(!urlPath.startsWith('wootzapp://'));
+    assert(!urlPath.startsWith('chrome://'));
     assert(!urlPath.startsWith('settings'));
     assert(urlPath.startsWith('/'));
     assert(!urlPath.match(/\?/g));

@@ -15,10 +15,12 @@
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
+#include "components/services/storage/dom_storage/async_dom_storage_database.h"
 #include "components/services/storage/dom_storage/dom_storage_database.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/receiver_set.h"
 #include "mojo/public/cpp/bindings/remote_set.h"
+#include "storage/common/database/db_status.h"
 #include "third_party/blink/public/mojom/dom_storage/storage_area.mojom.h"
 
 namespace base {
@@ -42,7 +44,8 @@ class AsyncDomStorageDatabase;
 // 4) Throttles requests to avoid overwhelming the disk.
 //
 // The wrapper supports two different caching modes.
-class StorageAreaImpl : public blink::mojom::StorageArea {
+class StorageAreaImpl : public blink::mojom::StorageArea,
+                        public AsyncDomStorageDatabase::Committer {
  public:
   using ValueMap = std::map<std::vector<uint8_t>, std::vector<uint8_t>>;
   using ValueMapCallback = base::OnceCallback<void(std::unique_ptr<ValueMap>)>;
@@ -57,8 +60,8 @@ class StorageAreaImpl : public blink::mojom::StorageArea {
     virtual void PrepareToCommit(
         std::vector<DomStorageDatabase::KeyValuePair>* extra_entries_to_add,
         std::vector<DomStorageDatabase::Key>* extra_keys_to_delete);
-    virtual void DidCommit(leveldb::Status error) = 0;
-    virtual void OnMapLoaded(leveldb::Status status);
+    virtual void DidCommit(DbStatus error) = 0;
+    virtual void OnMapLoaded(DbStatus status);
   };
 
   enum class CacheMode {
@@ -164,7 +167,7 @@ class StorageAreaImpl : public blink::mojom::StorageArea {
   // waiting on the result of initializing our map the commit won't happen
   // until the load has finished. If provided, |callback| is run only once the
   // commit is fully completed.
-  void ScheduleImmediateCommit(base::OnceClosure callback = {});
+  void ScheduleImmediateCommit();
 
   // Clears the in-memory cache if currently no changes are pending. If there
   // are uncommitted changes this method does nothing.
@@ -199,6 +202,12 @@ class StorageAreaImpl : public blink::mojom::StorageArea {
       mojo::PendingRemote<blink::mojom::StorageAreaObserver> new_observer,
       GetAllCallback callback) override;
 
+  // Committer:
+  std::optional<AsyncDomStorageDatabase::Commit> CollectCommit() override;
+  base::OnceCallback<void(DbStatus)> GetCommitCompleteCallback() override;
+
+  void OnCommitComplete(DbStatus status);
+
   void SetOnLoadCallbackForTesting(base::OnceClosure callback) {
     on_load_callback_for_testing_ = std::move(callback);
   }
@@ -208,7 +217,7 @@ class StorageAreaImpl : public blink::mojom::StorageArea {
   FRIEND_TEST_ALL_PREFIXES(StorageAreaImplTest,
                            PutLoadsValuesAfterCacheModeUpgrade);
   FRIEND_TEST_ALL_PREFIXES(StorageAreaImplTest, SetCacheModeConsistent);
-  FRIEND_TEST_ALL_PREFIXES(StorageAreaImplParamTest,
+  FRIEND_TEST_ALL_PREFIXES(StorageAreaImplCacheModeTest,
                            CommitOnDifferentCacheModes);
 
   // Used to rate limit commits.
@@ -248,6 +257,9 @@ class StorageAreaImpl : public blink::mojom::StorageArea {
     std::map<std::vector<uint8_t>, std::vector<uint8_t>> changed_values;
     // Used if the map_type_ is LOADED_KEYS_AND_VALUES.
     std::set<std::vector<uint8_t>> changed_keys;
+    // Timestamp of each discrete `Put()` call that was coalesced into this
+    // batch.
+    std::vector<base::TimeTicks> put_timestamps;
   };
 
   enum class MapState {
@@ -282,7 +294,7 @@ class StorageAreaImpl : public blink::mojom::StorageArea {
   // Then if the |cache_mode_| is keys-only, it unloads the map to the
   // |keys_only_map_| and sets the |map_state_| to LOADED_KEYS_ONLY
   void LoadMap(base::OnceClosure completion_callback);
-  void OnMapLoaded(leveldb::Status status,
+  void OnMapLoaded(DbStatus status,
                    std::vector<DomStorageDatabase::KeyValuePair> data);
   void CalculateStorageAndMemoryUsed();
   void OnLoadComplete();
@@ -291,8 +303,7 @@ class StorageAreaImpl : public blink::mojom::StorageArea {
   void StartCommitTimer();
   base::TimeDelta ComputeCommitDelay() const;
 
-  void CommitChanges(base::OnceClosure callback = {});
-  void OnCommitComplete(base::OnceClosure callback, leveldb::Status status);
+  void CommitChanges();
 
   void UnloadMapIfPossible();
 

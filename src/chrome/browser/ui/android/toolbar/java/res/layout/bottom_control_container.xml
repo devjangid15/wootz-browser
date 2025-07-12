@@ -15,19 +15,16 @@ found in the LICENSE file.
         android:orientation="vertical"
         android:layout_width="match_parent"
         android:id="@+id/bottom_controls_wrapper"
-        android:layout_height="wrap_content"
-        android:clipChildren="true"
-        android:clipToOutline="true" >
+        android:layout_height="wrap_content" >
 
-        <!-- <ImageView
+        <ImageView
             android:id="@+id/bottom_container_top_shadow"
             android:layout_width="match_parent"
             android:layout_height="@dimen/toolbar_shadow_height"
             android:src="@drawable/modern_toolbar_shadow"
             android:scaleType="fitXY"
             android:scaleY="-1"
-            tools:ignore="ContentDescription"
-            android:visibility="gone" /> -->
+            tools:ignore="ContentDescription" />
 
         <FrameLayout
             android:layout_width="match_parent"

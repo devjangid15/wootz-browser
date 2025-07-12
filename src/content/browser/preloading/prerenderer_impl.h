@@ -5,6 +5,7 @@
 #ifndef CONTENT_BROWSER_PRELOADING_PRERENDERER_IMPL_H_
 #define CONTENT_BROWSER_PRELOADING_PRERENDERER_IMPL_H_
 
+#include <array>
 #include <tuple>
 
 #include "base/scoped_observation.h"
@@ -46,9 +47,11 @@ class CONTENT_EXPORT PrerendererImpl : public Prerenderer,
       PrerenderCancellationCallback callback) override;
 
   // PrerenderHostRegistry::Observer implementations:
-  void OnCancel(int host_frame_tree_node_id,
+  void OnCancel(FrameTreeNodeId host_frame_tree_node_id,
                 const PrerenderCancellationReason& reason) override;
   void OnRegistryDestroyed() override;
+
+  void CancelStartedPrerendersForTesting();
 
  private:
   struct PrerenderInfo;

@@ -4,9 +4,14 @@
 
 package org.chromium.chrome.browser.password_manager;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.Context;
 import android.content.res.Resources;
 
+import org.chromium.base.CallbackUtils;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.components.browser_ui.modaldialog.AppModalPresenter;
 import org.chromium.ui.modaldialog.DialogDismissalCause;
 import org.chromium.ui.modaldialog.ModalDialogManager;
@@ -15,13 +20,17 @@ import org.chromium.ui.modaldialog.ModalDialogProperties;
 import org.chromium.ui.modaldialog.SimpleModalDialogController;
 import org.chromium.ui.modelutil.PropertyModel;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /** Helps to show a confirmation. */
+@NullMarked
 public class ConfirmationDialogHelper {
     private final Context mContext;
     private ModalDialogManager mModalDialogManager;
-    private PropertyModel mDialogModel;
-    private Runnable mConfirmedCallback;
-    private Runnable mDeclinedCallback;
+    private @Nullable PropertyModel mDialogModel;
+    private @Nullable Runnable mConfirmedCallback;
+    private @Nullable Runnable mDeclinedCallback;
 
     public ConfirmationDialogHelper(Context context) {
         mContext = context;
@@ -53,7 +62,12 @@ public class ConfirmationDialogHelper {
      */
     public void showConfirmation(
             String title, String message, int confirmButtonTextId, Runnable confirmedCallback) {
-        showConfirmation(title, message, confirmButtonTextId, confirmedCallback, () -> {});
+        showConfirmation(
+                title,
+                message,
+                confirmButtonTextId,
+                confirmedCallback,
+                CallbackUtils.emptyRunnable());
     }
 
     /**
@@ -88,7 +102,9 @@ public class ConfirmationDialogHelper {
                                 ModalDialogProperties.BUTTON_STYLES,
                                 ModalDialogProperties.ButtonStyles.PRIMARY_FILLED_NEGATIVE_OUTLINE)
                         .with(ModalDialogProperties.TITLE, title)
-                        .with(ModalDialogProperties.MESSAGE_PARAGRAPH_1, message)
+                        .with(
+                                ModalDialogProperties.MESSAGE_PARAGRAPHS,
+                                new ArrayList<>(List.of(message)))
                         .with(
                                 ModalDialogProperties.POSITIVE_BUTTON_TEXT,
                                 mContext.getString(confirmButtonTextId))
@@ -103,9 +119,11 @@ public class ConfirmationDialogHelper {
     private void onDismiss(@DialogDismissalCause int dismissalCause) {
         switch (dismissalCause) {
             case DialogDismissalCause.POSITIVE_BUTTON_CLICKED:
+                assumeNonNull(mConfirmedCallback);
                 mConfirmedCallback.run();
                 break;
             case DialogDismissalCause.NEGATIVE_BUTTON_CLICKED:
+                assumeNonNull(mDeclinedCallback);
                 mDeclinedCallback.run();
                 break;
             default:

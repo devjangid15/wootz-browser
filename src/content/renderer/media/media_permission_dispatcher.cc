@@ -36,9 +36,7 @@ blink::mojom::PermissionDescriptorPtr MediaPermissionTypeToPermissionDescriptor(
       descriptor->name = blink::mojom::PermissionName::VIDEO_CAPTURE;
       break;
     default:
-      NOTREACHED_IN_MIGRATION() << base::to_underlying(type);
-      descriptor->name =
-          blink::mojom::PermissionName::PROTECTED_MEDIA_IDENTIFIER;
+      NOTREACHED() << base::to_underlying(type);
   }
   return descriptor;
 }
@@ -134,7 +132,7 @@ uint32_t MediaPermissionDispatcher::RegisterCallback(
 blink::mojom::PermissionService*
 MediaPermissionDispatcher::GetPermissionService() {
   if (!permission_service_) {
-    render_frame_->GetBrowserInterfaceBroker()->GetInterface(
+    render_frame_->GetBrowserInterfaceBroker().GetInterface(
         permission_service_.BindNewPipeAndPassReceiver());
     permission_service_.set_disconnect_handler(base::BindOnce(
         &MediaPermissionDispatcher::OnPermissionServiceConnectionError,
@@ -151,7 +149,7 @@ void MediaPermissionDispatcher::OnPermissionStatus(
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
 
   auto iter = requests_.find(request_id);
-  DCHECK(iter != requests_.end()) << "Request not found.";
+  CHECK(iter != requests_.end());
 
   PermissionStatusCB permission_status_cb = std::move(iter->second);
   requests_.erase(iter);
@@ -170,7 +168,7 @@ void MediaPermissionDispatcher::IsHardwareSecureDecryptionAllowed(
 media::mojom::MediaFoundationPreferences*
 MediaPermissionDispatcher::GetMediaFoundationPreferences() {
   if (!mf_preferences_) {
-    render_frame_->GetBrowserInterfaceBroker()->GetInterface(
+    render_frame_->GetBrowserInterfaceBroker().GetInterface(
         mf_preferences_.BindNewPipeAndPassReceiver());
     mf_preferences_.set_disconnect_handler(base::BindOnce(
         &MediaPermissionDispatcher::OnMediaFoundationPreferencesConnectionError,

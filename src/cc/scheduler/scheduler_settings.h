@@ -59,6 +59,10 @@ class CC_EXPORT SchedulerSettings {
   bool scroll_deadline_mode_enabled = false;
   double scroll_deadline_ratio = 0.333;
 
+  // The number of frames to allow slow main commits to delay impl invalidation
+  // frames by.
+  int delay_impl_invalidation_frames = 0;
+
   std::unique_ptr<base::trace_event::ConvertableToTraceFormat> AsValue() const;
 };
 

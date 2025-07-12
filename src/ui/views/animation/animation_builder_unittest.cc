@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/test/gtest_util.h"
 #include "base/time/time.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -91,8 +92,9 @@ class AnimationBuilderTest : public testing::Test {
     animator_controllers_.clear();
     AnimationBuilder::SetObserverDeletedCallbackForTesting(
         base::NullCallback());
-    if (expected_observers_deleted_)
+    if (expected_observers_deleted_) {
       EXPECT_EQ(expected_observers_deleted_.value(), deleted_observers_);
+    }
   }
 
   // Call this function to also ensure any implicitly created observers have

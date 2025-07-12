@@ -7,6 +7,7 @@
 #include <string>
 #include <unordered_set>
 
+#include "base/strings/string_util.h"
 #include "net/http/http_response_headers.h"
 #include "services/network/orb/orb_impl.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
@@ -35,7 +36,7 @@ ResponseAnalyzer::~ResponseAnalyzer() = default;
 
 // static
 std::unique_ptr<ResponseAnalyzer> ResponseAnalyzer::Create(
-    PerFactoryState& state) {
+    PerFactoryState* state) {
   return std::make_unique<OpaqueResponseBlockingAnalyzer>(state);
 }
 

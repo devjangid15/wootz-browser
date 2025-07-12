@@ -7,6 +7,7 @@
 #include <iostream>
 #include <tuple>
 #include <utility>
+#include <variant>
 
 #include "base/base_paths.h"
 #include "base/base_switches.h"
@@ -18,6 +19,7 @@
 #include "base/logging.h"
 #include "base/path_service.h"
 #include "base/process/current_process.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/trace_event/trace_log.h"
 #include "build/build_config.h"
 #include "components/crash/core/common/crash_key.h"
@@ -31,15 +33,14 @@
 #include "content/public/common/url_constants.h"
 #include "content/shell/app/shell_crash_reporter_client.h"
 #include "content/shell/browser/shell_content_browser_client.h"
-#include "content/shell/browser/shell_paths.h"
 #include "content/shell/common/shell_content_client.h"
+#include "content/shell/common/shell_paths.h"
 #include "content/shell/common/shell_switches.h"
 #include "content/shell/gpu/shell_content_gpu_client.h"
 #include "content/shell/renderer/shell_content_renderer_client.h"
 #include "content/shell/utility/shell_content_utility_client.h"
 #include "ipc/ipc_buildflags.h"
 #include "net/cookies/cookie_monster.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "ui/base/resource/resource_bundle.h"
 
 #if BUILDFLAG(IPC_MESSAGE_LOG_ENABLED)
@@ -90,6 +91,12 @@
 
 #if BUILDFLAG(IS_IOS)
 #include "content/shell/app/ios/shell_application_ios.h"
+#endif
+
+#if BUILDFLAG(IS_IOS_TVOS)
+#include "base/files/file_path.h"
+#include "base/path_service.h"
+#include "content/shell/common/shell_switches.h"
 #endif
 
 namespace {
@@ -226,12 +233,7 @@ std::optional<int> ShellMainDelegate::BasicStartupComplete() {
 
 #if BUILDFLAG(IS_MAC)
   // Needs to happen before InitializeResourceBundle().
-  OverrideFrameworkBundlePath();
-  OverrideOuterBundlePath();
-  OverrideChildProcessPath();
-  OverrideSourceRootPath();
   EnsureCorrectResolutionSettings();
-  OverrideBundleID();
 #endif  // BUILDFLAG(IS_MAC)
 
   InitLogging(command_line);
@@ -247,13 +249,31 @@ std::optional<int> ShellMainDelegate::BasicStartupComplete() {
   }
 #endif
 
+#if BUILDFLAG(IS_IOS_TVOS)
+  // On tvOS, local storage is limited and data cannot be written anywhere
+  // other than the cache directory, so `base::DIR_CACHE` is used for
+  // the user data directory.
+  //
+  // The exception is when a different user data directory has been specified
+  // (for example by content's WrapperTestLauncherDelegate::GetCommandLine()
+  // when running browser tests). In this case, we prefer the value has been
+  // passed, otherwise multiple tests running at the same time will try to use
+  // the same temporary files and fail.
+  base::FilePath path;
+  if (!command_line.HasSwitch(switches::kContentShellUserDataDir) &&
+      base::PathService::Get(base::DIR_CACHE, &path) && !path.empty()) {
+    command_line.AppendSwitchASCII(switches::kContentShellUserDataDir,
+                                   path.MaybeAsASCII());
+  }
+#endif
+
   RegisterShellPathProvider();
 
   return std::nullopt;
 }
 
 bool ShellMainDelegate::ShouldCreateFeatureList(InvokedIn invoked_in) {
-  return absl::holds_alternative<InvokedInChildProcess>(invoked_in);
+  return std::holds_alternative<InvokedInChildProcess>(invoked_in);
 }
 
 bool ShellMainDelegate::ShouldInitializeMojo(InvokedIn invoked_in) {
@@ -261,13 +281,6 @@ bool ShellMainDelegate::ShouldInitializeMojo(InvokedIn invoked_in) {
 }
 
 void ShellMainDelegate::PreSandboxStartup() {
-#if defined(ARCH_CPU_ARM_FAMILY) && \
-    (BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS))
-  // Create an instance of the CPU class to parse /proc/cpuinfo and cache
-  // cpu_brand info.
-  base::CPU cpu_info;
-#endif
-
 // Disable platform crash handling and initialize the crash reporter, if
 // requested.
 // TODO(crbug.com/40188745): Implement crash reporter integration for Fuchsia.
@@ -294,7 +307,7 @@ void ShellMainDelegate::PreSandboxStartup() {
   InitializeResourceBundle();
 }
 
-absl::variant<int, MainFunctionParams> ShellMainDelegate::RunProcess(
+std::variant<int, MainFunctionParams> ShellMainDelegate::RunProcess(
     const std::string& process_type,
     MainFunctionParams main_function_params) {
   // For non-browser process, return and have the caller run the main loop.
@@ -303,8 +316,6 @@ absl::variant<int, MainFunctionParams> ShellMainDelegate::RunProcess(
 
   base::CurrentProcess::GetInstance().SetProcessType(
       base::CurrentProcessType::PROCESS_BROWSER);
-  base::trace_event::TraceLog::GetInstance()->SetProcessSortIndex(
-      kTraceEventBrowserProcessSortIndex);
 
 #if !BUILDFLAG(IS_ANDROID)
   if (switches::IsRunWebTestsSwitchPresent()) {

@@ -252,7 +252,7 @@ void BluetoothLocalGattCharacteristicFloss::
       FROM_HERE, kResponseTimeout,
       base::BindOnce(
           &BluetoothLocalGattCharacteristicFloss::OnWriteRequestCallback,
-          weak_ptr_factory_.GetWeakPtr(), request_id, std::ref(value),
+          weak_ptr_factory_.GetWeakPtr(), request_id, base::OwnedRef(value),
           needs_response, /*success=*/false));
 
   if (is_prepared_write) {
@@ -260,12 +260,12 @@ void BluetoothLocalGattCharacteristicFloss::
         device, characteristic, value, offset, /*has_subsequent_request=*/true,
         base::BindOnce(
             &BluetoothLocalGattCharacteristicFloss::OnWriteRequestCallback,
-            weak_ptr_factory_.GetWeakPtr(), request_id, std::ref(value),
+            weak_ptr_factory_.GetWeakPtr(), request_id, base::OwnedRef(value),
             needs_response,
             /*success=*/true),
         base::BindOnce(
             &BluetoothLocalGattCharacteristicFloss::OnWriteRequestCallback,
-            weak_ptr_factory_.GetWeakPtr(), request_id, std::ref(value),
+            weak_ptr_factory_.GetWeakPtr(), request_id, base::OwnedRef(value),
             needs_response,
             /*success=*/false));
   } else {
@@ -273,12 +273,12 @@ void BluetoothLocalGattCharacteristicFloss::
         device, characteristic, value, offset,
         base::BindOnce(
             &BluetoothLocalGattCharacteristicFloss::OnWriteRequestCallback,
-            weak_ptr_factory_.GetWeakPtr(), request_id, std::ref(value),
+            weak_ptr_factory_.GetWeakPtr(), request_id, base::OwnedRef(value),
             needs_response,
             /*success=*/true),
         base::BindOnce(
             &BluetoothLocalGattCharacteristicFloss::OnWriteRequestCallback,
-            weak_ptr_factory_.GetWeakPtr(), request_id, std::ref(value),
+            weak_ptr_factory_.GetWeakPtr(), request_id, base::OwnedRef(value),
             needs_response,
             /*success=*/false));
   }
@@ -379,9 +379,14 @@ int32_t BluetoothLocalGattCharacteristicFloss::AddDescriptor(
   return descriptors_.size() - 1;
 }
 
-const std::vector<std::unique_ptr<BluetoothLocalGattDescriptorFloss>>&
+std::vector<device::BluetoothLocalGattDescriptor*>
 BluetoothLocalGattCharacteristicFloss::GetDescriptors() const {
-  return descriptors_;
+  std::vector<device::BluetoothLocalGattDescriptor*> descriptors;
+  descriptors.reserve(descriptors_.size());
+  for (const auto& d : descriptors_) {
+    descriptors.push_back(d.get());
+  }
+  return descriptors;
 }
 
 device::BluetoothGattCharacteristic::NotificationType

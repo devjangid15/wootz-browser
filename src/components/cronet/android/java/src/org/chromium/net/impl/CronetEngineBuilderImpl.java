@@ -3,27 +3,28 @@
 // found in the LICENSE file.
 package org.chromium.net.impl;
 
-import static android.os.Process.THREAD_PRIORITY_BACKGROUND;
-import static android.os.Process.THREAD_PRIORITY_LOWEST;
-
 import android.content.Context;
 import android.os.Process;
 import android.os.SystemClock;
 import android.util.Base64;
 
 import androidx.annotation.IntDef;
+import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import org.chromium.net.CronetEngine;
 import org.chromium.net.ICronetEngineBuilder;
+import org.chromium.net.ProxyOptions;
 import org.chromium.net.impl.CronetLogger.CronetSource;
 
 import java.io.File;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.net.IDN;
+import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -127,8 +128,6 @@ public abstract class CronetEngineBuilderImpl extends ICronetEngineBuilder {
 
     private static final Pattern INVALID_PKP_HOST_NAME = Pattern.compile("^[0-9\\.]*$");
 
-    private static final int INVALID_THREAD_PRIORITY = THREAD_PRIORITY_LOWEST + 1;
-
     @VisibleForTesting
     static int sApiLevel = VersionSafeCallbacks.ApiVersion.getMaximumAvailableApiLevel();
 
@@ -151,7 +150,7 @@ public abstract class CronetEngineBuilderImpl extends ICronetEngineBuilder {
     private String mExperimentalOptions;
     protected long mMockCertVerifier;
     private boolean mNetworkQualityEstimatorEnabled;
-    private int mThreadPriority = INVALID_THREAD_PRIORITY;
+    private @Nullable VersionSafeProxyOptions mProxyOptions;
 
     /**
      * Default config enables SPDY and QUIC, disables SDCH and HTTP cache.
@@ -500,11 +499,28 @@ public abstract class CronetEngineBuilderImpl extends ICronetEngineBuilder {
 
     @Override
     public CronetEngineBuilderImpl setThreadPriority(int priority) {
-        if (priority > THREAD_PRIORITY_LOWEST || priority < -20) {
-            throw new IllegalArgumentException("Thread priority invalid");
-        }
-        mThreadPriority = priority;
+        // Not supported
         return this;
+    }
+
+    @Override
+    public CronetEngineBuilderImpl setProxyOptions(@Nullable ProxyOptions proxyOptions) {
+        if (proxyOptions != null) {
+            mProxyOptions = new VersionSafeProxyOptions(proxyOptions);
+        }
+        return this;
+    }
+
+    @Nullable
+    VersionSafeProxyOptions getProxyOptions() {
+        return mProxyOptions;
+    }
+
+    @Override
+    public Set<Integer> getSupportedConfigOptions() {
+        Set<Integer> supportedConfigOptions = new HashSet<>();
+        supportedConfigOptions.add(PROXY_OPTIONS);
+        return Collections.unmodifiableSet(supportedConfigOptions);
     }
 
     @Override
@@ -512,13 +528,11 @@ public abstract class CronetEngineBuilderImpl extends ICronetEngineBuilder {
         return 0;
     }
 
-    /**
-     * @return thread priority provided by user, or {@code defaultThreadPriority} if none provided.
-     */
+    // Empirical field experiments suggest that, across a variety of devices and apps, DEFAULT
+    // priority is the best tradeoff. Lower priorities come with negative latency impact, while
+    // higher priorities quickly hit diminishing returns.
     @VisibleForTesting
-    int threadPriority(int defaultThreadPriority) {
-        return mThreadPriority == INVALID_THREAD_PRIORITY ? defaultThreadPriority : mThreadPriority;
-    }
+    public static final int NETWORK_THREAD_PRIORITY = Process.THREAD_PRIORITY_DEFAULT;
 
     /**
      * Returns {@link Context} for builder.
@@ -540,7 +554,7 @@ public abstract class CronetEngineBuilderImpl extends ICronetEngineBuilder {
                 /* httpCacheMode= */ publicBuilderHttpCacheMode(),
                 /* experimentalOptions= */ experimentalOptions(),
                 /* networkQualityEstimatorEnabled= */ networkQualityEstimatorEnabled(),
-                /* threadPriority= */ threadPriority(THREAD_PRIORITY_BACKGROUND),
+                /* threadPriority= */ NETWORK_THREAD_PRIORITY,
                 /* cronetInitializationRef= */ getLogCronetInitializationRef());
     }
 }

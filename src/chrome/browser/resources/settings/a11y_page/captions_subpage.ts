@@ -9,6 +9,7 @@
 
 import '//resources/cr_elements/cr_shared_style.css.js';
 import '../controls/settings_slider.js';
+import '../settings_page/settings_subpage.js';
 import '../settings_shared.css.js';
 import './live_caption_section.js';
 
@@ -20,11 +21,12 @@ import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
 import type {DropdownMenuOptionList} from '../controls/settings_dropdown_menu.js';
 import type {SettingsToggleButtonElement} from '../controls/settings_toggle_button.js';
 import {loadTimeData} from '../i18n_setup.js';
-import type {LanguageHelper, LanguagesModel} from '../languages_page/languages_types.js';
+import {SettingsViewMixin} from '../settings_page/settings_view_mixin.js';
 
 import {getTemplate} from './captions_subpage.html.js';
 
-const SettingsCaptionsElementBase = PrefsMixin(PolymerElement);
+const SettingsCaptionsElementBase =
+    SettingsViewMixin(PrefsMixin(PolymerElement));
 
 export class SettingsCaptionsElement extends SettingsCaptionsElementBase {
   static get is() {
@@ -37,23 +39,6 @@ export class SettingsCaptionsElement extends SettingsCaptionsElementBase {
 
   static get properties() {
     return {
-      prefs: {
-        type: Object,
-        notify: true,
-      },
-
-
-      /**
-       * Read-only reference to the languages model provided by the
-       * 'settings-languages' instance.
-       */
-      languages: {
-        type: Object,
-        notify: true,
-      },
-
-      languageHelper: Object,
-
       /**
        * List of options for the background opacity drop-down menu.
        */
@@ -217,15 +202,13 @@ export class SettingsCaptionsElement extends SettingsCaptionsElementBase {
     };
   }
 
-  languages: LanguagesModel;
-  languageHelper: LanguageHelper;
-  private readonly backgroundOpacityOptions_: DropdownMenuOptionList;
-  private readonly colorOptions_: DropdownMenuOptionList;
-  private textFontOptions_: DropdownMenuOptionList;
-  private readonly textOpacityOptions_: DropdownMenuOptionList;
-  private readonly textShadowOptions_: DropdownMenuOptionList;
-  private readonly textSizeOptions_: DropdownMenuOptionList;
-  private enableLiveCaption_: boolean;
+  declare private readonly backgroundOpacityOptions_: DropdownMenuOptionList;
+  declare private readonly colorOptions_: DropdownMenuOptionList;
+  declare private textFontOptions_: DropdownMenuOptionList;
+  declare private readonly textOpacityOptions_: DropdownMenuOptionList;
+  declare private readonly textShadowOptions_: DropdownMenuOptionList;
+  declare private readonly textSizeOptions_: DropdownMenuOptionList;
+  declare private enableLiveCaption_: boolean;
 
   override ready() {
     super.ready();
@@ -323,6 +306,11 @@ export class SettingsCaptionsElement extends SettingsCaptionsElementBase {
     }
 
     return `${+ size.slice(0, -1) / 100}%`;
+  }
+
+  // SettingsViewMixin implementation.
+  override focusBackButton() {
+    this.shadowRoot!.querySelector('settings-subpage')!.focusBackButton();
   }
 }
 

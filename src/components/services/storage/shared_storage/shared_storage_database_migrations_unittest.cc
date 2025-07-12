@@ -11,6 +11,7 @@
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/strings/string_util.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_timeouts.h"
@@ -18,6 +19,7 @@
 #include "components/services/storage/shared_storage/shared_storage_database.h"
 #include "components/services/storage/shared_storage/shared_storage_options.h"
 #include "components/services/storage/shared_storage/shared_storage_test_utils.h"
+#include "services/network/public/cpp/features.h"
 #include "sql/database.h"
 #include "sql/statement.h"
 #include "sql/test/test_helpers.h"
@@ -48,7 +50,7 @@ class SharedStorageDatabaseMigrationsTest : public testing::Test {
 
   void SetUp() override {
     scoped_feature_list_.InitAndEnableFeatureWithParameters(
-        {blink::features::kSharedStorageAPI},
+        {network::features::kSharedStorageAPI},
         {{"MaxSharedStorageInitTries", "2"}});
 
     // Get a temporary directory for the test DB files.
@@ -74,7 +76,7 @@ class SharedStorageDatabaseMigrationsTest : public testing::Test {
         temp_dir_.GetPath().Append(FILE_PATH_LITERAL("TestCurrentVersion.db"));
     EXPECT_TRUE(CreateDatabaseFromSQL(current_version_path,
                                       GetTestFileNameForCurrentVersion()));
-    sql::Database db;
+    sql::Database db(sql::test::kTestTag);
     EXPECT_TRUE(db.Open(current_version_path));
     return db.GetSchema();
   }
@@ -119,7 +121,7 @@ TEST_F(SharedStorageDatabaseMigrationsTest, MigrateEmptyToCurrent) {
 
   // Verify schema is current.
   {
-    sql::Database db;
+    sql::Database db(sql::test::kTestTag);
     ASSERT_TRUE(db.Open(file_name_));
 
     // Check version.
@@ -145,7 +147,7 @@ TEST_F(SharedStorageDatabaseMigrationsTest,
 
   // Verify pre-conditions.
   {
-    sql::Database db;
+    sql::Database db(sql::test::kTestTag);
     ASSERT_TRUE(db.Open(file_name_));
 
     // Check version.
@@ -163,7 +165,7 @@ TEST_F(SharedStorageDatabaseMigrationsTest,
 
   // Verify schema is current.
   {
-    sql::Database db;
+    sql::Database db(sql::test::kTestTag);
     ASSERT_TRUE(db.Open(file_name_));
 
     // Check version.
@@ -189,7 +191,7 @@ TEST_F(SharedStorageDatabaseMigrationsTest, MigrateTooNewVersionToCurrent) {
 
   // Verify pre-conditions.
   {
-    sql::Database db;
+    sql::Database db(sql::test::kTestTag);
     ASSERT_TRUE(db.Open(file_name_));
 
     // Check compatible version.
@@ -207,7 +209,7 @@ TEST_F(SharedStorageDatabaseMigrationsTest, MigrateTooNewVersionToCurrent) {
 
   // Verify schema is current.
   {
-    sql::Database db;
+    sql::Database db(sql::test::kTestTag);
     ASSERT_TRUE(db.Open(file_name_));
 
     // Check version.
@@ -238,7 +240,7 @@ TEST_F(SharedStorageDatabaseMigrationsTest, MigrateVersion5ToCurrent) {
 
   // Verify pre-conditions.
   {
-    sql::Database db;
+    sql::Database db(sql::test::kTestTag);
     ASSERT_TRUE(db.Open(file_name_));
 
     // `context_origin`, `creation_time`, `length`, and `num_bytes`.
@@ -268,7 +270,7 @@ TEST_F(SharedStorageDatabaseMigrationsTest, MigrateVersion5ToCurrent) {
 
   // Verify schema is current.
   {
-    sql::Database db;
+    sql::Database db(sql::test::kTestTag);
     ASSERT_TRUE(db.Open(file_name_));
 
     // Check version.
@@ -319,7 +321,7 @@ TEST_F(SharedStorageDatabaseMigrationsTest, MigrateVersion4ToCurrent) {
 
   // Verify pre-conditions.
   {
-    sql::Database db;
+    sql::Database db(sql::test::kTestTag);
     ASSERT_TRUE(db.Open(file_name_));
 
     // `context_origin`, `creation_time`, and `length`.
@@ -369,7 +371,7 @@ TEST_F(SharedStorageDatabaseMigrationsTest, MigrateVersion4ToCurrent) {
 
   // Verify schema is current.
   {
-    sql::Database db;
+    sql::Database db(sql::test::kTestTag);
     ASSERT_TRUE(db.Open(file_name_));
 
     // Check version.
@@ -426,7 +428,7 @@ TEST_F(SharedStorageDatabaseMigrationsTest, MigrateVersion3ToCurrent) {
 
   // Verify pre-conditions.
   {
-    sql::Database db;
+    sql::Database db(sql::test::kTestTag);
     ASSERT_TRUE(db.Open(file_name_));
 
     // `id`, `context_origin`, `time_stamp`, and `bits_debit`.
@@ -445,7 +447,7 @@ TEST_F(SharedStorageDatabaseMigrationsTest, MigrateVersion3ToCurrent) {
 
     while (select_statement.Step()) {
       premigration_values[select_statement.ColumnInt64(0)] = std::make_tuple(
-          url::Origin::Create(GURL(select_statement.ColumnString(1))),
+          url::Origin::Create(GURL(select_statement.ColumnStringView(1))),
           select_statement.ColumnTime(2), select_statement.ColumnDouble(3));
     }
   }
@@ -454,7 +456,7 @@ TEST_F(SharedStorageDatabaseMigrationsTest, MigrateVersion3ToCurrent) {
 
   // Verify schema is current.
   {
-    sql::Database db;
+    sql::Database db(sql::test::kTestTag);
     ASSERT_TRUE(db.Open(file_name_));
 
     // Check version.
@@ -501,7 +503,7 @@ TEST_F(SharedStorageDatabaseMigrationsTest, MigrateVersion2ToCurrent) {
 
   // Verify pre-conditions.
   {
-    sql::Database db;
+    sql::Database db(sql::test::kTestTag);
     ASSERT_TRUE(db.Open(file_name_));
 
     // `context_origin`, `key`, `value`, and `last_used_time`.
@@ -537,7 +539,7 @@ TEST_F(SharedStorageDatabaseMigrationsTest, MigrateVersion2ToCurrent) {
 
   // Verify schema is current.
   {
-    sql::Database db;
+    sql::Database db(sql::test::kTestTag);
     ASSERT_TRUE(db.Open(file_name_));
 
     // Check version.
@@ -591,7 +593,7 @@ TEST_F(SharedStorageDatabaseMigrationsTest, MigrateVersion1ToCurrent) {
 
   // Verify pre-conditions.
   {
-    sql::Database db;
+    sql::Database db(sql::test::kTestTag);
     ASSERT_TRUE(db.Open(file_name_));
 
     // `context_origin`, `key`, and `value`.
@@ -614,7 +616,7 @@ TEST_F(SharedStorageDatabaseMigrationsTest, MigrateVersion1ToCurrent) {
 
   // Verify schema is current.
   {
-    sql::Database db;
+    sql::Database db(sql::test::kTestTag);
     ASSERT_TRUE(db.Open(file_name_));
 
     // Check version.
@@ -652,7 +654,7 @@ TEST_F(SharedStorageDatabaseMigrationsTest,
 
   // Verify pre-conditions.
   {
-    sql::Database db;
+    sql::Database db(sql::test::kTestTag);
     ASSERT_TRUE(db.Open(file_name_));
 
     // `meta`, `values_mapping`, and `per_origin_mapping`.
@@ -679,7 +681,7 @@ TEST_F(SharedStorageDatabaseMigrationsTest,
 
   // Verify schema is current.
   {
-    sql::Database db;
+    sql::Database db(sql::test::kTestTag);
     ASSERT_TRUE(db.Open(file_name_));
 
     // Check version.

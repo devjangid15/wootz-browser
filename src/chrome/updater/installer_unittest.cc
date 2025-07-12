@@ -36,13 +36,16 @@ TEST(InstallerTest, Simple) {
   metadata->SetProductVersion("id", base::Version("1.2.3.4"));
   metadata->SetAP("id", "ap");
   metadata->SetBrandCode("id", "BRND");
+  metadata->SetLang("id", "foolang");
 
   update_client::CrxComponent crx;
 
   base::RunLoop loop;
   base::MakeRefCounted<Installer>(
-      "id", "client_install_data", "install_data_index", "target_channel",
-      "target_version_prefix", /*rollback_allowed=*/true,
+      "id", "client_install_data", "install_data_index", "install_source",
+      "target_channel", "target_version_prefix", /*rollback_allowed=*/true,
+      /*major_version_rollout_policy=*/1,
+      /*minor_version_rollout_policy=*/2,
       /*update_disabled=*/false,
       UpdateService::PolicySameVersionUpdate::kNotAllowed, metadata,
       crx_file::VerifierFormat::CRX3_WITH_PUBLISHER_PROOF)
@@ -57,6 +60,7 @@ TEST(InstallerTest, Simple) {
   EXPECT_EQ(crx.version, base::Version("1.2.3.4"));
   EXPECT_EQ(crx.ap, "ap");
   EXPECT_EQ(crx.brand, "BRND");
+  EXPECT_EQ(crx.lang, "foolang");
   EXPECT_EQ(crx.crx_format_requirement,
             crx_file::VerifierFormat::CRX3_WITH_PUBLISHER_PROOF);
   EXPECT_EQ(crx.target_version_prefix, "target_version_prefix");
@@ -65,6 +69,16 @@ TEST(InstallerTest, Simple) {
 
   // install_data_index is unset because client_install_data was sent.
   EXPECT_EQ(crx.install_data_index, "");
+  ASSERT_NE(crx.installer_attributes.find("major_version_rollout_policy"),
+            crx.installer_attributes.end());
+  ASSERT_NE(crx.installer_attributes.find("minor_version_rollout_policy"),
+            crx.installer_attributes.end());
+  EXPECT_EQ(
+      crx.installer_attributes.find("major_version_rollout_policy")->second,
+      "1");
+  EXPECT_EQ(
+      crx.installer_attributes.find("minor_version_rollout_policy")->second,
+      "2");
 }
 
 #if BUILDFLAG(IS_MAC)
@@ -98,8 +112,10 @@ TEST(InstallerTest, LoadFromPath) {
   update_client::CrxComponent crx;
   base::RunLoop loop;
   base::MakeRefCounted<Installer>(
-      "id", "client_install_data", "install_data_index", "target_channel",
-      "target_version_prefix", /*rollback_allowed=*/true,
+      "id", "client_install_data", "install_data_index", "install_source",
+      "target_channel", "target_version_prefix", /*rollback_allowed=*/true,
+      /*major_version_rollout_policy=*/1,
+      /*minor_version_rollout_policy=*/2,
       /*update_disabled=*/false,
       UpdateService::PolicySameVersionUpdate::kNotAllowed, metadata,
       crx_file::VerifierFormat::CRX3_WITH_PUBLISHER_PROOF)
@@ -114,6 +130,7 @@ TEST(InstallerTest, LoadFromPath) {
   EXPECT_EQ(crx.version, base::Version("5.5.5.5"));
   EXPECT_EQ(crx.ap, "ap2");
   EXPECT_EQ(crx.brand, "BTWO");
+  EXPECT_EQ(crx.install_source, "install_source");
 }
 #endif  // BUILDFLAG(IS_MAC)
 
@@ -140,8 +157,10 @@ TEST(InstallerTest, LoadFromPath_PathDoesNotExist) {
 
   base::RunLoop loop;
   base::MakeRefCounted<Installer>(
-      "id", "client_install_data", "install_data_index", "target_channel",
-      "target_version_prefix", /*rollback_allowed=*/true,
+      "id", "client_install_data", "install_data_index", "install_source",
+      "target_channel", "target_version_prefix", /*rollback_allowed=*/true,
+      /*major_version_rollout_policy=*/1,
+      /*minor_version_rollout_policy=*/2,
       /*update_disabled=*/false,
       UpdateService::PolicySameVersionUpdate::kNotAllowed, metadata,
       crx_file::VerifierFormat::CRX3_WITH_PUBLISHER_PROOF)
@@ -185,8 +204,10 @@ TEST(InstallerTest, LoadFromPath_KeysMissing) {
   update_client::CrxComponent crx;
   base::RunLoop loop;
   base::MakeRefCounted<Installer>(
-      "id", "client_install_data", "install_data_index", "target_channel",
-      "target_version_prefix", /*rollback_allowed=*/true,
+      "id", "client_install_data", "install_data_index", "install_source",
+      "target_channel", "target_version_prefix", /*rollback_allowed=*/true,
+      /*major_version_rollout_policy=*/1,
+      /*minor_version_rollout_policy=*/2,
       /*update_disabled=*/false,
       UpdateService::PolicySameVersionUpdate::kNotAllowed, metadata,
       crx_file::VerifierFormat::CRX3_WITH_PUBLISHER_PROOF)
@@ -201,6 +222,29 @@ TEST(InstallerTest, LoadFromPath_KeysMissing) {
   EXPECT_EQ(crx.version, base::Version("1.2.3.4"));
   EXPECT_EQ(crx.ap, "ap");
   EXPECT_EQ(crx.brand, "BRND");
+}
+
+TEST(InstallerTest, GetInstalledFileReturnsNothing) {
+  base::test::TaskEnvironment environment_{
+      base::test::TaskEnvironment::MainThreadType::UI};
+  auto pref = std::make_unique<TestingPrefServiceSimple>();
+  update_client::RegisterPrefs(pref->registry());
+  RegisterPersistedDataPrefs(pref->registry());
+  auto metadata = base::MakeRefCounted<PersistedData>(
+      GetUpdaterScopeForTesting(), pref.get(), nullptr);
+  ASSERT_EQ(
+      static_cast<scoped_refptr<update_client::CrxInstaller>>(
+          base::MakeRefCounted<Installer>(
+              "id", "client_install_data", "install_data_index",
+              "install_source", "target_channel", "target_version_prefix",
+              /*rollback_allowed=*/true,
+              /*major_version_rollout_policy=*/1,
+              /*minor_version_rollout_policy=*/2,
+              /*update_disabled=*/false,
+              UpdateService::PolicySameVersionUpdate::kNotAllowed, metadata,
+              crx_file::VerifierFormat::CRX3_WITH_PUBLISHER_PROOF))
+          ->GetInstalledFile("f"),
+      std::nullopt);
 }
 
 }  // namespace updater

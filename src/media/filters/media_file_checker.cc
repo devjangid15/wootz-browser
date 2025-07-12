@@ -6,6 +6,8 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <utility>
@@ -55,28 +57,36 @@ bool MediaFileChecker::Start(base::TimeDelta check_time) {
   if (!glue.OpenContext())
     return false;
 
-  if (avformat_find_stream_info(format_context, NULL) < 0)
+  if (avformat_find_stream_info(format_context, nullptr) < 0) {
     return false;
+  }
 
   // Remember the codec context for any decodable audio or video streams.
   bool found_streams = false;
   std::vector<Decoder> stream_contexts(format_context->nb_streams);
-  for (size_t i = 0; i < format_context->nb_streams; ++i) {
-    AVCodecParameters* cp = format_context->streams[i]->codecpar;
+  base::span<AVStream*> format_context_span =
+      AVFormatContextToSpan(format_context);
+  std::ranges::transform(
+      format_context_span, stream_contexts.begin(),
+      [&found_streams](AVStream* stream) {
+        AVCodecParameters* cp = stream->codecpar;
 
-    if (cp->codec_type == AVMEDIA_TYPE_AUDIO ||
-        cp->codec_type == AVMEDIA_TYPE_VIDEO) {
-      auto context = AVStreamToAVCodecContext(format_context->streams[i]);
-      if (!context)
-        continue;
-      const AVCodec* codec = avcodec_find_decoder(cp->codec_id);
-      if (codec && avcodec_open2(context.get(), codec, nullptr) >= 0) {
-        auto loop = std::make_unique<FFmpegDecodingLoop>(context.get());
-        stream_contexts[i] = {std::move(context), std::move(loop)};
-        found_streams = true;
-      }
-    }
-  }
+        if (cp->codec_type == AVMEDIA_TYPE_AUDIO ||
+            cp->codec_type == AVMEDIA_TYPE_VIDEO) {
+          auto context = AVStreamToAVCodecContext(stream);
+          if (!context) {
+            return Decoder{};
+          }
+          const AVCodec* codec = avcodec_find_decoder(cp->codec_id);
+          if (codec && avcodec_open2(context.get(), codec, nullptr) >= 0) {
+            auto loop = std::make_unique<FFmpegDecodingLoop>(context.get());
+            found_streams = true;
+            return Decoder{std::move(context), std::move(loop)};
+          }
+        }
+
+        return Decoder{};
+      });
 
   if (!found_streams)
     return false;

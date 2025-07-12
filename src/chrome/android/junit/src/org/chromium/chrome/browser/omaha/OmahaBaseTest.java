@@ -18,7 +18,6 @@ import org.robolectric.annotation.Config;
 
 import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.FakeTimeTestRule;
-import org.chromium.base.FeatureList;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Batch;
@@ -49,10 +48,11 @@ import java.util.List;
 @RunWith(BaseRobolectricTestRunner.class)
 @Batch(Batch.UNIT_TESTS)
 @Config(manifest = Config.NONE)
+@SuppressWarnings("UnusedMethod")
 public class OmahaBaseTest {
     private static class TimestampPair {
-        public long timestampNextRequest;
-        public long timestampNextPost;
+        public final long timestampNextRequest;
+        public final long timestampNextPost;
 
         public TimestampPair(long timestampNextRequest, long timestampNextPost) {
             this.timestampNextRequest = timestampNextRequest;
@@ -61,14 +61,13 @@ public class OmahaBaseTest {
     }
 
     private static class MockOmahaDelegate extends OmahaDelegate {
-        private final List<Integer> mPostResults = new ArrayList<Integer>();
-        private final List<Boolean> mGenerateAndPostRequestResults = new ArrayList<Boolean>();
+        private final List<Integer> mPostResults = new ArrayList<>();
+        private final List<Boolean> mGenerateAndPostRequestResults = new ArrayList<>();
 
         private final boolean mIsOnTablet;
         private final boolean mIsInForeground;
         private final boolean mIsInSystemImage;
         private final ExponentialBackoffScheduler mScheduler;
-        private MockRequestGenerator mMockGenerator;
 
         private int mNumUUIDsGenerated;
         private long mNextScheduledTimestamp = -1;
@@ -91,9 +90,9 @@ public class OmahaBaseTest {
 
         @Override
         protected RequestGenerator createRequestGenerator() {
-            mMockGenerator =
+            MockRequestGenerator mockGenerator =
                     new MockRequestGenerator(mIsOnTablet ? DeviceType.TABLET : DeviceType.HANDSET);
-            return mMockGenerator;
+            return mockGenerator;
         }
 
         @Override
@@ -147,7 +146,7 @@ public class OmahaBaseTest {
 
     private static class ClosableThreadAssertsDisabler implements AutoCloseable {
         ClosableThreadAssertsDisabler() {
-            ThreadUtils.setThreadAssertsDisabledForTesting(true);
+            ThreadUtils.hasSubtleSideEffectsSetThreadAssertsDisabledForTesting(true);
         }
 
         @Override
@@ -198,7 +197,6 @@ public class OmahaBaseTest {
 
     @After
     public void tearDown() {
-        FeatureList.setTestValues(null);
         OmahaBase.setIsDisabledForTesting(true);
     }
 
@@ -344,7 +342,6 @@ public class OmahaBaseTest {
     @Test
     @Feature({"Omaha"})
     public void testPipelineFreshInstallUpdatedAvailable_crbug_1095755() {
-        final long now = mDelegate.getScheduler().getCurrentTime();
         final String updateVersion = "10.0.0.0";
 
         // Trigger Omaha.

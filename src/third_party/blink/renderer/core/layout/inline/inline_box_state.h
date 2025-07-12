@@ -10,10 +10,12 @@
 #include "base/dcheck_is_on.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/layout/geometry/logical_rect.h"
+#include "third_party/blink/renderer/core/layout/inline/inline_item_result.h"
 #include "third_party/blink/renderer/core/layout/inline/line_box_fragment_builder.h"
 #include "third_party/blink/renderer/core/style/computed_style_constants.h"
 #include "third_party/blink/renderer/platform/fonts/font_height.h"
 #include "third_party/blink/renderer/platform/geometry/layout_unit.h"
+#include "third_party/blink/renderer/platform/wtf/gc_plugin.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 #include "third_party/blink/renderer/platform/wtf/vector_traits.h"
 
@@ -43,19 +45,15 @@ struct InlineBoxState {
 
  public:
   unsigned fragment_start = 0;
-  const InlineItem* item = nullptr;
+  Member<const InlineItem> item;
   Member<const ComputedStyle> style;
 
-  // Points to style->GetFont(), or |scaled_font| in an SVG <text>.
-  const Font* font = nullptr;
+  // Equal to style->GetFont(), or to |scaled_font| in an SVG <text>.
+  Member<const Font> font;
 
   // A storage of SVG scaled font. Do not touch this outside of
   // ResetStyle().
-  //
-  // NOTE: This doesn't use a std::optional to avoid a potentially racy branch
-  // within the Trace method.
-  Font scaled_font;
-  bool has_scaled_font = false;
+  Member<const Font> scaled_font;
 
   // SVG scaling factor for this box. We use a font of which size is
   // css-specified-size * scaling_factor.
@@ -84,8 +82,7 @@ struct InlineBoxState {
   // is set.
   bool has_start_edge = false;
   bool has_end_edge = false;
-  LayoutUnit margin_inline_start;
-  LayoutUnit margin_inline_end;
+  LineBoxStrut margins;
   LineBoxStrut borders;
   LineBoxStrut padding;
 
@@ -104,7 +101,9 @@ struct InlineBoxState {
   InlineBoxState& operator=(const InlineBoxState&) = delete;
 
   void Trace(Visitor* visitor) const {
+    visitor->Trace(item);
     visitor->Trace(style);
+    visitor->Trace(font);
     visitor->Trace(scaled_font);
   }
 
@@ -125,13 +124,15 @@ struct InlineBoxState {
   // The computed metrics is included into the line height of the current box.
   void ComputeTextMetrics(const ComputedStyle&,
                           const Font& fontref,
-                          FontBaseline ifc_baseline);
+                          FontBaseline ifc_baseline,
+                          float scale);
   void EnsureTextMetrics(const ComputedStyle&,
                          const Font& fontref,
-                         FontBaseline ifc_baseline);
+                         FontBaseline ifc_baseline,
+                         float scale);
   void ResetTextMetrics();
 
-  void AccumulateUsedFonts(const ShapeResultView*);
+  void AccumulateUsedFonts(const ShapeResultView*, float scale = 1.0f);
 
   // 'text-top' offset for 'vertical-align'.
   LayoutUnit TextTop(FontBaseline baseline_type) const;
@@ -150,7 +151,7 @@ struct InlineBoxState {
                           FontHeight& metrics);
 
 #if DCHECK_IS_ON()
-  void CheckSame(const InlineBoxState&) const;
+  void CheckSame(const InlineBoxState&, bool allow_metrics_mismatch) const;
 #endif
 };
 
@@ -172,8 +173,10 @@ class CORE_EXPORT InlineLayoutStateStack {
   // @return The initial box state for the line.
   InlineBoxState* OnBeginPlaceItems(const InlineNode node,
                                     const ComputedStyle&,
+                                    const InlineItemResults& line_items,
                                     FontBaseline,
                                     bool line_height_quirk,
+                                    bool should_scale_line_height,
                                     LogicalLineItems* line_box);
 
   // Push a box state stack.
@@ -187,6 +190,7 @@ class CORE_EXPORT InlineLayoutStateStack {
                             const InlineItem&,
                             const InlineItemResult&,
                             FontBaseline baseline_type,
+                            float text_scale,
                             LogicalLineItems* line_box);
 
   // Pop a box state stack.
@@ -212,6 +216,11 @@ class CORE_EXPORT InlineLayoutStateStack {
   void ClearRubyColumnList() { ruby_column_list_.Shrink(0); }
 
   bool HasBoxFragments() const { return !box_data_list_.empty(); }
+
+  // Returns a pair of line-over margin and line-under margin if the outermost
+  // element has non-zero block-axis margin, border, or padding.
+  std::optional<std::pair<LayoutUnit, LayoutUnit>>
+  AnnotationBoxBlockAxisMargins() const;
 
   // Notify when child is inserted at |index| to adjust child indexes.
   void ChildInserted(unsigned index);
@@ -247,10 +256,12 @@ class CORE_EXPORT InlineLayoutStateStack {
   // a box tree.
   void CreateBoxFragments(const ConstraintSpace&,
                           LogicalLineItems*,
+                          LayoutUnit line_box_line_height,
                           bool is_opaque);
 
 #if DCHECK_IS_ON()
-  void CheckSame(const InlineLayoutStateStack&) const;
+  void CheckSame(const InlineLayoutStateStack&,
+                 bool allow_metrics_mismatch) const;
 #endif
 
  private:
@@ -262,6 +273,7 @@ class CORE_EXPORT InlineLayoutStateStack {
                    FontBaseline);
 
   void AddBoxFragmentPlaceholder(InlineBoxState*,
+                                 float text_scale,
                                  LogicalLineItems*,
                                  FontBaseline);
   void AddBoxData(const ConstraintSpace&, InlineBoxState*, LogicalLineItems*);
@@ -318,15 +330,17 @@ class CORE_EXPORT InlineLayoutStateStack {
     unsigned fragment_start;
     unsigned fragment_end;
     // Ruby columns in the above range.
-    Member<HeapVector<Member<LogicalRubyColumn>>> ruby_column_list;
+    Member<GCedHeapVector<Member<LogicalRubyColumn>>> ruby_column_list;
 
-    const InlineItem* item;
+    Member<const InlineItem> item;
     LogicalRect rect;
 
     bool has_line_left_edge = false;
     bool has_line_right_edge = false;
     LineBoxStrut borders;
     LineBoxStrut padding;
+    LayoutUnit margin_line_over;
+    LayoutUnit margin_line_under;
     // |CreateBoxFragment()| needs margin, border+padding, and the sum of them.
     LayoutUnit margin_line_left;
     LayoutUnit margin_line_right;
@@ -340,6 +354,7 @@ class CORE_EXPORT InlineLayoutStateStack {
 
     const LayoutResult* CreateBoxFragment(const ConstraintSpace&,
                                           LogicalLineItems*,
+                                          LayoutUnit line_box_line_height,
                                           bool is_opaque = false);
     void Trace(Visitor* visitor) const;
   };

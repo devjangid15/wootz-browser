@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #import "ios/web/navigation/nscoder_util.h"
 
 #import <Foundation/Foundation.h>
@@ -21,8 +26,7 @@ const char* testStrings[] = {
     "This is working™",
     "古池や蛙飛込む水の音\nふるいけやかわずとびこむみずのおと",
     "ἀγεωμέτρητος μηδεὶς εἰσίτω",
-    "Bang!\t\n"
-};
+    "Bang!\t\n"};
 
 TEST_F(NSCoderStdStringTest, encodeDecode) {
   for (size_t i = 0; i < std::size(testStrings); ++i) {

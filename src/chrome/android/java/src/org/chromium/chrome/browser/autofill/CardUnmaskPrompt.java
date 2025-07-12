@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.autofill;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.app.Activity;
 import android.content.Context;
 import android.os.Handler;
@@ -13,6 +15,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.View.OnClickListener;
 import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
@@ -24,15 +27,17 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 
 import androidx.annotation.IntDef;
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 import androidx.core.view.ViewCompat;
 
 import org.chromium.base.ResettersForTesting;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.task.AsyncTask;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.autofill.AutofillUiUtils.ErrorType;
+import org.chromium.components.autofill.ImageSize;
 import org.chromium.ui.modaldialog.DialogDismissalCause;
 import org.chromium.ui.modaldialog.ModalDialogManager;
 import org.chromium.ui.modaldialog.ModalDialogProperties;
@@ -45,16 +50,16 @@ import java.lang.annotation.RetentionPolicy;
 import java.util.Calendar;
 
 /** A prompt that bugs users to enter their CVC when unmasking a Wallet instrument (credit card). */
+@NullMarked
 public class CardUnmaskPrompt
         implements EmptyTextWatcher,
                 OnClickListener,
                 ModalDialogProperties.Controller,
                 CompoundButton.OnCheckedChangeListener {
-    private static CardUnmaskObserverForTest sObserverForTest;
+    private static @Nullable CardUnmaskObserverForTest sObserverForTest;
 
     private final CardUnmaskPromptDelegate mDelegate;
-    private final PersonalDataManager mPersonalDataManager;
-    private PropertyModel mDialogModel;
+    private @Nullable PropertyModel mDialogModel;
     private boolean mShouldRequestExpirationDate;
 
     private final View mMainView;
@@ -72,13 +77,12 @@ public class CardUnmaskPrompt
     private final ProgressBar mVerificationProgressBar;
     private final TextView mVerificationView;
     private final long mSuccessMessageDurationMilliseconds;
-    private final int mGooglePayDrawableId;
     private final boolean mIsVirtualCard;
 
     private int mThisYear;
     private int mThisMonth;
-    private ModalDialogManager mModalDialogManager;
-    private Context mContext;
+    private @Nullable ModalDialogManager mModalDialogManager;
+    private @Nullable Context mContext;
 
     private boolean mDidFocusOnMonth;
     private boolean mDidFocusOnYear;
@@ -160,7 +164,7 @@ public class CardUnmaskPrompt
     public CardUnmaskPrompt(
             Context context,
             CardUnmaskPromptDelegate delegate,
-            PersonalDataManager personalDataManager,
+            AutofillImageFetcher imageFetcher,
             String title,
             String instructions,
             int cardIconId,
@@ -171,50 +175,47 @@ public class CardUnmaskPrompt
             String confirmButtonLabel,
             int cvcDrawableId,
             String cvcImageAnnouncement,
-            int googlePayDrawableId,
             boolean isVirtualCard,
             boolean shouldRequestExpirationDate,
             boolean shouldOfferWebauthn,
             boolean defaultUseScreenlockChecked,
             long successMessageDurationMilliseconds) {
         mDelegate = delegate;
-        mPersonalDataManager = personalDataManager;
-        mGooglePayDrawableId = googlePayDrawableId;
         mIsVirtualCard = isVirtualCard;
 
         LayoutInflater inflater = LayoutInflater.from(context);
         mMainView = inflater.inflate(R.layout.autofill_card_unmask_prompt, null);
         AutofillUiUtils.addCardDetails(
                 context,
-                mPersonalDataManager,
+                imageFetcher,
                 mMainView,
                 cardName,
                 cardLastFourDigits,
                 cardExpiration,
                 cardArtUrl,
                 cardIconId,
-                AutofillUiUtils.CardIconSize.LARGE,
+                ImageSize.LARGE,
                 R.dimen.card_unmask_dialog_credit_card_icon_end_margin,
                 /* cardNameAndNumberTextAppearance= */ R.style.TextAppearance_TextLarge_Primary,
                 /* cardLabelTextAppearance= */ R.style.TextAppearance_TextMedium_Secondary,
                 /* showCustomIcon= */ AutofillUiUtils.shouldShowCustomIcon(
                         cardArtUrl, /* isVirtualCard= */ isVirtualCard));
 
-        updateTitleForCustomView(title, context);
-        mInstructions = (TextView) mMainView.findViewById(R.id.instructions);
+        updateTitleForCustomView(title);
+        mInstructions = mMainView.findViewById(R.id.instructions);
         mInstructions.setText(instructions);
-        mNoRetryErrorMessage = (TextView) mMainView.findViewById(R.id.no_retry_error_message);
-        mCardUnmaskInput = (EditText) mMainView.findViewById(R.id.card_unmask_input);
+        mNoRetryErrorMessage = mMainView.findViewById(R.id.no_retry_error_message);
+        mCardUnmaskInput = mMainView.findViewById(R.id.card_unmask_input);
         if (isVirtualCard) {
             mCardUnmaskInput.setHint("");
         }
-        mMonthInput = (EditText) mMainView.findViewById(R.id.expiration_month);
-        mYearInput = (EditText) mMainView.findViewById(R.id.expiration_year);
+        mMonthInput = mMainView.findViewById(R.id.expiration_month);
+        mYearInput = mMainView.findViewById(R.id.expiration_year);
         mExpirationContainer = mMainView.findViewById(R.id.expiration_container);
-        mNewCardLink = (TextView) mMainView.findViewById(R.id.new_card_link);
+        mNewCardLink = mMainView.findViewById(R.id.new_card_link);
         mNewCardLink.setOnClickListener(this);
-        mErrorMessage = (TextView) mMainView.findViewById(R.id.error_message);
-        mUseScreenlockCheckbox = (CheckBox) mMainView.findViewById(R.id.use_screenlock_checkbox);
+        mErrorMessage = mMainView.findViewById(R.id.error_message);
+        mUseScreenlockCheckbox = mMainView.findViewById(R.id.use_screenlock_checkbox);
         mUseScreenlockCheckbox.setChecked(defaultUseScreenlockChecked);
         if (!shouldOfferWebauthn) {
             mUseScreenlockCheckbox.setVisibility(View.GONE);
@@ -222,13 +223,12 @@ public class CardUnmaskPrompt
         }
         logCheckBoxInitialStateStats(mUseScreenlockCheckbox.isChecked());
         mUseScreenlockCheckbox.setOnCheckedChangeListener(this);
-        mControlsContainer = (ViewGroup) mMainView.findViewById(R.id.controls_container);
+        mControlsContainer = mMainView.findViewById(R.id.controls_container);
         mVerificationOverlay = mMainView.findViewById(R.id.verification_overlay);
-        mVerificationProgressBar =
-                (ProgressBar) mMainView.findViewById(R.id.verification_progress_bar);
-        mVerificationView = (TextView) mMainView.findViewById(R.id.verification_message);
+        mVerificationProgressBar = mMainView.findViewById(R.id.verification_progress_bar);
+        mVerificationView = mMainView.findViewById(R.id.verification_message);
         mSuccessMessageDurationMilliseconds = successMessageDurationMilliseconds;
-        ImageView cvcHintImage = (ImageView) mMainView.findViewById(R.id.cvc_hint_image);
+        ImageView cvcHintImage = mMainView.findViewById(R.id.cvc_hint_image);
         cvcHintImage.setImageResource(cvcDrawableId);
         cvcHintImage.setContentDescription(cvcImageAnnouncement);
 
@@ -261,6 +261,7 @@ public class CardUnmaskPrompt
         mCardUnmaskInput.setOnEditorActionListener(
                 (v14, actionId, event) -> {
                     if (actionId == EditorInfo.IME_ACTION_DONE) {
+                        assumeNonNull(mDialogModel);
                         if (!mDialogModel.get(ModalDialogProperties.POSITIVE_BUTTON_DISABLED)) {
                             onClick(mDialogModel, ModalDialogProperties.ButtonType.POSITIVE);
                         } else if (sObserverForTest != null) {
@@ -287,6 +288,19 @@ public class CardUnmaskPrompt
                     mDidFocusOnYear = true;
                     validate();
                 });
+
+        // Focus the correct initial view once the window is focused.
+        mMainView
+                .getViewTreeObserver()
+                .addOnWindowFocusChangeListener(
+                        new ViewTreeObserver.OnWindowFocusChangeListener() {
+                            @Override
+                            public void onWindowFocusChanged(boolean hasFocus) {
+                                if (hasFocus) {
+                                    setInitialFocus();
+                                }
+                            }
+                        });
     }
 
     /** Avoids disk reads for timezone when getting the default instance of Calendar. */
@@ -315,6 +329,7 @@ public class CardUnmaskPrompt
         mContext = activity;
         mModalDialogManager = modalDialogManager;
 
+        assumeNonNull(mDialogModel);
         mModalDialogManager.showDialog(mDialogModel, ModalDialogManager.ModalDialogType.APP);
 
         showExpirationDateInputsInputs();
@@ -323,11 +338,10 @@ public class CardUnmaskPrompt
         // the dialog.
         mDialogModel.set(ModalDialogProperties.POSITIVE_BUTTON_DISABLED, true);
         mCardUnmaskInput.addTextChangedListener(this);
-        mCardUnmaskInput.post(() -> setInitialFocus());
     }
 
     public void update(String title, String instructions, boolean shouldRequestExpirationDate) {
-        updateTitleForCustomView(title, mContext);
+        updateTitleForCustomView(title);
         mInstructions.setText(instructions);
         mShouldRequestExpirationDate = shouldRequestExpirationDate;
         if (mShouldRequestExpirationDate && (mThisYear == -1 || mThisMonth == -1)) {
@@ -336,12 +350,13 @@ public class CardUnmaskPrompt
         showExpirationDateInputsInputs();
     }
 
-    private void updateTitleForCustomView(String title, Context context) {
-        TextView titleView = (TextView) mMainView.findViewById(R.id.title);
+    private void updateTitleForCustomView(String title) {
+        TextView titleView = mMainView.findViewById(R.id.title);
         titleView.setText(title);
     }
 
     public void dismiss(@DialogDismissalCause int dismissalCause) {
+        assumeNonNull(mModalDialogManager);
         mModalDialogManager.dismissDialog(mDialogModel, dismissalCause);
     }
 
@@ -350,7 +365,7 @@ public class CardUnmaskPrompt
         setOverlayVisibility(View.VISIBLE);
         mVerificationProgressBar.setVisibility(View.VISIBLE);
         mVerificationView.setText(R.string.autofill_card_unmask_verification_in_progress);
-        mVerificationView.announceForAccessibility(mVerificationView.getText());
+        ViewCompat.setAccessibilityPaneTitle(mVerificationView, mVerificationView.getText());
         clearInputError();
     }
 
@@ -377,7 +392,8 @@ public class CardUnmaskPrompt
                 mVerificationProgressBar.setVisibility(View.GONE);
                 mMainView.findViewById(R.id.verification_success).setVisibility(View.VISIBLE);
                 mVerificationView.setText(R.string.autofill_card_unmask_verification_success);
-                mVerificationView.announceForAccessibility(mVerificationView.getText());
+                ViewCompat.setAccessibilityPaneTitle(
+                        mVerificationView, mVerificationView.getText());
                 new Handler().postDelayed(dismissRunnable, mSuccessMessageDurationMilliseconds);
             } else {
                 new Handler().post(dismissRunnable);
@@ -396,6 +412,8 @@ public class CardUnmaskPrompt
      * is wrong. Finally checks whether the focus should move to the next field.
      */
     private void validate() {
+        assumeNonNull(mContext);
+        assumeNonNull(mDialogModel);
         @ErrorType int errorType = getExpirationAndCvcErrorType();
         mDialogModel.set(
                 ModalDialogProperties.POSITIVE_BUTTON_DISABLED, errorType != ErrorType.NONE);
@@ -440,6 +458,7 @@ public class CardUnmaskPrompt
     }
 
     private void setInitialFocus() {
+        assumeNonNull(mContext);
         InputMethodManager imm =
                 (InputMethodManager) mContext.getSystemService(Context.INPUT_METHOD_SERVICE);
         View view = mShouldRequestExpirationDate ? mMonthInput : mCardUnmaskInput;
@@ -533,6 +552,7 @@ public class CardUnmaskPrompt
      *        obscures them.
      */
     private void setInputsEnabled(boolean enabled) {
+        assumeNonNull(mDialogModel);
         mCardUnmaskInput.setEnabled(enabled);
         mMonthInput.setEnabled(enabled);
         mYearInput.setEnabled(enabled);
@@ -568,6 +588,7 @@ public class CardUnmaskPrompt
     private void clearInputError() {
         AutofillUiUtils.clearInputError(mErrorMessage);
         // Remove the highlight on the input fields.
+        assumeNonNull(mContext);
         AutofillUiUtils.updateColorForInputs(
                 ErrorType.NONE, mContext, mMonthInput, mYearInput, mCardUnmaskInput);
     }
@@ -576,7 +597,7 @@ public class CardUnmaskPrompt
     private void setNoRetryError(String message) {
         mNoRetryErrorMessage.setText(message);
         mNoRetryErrorMessage.setVisibility(View.VISIBLE);
-        mNoRetryErrorMessage.announceForAccessibility(message);
+        ViewCompat.setAccessibilityPaneTitle(mNoRetryErrorMessage, message);
     }
 
     private void logCheckBoxInitialStateStats(boolean isChecked) {
@@ -603,6 +624,7 @@ public class CardUnmaskPrompt
                     mUseScreenlockCheckbox.isChecked(),
                     mUseScreenlockCheckbox.getVisibility() == View.VISIBLE);
         } else if (buttonType == ModalDialogProperties.ButtonType.NEGATIVE) {
+            assumeNonNull(mModalDialogManager);
             mModalDialogManager.dismissDialog(model, DialogDismissalCause.NEGATIVE_BUTTON_CLICKED);
         }
     }
@@ -625,7 +647,7 @@ public class CardUnmaskPrompt
         ResettersForTesting.register(() -> sObserverForTest = oldValue);
     }
 
-    public PropertyModel getDialogForTest() {
+    public @Nullable PropertyModel getDialogForTest() {
         return mDialogModel;
     }
 

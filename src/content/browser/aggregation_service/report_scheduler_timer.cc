@@ -12,7 +12,6 @@
 #include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/memory/weak_ptr.h"
-#include "base/not_fatal_until.h"
 #include "base/sequence_checker.h"
 #include "base/time/time.h"
 #include "base/timer/wall_clock_timer.h"
@@ -23,7 +22,7 @@ namespace content {
 
 ReportSchedulerTimer::ReportSchedulerTimer(std::unique_ptr<Delegate> delegate)
     : delegate_(std::move(delegate)) {
-  CHECK(delegate_, base::NotFatalUntil::M128);
+  CHECK(delegate_);
 
   network::NetworkConnectionTracker* tracker = GetNetworkConnectionTracker();
   obs_.Observe(tracker);
@@ -88,10 +87,6 @@ void ReportSchedulerTimer::OnConnectionChanged(
 
   if (IsOffline()) {
     reporting_time_reached_timer_.Stop();
-    if (!was_offline) {
-      delegate_->OnReportingPaused();
-    }
-
   } else if (was_offline) {
     // Add delay to all reports that should have been sent while the browser was
     // offline so they are not temporally joinable. We only need to do this if

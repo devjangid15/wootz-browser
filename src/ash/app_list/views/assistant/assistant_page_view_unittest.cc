@@ -7,13 +7,12 @@
 #include "ash/assistant/model/assistant_ui_model.h"
 #include "ash/assistant/test/assistant_ash_test_base.h"
 #include "ash/assistant/ui/assistant_ui_constants.h"
-#include "ash/assistant/ui/colors/assistant_colors.h"
-#include "ash/assistant/ui/main_stage/assistant_onboarding_suggestion_view.h"
 #include "ash/assistant/ui/main_stage/suggestion_chip_view.h"
 #include "ash/constants/ash_pref_names.h"
 #include "ash/public/cpp/app_list/app_list_types.h"
 #include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
+#include "ash/strings/grit/ash_strings.h"
 #include "ash/style/ash_color_id.h"
 #include "ash/style/ash_color_provider.h"
 #include "ash/style/dark_light_mode_controller_impl.h"
@@ -24,9 +23,11 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkTypes.h"
+#include "ui/base/l10n/l10n_util.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/scoped_animation_duration_scale_mode.h"
 #include "ui/events/event.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/background.h"
 #include "ui/views/controls/textfield/textfield.h"
 #include "ui/views/focus/focus_manager.h"
@@ -82,7 +83,7 @@ views::View* AddTextfield(views::Widget* widget) {
   result->SetSize(gfx::Size(20, 10));
   // Focusable views need an accessible name to pass the accessibility paint
   // checks.
-  result->SetAccessibleName(u"Name");
+  result->GetViewAccessibility().SetName(u"Name");
 
   return result;
 }
@@ -102,9 +103,6 @@ class FocusChangeListenerStub : public views::FocusChangeListener {
   ~FocusChangeListenerStub() override {
     focus_manager_->RemoveFocusChangeListener(this);
   }
-
-  void OnWillChangeFocus(views::View* focused_before,
-                         views::View* focused_now) override {}
 
   void OnDidChangeFocus(views::View* focused_before,
                         views::View* focused_now) override {
@@ -139,7 +137,8 @@ class VisibilityObserver : public views::ViewObserver {
   ~VisibilityObserver() override { observed_view_->RemoveObserver(this); }
 
   void OnViewVisibilityChanged(views::View* view_or_ancestor,
-                               views::View* starting_view) override {
+                               views::View* starting_view,
+                               bool visible) override {
     UpdateWasDrawn();
   }
 
@@ -303,7 +302,6 @@ TEST_F(AssistantPageViewTest, ShouldShowGreetingLabelWhenOpening) {
   ShowAssistantUi();
 
   EXPECT_TRUE(greeting_label()->IsDrawn());
-  EXPECT_FALSE(onboarding_view()->IsDrawn());
 }
 
 TEST_F(AssistantPageViewTest, ShouldDismissGreetingLabelAfterQuery) {
@@ -312,7 +310,6 @@ TEST_F(AssistantPageViewTest, ShouldDismissGreetingLabelAfterQuery) {
   MockTextInteraction().WithTextResponse("The response");
 
   EXPECT_FALSE(greeting_label()->IsDrawn());
-  EXPECT_FALSE(onboarding_view()->IsDrawn());
 }
 
 TEST_F(AssistantPageViewTest, ShouldShowGreetingLabelAgainAfterReopening) {
@@ -327,7 +324,6 @@ TEST_F(AssistantPageViewTest, ShouldShowGreetingLabelAgainAfterReopening) {
   ShowAssistantUi();
 
   EXPECT_TRUE(greeting_label()->IsDrawn());
-  EXPECT_FALSE(onboarding_view()->IsDrawn());
 }
 
 TEST_F(AssistantPageViewTest,
@@ -335,30 +331,6 @@ TEST_F(AssistantPageViewTest,
   ShowAssistantUi(AssistantEntryPoint::kLauncherSearchResult);
 
   EXPECT_FALSE(greeting_label()->IsDrawn());
-  EXPECT_FALSE(onboarding_view()->IsDrawn());
-}
-
-TEST_F(AssistantPageViewTest,
-       ShouldNotShowOnboardingWhenOpeningFromSearchResult) {
-  ShowAssistantUi(AssistantEntryPoint::kLauncherSearchResult);
-
-  EXPECT_FALSE(onboarding_view()->IsDrawn());
-  EXPECT_FALSE(greeting_label()->IsDrawn());
-}
-
-TEST_F(AssistantPageViewTest,
-       ShouldNotShowOnboardingToExistingUsersIfShownPreviouslyInMaxSessions) {
-  SetTimeOfLastInteraction(base::Time::Now());
-  SetNumberOfSessionsWhereOnboardingShown(
-      assistant::ui::kOnboardingMaxSessionsShown);
-
-  ShowAssistantUi();
-
-  // This user has *not* interacted with Assistant more recently than 28 days
-  // ago so they *are* considered new. Onboarding would normally be shown but,
-  // since it was shown already in the max number of previous user sessions, we
-  // do *not* show it.
-  EXPECT_FALSE(onboarding_view()->IsDrawn());
 }
 
 TEST_F(AssistantPageViewTest, ShouldFocusMicViewWhenPressingVoiceInputToggle) {
@@ -545,9 +517,8 @@ TEST_F(AssistantPageViewTest,
   EXPECT_HAS_FOCUS(input_text_field());
 }
 
-// TODO(b/234164113): Test is flaky.
 TEST_F(AssistantPageViewTest,
-       DISABLED_ShouldFocusMicWhenSubmittingSuggestionChipInVoiceMode) {
+       ShouldFocusMicWhenSubmittingSuggestionChipInVoiceMode) {
   ShowAssistantUi();
   ash::SuggestionChipView* suggestion_chip =
       CreateAndGetSuggestionChip("<suggestion chip query>");
@@ -620,8 +591,6 @@ TEST_F(AssistantPageViewTest, RememberAndShowHistory) {
 TEST_F(AssistantPageViewTest, ShouldNotHaveConversationStarters) {
   ShowAssistantUi();
 
-  EXPECT_FALSE(onboarding_view()->IsDrawn());
-
   // When Launcher Search IPH is enabled, there is no suggestion chips.
   EXPECT_TRUE(GetSuggestionChips().empty());
 }
@@ -685,6 +654,17 @@ TEST_F(AssistantPageViewTest, BackgroundColorInDarkLightMode) {
   EXPECT_EQ(
       page_view()->layer()->GetTargetColor(),
       page_view()->GetColorProvider()->GetColor(kColorAshShieldAndBase80));
+}
+
+TEST_F(AssistantPageViewTest, AccessibleProperties) {
+  SetTabletMode(true);
+  ShowAssistantUi();
+  ui::AXNodeData data;
+
+  page_view()->GetViewAccessibility().GetAccessibleNodeData(&data);
+  EXPECT_EQ(data.role, ax::mojom::Role::kPane);
+  EXPECT_EQ(data.GetString16Attribute(ax::mojom::StringAttribute::kName),
+            l10n_util::GetStringUTF16(IDS_ASH_ASSISTANT_WINDOW));
 }
 
 //------------------------------------------------------------------------------

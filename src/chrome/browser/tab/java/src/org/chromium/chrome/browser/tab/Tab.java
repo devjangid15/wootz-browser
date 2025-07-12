@@ -4,16 +4,20 @@
 
 package org.chromium.chrome.browser.tab;
 
+import static org.chromium.build.NullUtil.assertNonNull;
+
 import android.content.Context;
 import android.view.View;
 
+import androidx.annotation.ColorInt;
 import androidx.annotation.IntDef;
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.Token;
 import org.chromium.base.UserDataHost;
+import org.chromium.base.supplier.ObservableSupplier;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.ui.native_page.NativePage;
 import org.chromium.components.embedder_support.view.ContentView;
@@ -27,23 +31,24 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 
 /**
- * Tab is a visual/functional unit that encapsulates the content (not just web site content
- * from network but also other types of content such as NTP, navigation history, etc) and
- * presents it to users who perceive it as one of the 'pages' managed by Chrome.
+ * Tab is a visual/functional unit that encapsulates the content (not just web site content from
+ * network but also other types of content such as NTP, navigation history, etc) and presents it to
+ * users who perceive it as one of the 'pages' managed by Chrome.
  */
+@NullMarked
 public interface Tab extends TabLifecycle {
-    public static final int INVALID_TAB_ID = -1;
-    public static final long INVALID_TIMESTAMP = -1;
+    @TabId int INVALID_TAB_ID = -1;
+    long INVALID_TIMESTAMP = -1;
 
     @IntDef({TabLoadStatus.PAGE_LOAD_FAILED, TabLoadStatus.DEFAULT_PAGE_LOAD})
     @Retention(RetentionPolicy.SOURCE)
-    public @interface TabLoadStatus {
+    @interface TabLoadStatus {
         int PAGE_LOAD_FAILED = 0;
         int DEFAULT_PAGE_LOAD = 1;
     }
 
     /** The result of the loadUrl. */
-    public static class LoadUrlResult {
+    class LoadUrlResult {
         /** Tab load status. */
         public final @TabLoadStatus int tabLoadStatus;
 
@@ -81,27 +86,33 @@ public interface Tab extends TabLifecycle {
     UserDataHost getUserDataHost();
 
     /** Returns the Profile this tab is associated with. */
-    @NonNull
     Profile getProfile();
 
     /**
      * @return The web contents associated with this tab.
      */
-    @Nullable
-    WebContents getWebContents();
+    @Nullable WebContents getWebContents();
 
     /**
      * @return The {@link Activity} {@link Context} if this {@link Tab} is attached to an
      *         {@link Activity}, otherwise the themed application context (e.g. hidden tab or
      *         browser action tab).
      */
-    @NonNull
     Context getContext();
 
     /**
-     * @return The {@link WindowAndroid} associated with this {@link Tab}.
+     * Returns the {@link WindowAndroid} associated with this {@link Tab}. May be null if the tab is
+     * detached.
      */
-    WindowAndroid getWindowAndroid();
+    @Nullable WindowAndroid getWindowAndroid();
+
+    /**
+     * Returns the {@link WindowAndroid} associated with this {@link Tab}. Asserts that the {@link
+     * WindowAndroid} is not null.
+     */
+    default WindowAndroid getWindowAndroidChecked() {
+        return assertNonNull(getWindowAndroid());
+    }
 
     /**
      * Update the attachment state to Window(Activity).
@@ -115,32 +126,30 @@ public interface Tab extends TabLifecycle {
             @Nullable WindowAndroid window, @Nullable TabDelegateFactory tabDelegateFactory);
 
     /**
-     * @return Content view used for rendered web contents. Can be null
-     *    if web contents is null.
+     * @return Content view used for rendered web contents. Can be null if web contents is null.
      */
-    ContentView getContentView();
+    @Nullable ContentView getContentView();
 
     /**
      * @return The {@link View} displaying the current page in the tab. This can be {@code null}, if
-     *         the tab is frozen or being initialized or destroyed.
+     *     the tab is frozen or being initialized or destroyed.
      */
-    View getView();
+    @Nullable View getView();
 
     /**
      * @return The {@link TabViewManager} that is responsible for managing custom {@link View}s
-     * shown on top of content in this Tab.
+     *     shown on top of content in this Tab.
      */
     TabViewManager getTabViewManager();
 
-    /**
-     * @return The id representing this tab.
-     */
+    /** Returns the id representing this tab. */
+    @TabId
     int getId();
 
     /**
      * @return Parameters that should be used for a lazily loaded Tab. May be null.
      */
-    LoadUrlParams getPendingLoadParams();
+    @Nullable LoadUrlParams getPendingLoadParams();
 
     /**
      * @return The URL that is loaded in the current tab. This may not be the same as
@@ -161,10 +170,10 @@ public interface Tab extends TabLifecycle {
 
     /**
      * @return The {@link NativePage} associated with the current page, or {@code null} if there is
-     *         no current page or the current page is displayed using something besides
-     *         {@link NativePage}.
+     *     no current page or the current page is displayed using something besides {@link
+     *     NativePage}.
      */
-    NativePage getNativePage();
+    @Nullable NativePage getNativePage();
 
     /**
      * @return Whether or not the {@link Tab} represents a {@link NativePage}.
@@ -184,21 +193,18 @@ public interface Tab extends TabLifecycle {
     void freezeNativePage();
 
     /**
-     * @return The reason the Tab was launched (from a link, external app, etc).
-     *         May change over time, for instance, to {@code FROM_RESTORE} during
-     *         tab restoration.
+     * @return The reason the Tab was launched (from a link, external app, etc). May change over
+     *     time, for instance, to {@code FROM_RESTORE} during tab restoration.
      */
     @TabLaunchType
     int getLaunchType();
 
-    /**
-     * @return The theme color for this tab.
-     */
+    /** Returns the theme color for this tab. */
+    @ColorInt
     int getThemeColor();
 
-    /**
-     * @return The background color for the current webpage.
-     */
+    /** Returns the background color for the current webpage. */
+    @ColorInt
     int getBackgroundColor();
 
     /**
@@ -207,9 +213,25 @@ public interface Tab extends TabLifecycle {
     boolean isThemingAllowed();
 
     /**
+     * TODO(crbug.com/350654700): clean up usages and remove isIncognito.
+     *
      * @return {@code true} if the Tab is in incognito mode.
+     * @deprecated Use {@link #isIncognitoBranded()} or {@link #isOffTheRecord()}.
      */
+    @Deprecated
     boolean isIncognito();
+
+    /**
+     * @return {@code true} if the Tab is in an off-the-record profile.
+     * @see {@link Profile#isOffTheRecord()}
+     */
+    boolean isOffTheRecord();
+
+    /**
+     * @return {@code true} if the Tab is in Incognito branded profile.
+     * @see {@link Profile#isIncognitoBranded()}
+     */
+    boolean isIncognitoBranded();
 
     /**
      * @return Whether the {@link Tab} is currently showing an error page.
@@ -232,6 +254,9 @@ public interface Tab extends TabLifecycle {
     /** Returns whether the tab is detached for reparenting. */
     boolean isDetached();
 
+    /** Returns whether this is the activated tab; AKA selected tab, or current tab. */
+    boolean isActivated();
+
     /** Sets Parent for the current Tab and other tab related parent properties. */
     void reparentTab(Tab parent);
 
@@ -244,6 +269,9 @@ public interface Tab extends TabLifecycle {
      * @return a {@link LoadUrlResult} for this load.
      */
     LoadUrlResult loadUrl(LoadUrlParams params);
+
+    /** Freezes the tab. If the tab is already frozen this is a no-op. */
+    void freeze();
 
     /**
      * Freezes the tabs and stores the URL in the tab's WebContentsState. If the tab is already
@@ -316,26 +344,54 @@ public interface Tab extends TabLifecycle {
     void goForward();
 
     /**
-     * @return true if the {@link Tab} is a custom tab.
+     * @return true if the {@link Tab} is a custom tab, including CCTs, TWAs and WebAPKs.
      */
     boolean isCustomTab();
 
     /**
+     * @return true if the {@link Tab} is in either a TWA or a WebAPK, both types of PWA.
+     */
+    boolean isTabInPWA();
+
+    /**
+     * @return true if the {@link Tab} is in the main browser app (i.e. not a CCT, TWA, or WebApk).
+     */
+    boolean isTabInBrowser();
+
+    /**
      * @return the last time this tab was shown or the time of its initialization if it wasn't yet
-     *         shown.
+     *     shown.
      */
     long getTimestampMillis();
 
     /**
-     * @return parent identifier for the {@link Tab}
+     * Sets the last time this tab was shown. Used for declutter to mark the tab as "active" after
+     * it's restored, but not immediately shown.
      */
+    void setTimestampMillis(long timestampMillis);
+
+    /** Returns the parent identifier for the {@link Tab}. */
+    @TabId
     int getParentId();
 
-    // TODO(crbug.com/41497290): deprecate RootId once TabGroupId has finished replacing it.
+    /**
+     * Set the parent identifier for the {@link Tab}. This method is only used as a temporary
+     * workaround for invalid parent ids being present in the tab state file.
+     */
+    void setParentId(@TabId int parentId);
+
     /**
      * Returns the root identifier for the {@link Tab}. This method will be replaced by {@link
      * getTabGroupId()} as part of https://crbug.com/1523745.
+     *
+     * @deprecated Use {@link #getTabGroupId()} instead. Most public tabmodel methods have been
+     *     migrated to support tab group id. Any remaining usecases should be migrated to tab group
+     *     id. The only remaining usecase that should require a root id is fetching metadata about
+     *     the tab group (color, title, etc.). The metadata is still stored in shared prefs by root
+     *     ID key until a migration to a better storage system happens.
      */
+    @Deprecated
+    @TabId
     int getRootId();
 
     /**
@@ -344,14 +400,13 @@ public interface Tab extends TabLifecycle {
      *
      * @param rootId The root identifier to use.
      */
-    void setRootId(int rootId);
+    void setRootId(@TabId int rootId);
 
     /**
      * Returns the tab group ID of the {@link Tab} or null if not part of a group. Note that during
      * migration from root ID the TabGroupId may be null until tab state is initialized.
      */
-    @Nullable
-    Token getTabGroupId();
+    @Nullable Token getTabGroupId();
 
     /**
      * Sets the tab group ID of the {@link Tab}.
@@ -373,23 +428,65 @@ public interface Tab extends TabLifecycle {
     /**
      * @return content state bytes for the {@link Tab}
      */
-    WebContentsState getWebContentsState();
+    @Nullable WebContentsState getWebContentsState();
 
     /**
      * @return timestamp in milliseconds when the tab was last interacted.
      */
     long getLastNavigationCommittedTimestampMillis();
 
-    /**
-     * @return launch type at creation
-     */
-    @Nullable
+    /** Returns launch type at creation. May be {@link TabLaunchType.UNSET} if unknown. */
     @TabLaunchType
-    Integer getTabLaunchTypeAtCreation();
+    int getTabLaunchTypeAtCreation();
 
     /** Sets the TabLaunchType for tabs launched with an unset launch type. */
     void setTabLaunchType(@TabLaunchType int launchType);
 
     /** Update the title for the current page if changed. */
     void updateTitle();
+
+    /**
+     * @return True if the back forward transition is in progress, including web page and native
+     *     page transitions.
+     */
+    boolean isDisplayingBackForwardAnimation();
+
+    /**
+     * @return True if we have a WebContents that's navigated to a trusted origin of a TWA.
+     */
+    boolean isTrustedWebActivity();
+
+    /**
+     * @return True if the current tab has embedded media experience enabled.
+     */
+    boolean shouldEnableEmbeddedMediaExperience();
+
+    /** Returns the content sensitivity of the tab. */
+    boolean getTabHasSensitiveContent();
+
+    /**
+     * Sets the content sensitivity of the tab.
+     *
+     * @param contentIsSensitive True if the content is sensitive.
+     */
+    void setTabHasSensitiveContent(boolean contentIsSensitive);
+
+    /** Returns the current pinned state of the tab. */
+    boolean getIsPinned();
+
+    /**
+     * Sets the pinned state of the tab.
+     *
+     * @param isPinned True if the tab is pinned.
+     */
+    void setIsPinned(boolean isPinned);
+
+    /** Called when the tab is restored from the archived tab model. */
+    void onTabRestoredFromArchivedTabModel();
+
+    /** Called when the tab is added to a tab model. */
+    void onAddedToTabModel(ObservableSupplier<@Nullable Tab> currentTabSupplier);
+
+    /** Called when the tab is removed from a tab model. */
+    void onRemovedFromTabModel(ObservableSupplier<@Nullable Tab> currentTabSupplier);
 }

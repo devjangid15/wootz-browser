@@ -20,6 +20,7 @@
 #include "base/task/thread_pool.h"
 #include "chromeos/crosapi/cpp/keystore_service_util.h"
 #include "chromeos/crosapi/mojom/keystore_error.mojom.h"
+#include "crypto/evp.h"
 #include "crypto/openssl_util.h"
 #include "net/base/hash_value.h"
 #include "net/base/net_errors.h"
@@ -27,7 +28,6 @@
 #include "net/cert/x509_certificate.h"
 #include "net/cert/x509_util.h"
 #include "third_party/boringssl/src/include/openssl/bn.h"
-#include "third_party/boringssl/src/include/openssl/bytestring.h"
 #include "third_party/boringssl/src/include/openssl/ec_key.h"
 #include "third_party/boringssl/src/include/openssl/evp.h"
 #include "third_party/boringssl/src/include/openssl/rsa.h"
@@ -90,9 +90,8 @@ std::string StatusToString(Status status) {
       return "Key attribute value retrieval failed.";
     case Status::kErrorKeyAttributeSettingFailed:
       return "Setting key attribute value failed.";
-    case Status::kErrorKeyNotAllowedForSigning:
-      return "This key is not allowed for signing. Either it was used for "
-             "signing before or it was not correctly generated.";
+    case Status::kErrorKeyNotAllowedForOperation:
+      return "This key is not allowed for this operation.";
     case Status::kErrorKeyNotFound:
       return "Key not found.";
     case Status::kErrorShutDown:
@@ -131,8 +130,8 @@ crosapi::mojom::KeystoreError StatusToKeystoreError(Status status) {
       return KeystoreError::kKeyAttributeRetrievalFailed;
     case Status::kErrorKeyAttributeSettingFailed:
       return KeystoreError::kKeyAttributeSettingFailed;
-    case Status::kErrorKeyNotAllowedForSigning:
-      return KeystoreError::kKeyNotAllowedForSigning;
+    case Status::kErrorKeyNotAllowedForOperation:
+      return KeystoreError::kKeyNotAllowedForOperation;
     case Status::kErrorKeyNotFound:
       return KeystoreError::kKeyNotFound;
     case Status::kErrorShutDown:
@@ -144,7 +143,7 @@ crosapi::mojom::KeystoreError StatusToKeystoreError(Status status) {
     case Status::kNetErrorCertificateInvalid:
       return KeystoreError::kNetCertificateInvalid;
   }
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 Status StatusFromKeystoreError(crosapi::mojom::KeystoreError error) {
@@ -158,8 +157,7 @@ Status StatusFromKeystoreError(crosapi::mojom::KeystoreError error) {
     case KeystoreError::kMojoUnavailable:
     case KeystoreError::kUnsupportedKeyType:
       // Keystore specific errors shouldn't be passed here.
-      NOTREACHED_IN_MIGRATION();
-      return Status::kErrorInternal;
+      NOTREACHED();
 
     case KeystoreError::kAlgorithmNotSupported:
       return Status::kErrorAlgorithmNotSupported;
@@ -179,8 +177,8 @@ Status StatusFromKeystoreError(crosapi::mojom::KeystoreError error) {
       return Status::kErrorKeyAttributeRetrievalFailed;
     case KeystoreError::kKeyAttributeSettingFailed:
       return Status::kErrorKeyAttributeSettingFailed;
-    case KeystoreError::kKeyNotAllowedForSigning:
-      return Status::kErrorKeyNotAllowedForSigning;
+    case KeystoreError::kKeyNotAllowedForOperation:
+      return Status::kErrorKeyNotAllowedForOperation;
     case KeystoreError::kKeyNotFound:
       return Status::kErrorKeyNotFound;
     case KeystoreError::kShutDown:
@@ -193,7 +191,7 @@ Status StatusFromKeystoreError(crosapi::mojom::KeystoreError error) {
       return Status::kNetErrorCertificateInvalid;
   }
 
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 std::string KeystoreErrorToString(crosapi::mojom::KeystoreError error) {
@@ -218,17 +216,7 @@ std::string KeystoreErrorToString(crosapi::mojom::KeystoreError error) {
   return StatusToString(StatusFromKeystoreError(error));
 }
 
-std::string GetSubjectPublicKeyInfo(
-    const scoped_refptr<net::X509Certificate>& certificate) {
-  std::string_view spki_bytes;
-  if (!net::asn1::ExtractSPKIFromDERCert(
-          net::x509_util::CryptoBufferAsStringPiece(certificate->cert_buffer()),
-          &spki_bytes))
-    return {};
-  return std::string(spki_bytes);
-}
-
-std::vector<uint8_t> GetSubjectPublicKeyInfoBlob(
+std::vector<uint8_t> GetSubjectPublicKeyInfo(
     const scoped_refptr<net::X509Certificate>& certificate) {
   std::string_view spki_bytes;
   if (!net::asn1::ExtractSPKIFromDERCert(
@@ -279,11 +267,9 @@ bool GetPublicKey(const scoped_refptr<net::X509Certificate>& certificate,
     return false;
   }
 
-  std::string spki = GetSubjectPublicKeyInfo(certificate);
+  std::vector<uint8_t> spki = GetSubjectPublicKeyInfo(certificate);
   crypto::OpenSSLErrStackTracer err_tracer(FROM_HERE);
-  CBS cbs;
-  CBS_init(&cbs, reinterpret_cast<const uint8_t*>(spki.data()), spki.size());
-  bssl::UniquePtr<EVP_PKEY> pkey(EVP_parse_public_key(&cbs));
+  bssl::UniquePtr<EVP_PKEY> pkey = crypto::evp::PublicKeyFromBytes(spki);
   if (!pkey) {
     LOG(WARNING) << "Could not extract public key of certificate.";
     return false;
@@ -321,16 +307,14 @@ bool GetPublicKey(const scoped_refptr<net::X509Certificate>& certificate,
   return true;
 }
 
-bool GetPublicKeyBySpki(const std::string& spki,
+bool GetPublicKeyBySpki(base::span<const uint8_t> spki,
                         net::X509Certificate::PublicKeyType* key_type,
                         size_t* key_size_bits) {
   net::X509Certificate::PublicKeyType key_type_tmp =
       net::X509Certificate::kPublicKeyTypeUnknown;
 
   crypto::OpenSSLErrStackTracer err_tracer(FROM_HERE);
-  CBS cbs;
-  CBS_init(&cbs, reinterpret_cast<const uint8_t*>(spki.data()), spki.size());
-  bssl::UniquePtr<EVP_PKEY> pkey(EVP_parse_public_key(&cbs));
+  bssl::UniquePtr<EVP_PKEY> pkey = crypto::evp::PublicKeyFromBytes(spki);
   if (!pkey) {
     LOG(WARNING) << "Could not extract public key from SPKI.";
     return false;
@@ -436,8 +420,7 @@ GetPublicKeyAndAlgorithmOutput GetPublicKeyAndAlgorithm(
   DCHECK(algorithm.has_value());
   output.algorithm = std::move(algorithm.value());
 
-  output.public_key = std::vector<uint8_t>(key_info.public_key_spki_der.begin(),
-                                           key_info.public_key_spki_der.end());
+  output.public_key = key_info.public_key_spki_der;
   output.status = Status::kSuccess;
   return output;
 }

@@ -19,11 +19,11 @@
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_url_info.h"
-// #include "chrome/browser/web_applications/web_app.h"
+#include "chrome/browser/web_applications/web_app.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
-// #include "chrome/browser/web_applications/web_app_registrar.h"
+#include "chrome/browser/web_applications/web_app_registrar.h"
 #include "components/webapps/common/web_app_id.h"
-#include "extensions/browser/extension_registry.h"
+#include "extensions/browser/extension_registry.h"  // nogncheck
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
@@ -84,30 +84,23 @@ UrlIdentity CreateChromeExtensionIdentityFromUrl(Profile* profile,
                          base::UTF8ToUTF16(extension->name()), false)};
 }
 
-#if 0
 std::optional<webapps::AppId> GetIsolatedWebAppIdFromUrl(const GURL& url) {
   base::expected<web_app::IsolatedWebAppUrlInfo, std::string> url_info =
       web_app::IsolatedWebAppUrlInfo::Create(url);
   return url_info.has_value() ? std::make_optional(url_info.value().app_id())
                               : std::nullopt;
 }
-#endif
 
 UrlIdentity CreateIsolatedWebAppIdentityFromUrl(Profile* profile,
                                                 const GURL& url,
                                                 const FormatOptions& options) {
-#if 0
   DCHECK(url.SchemeIs(chrome::kIsolatedAppScheme));
 
   DCHECK(profile) << "Profile cannot be null when type is Isolated Web App.";
 
   web_app::WebAppProvider* provider =
       web_app::WebAppProvider::GetForWebApps(profile);
-  if (!provider) {  // fallback to default
-    // WebAppProvider can be null in ChromeOS depending on whether Lacros is
-    // enabled or not.
-    return CreateDefaultUrlIdentityFromUrl(url, options);
-  }
+  DCHECK(provider);
 
   std::optional<webapps::AppId> app_id = GetIsolatedWebAppIdFromUrl(url);
   if (!app_id.has_value()) {  // fallback to default
@@ -127,8 +120,6 @@ UrlIdentity CreateIsolatedWebAppIdentityFromUrl(Profile* profile,
           base::UTF8ToUTF16(
               provider->registrar_unsafe().GetAppShortName(app_id.value())),
           false)};
-#endif
-  return UrlIdentity();
 }
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 

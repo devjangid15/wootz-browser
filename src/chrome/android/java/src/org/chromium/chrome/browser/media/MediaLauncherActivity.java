@@ -14,6 +14,7 @@ import android.webkit.MimeTypeMap;
 import org.chromium.base.BuildInfo;
 import org.chromium.base.IntentUtils;
 import org.chromium.base.Log;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.customtabs.CustomTabIntentDataProvider;
 
 import java.util.Locale;
@@ -26,7 +27,7 @@ public class MediaLauncherActivity extends Activity {
     private static final String TAG = "MediaLauncher";
 
     @Override
-    public void onCreate(Bundle savedInstanceState) {
+    public void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
         Intent input = IntentUtils.sanitizeIntent(getIntent());
@@ -66,8 +67,16 @@ public class MediaLauncherActivity extends Activity {
     }
 
     private String getMIMEType(Uri uri) {
+        if (uri == null) {
+            return "";
+        }
+        String uriScheme = uri.getScheme();
+        if (uriScheme == null) {
+            return "";
+        }
+
         // With a content URI, we can just query the ContentResolver.
-        if (uri.getScheme().equals(ContentResolver.SCHEME_CONTENT)) {
+        if (uriScheme.equals(ContentResolver.SCHEME_CONTENT)) {
             return getContentResolver().getType(uri);
         }
 

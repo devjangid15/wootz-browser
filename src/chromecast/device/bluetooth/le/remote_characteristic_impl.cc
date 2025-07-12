@@ -239,7 +239,7 @@ void RemoteCharacteristicImpl::SetRegisterNotificationOrIndicationInternal(
   }
 
   auto it = uuid_to_descriptor_.find(RemoteDescriptor::kCccdUuid);
-  DCHECK(it != uuid_to_descriptor_.end());
+  CHECK(it != uuid_to_descriptor_.end());
 
   // CCCD must exist. |fake_cccd_| should have been created if it doesn't exist.
   std::vector<uint8_t> write_val = indication

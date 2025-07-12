@@ -71,7 +71,6 @@ class CONTENT_EXPORT GpuDataManagerImpl : public GpuDataManager,
   static bool Initialized();
 
   // GpuDataManager implementation.
-  void BlocklistWebGLForTesting() override;
   gpu::GPUInfo GetGPUInfo() override;
   gpu::GpuFeatureStatus GetFeatureStatus(gpu::GpuFeatureType feature) override;
   bool GpuAccessAllowed(std::string* reason) override;
@@ -87,8 +86,11 @@ class CONTENT_EXPORT GpuDataManagerImpl : public GpuDataManager,
   void RemoveObserver(GpuDataManagerObserver* observer) override;
   void DisableHardwareAcceleration() override;
   bool HardwareAccelerationEnabled() override;
+  bool IsGpuRasterizationForUIEnabled() override;
   void AppendGpuCommandLine(base::CommandLine* command_line,
                             GpuProcessKind kind) override;
+  void BlocklistWebGLForTesting() override;
+  void SetSkiaGraphiteEnabledForTesting(bool enabled) override;
 
   // Start a timer that occasionally reports UMA metrics. This is explicitly
   // started because unit tests may create and use a GpuDataManager but they do
@@ -175,12 +177,11 @@ class CONTENT_EXPORT GpuDataManagerImpl : public GpuDataManager,
   void HandleGpuSwitch();
 
   // Maintenance of domains requiring explicit user permission before
-  // using client-facing 3D APIs (WebGL, Pepper 3D), either because
-  // the domain has caused the GPU to reset, or because too many GPU
-  // resets have been observed globally recently, and system stability
-  // might be compromised. A set of URLs is passed because in the
-  // situation where the GPU process crashes, the implementation needs
-  // to know that these URLs all came from the same crash.
+  // using client-facing 3D APIs (WebGL), either because the domain has caused
+  // the GPU to reset, or because too many GPU resets have been observed
+  // globally recently, and system stability might be compromised. A set of URLs
+  // is passed because in the situation where the GPU process crashes, the
+  // implementation needs to know that these URLs all came from the same crash.
   //
   // In the set, each URL may be a partial URL (including at least the
   // host) or a full URL to a page.
@@ -196,11 +197,15 @@ class CONTENT_EXPORT GpuDataManagerImpl : public GpuDataManager,
   // Return mode describing what the GPU process will be launched to run.
   gpu::GpuMode GetGpuMode() const;
 
-  // Called when GPU process initialization failed or the GPU process has
-  // crashed repeatedly. This will try to disable hardware acceleration and then
-  // SwiftShader WebGL. It will also crash the browser process as a last resort
-  // on Android and Chrome OS.
+  // Called when GPU process initialization failed. This will try to disable
+  // hardware acceleration and then SwiftShader WebGL. It will also crash the
+  // browser process as a last resort on Android and Chrome OS.
   void FallBackToNextGpuMode();
+
+  // Called when the GPU process has crashed repeatedly. Will try other gpu
+  // modes (like FallBackToNextGpuMode) but may skip software acceleration based
+  // on features.
+  void FallBackToNextGpuModeDueToCrash();
 
   // Check if there is at least one fallback option available.
   bool CanFallback() const;
@@ -221,7 +226,6 @@ class CONTENT_EXPORT GpuDataManagerImpl : public GpuDataManager,
 
 #if BUILDFLAG(IS_LINUX)
   bool IsGpuMemoryBufferNV12Supported();
-  void SetGpuMemoryBufferNV12Supported(bool supported);
 #endif  // BUILDFLAG(IS_LINUX)
 
   // Binds a new Mojo receiver to handle requests from a renderer.

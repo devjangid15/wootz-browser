@@ -16,6 +16,7 @@ import org.junit.runner.RunWith;
 
 import org.chromium.base.ActivityState;
 import org.chromium.base.ApplicationStatus;
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.params.ParameterAnnotations.ClassParameter;
 import org.chromium.base.test.params.ParameterAnnotations.UseRunnerDelegate;
 import org.chromium.base.test.params.ParameterSet;
@@ -25,7 +26,6 @@ import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.chrome.browser.DeferredStartupHandler;
 import org.chromium.chrome.browser.customtabs.content.CustomTabActivityTabProvider;
 import org.chromium.chrome.browser.customtabs.content.TabCreationMode;
-import org.chromium.chrome.browser.customtabs.dependency_injection.BaseCustomTabActivityComponent;
 import org.chromium.chrome.browser.flags.ActivityType;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.lifecycle.InflationObserver;
@@ -37,7 +37,6 @@ import org.chromium.chrome.browser.tabmodel.TabModelSelectorBase;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorObserver;
 import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4RunnerDelegate;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.url.GURL;
 
 import java.util.Arrays;
@@ -65,7 +64,7 @@ public class CustomTabDeferredStartupTest {
     }
 
     static class InitialTabCreationObserver extends CustomTabActivityTabProvider.Observer {
-        private TabObserver mObserver;
+        private final TabObserver mObserver;
 
         public InitialTabCreationObserver(TabObserver observer) {
             mObserver = observer;
@@ -82,7 +81,7 @@ public class CustomTabDeferredStartupTest {
                     ApplicationStatus.ActivityStateListener,
                     InflationObserver {
         private BaseCustomTabActivity mActivity;
-        private TabObserver mObserver;
+        private final TabObserver mObserver;
 
         public NewTabObserver(TabObserver observer) {
             mObserver = observer;
@@ -105,10 +104,8 @@ public class CustomTabDeferredStartupTest {
 
         @Override
         public void onPreInflationStartup() {
-            BaseCustomTabActivityComponent baseCustomTabActivityComponent =
-                    (BaseCustomTabActivityComponent) mActivity.getComponent();
-            baseCustomTabActivityComponent
-                    .resolveTabProvider()
+            mActivity
+                    .getCustomTabActivityTabProvider()
                     .addObserver(new InitialTabCreationObserver(mObserver));
         }
 
@@ -118,22 +115,29 @@ public class CustomTabDeferredStartupTest {
 
     static class PageIsLoadedDeferredStartupHandler extends DeferredStartupHandler {
         public PageIsLoadedDeferredStartupHandler(
-                PageLoadFinishedTabObserver observer, CallbackHelper helper) {
+                PageLoadFinishedTabObserver observer,
+                CallbackHelper helper,
+                ChromeActivityTestRule<?> activityTestRule) {
             mObserver = observer;
             mHelper = helper;
+            mActivityTestRule = activityTestRule;
         }
 
         @Override
         public void queueDeferredTasksOnIdleHandler() {
-            Assert.assertTrue("Page is yet to finish loading.", mObserver.isPageLoadFinished());
+            Assert.assertTrue(
+                    "Page is yet to finish loading.",
+                    mObserver.isPageLoadFinished()
+                            || !mActivityTestRule.getActivity().getActivityTab().isLoading());
 
             mHelper.notifyCalled();
 
             super.queueDeferredTasksOnIdleHandler();
         }
 
-        private CallbackHelper mHelper;
-        private PageLoadFinishedTabObserver mObserver;
+        private final CallbackHelper mHelper;
+        private final PageLoadFinishedTabObserver mObserver;
+        private final ChromeActivityTestRule<?> mActivityTestRule;
     }
 
     @ClassParameter
@@ -145,7 +149,7 @@ public class CustomTabDeferredStartupTest {
                             .value(ActivityType.TRUSTED_WEB_ACTIVITY)
                             .name("TrustedWebActivity"));
 
-    private @ActivityType int mActivityType;
+    private final @ActivityType int mActivityType;
 
     @Rule public final ChromeActivityTestRule<?> mActivityTestRule;
 
@@ -159,14 +163,15 @@ public class CustomTabDeferredStartupTest {
     // TODO(eirage): Make this test work with quality enforcement.
     public void testPageIsLoadedOnDeferredStartup() throws Exception {
         CallbackHelper helper = new CallbackHelper();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     PageLoadFinishedTabObserver tabObserver = new PageLoadFinishedTabObserver();
                     NewTabObserver newTabObserver = new NewTabObserver(tabObserver);
                     TabModelSelectorBase.setObserverForTests(newTabObserver);
                     ApplicationStatus.registerStateListenerForAllActivities(newTabObserver);
                     PageIsLoadedDeferredStartupHandler handler =
-                            new PageIsLoadedDeferredStartupHandler(tabObserver, helper);
+                            new PageIsLoadedDeferredStartupHandler(
+                                    tabObserver, helper, mActivityTestRule);
                     DeferredStartupHandler.setInstanceForTests(handler);
                 });
         CustomTabActivityTypeTestUtils.launchActivity(

@@ -11,8 +11,6 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/location.h"
-#include "base/logging.h"
-#include "base/not_fatal_until.h"
 #include "base/notreached.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/trace_event/trace_event.h"
@@ -23,7 +21,8 @@ namespace subresource_filter {
 
 // VerifiedRulesetDealer and its Handle. ---------------------------------------
 
-VerifiedRulesetDealer::VerifiedRulesetDealer() = default;
+VerifiedRulesetDealer::VerifiedRulesetDealer(const RulesetConfig& config)
+    : config_(config) {}
 VerifiedRulesetDealer::~VerifiedRulesetDealer() = default;
 
 RulesetFilePtr VerifiedRulesetDealer::OpenAndSetRulesetFile(
@@ -40,7 +39,6 @@ RulesetFilePtr VerifiedRulesetDealer::OpenAndSetRulesetFile(
   TRACE_EVENT1(TRACE_DISABLED_BY_DEFAULT("loading"),
                "VerifiedRulesetDealer::OpenAndSetRulesetFile", "file_valid",
                file->IsValid());
-  LOG(INFO) << "OpenAndSetRulesetFile: " << file_path << " is valid: " << file->IsValid();
   if (file->IsValid()) {
     SetRulesetFile(file->Duplicate());
     expected_checksum_ = expected_checksum;
@@ -63,8 +61,8 @@ scoped_refptr<const MemoryMappedRuleset> VerifiedRulesetDealer::GetRuleset() {
     case RulesetVerificationStatus::kNotVerified: {
       auto ruleset = RulesetDealer::GetRuleset();
       if (ruleset) {
-        if (IndexedRulesetMatcher::Verify(ruleset->data(),
-                                          expected_checksum_)) {
+        if (IndexedRulesetMatcher::Verify(ruleset->data(), expected_checksum_,
+                                          config_.uma_tag)) {
           status_ = RulesetVerificationStatus::kIntact;
         } else {
           status_ = RulesetVerificationStatus::kCorrupt;
@@ -85,15 +83,15 @@ scoped_refptr<const MemoryMappedRuleset> VerifiedRulesetDealer::GetRuleset() {
     case RulesetVerificationStatus::kInvalidFile:
       return nullptr;
     default:
-      NOTREACHED_IN_MIGRATION();
-      return nullptr;
+      NOTREACHED();
   }
 }
 
 VerifiedRulesetDealer::Handle::Handle(
-    scoped_refptr<base::SequencedTaskRunner> task_runner)
+    scoped_refptr<base::SequencedTaskRunner> task_runner,
+    const RulesetConfig& config)
     : task_runner_(task_runner.get()),
-      dealer_(new VerifiedRulesetDealer,
+      dealer_(new VerifiedRulesetDealer(config),
               base::OnTaskRunnerDeleter(std::move(task_runner))) {}
 
 VerifiedRulesetDealer::Handle::~Handle() {
@@ -142,7 +140,7 @@ VerifiedRuleset::~VerifiedRuleset() {
 
 void VerifiedRuleset::Initialize(VerifiedRulesetDealer* dealer) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  CHECK(dealer, base::NotFatalUntil::M129);
+  CHECK(dealer);
   ruleset_ = dealer->GetRuleset();
 }
 

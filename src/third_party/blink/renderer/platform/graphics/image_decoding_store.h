@@ -33,6 +33,7 @@
 #include "base/memory/memory_pressure_listener.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "base/synchronization/lock.h"
 #include "cc/paint/paint_image_generator.h"
 #include "third_party/blink/renderer/platform/graphics/image_frame_generator.h"
@@ -78,7 +79,7 @@ static inline bool operator!=(const DecoderCacheKey& a,
 // Base class for all cache entries.
 class CacheEntry : public DoublyLinkedListNode<CacheEntry> {
   USING_FAST_MALLOC(CacheEntry);
-  friend class WTF::DoublyLinkedListNode<CacheEntry>;
+  friend class DoublyLinkedListNode<CacheEntry>;
 
  public:
   enum CacheType {
@@ -113,8 +114,11 @@ class CacheEntry : public DoublyLinkedListNode<CacheEntry> {
   int use_count_;
 
  private:
-  CacheEntry* prev_;
-  CacheEntry* next_;
+  // RAW_PTR_EXCLUSION: Rewriting causes a crash, because a base class ctor
+  // accesses child class ptr fields before they're initialized (see
+  // crbug.com/349213429).
+  RAW_PTR_EXCLUSION CacheEntry* prev_;
+  RAW_PTR_EXCLUSION CacheEntry* next_;
 };
 
 class DecoderCacheEntry final : public CacheEntry {
@@ -168,41 +172,31 @@ class DecoderCacheEntry final : public CacheEntry {
   cc::PaintImage::GeneratorClientId client_id_;
 };
 
-}  // namespace blink
-
-namespace WTF {
-
 template <>
-struct HashTraits<blink::DecoderCacheKey>
-    : GenericHashTraits<blink::DecoderCacheKey> {
+struct HashTraits<DecoderCacheKey> : GenericHashTraits<DecoderCacheKey> {
   STATIC_ONLY(HashTraits);
-  static unsigned GetHash(const blink::DecoderCacheKey& p) {
-    auto first = HashInts(
-        WTF::GetHash(const_cast<blink::ImageFrameGenerator*>(p.gen_.get())),
-        WTF::GetHash(p.size_));
-    auto second = HashInts(WTF::GetHash(static_cast<uint8_t>(p.alpha_option_)),
-                           p.client_id_);
+  static unsigned GetHash(const DecoderCacheKey& p) {
+    auto first =
+        HashInts(blink::GetHash(const_cast<ImageFrameGenerator*>(p.gen_.get())),
+                 blink::GetHash(p.size_));
+    auto second = HashInts(
+        blink::GetHash(static_cast<uint8_t>(p.alpha_option_)), p.client_id_);
     return HashInts(first, second);
   }
 
   static const bool kEmptyValueIsZero = true;
-  static blink::DecoderCacheKey EmptyValue() {
-    return blink::DecoderCacheEntry::MakeCacheKey(
-        nullptr, SkISize::Make(0, 0),
-        static_cast<blink::ImageDecoder::AlphaOption>(0),
+  static DecoderCacheKey EmptyValue() {
+    return DecoderCacheEntry::MakeCacheKey(
+        nullptr, SkISize::Make(0, 0), static_cast<ImageDecoder::AlphaOption>(0),
         cc::PaintImage::kDefaultGeneratorClientId);
   }
-  static blink::DecoderCacheKey DeletedValue() {
-    return blink::DecoderCacheEntry::MakeCacheKey(
+  static DecoderCacheKey DeletedValue() {
+    return DecoderCacheEntry::MakeCacheKey(
         nullptr, SkISize::Make(-1, -1),
-        static_cast<blink::ImageDecoder::AlphaOption>(0),
+        static_cast<ImageDecoder::AlphaOption>(0),
         cc::PaintImage::kDefaultGeneratorClientId);
   }
 };
-
-}  // namespace WTF
-
-namespace blink {
 
 // FUNCTION
 //

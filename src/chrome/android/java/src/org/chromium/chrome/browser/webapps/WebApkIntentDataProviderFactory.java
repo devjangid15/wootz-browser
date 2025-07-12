@@ -19,7 +19,6 @@ import android.content.res.Resources;
 import android.content.res.Resources.Theme;
 import android.content.res.XmlResourceParser;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Bundle;
 import android.text.TextUtils;
 import android.util.Pair;
@@ -170,8 +169,6 @@ public class WebApkIntentDataProviderFactory {
     }
 
     /**
-     * @param webApkPackageName
-     * @param resources
      * @return A list of shortcut items derived from the parser.
      */
     // looking up resources from other apps requires the use of getIdentifier()
@@ -361,8 +358,7 @@ public class WebApkIntentDataProviderFactory {
 
         // Check the OS version because the same WebAPK is vended by the WebAPK server for all OS
         // versions.
-        boolean isPrimaryIconMaskable =
-                primaryMaskableIconId != 0 && (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O);
+        boolean isPrimaryIconMaskable = primaryMaskableIconId != 0;
 
         int splashIconId = IntentUtils.safeGetInt(bundle, WebApkMetaDataKeys.SPLASH_ID, 0);
 
@@ -598,8 +594,7 @@ public class WebApkIntentDataProviderFactory {
             return ShortcutSource.UNKNOWN;
         }
         if (source == ShortcutSource.EXTERNAL_INTENT
-                && IntentHandler.determineExternalIntentSource(intent)
-                        == IntentHandler.ExternalAppId.CHROME) {
+                && IntentHandler.isExternalIntentSourceChrome(intent)) {
             return ShortcutSource.EXTERNAL_INTENT_FROM_CHROME;
         }
 
@@ -632,12 +627,11 @@ public class WebApkIntentDataProviderFactory {
     /**
      * Extract the icon URLs and icon hashes from the WebAPK's meta data, and returns a map of these
      * {URL, hash} pairs. The icon URLs/icon hashes are stored in a single meta data tag in the
-     * WebAPK's AndroidManifest.xml as following:
-     * "URL1 hash1 URL2 hash2 URL3 hash3..."
+     * WebAPK's AndroidManifest.xml as following: "URL1 hash1 URL2 hash2 URL3 hash3..."
      */
     @VisibleForTesting
     static Map<String, String> getIconUrlAndIconMurmur2HashMap(Bundle metaData) {
-        Map<String, String> iconUrlAndIconMurmur2HashMap = new HashMap<String, String>();
+        Map<String, String> iconUrlAndIconMurmur2HashMap = new HashMap<>();
         String iconUrlsAndIconMurmur2Hashes =
                 metaData.getString(WebApkMetaDataKeys.ICON_URLS_AND_ICON_MURMUR2_HASHES);
         if (TextUtils.isEmpty(iconUrlsAndIconMurmur2Hashes)) return iconUrlAndIconMurmur2HashMap;

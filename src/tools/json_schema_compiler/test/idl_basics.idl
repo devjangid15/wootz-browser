@@ -2,9 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Tests a variety of basic API definition features.
+// Tests a variety of basic API definition features, ensuring things are parsed
+// and processed as expected.
 
-[internal] namespace idl_basics {
+namespace idl_basics {
   // Enum description
   enum EnumType {
     // comment1
@@ -27,7 +28,7 @@
 
   dictionary MyType1 {
     // This comment tests "double-quotes".
-    [legalValues=(1,2)] long x;
+    long x;
     DOMString y;
     DOMString z;
     DOMString a;
@@ -37,6 +38,14 @@
 
   dictionary MyType2 {
     DOMString x;
+  };
+
+  dictionary ChoiceWithArraysType {
+    (DOMString or DOMString[]) entries;
+  };
+
+  dictionary ChoiceWithOptionalType {
+    (DOMString or DOMString[])? entries;
   };
 
   dictionary UnionType {
@@ -52,6 +61,9 @@
     // String manifest key.
     DOMString key_str;
     MyType2 key_ref;
+    (DOMString or long) inline_choice;
+    ChoiceWithArraysType choice_with_arrays;
+    ChoiceWithOptionalType choice_with_optional;
   };
 
   callback Callback1 = void();

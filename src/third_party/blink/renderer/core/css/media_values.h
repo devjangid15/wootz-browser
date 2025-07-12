@@ -16,11 +16,12 @@
 #include "third_party/blink/renderer/core/css/container_state.h"
 #include "third_party/blink/renderer/core/css/css_length_resolver.h"
 #include "third_party/blink/renderer/core/css/css_primitive_value.h"
+#include "third_party/blink/renderer/core/style/position_try_fallbacks.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/text/text_direction.h"
 #include "third_party/blink/renderer/platform/text/writing_mode.h"
+#include "ui/base/mojom/window_show_state.mojom-blink-forward.h"
 #include "ui/base/pointer/pointer_device.h"
-#include "ui/base/ui_base_types.h"
 
 namespace blink {
 
@@ -80,7 +81,7 @@ class CORE_EXPORT MediaValues : public GarbageCollected<MediaValues>,
   virtual bool ThreeDEnabled() const = 0;
   virtual const String MediaType() const = 0;
   virtual blink::mojom::DisplayMode DisplayMode() const = 0;
-  virtual ui::WindowShowState WindowShowState() const = 0;
+  virtual ui::mojom::blink::WindowShowState WindowShowState() const = 0;
   virtual bool Resizable() const = 0;
   virtual bool StrictMode() const = 0;
   virtual Document* GetDocument() const = 0;
@@ -98,21 +99,21 @@ class CORE_EXPORT MediaValues : public GarbageCollected<MediaValues>,
   virtual int GetHorizontalViewportSegments() const = 0;
   virtual int GetVerticalViewportSegments() const = 0;
   virtual mojom::blink::DevicePostureType GetDevicePosture() const = 0;
-  // For evaluating state(stuck: left), state(stuck: right)
+  // For evaluating scroll-state(stuck: left), scroll-state(stuck: right)
   virtual ContainerStuckPhysical StuckHorizontal() const {
     return ContainerStuckPhysical::kNo;
   }
-  // For evaluating state(stuck: top), state(stuck: bottom)
+  // For evaluating scroll-state(stuck: top), scroll-state(stuck: bottom)
   virtual ContainerStuckPhysical StuckVertical() const {
     return ContainerStuckPhysical::kNo;
   }
-  // For evaluating state(stuck: inset-inline-start),
-  // state(stuck: inset-inline-end)
+  // For evaluating scroll-state(stuck: inline-start),
+  // scroll-state(stuck: inline-end)
   virtual ContainerStuckLogical StuckInline() const {
     return ContainerStuckLogical::kNo;
   }
-  // For evaluating state(stuck: inset-block-start),
-  // state(stuck: inset-block-end)
+  // For evaluating scroll-state(stuck: block-start),
+  // scroll-state(stuck: block-end)
   virtual ContainerStuckLogical StuckBlock() const {
     return ContainerStuckLogical::kNo;
   }
@@ -121,16 +122,81 @@ class CORE_EXPORT MediaValues : public GarbageCollected<MediaValues>,
     return StuckHorizontal() != ContainerStuckPhysical::kNo ||
            StuckVertical() != ContainerStuckPhysical::kNo;
   }
-  // For evaluating state(snapped: block/inline)
-  bool SnappedBlock() const {
-    return SnappedFlags() &
-           static_cast<ContainerSnappedFlags>(ContainerSnapped::kBlock);
+  virtual ContainerSnappedFlags SnappedFlags() const {
+    return static_cast<ContainerSnappedFlags>(ContainerSnapped::kNone);
   }
-  bool SnappedInline() const {
+  // For evaluating scroll-state(snapped: x/y)
+  bool SnappedX() const {
     return SnappedFlags() &
-           static_cast<ContainerSnappedFlags>(ContainerSnapped::kInline);
+           static_cast<ContainerSnappedFlags>(ContainerSnapped::kX);
   }
-  bool Snapped() const { return SnappedBlock() || SnappedInline(); }
+  bool SnappedY() const {
+    return SnappedFlags() &
+           static_cast<ContainerSnappedFlags>(ContainerSnapped::kY);
+  }
+  // For evaluating scroll-state(snapped: block/inline)
+  bool SnappedBlock() const;
+  bool SnappedInline() const;
+  // For boolean context evaluation.
+  bool Snapped() const {
+    return SnappedFlags() !=
+           static_cast<ContainerSnappedFlags>(ContainerSnapped::kNone);
+  }
+  // For evaluating scroll-state(scrollable: left/right)
+  virtual ContainerScrollableFlags ScrollableHorizontal() const {
+    return static_cast<ContainerScrollableFlags>(ContainerScrollable::kNone);
+  }
+  // For evaluating scroll-state(scrollable: top/bottom)
+  virtual ContainerScrollableFlags ScrollableVertical() const {
+    return static_cast<ContainerScrollableFlags>(ContainerScrollable::kNone);
+  }
+  // For evaluating scroll-state(scrollable: inline-start/inline-end)
+  virtual ContainerScrollableFlags ScrollableInline() const {
+    return static_cast<ContainerScrollableFlags>(ContainerScrollable::kNone);
+  }
+  // For evaluating scroll-state(scrollable: block-start/block-end)
+  virtual ContainerScrollableFlags ScrollableBlock() const {
+    return static_cast<ContainerScrollableFlags>(ContainerScrollable::kNone);
+  }
+  // For boolean context evaluation
+  bool Scrollable() const {
+    return ScrollableHorizontal() != static_cast<ContainerScrollableFlags>(
+                                         ContainerScrollable::kNone) ||
+           ScrollableVertical() != static_cast<ContainerScrollableFlags>(
+                                       ContainerScrollable::kNone);
+  }
+  // For evaluating scroll-state(scroll-direction: left/right)
+  virtual ContainerScrollDirection ScrollDirectionHorizontal() const {
+    return ContainerScrollDirection::kNone;
+  }
+  // For evaluating scroll-state(scroll-direction: up/down)
+  virtual ContainerScrollDirection ScrollDirectionVertical() const {
+    return ContainerScrollDirection::kNone;
+  }
+  // For evaluating scroll-state(scroll-direction: inline-start/inline-end)
+  virtual ContainerScrollDirection ScrollDirectionInline() const {
+    return ContainerScrollDirection::kNone;
+  }
+  // For evaluating scroll-state(scroll-direction: block-start/block-end)
+  virtual ContainerScrollDirection ScrollDirectionBlock() const {
+    return ContainerScrollDirection::kNone;
+  }
+  // For boolean context evaluation
+  bool ScrollDirection() const {
+    return ScrollDirectionHorizontal() != ContainerScrollDirection::kNone ||
+           ScrollDirectionVertical() != ContainerScrollDirection::kNone;
+  }
+  // The writing-mode/direction of a container. Used for anchored(fallback).
+  virtual WritingDirectionMode GetWritingDirection() const { NOTREACHED(); }
+  // The writing-mode/direction of the abspos containing block for an anchored
+  // container. Used for anchored(fallback).
+  virtual WritingDirectionMode AbsContainerWritingDirection() const {
+    NOTREACHED();
+  }
+  // Return the currently applied position-try-fallback for an anchored element.
+  // 0 means no position-try-fallback is applied. Otherwise a 1-based index into
+  // the list of fallbacks of the computed position-try-fallbacks property.
+  virtual const PositionTryFallback& AnchoredFallback() const { NOTREACHED(); }
   // Returns the container element used to retrieve base style and parent style
   // when computing the computed value of a style() container query.
   virtual Element* ContainerElement() const { return nullptr; }
@@ -140,12 +206,11 @@ class CORE_EXPORT MediaValues : public GarbageCollected<MediaValues>,
   // CSSLengthResolver override.
   void ReferenceTreeScope() const override {}
   void ReferenceAnchor() const override {}
+  void ReferenceSibling() const override {}
+
+  Element* GetElement() const override { NOTREACHED(); }
 
  protected:
-  virtual ContainerSnappedFlags SnappedFlags() const {
-    return static_cast<ContainerSnappedFlags>(ContainerSnapped::kNone);
-  }
-
   static double CalculateViewportWidth(LocalFrame*);
   static double CalculateViewportHeight(LocalFrame*);
   static double CalculateSmallViewportWidth(LocalFrame*);
@@ -170,7 +235,8 @@ class CORE_EXPORT MediaValues : public GarbageCollected<MediaValues>,
   static bool CalculateInvertedColors(LocalFrame*);
   static const String CalculateMediaType(LocalFrame*);
   static blink::mojom::DisplayMode CalculateDisplayMode(LocalFrame*);
-  static ui::WindowShowState CalculateWindowShowState(LocalFrame*);
+  static ui::mojom::blink::WindowShowState CalculateWindowShowState(
+      LocalFrame*);
   static bool CalculateResizable(LocalFrame*);
   static bool CalculateThreeDEnabled(LocalFrame*);
   static mojom::blink::PointerType CalculatePrimaryPointerType(LocalFrame*);

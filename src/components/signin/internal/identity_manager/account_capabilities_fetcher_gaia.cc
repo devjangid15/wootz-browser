@@ -7,6 +7,7 @@
 #include <optional>
 
 #include "base/metrics/histogram_functions.h"
+#include "base/strings/string_util.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "components/signin/internal/identity_manager/account_capabilities_constants.h"
@@ -31,7 +32,7 @@ std::string_view ToUmaToken(
     case AccountCapabilitiesFetcher::FetchPriority::kBackground:
       return "Background";
   }
-  NOTREACHED_NORETURN() << "Unknown priority: " << static_cast<int>(priority);
+  NOTREACHED() << "Unknown priority: " << static_cast<int>(priority);
 }
 
 std::string_view ToUmaToken(

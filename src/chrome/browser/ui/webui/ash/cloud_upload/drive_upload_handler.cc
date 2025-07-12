@@ -15,6 +15,8 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
+#include "chrome/browser/ash/drive/drive_integration_service.h"
+#include "chrome/browser/ash/drive/drive_integration_service_factory.h"
 #include "chrome/browser/ash/drive/file_system_util.h"
 #include "chrome/browser/ash/file_manager/copy_or_move_io_task.h"
 #include "chrome/browser/ash/file_manager/delete_io_task.h"
@@ -63,6 +65,7 @@ std::string GetTargetAppName(base::FilePath file_path) {
 DriveUploadHandler::DriveUploadHandler(
     Profile* profile,
     const FileSystemURL& source_url,
+    UploadType upload_type,
     UploadCallback callback,
     base::SafeRef<CloudOpenMetrics> cloud_open_metrics)
     : profile_(profile),
@@ -70,7 +73,7 @@ DriveUploadHandler::DriveUploadHandler(
           file_manager::util::GetFileManagerFileSystemContext(profile)),
       drive_integration_service_(
           drive::DriveIntegrationServiceFactory::FindForProfile(profile)),
-      upload_type_(GetUploadType(profile, source_url)),
+      upload_type_(upload_type),
       notification_manager_(
           base::MakeRefCounted<CloudUploadNotificationManager>(
               profile,
@@ -327,10 +330,8 @@ void DriveUploadHandler::OnCopyStatus(
       ShowIOTaskError(status);
       return;
     case file_manager::io_task::State::kNeedPassword:
-      NOTREACHED_IN_MIGRATION()
-          << "Encrypted file should not need password to be copied or "
-             "moved. Case should not be reached.";
-      return;
+      NOTREACHED() << "Encrypted file should not need password to be copied or "
+                      "moved. Case should not be reached.";
   }
 }
 
@@ -338,10 +339,8 @@ void DriveUploadHandler::OnDeleteStatus(
     const ::file_manager::io_task::ProgressStatus& status) {
   switch (status.state) {
     case file_manager::io_task::State::kCancelled:
-      NOTREACHED_IN_MIGRATION()
-          << "Deletion of source or destination file should not have "
-             "been cancelled.";
-      ABSL_FALLTHROUGH_INTENDED;
+      NOTREACHED() << "Deletion of source or destination file should not have "
+                      "been cancelled.";
     case file_manager::io_task::State::kError:
     case file_manager::io_task::State::kSuccess:
       std::move(end_upload_callback_).Run();
@@ -456,8 +455,7 @@ void DriveUploadHandler::OnSyncingStatusUpdate(
         OnEndCopy(OfficeFilesUploadResult::kSyncError);
         return;
       case drivefs::mojom::ItemEvent::State::kCancelledAndDeleted:
-        NOTREACHED_IN_MIGRATION();
-        return;
+        NOTREACHED();
       case drivefs::mojom::ItemEvent::State::kCancelledAndTrashed:
         LOG(ERROR) << "Drive sync error: cancelled and trashed";
         OnEndCopy(OfficeFilesUploadResult::kSyncCancelledAndTrashed);

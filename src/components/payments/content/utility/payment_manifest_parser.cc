@@ -14,6 +14,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "components/payments/content/utility/fingerprint_parser.h"
 #include "components/payments/core/error_logger.h"
@@ -54,13 +55,15 @@ const char* const kWebAppIconType = "type";
 const char* const kWebAppName = "name";
 
 // Truncates a std::string to 100 chars. This returns an empty string when the
-// input should be ASCII but it's not.
+// input should be printalbe ASCII but it's not.
 const std::string ValidateAndTruncateIfNeeded(const std::string& input,
-                                              bool* out_is_ASCII) {
-  if (out_is_ASCII) {
-    *out_is_ASCII = base::IsStringASCII(input);
-    if (!*out_is_ASCII)
+                                              bool* out_is_ascii_printable) {
+  if (out_is_ascii_printable) {
+    *out_is_ascii_printable = std::ranges::all_of(
+        input, [](char c) { return base::IsAsciiPrintable(c); });
+    if (!*out_is_ascii_printable) {
       return "";
+    }
   }
 
   return input.size() > kMaximumPrintedStringLength
@@ -607,12 +610,13 @@ bool PaymentManifestParser::ParseWebAppInstallationInfoIntoStructs(
         } else if (delegation_name == "payerPhone") {
           installation_info->supported_delegations.payer_phone = true;
         } else {  // delegation_name is not valid
-          bool is_ASCII;
+          bool is_ascii_printable;
           const std::string delegation_name_to_print =
-              ValidateAndTruncateIfNeeded(delegation_name, &is_ASCII);
-          if (!is_ASCII) {
-            log.Error("Entries in delegation list must be ASCII strings.");
-          } else {  // ASCII string.
+              ValidateAndTruncateIfNeeded(delegation_name, &is_ascii_printable);
+          if (!is_ascii_printable) {
+            log.Error(
+                "Entries in delegation list must be printable ASCII strings.");
+          } else {  // Printable ASCII string.
             log.Error(base::StringPrintf(
                 "\"%s\" is not a valid value in \"%s\" array.",
                 delegation_name_to_print.c_str(), kSupportedDelegations));

@@ -7,12 +7,14 @@
 
 #include <memory>
 
-#include "base/functional/callback.h"
+#include "base/functional/callback_forward.h"
+#include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
 #include "base/thread_annotations.h"
+#include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "components/system_cpu/cpu_sample.h"
-#include "services/device/public/mojom/pressure_update.mojom-shared.h"
+#include "services/device/public/mojom/pressure_update.mojom.h"
 
 namespace system_cpu {
 class CpuProbe;
@@ -40,13 +42,13 @@ class CpuProbeManager {
   // Returns nullptr if no suitable implementation exists.
   static std::unique_ptr<CpuProbeManager> Create(
       base::TimeDelta sampling_interval,
-      base::RepeatingCallback<void(mojom::PressureState)> sampling_callback);
+      base::RepeatingCallback<void(mojom::PressureDataPtr)> sampling_callback);
 
   // Instantiates CpuProbeManager with a supplied CpuProbe.
   static std::unique_ptr<CpuProbeManager> CreateForTesting(
-      std::unique_ptr<system_cpu::CpuProbe> system_cpu_probe,
       base::TimeDelta sampling_interval,
-      base::RepeatingCallback<void(mojom::PressureState)> sampling_callback);
+      base::RepeatingCallback<void(mojom::PressureDataPtr)> sampling_callback,
+      std::unique_ptr<system_cpu::CpuProbe> system_cpu_probe);
 
   CpuProbeManager(const CpuProbeManager&) = delete;
   CpuProbeManager& operator=(const CpuProbeManager&) = delete;
@@ -62,70 +64,39 @@ class CpuProbeManager {
   // Stop the timer.
   void Stop();
 
-  base::TimeDelta GetRandomizationTimeForTesting() const {
-    return randomization_time_;
-  }
-
   void SetCpuProbeForTesting(std::unique_ptr<system_cpu::CpuProbe>);
 
-  system_cpu::CpuProbe* GetCpuProbeForTesting();
-
- private:
-  friend class PressureManagerImpl;
-  FRIEND_TEST_ALL_PREFIXES(CpuProbeManagerTest, CalculateStateValueTooLarge);
-
-  CpuProbeManager(std::unique_ptr<system_cpu::CpuProbe> system_cpu_probe,
-                  base::TimeDelta,
-                  base::RepeatingCallback<void(mojom::PressureState)>);
-
-  // Implements the "break calibration" mitigation by toggling the
-  // |state_randomization_requested_| flag every |randomization_time_|
-  // interval.
-  void ToggleStateRandomization();
-
-  // Called after CpuProbe::StartSampling() completes.
-  void OnSamplingStarted();
-
-  // Called periodically while the CpuProbe is running.
-  void OnCpuSampleAvailable(std::optional<system_cpu::CpuSample>);
-
-  // Calculate PressureState based on optional CpuSample.
-  mojom::PressureState CalculateState(std::optional<system_cpu::CpuSample>);
-
+ protected:
   SEQUENCE_CHECKER(sequence_checker_);
 
-  std::unique_ptr<system_cpu::CpuProbe> system_cpu_probe_
-      GUARDED_BY_CONTEXT(sequence_checker_);
+  CpuProbeManager(base::TimeDelta,
+                  base::RepeatingCallback<void(mojom::PressureDataPtr)>,
+                  std::unique_ptr<system_cpu::CpuProbe> system_cpu_probe);
 
-  // Variable storing |randomization_timer_| time.
-  base::TimeDelta randomization_time_;
-
-  // Last state stored as index instead of value.
-  size_t last_state_index_ =
-      static_cast<size_t>(mojom::PressureState::kNominal);
+  system_cpu::CpuProbe* cpu_probe();
 
   // Drive repeated sampling.
   base::RepeatingTimer timer_ GUARDED_BY_CONTEXT(sequence_checker_);
   const base::TimeDelta sampling_interval_
       GUARDED_BY_CONTEXT(sequence_checker_);
 
-  // Drive randomization interval by invoking `ToggleStateRandomization()`.
-  base::OneShotTimer randomization_timer_ GUARDED_BY_CONTEXT(sequence_checker_);
-
-  // Flag to indicate that state randomization has been requested.
-  bool state_randomization_requested_ = false;
-
   // Called with each sample reading.
-  base::RepeatingCallback<void(mojom::PressureState)> sampling_callback_
+  base::RepeatingCallback<void(mojom::PressureDataPtr)> sampling_callback_
       GUARDED_BY_CONTEXT(sequence_checker_);
 
-  // True if the CpuProbe state will be reported after the next update.
-  //
-  // The CpuSample reported by many CpuProbe implementations relies
-  // on the differences observed between two Update() calls. For this reason,
-  // the CpuSample reported after a first Update() call is not
-  // reported via `sampling_callback_`.
-  bool got_probe_baseline_ GUARDED_BY_CONTEXT(sequence_checker_) = false;
+ private:
+  friend class CpuProbeManagerTest;
+  FRIEND_TEST_ALL_PREFIXES(CpuProbeManagerDeathTest,
+                           CalculateStateValueTooLarge);
+  FRIEND_TEST_ALL_PREFIXES(CpuProbeManagerTest, CreateCpuProbeExists);
+
+  // Called periodically while the CpuProbe is running.
+  virtual void OnCpuSampleAvailable(std::optional<system_cpu::CpuSample>);
+
+  std::unique_ptr<system_cpu::CpuProbe> system_cpu_probe_
+      GUARDED_BY_CONTEXT(sequence_checker_);
+
+  base::WeakPtrFactory<CpuProbeManager> weak_factory_{this};
 };
 
 }  // namespace device

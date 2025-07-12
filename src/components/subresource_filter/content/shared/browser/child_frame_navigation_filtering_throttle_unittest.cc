@@ -12,13 +12,16 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/strings/stringprintf.h"
+#include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
+#include "child_frame_navigation_filtering_throttle.h"
 #include "components/subresource_filter/content/shared/browser/child_frame_navigation_test_utils.h"
 #include "components/subresource_filter/core/browser/async_document_subresource_filter.h"
 #include "components/subresource_filter/core/browser/subresource_filter_constants.h"
 #include "components/subresource_filter/core/mojom/subresource_filter.mojom.h"
 #include "content/public/browser/navigation_handle.h"
+#include "content/public/test/test_navigation_throttle_inserter.h"
 #include "content/public/test/test_renderer_host.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -29,15 +32,15 @@ class TestChildFrameNavigationFilteringThrottle
     : public ChildFrameNavigationFilteringThrottle {
  public:
   TestChildFrameNavigationFilteringThrottle(
-      content::NavigationHandle* handle,
+      content::NavigationThrottleRegistry& registry,
       AsyncDocumentSubresourceFilter* parent_frame_filter,
-      bool bypass_alias_check,
+      bool alias_check_enabled,
       base::RepeatingCallback<std::string(const GURL& url)>
           disallow_message_callback)
       : ChildFrameNavigationFilteringThrottle(
-            handle,
+            registry,
             parent_frame_filter,
-            bypass_alias_check,
+            alias_check_enabled,
             std::move(disallow_message_callback)) {}
 
   TestChildFrameNavigationFilteringThrottle(
@@ -80,27 +83,43 @@ class ChildFrameNavigationFilteringThrottleTest
 
   ~ChildFrameNavigationFilteringThrottleTest() override = default;
 
+  void SetUp() override {
+    ChildFrameNavigationFilteringThrottleTestHarness::SetUp();
+
+    throttle_inserter_ =
+        std::make_unique<content::TestNavigationThrottleInserter>(
+            content::RenderViewHostTestHarness::web_contents(),
+            base::BindLambdaForTesting([&](content::NavigationThrottleRegistry&
+                                        registry) -> void {
+              // The |parent_filter_| is the parent frame's filter. Do not
+              // register a throttle if the parent is not activated with a valid
+              // filter.
+              if (parent_filter_) {
+                auto throttle =
+                    std::make_unique<TestChildFrameNavigationFilteringThrottle>(
+                        registry, parent_filter_.get(),
+                        /*alias_check_enabled=*/alias_check_enabled_,
+                        base::BindRepeating([](const GURL& filtered_url) {
+                          // Same as GetFilterConsoleMessage().
+                          return base::StringPrintf(
+                              kDisallowChildFrameConsoleMessageFormat,
+                              filtered_url.possibly_invalid_spec().c_str());
+                        }));
+                EXPECT_NE(nullptr, throttle->GetNameForLogging());
+                registry.AddThrottle(std::move(throttle));
+              }
+            }));
+  }
+
   // content::WebContentsObserver:
   void DidStartNavigation(
       content::NavigationHandle* navigation_handle) override {
     ASSERT_FALSE(navigation_handle->IsInMainFrame());
-    // The |parent_filter_| is the parent frame's filter. Do not register a
-    // throttle if the parent is not activated with a valid filter.
-    if (parent_filter_) {
-      auto throttle =
-          std::make_unique<TestChildFrameNavigationFilteringThrottle>(
-              navigation_handle, parent_filter_.get(),
-              /*bypass_alias_check=*/false,
-              base::BindRepeating([](const GURL& filtered_url) {
-                // Same as GetFilterConsoleMessage().
-                return base::StringPrintf(
-                    kDisallowChildFrameConsoleMessageFormat,
-                    filtered_url.possibly_invalid_spec().c_str());
-              }));
-      ASSERT_NE(nullptr, throttle->GetNameForLogging());
-      navigation_handle->RegisterThrottleForTesting(std::move(throttle));
-    }
   }
+
+ protected:
+  bool alias_check_enabled_ = false;
+  std::unique_ptr<content::TestNavigationThrottleInserter> throttle_inserter_;
 };
 
 TEST_F(ChildFrameNavigationFilteringThrottleTest, FilterOnStart) {
@@ -206,14 +225,12 @@ class ChildFrameNavigationFilteringThrottleDnsAliasTest
     : public ChildFrameNavigationFilteringThrottleTest {
  public:
   ChildFrameNavigationFilteringThrottleDnsAliasTest() {
-    feature_list_.InitAndEnableFeature(
-        features::kSendCnameAliasesToSubresourceFilterFromBrowser);
+    alias_check_enabled_ = true;
   }
 
   ~ChildFrameNavigationFilteringThrottleDnsAliasTest() override = default;
 
  private:
-  base::test::ScopedFeatureList feature_list_;
   base::HistogramTester histogram_tester_;
 };
 

@@ -66,8 +66,6 @@ void NotificationTriggerScheduler::TriggerNotificationsForStoragePartition(
 
 void NotificationTriggerScheduler::TriggerNotificationsForProfile(
     Profile* profile) {
-  return;
-#if 0
   auto* service = PlatformNotificationServiceFactory::GetForProfile(profile);
   // Service might not be available for some irregular profiles, like the System
   // Profile.
@@ -92,5 +90,4 @@ void NotificationTriggerScheduler::TriggerNotificationsForProfile(
       [&](content::StoragePartition* partition) {
         scheduler->TriggerNotificationsForStoragePartition(partition);
       });
-#endif
 }

@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_OMNIBOX_OMNIBOX_POPUP_PRESENTER_H_
 #define CHROME_BROWSER_UI_VIEWS_OMNIBOX_OMNIBOX_POPUP_PRESENTER_H_
 
+#include "base/memory/raw_ptr.h"
 #include "chrome/browser/ui/webui/searchbox/realbox_handler.h"
 #include "content/public/browser/render_frame_host.h"
 #include "ui/base/metadata/metadata_header_macros.h"
@@ -70,6 +71,7 @@ class OmniboxPopupPresenter : public views::WebView,
   raw_ptr<LocationBarView> location_bar_view_;
 
   // Created by this, closed by this; owned and destroyed by OS.
+  // TODO(crbug.com/40232479): Migrate this to CLIENT_OWNS_WIDGET.
   raw_ptr<views::Widget> widget_;
 
   // Whether any call to `GetHandler` has been made.

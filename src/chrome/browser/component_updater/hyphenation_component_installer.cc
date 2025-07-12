@@ -11,8 +11,6 @@
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 
-using component_updater::ComponentUpdateService;
-
 namespace {
 
 // The SHA256 of the SubjectPublicKeyInfo used to sign the extension.
@@ -127,9 +125,8 @@ base::FilePath HyphenationComponentInstallerPolicy::GetRelativeInstallDir()
 
 void HyphenationComponentInstallerPolicy::GetHash(
     std::vector<uint8_t>* hash) const {
-  hash->assign(
-      kHyphenationPublicKeySHA256,
-      kHyphenationPublicKeySHA256 + std::size(kHyphenationPublicKeySHA256));
+  hash->assign(std::begin(kHyphenationPublicKeySHA256),
+               std::end(kHyphenationPublicKeySHA256));
 }
 
 std::string HyphenationComponentInstallerPolicy::GetName() const {

@@ -14,6 +14,7 @@
 #include "cc/paint/path_effect.h"
 #include "third_party/skia/include/core/SkPaint.h"
 #include "third_party/skia/include/core/SkSamplingOptions.h"
+#include "ui/gfx/display_color_spaces.h"
 
 class SkCanvas;
 class SkPath;
@@ -24,43 +25,24 @@ class PaintShader;
 
 // Minimal set of commonly used paint state. Using a minimal set means PaintOps
 // takes up less space in memory as well as less data to read/write.
-//
-// TODO(crbug.com/340122178): figure out a way to merge this with PaintFlags.
-struct CC_PAINT_EXPORT CorePaintFlags {
-  bool operator==(const CorePaintFlags& other) const = default;
-
-  SkColor4f color = SkColors::kBlack;
-  float width = 0.f;
-  float miter_limit = 4.f;
-  uint32_t bitfields_uint;
-};
-
-class CC_PAINT_EXPORT PaintFlags {
+class CC_PAINT_EXPORT CorePaintFlags {
  public:
-  PaintFlags();
-  PaintFlags(const PaintFlags& flags);
-  explicit PaintFlags(const CorePaintFlags& flags);
-  PaintFlags(PaintFlags&& other);
-  ~PaintFlags();
-
-  PaintFlags& operator=(const PaintFlags& other);
-  PaintFlags& operator=(PaintFlags&& other);
-
-  bool CanConvertToCorePaintFlags() const;
-  CorePaintFlags ToCorePaintFlags() const;
+  CorePaintFlags();
+  CorePaintFlags(const CorePaintFlags& flags) = default;
+  bool operator==(const CorePaintFlags& other) const;
+  ~CorePaintFlags() = default;
 
   enum Style {
     kFill_Style = SkPaint::kFill_Style,
     kStroke_Style = SkPaint::kStroke_Style,
   };
-  bool nothingToDraw() const;
   ALWAYS_INLINE Style getStyle() const {
     return static_cast<Style>(bitfields_.style_);
   }
   ALWAYS_INLINE void setStyle(Style style) { bitfields_.style_ = style; }
   // TODO(crbug.com/40249893): Remove this function
   ALWAYS_INLINE SkColor getColor() const { return color_.toSkColor(); }
-  ALWAYS_INLINE SkColor4f getColor4f() const { return color_; }
+  ALWAYS_INLINE const SkColor4f& getColor4f() const { return color_; }
   ALWAYS_INLINE void setColor(SkColor color) {
     color_ = SkColor4f::FromColor(color);
   }
@@ -68,7 +50,8 @@ class CC_PAINT_EXPORT PaintFlags {
   ALWAYS_INLINE float getAlphaf() const { return color_.fA; }
   ALWAYS_INLINE bool isFullyTransparent() const { return color_.fA == 0.0f; }
   ALWAYS_INLINE bool isOpaque() const { return color_.fA >= 1.0f; }
-  template <class F, class = std::enable_if_t<std::is_same_v<F, float>>>
+  template <class F>
+    requires(std::is_same_v<F, float>)
   ALWAYS_INLINE void setAlphaf(F a) {
     color_.fA = a;
   }
@@ -95,6 +78,13 @@ class CC_PAINT_EXPORT PaintFlags {
     kHigh,
     kLast = kHigh,
   };
+
+  enum class ScalingOperation {
+    kDefault,  // legacy behavior
+    kUnknown,
+    kUpscale  // strict upscale (scaling up both horizontally and vertically)
+  };
+
   ALWAYS_INLINE void setFilterQuality(FilterQuality quality) {
     bitfields_.filter_quality_ = static_cast<uint32_t>(quality);
   }
@@ -110,7 +100,9 @@ class CC_PAINT_EXPORT PaintFlags {
   // Represents a weighted arithmetic mean of "standard", "constrained-high" and
   // "high" in log-luminance space (which is equivalent to a geometric mean in
   // linear luminance).
-  struct DynamicRangeLimitMixture {
+  struct CC_PAINT_EXPORT DynamicRangeLimitMixture {
+    // The default constructor is equivalent to DynamicRangeLimit::kHigh.
+    DynamicRangeLimitMixture() = default;
     explicit DynamicRangeLimitMixture(DynamicRangeLimit limit) {
       switch (limit) {
         case DynamicRangeLimit::kStandard:
@@ -128,6 +120,10 @@ class CC_PAINT_EXPORT PaintFlags {
           constrained_high_mix(constrained_high_mix) {}
     friend bool operator==(const DynamicRangeLimitMixture&,
                            const DynamicRangeLimitMixture&) = default;
+    // Compute the effective HDR headroom when this limit is applied to
+    // `target_hdr_headroom`.
+    float ComputeEffectiveHdrHeadroom(float target_hdr_headroom) const;
+
     float standard_mix = 0.f;
     float constrained_high_mix = 0.f;
     // The weight for "high" is implicit and calculated as "one minus the
@@ -181,6 +177,56 @@ class CC_PAINT_EXPORT PaintFlags {
     return static_cast<Join>(bitfields_.join_type_);
   }
   ALWAYS_INLINE void setStrokeJoin(Join join) { bitfields_.join_type_ = join; }
+
+  bool IsValid() const;
+
+ private:
+  friend class PaintOpReader;
+  friend class PaintOpWriter;
+
+  // Match(ish) SkPaint defaults.  SkPaintDefaults is not public, so this
+  // just uses these values and ignores any SkUserConfig overrides.
+  SkColor4f color_ = SkColors::kBlack;
+  float width_ = 0.f;
+  float miter_limit_ = 4.f;
+
+  struct PaintFlagsBitfields {
+    uint32_t antialias_ : 1;
+    uint32_t dither_ : 1;
+    uint32_t cap_type_ : 2;
+    uint32_t join_type_ : 2;
+    uint32_t style_ : 2;
+    uint32_t blend_mode_ : 5;
+    uint32_t filter_quality_ : 2;
+    uint32_t dynamic_range_limit_standard_mix_ : 7;
+    uint32_t dynamic_range_limit_constrained_high_mix_ : 7;
+    // Specifies whether the compositor should use a dark mode filter when
+    // rasterizing image on the draw op with this PaintFlags.
+    uint32_t use_dark_mode_for_image_ : 1;
+    // Whether the arc should be drawn as a closed path.
+    uint32_t is_arc_closed_ : 1;
+  };
+
+  union {
+    PaintFlagsBitfields bitfields_;
+    uint32_t bitfields_uint_;
+  };
+};
+
+class CC_PAINT_EXPORT PaintFlags final : public CorePaintFlags {
+ public:
+  PaintFlags();
+  PaintFlags(const PaintFlags& flags);
+  explicit PaintFlags(const CorePaintFlags& flags);
+  PaintFlags(PaintFlags&& other);
+  ~PaintFlags();
+  PaintFlags& operator=(const PaintFlags& other);
+  PaintFlags& operator=(PaintFlags&& other);
+
+  bool CanConvertToCorePaintFlags() const;
+  CorePaintFlags ToCorePaintFlags() const;
+
+  bool nothingToDraw() const;
 
   ALWAYS_INLINE const sk_sp<ColorFilter>& getColorFilter() const {
     return color_filter_;
@@ -244,11 +290,17 @@ class CC_PAINT_EXPORT PaintFlags {
 
   static SkSamplingOptions FilterQualityToSkSamplingOptions(
       FilterQuality filter_quality);
+  static SkSamplingOptions FilterQualityToSkSamplingOptions(
+      FilterQuality filter_quality,
+      ScalingOperation scaling_op);
 
-  bool IsValid() const;
   bool EqualsForTesting(const PaintFlags& other) const;
 
-  bool HasDiscardableImages() const;
+  // If `content_color_usage` is not null, the function should update
+  // `*content_color_usage` to be
+  // max(*content_color_usage, max_content_color_usage_of_the_flags).
+  bool HasDiscardableImages(
+      gfx::ContentColorUsage* content_color_usage = nullptr) const;
 
  private:
   friend class PaintOpReader;
@@ -259,34 +311,6 @@ class CC_PAINT_EXPORT PaintFlags {
   sk_sp<ColorFilter> color_filter_;
   sk_sp<DrawLooper> draw_looper_;
   sk_sp<PaintFilter> image_filter_;
-
-  // Match(ish) SkPaint defaults.  SkPaintDefaults is not public, so this
-  // just uses these values and ignores any SkUserConfig overrides.
-  SkColor4f color_ = SkColors::kBlack;
-  float width_ = 0.f;
-  float miter_limit_ = 4.f;
-
-  struct PaintFlagsBitfields {
-    uint32_t antialias_ : 1;
-    uint32_t dither_ : 1;
-    uint32_t cap_type_ : 2;
-    uint32_t join_type_ : 2;
-    uint32_t style_ : 2;
-    uint32_t blend_mode_ : 5;
-    uint32_t filter_quality_ : 2;
-    uint32_t dynamic_range_limit_standard_mix_ : 7;
-    uint32_t dynamic_range_limit_constrained_high_mix_ : 7;
-    // Specifies whether the compositor should use a dark mode filter when
-    // rasterizing image on the draw op with this PaintFlags.
-    uint32_t use_dark_mode_for_image_ : 1;
-    // Whether the arc should be drawn as a closed path.
-    uint32_t is_arc_closed_ : 1;
-  };
-
-  union {
-    PaintFlagsBitfields bitfields_;
-    uint32_t bitfields_uint_;
-  };
 };
 
 }  // namespace cc

@@ -6,7 +6,7 @@
 #define CHROME_BROWSER_UI_EXCLUSIVE_ACCESS_FULLSCREEN_CONTROLLER_H_
 
 #include "base/functional/callback.h"
-#include "base/memory/raw_ptr_exclusion.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/task/cancelable_task_tracker.h"
@@ -16,9 +16,11 @@
 #include "components/content_settings/core/common/content_settings.h"
 #include "content/public/browser/fullscreen_types.h"
 #include "ui/display/types/display_constants.h"
+#include "url/origin.h"
 
-class GURL;
+#if !BUILDFLAG(IS_ANDROID)
 class PopunderPreventer;
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 namespace content {
 class WebContents;
@@ -27,16 +29,13 @@ class RenderFrameHost;
 
 // There are two different kinds of fullscreen mode - "tab fullscreen" and
 // "browser fullscreen". "Tab fullscreen" refers to a renderer-initiated
-// fullscreen mode (eg: from a Flash plugin or via the JS fullscreen API),
+// fullscreen mode (eg: from an extension or via the JS fullscreen API),
 // whereas "browser fullscreen" refers to the user putting the browser itself
 // into fullscreen mode from the UI. The difference is that tab fullscreen has
 // implications for how the contents of the tab render (eg: a video element may
 // grow to consume the whole tab), whereas browser fullscreen mode doesn't.
 // Therefore if a user forces an exit from tab fullscreen, we need to notify the
 // tab so it can stop rendering in its fullscreen mode.
-//
-// For Flash, FullscreenController will auto-accept all permission requests for
-// fullscreen, since the assumption is that the plugin handles this for us.
 //
 // FullscreenWithinTab Note:
 // All fullscreen widgets are displayed within the tab contents area, and
@@ -76,14 +75,16 @@ class FullscreenController : public ExclusiveAccessControllerBase {
   // transition.
   bool IsFullscreenForBrowser() const;
 
-  void ToggleBrowserFullscreenMode();
+  // Toggle in or out of browser fullscreen mode. Certain windows will block
+  // `user_initiated` requests; see `CanUserEnterFullscreen()` for details.
+  void ToggleBrowserFullscreenMode(bool user_initiated);
 
   // Extension API implementation uses this method to toggle fullscreen mode.
   // The extension's name is displayed in the full screen bubble UI to attribute
   // the cause of the full screen state change.
   void ToggleBrowserFullscreenModeWithExtension(const GURL& extension_url);
 
-  // Tab/HTML/Flash Fullscreen /////////////////////////////////////////////////
+  // Tab/HTML/Extension Fullscreen /////////////////////////////////////////////
 
   // Returns true if the browser window has/will fullscreen because of
   // tab-initiated fullscreen. The window may still be transitioning, and
@@ -135,9 +136,11 @@ class FullscreenController : public ExclusiveAccessControllerBase {
     return ptr_factory_.GetWeakPtr();
   }
 
+#if !BUILDFLAG(IS_ANDROID)
   // Called when fullscreen tabs open popups, to track potential popunders.
   void FullscreenTabOpeningPopup(content::WebContents* opener,
                                  content::WebContents* popup);
+#endif  // !BUILDFLAG(IS_ANDROID)
 
   // Platform Fullscreen ///////////////////////////////////////////////////////
 
@@ -151,7 +154,7 @@ class FullscreenController : public ExclusiveAccessControllerBase {
   bool RequiresPressAndHoldEscToExit() const override;
 
   void ExitExclusiveAccessToPreviousState() override;
-  GURL GetURLForExclusiveAccessBubble() const override;
+  url::Origin GetOriginForExclusiveAccessBubble() const override;
   void ExitExclusiveAccessIfNecessary() override;
   // Callbacks /////////////////////////////////////////////////////////////////
 
@@ -187,12 +190,12 @@ class FullscreenController : public ExclusiveAccessControllerBase {
 
   void ToggleFullscreenModeInternal(FullscreenInternalOption option,
                                     content::RenderFrameHost* requesting_frame,
-                                    const int64_t display_id);
+                                    const int64_t display_id,
+                                    bool user_initiated);
   void EnterFullscreenModeInternal(FullscreenInternalOption option,
                                    content::RenderFrameHost* requesting_frame,
                                    int64_t display_id);
   void ExitFullscreenModeInternal();
-  void SetFullscreenedTab(content::WebContents* tab, const GURL& origin);
 
   // Returns true if |web_contents| was toggled into/out of fullscreen mode as a
   // screen-captured tab or as a content-fullscreen tab.
@@ -201,8 +204,8 @@ class FullscreenController : public ExclusiveAccessControllerBase {
                                       bool enter_fullscreen);
 
   // Helper methods that should be used in a TAB context.
-  GURL GetRequestingOrigin() const;
-  GURL GetEmbeddingOrigin() const;
+  url::Origin GetRequestingOrigin() const;
+  url::Origin GetEmbeddingOrigin() const;
 
   // This is recorded when the web page requests to go fullscreen, even if the
   // fullscreen state doesn't change.
@@ -213,10 +216,11 @@ class FullscreenController : public ExclusiveAccessControllerBase {
 
   // The origin of the specific frame requesting fullscreen, which may not match
   // the exclusive_access_tab()'s origin, if an embedded frame made the request.
-  GURL requesting_origin_;
+  url::Origin requesting_origin_;
 
-  // The URL of the extension which trigerred "browser fullscreen" mode.
-  GURL extension_caused_fullscreen_;
+  // The URL of the extension which triggered "browser fullscreen" mode,
+  // std::nullopt if it is not in extension fullscreen.
+  std::optional<GURL> extension_url_;
 
   enum PriorFullscreenState {
     STATE_INVALID,
@@ -245,17 +249,17 @@ class FullscreenController : public ExclusiveAccessControllerBase {
 
   // Set in OnTabDeactivated(). Used to see if we're in the middle of
   // deactivation of a tab.
-  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
-  // #addr-of
-  RAW_PTR_EXCLUSION content::WebContents* deactivated_contents_ = nullptr;
+  raw_ptr<content::WebContents> deactivated_contents_ = nullptr;
 
   // Used in testing to set the state to tab fullscreen.
   bool is_tab_fullscreen_for_testing_ = false;
 
+#if !BUILDFLAG(IS_ANDROID)
   // Tracks related popups that lost activation or were shown without activation
   // during content fullscreen sessions. This also activates the popups when
   // fullscreen exits, to prevent sites from creating persistent popunders.
   std::unique_ptr<PopunderPreventer> popunder_preventer_;
+#endif  // !BUILDFLAG(IS_ANDROID)
 
   base::ObserverList<FullscreenObserver> observer_list_;
 

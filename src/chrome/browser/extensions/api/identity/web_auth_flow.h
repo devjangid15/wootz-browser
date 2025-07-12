@@ -11,7 +11,10 @@
 #include "base/feature_list.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/scoped_observation.h"
 #include "base/time/time.h"
+#include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_observer.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "ui/gfx/geometry/rect.h"
 #include "url/gurl.h"
@@ -29,7 +32,7 @@ class WebAuthFlowInfoBarDelegate;
 
 // Controller class for web based auth flows. The WebAuthFlow creates
 // a browser popup window (or a new tab based on the feature setting)
-// with a webview that will navigate to the |provider_url| passed to the
+// with a webview that will navigate to the `provider_url` passed to the
 // WebAuthFlow constructor.
 //
 // The WebAuthFlow monitors the WebContents of the webview, and
@@ -44,7 +47,8 @@ class WebAuthFlowInfoBarDelegate;
 //
 // A WebAuthFlow can be started in Mode::SILENT, which never displays
 // a window. If a window would be required, the flow fails.
-class WebAuthFlow : public content::WebContentsObserver {
+class WebAuthFlow : public content::WebContentsObserver,
+                    public ProfileObserver {
  public:
   enum Mode {
     INTERACTIVE,  // Show UI to the user if necessary.
@@ -56,7 +60,7 @@ class WebAuthFlow : public content::WebContentsObserver {
     INTERACTION_REQUIRED,  // Non-redirect page load in silent mode.
     LOAD_FAILED,
     TIMED_OUT,
-    CANNOT_CREATE_WINDOW  // Couldn't create a browser window.
+    CANNOT_CREATE_WINDOW,  // Couldn't create a browser window.
   };
 
   enum class AbortOnLoad {
@@ -84,7 +88,7 @@ class WebAuthFlow : public content::WebContentsObserver {
         content::NavigationHandle* navigation_handle) {}
 
    protected:
-    virtual ~Delegate() {}
+    virtual ~Delegate() = default;
   };
 
   // Creates an instance with the given parameters.
@@ -133,6 +137,9 @@ class WebAuthFlow : public content::WebContentsObserver {
   void DidFinishNavigation(
       content::NavigationHandle* navigation_handle) override;
 
+  // ProfileObserver
+  void OnProfileWillBeDestroyed(Profile* profile) override;
+
   void BeforeUrlLoaded(const GURL& url);
   void AfterUrlLoaded();
 
@@ -145,7 +152,7 @@ class WebAuthFlow : public content::WebContentsObserver {
   void CloseInfoBar();
 
   raw_ptr<Delegate> delegate_ = nullptr;
-  const raw_ptr<Profile> profile_;
+  raw_ptr<Profile> profile_;
   const GURL provider_url_;
   const Mode mode_;
   const bool user_gesture_;
@@ -176,6 +183,7 @@ class WebAuthFlow : public content::WebContentsObserver {
   // Flag indicating that the initial URL was successfully loaded. Influences
   // the error code when the flow times out.
   bool initial_url_loaded_ = false;
+  base::ScopedObservation<Profile, ProfileObserver> profile_observation_{this};
 };
 
 }  // namespace extensions

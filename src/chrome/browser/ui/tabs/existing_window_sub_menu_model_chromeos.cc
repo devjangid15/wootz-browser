@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/tabs/existing_window_sub_menu_model_chromeos.h"
 
+#include "base/strings/string_number_conversions.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/tabs/tab_menu_model_delegate.h"
@@ -103,8 +104,9 @@ void ExistingWindowSubMenuModelChromeOS::BuildMenuGroupedByDesk(
   for (size_t desk = 0; desk < grouped_by_desk_menu_item_infos.size(); ++desk) {
     const std::vector<MenuItemInfo>& desk_items =
         grouped_by_desk_menu_item_infos[desk];
-    if (desk_items.empty())
+    if (desk_items.empty()) {
       continue;
+    }
 
     // Create a MenuItemInfo for this desk for `desk_name`.
     std::u16string desk_name;

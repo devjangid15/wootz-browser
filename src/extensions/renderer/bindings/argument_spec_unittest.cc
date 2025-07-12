@@ -420,7 +420,7 @@ TEST_F(ArgumentSpecUnitTest, Test) {
     {
       // Actual data.
       const uint8_t kBuffer[] = {'p', 'i', 'n', 'g'};
-      base::Value expected_value(base::make_span(kBuffer));
+      base::Value expected_value{base::span(kBuffer)};
       ExpectSuccess(spec,
                     "var b = new ArrayBuffer(4);\n"
                     "var v = new Uint8Array(b);\n"
@@ -982,7 +982,7 @@ TEST_F(ArgumentSpecUnitTest, V8Conversion) {
       v8::Local<v8::Context> context = object->GetCreationContextChecked();
       // We expect a null prototype to ensure we avoid tricky getters/setters on
       // the Object prototype.
-      EXPECT_TRUE(object->GetPrototype()->IsNull());
+      EXPECT_TRUE(object->GetPrototypeV2()->IsNull());
       gin::Dictionary dict(context->GetIsolate(), object);
       v8::Local<v8::Value> result;
       ASSERT_TRUE(dict.Get("str", &result));

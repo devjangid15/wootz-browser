@@ -4,6 +4,8 @@
 
 #include "third_party/blink/renderer/core/layout/anchor_evaluator_impl.h"
 
+#include <variant>
+
 #include "testing/gmock/include/gmock/gmock.h"
 #include "third_party/blink/renderer/core/dom/dom_token_list.h"
 #include "third_party/blink/renderer/core/layout/layout_block_flow.h"
@@ -13,10 +15,9 @@
 namespace blink {
 namespace {
 
-class AnchorEvaluatorImplTest : public RenderingTest,
-                                private ScopedCSSAnchorPositioningForTest {
+class AnchorEvaluatorImplTest : public RenderingTest {
  public:
-  AnchorEvaluatorImplTest() : ScopedCSSAnchorPositioningForTest(true) {}
+  AnchorEvaluatorImplTest() = default;
 
   const PhysicalAnchorQuery* AnchorQuery(const Element& element) const {
     const LayoutBlockFlow* container =
@@ -40,13 +41,14 @@ struct AnchorTestData {
       const PhysicalAnchorQuery& anchor_query) {
     Vector<AnchorTestData> items;
     for (auto entry : anchor_query) {
-      if (auto** name = absl::get_if<const ScopedCSSName*>(&entry.key)) {
-        items.push_back(AnchorTestData{(*name)->GetName(), entry.value->rect});
+      if (auto** name = std::get_if<const AnchorScopedName*>(&entry.key)) {
+        items.push_back(AnchorTestData{(*name)->GetName(),
+                                       entry.value->RectWithoutTransforms()});
       }
     }
     std::sort(items.begin(), items.end(),
               [](const AnchorTestData& a, const AnchorTestData& b) {
-                return CodeUnitCompare(a.name, b.name) < 0;
+                return WTF::CodeUnitCompare(a.name, b.name) < 0;
               });
     return items;
   }
@@ -355,7 +357,7 @@ TEST_F(AnchorEvaluatorImplTest, Scroll) {
   )HTML");
   Element* container = GetElementById("container");
   ASSERT_NE(container, nullptr);
-  container->scrollTo(30, 20);
+  container->scrollToForTesting(30, 20);
   UpdateAllLifecyclePhasesForTest();
 
   const PhysicalAnchorQuery* anchor_query = AnchorQuery(*container);

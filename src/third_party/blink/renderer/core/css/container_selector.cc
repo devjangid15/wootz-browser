@@ -35,17 +35,30 @@ ContainerSelector::ContainerSelector(AtomicString name,
   if (feature_flags & MediaQueryExpNode::kFeatureSnap) {
     has_snap_query_ = true;
   }
+  if (feature_flags & MediaQueryExpNode::kFeatureScrollable) {
+    has_scrollable_query_ = true;
+  }
+  if (feature_flags & MediaQueryExpNode::kFeatureScrollDirection) {
+    has_scroll_direction_query_ = true;
+  }
+  if (feature_flags & MediaQueryExpNode::kFeatureAnchored) {
+    has_anchored_query_ = true;
+  }
   if (feature_flags & MediaQueryExpNode::kFeatureUnknown) {
     has_unknown_feature_ = true;
   }
 }
 
 unsigned ContainerSelector::GetHash() const {
-  unsigned hash = !name_.empty() ? WTF::GetHash(name_) : 0;
-  WTF::AddIntToHash(hash, physical_axes_.value());
-  WTF::AddIntToHash(hash, logical_axes_.value());
-  WTF::AddIntToHash(hash, has_style_query_);
-  WTF::AddIntToHash(hash, has_sticky_query_);
+  unsigned hash = !name_.empty() ? blink::GetHash(name_) : 0;
+  AddIntToHash(hash, physical_axes_.value());
+  AddIntToHash(hash, logical_axes_.value());
+  AddIntToHash(hash, has_style_query_);
+  AddIntToHash(hash, has_sticky_query_);
+  AddIntToHash(hash, has_snap_query_);
+  AddIntToHash(hash, has_scrollable_query_);
+  AddIntToHash(hash, has_scroll_direction_query_);
+  AddIntToHash(hash, has_anchored_query_);
   return hash;
 }
 
@@ -61,8 +74,11 @@ unsigned ContainerSelector::Type(WritingMode writing_mode) const {
   if ((axes & kLogicalAxesBlock).value()) {
     type |= kContainerTypeBlockSize;
   }
-  if (has_sticky_query_ || has_snap_query_) {
+  if (SelectsScrollStateContainers()) {
     type |= kContainerTypeScrollState;
+  }
+  if (SelectsAnchoredContainers()) {
+    type |= kContainerTypeAnchored;
   }
   return type;
 }

@@ -18,8 +18,9 @@
 
 namespace partition_alloc::internal {
 
-#if PA_BUILDFLAG(PA_DCHECK_IS_ON)
-ThreadIsolationSettings ThreadIsolationSettings::settings;
+#if PA_BUILDFLAG(DCHECKS_ARE_ON) || \
+    PA_BUILDFLAG(ENABLE_PARTITION_LOCK_REENTRANCY_CHECK)
+PA_CONSTINIT ThreadIsolationSettings ThreadIsolationSettings::settings;
 #endif
 
 void WriteProtectThreadIsolatedMemory(ThreadIsolationOption thread_isolation,
@@ -74,13 +75,13 @@ void WriteProtectThreadIsolatedGlobals(ThreadIsolationOption thread_isolation) {
       thread_isolation, *pool,
       offsetof(AddressPoolManager::Pool, alloc_bitset_));
 
-  uint16_t* pkey_reservation_offset_table =
-      GetReservationOffsetTable(kThreadIsolatedPoolHandle);
+  auto pkey_reservation_offset_table =
+      ReservationOffsetTable::Get(kThreadIsolatedPoolHandle);
   WriteProtectThreadIsolatedMemory(
-      thread_isolation, pkey_reservation_offset_table,
-      ReservationOffsetTable::kReservationOffsetTableLength);
+      thread_isolation, pkey_reservation_offset_table.GetData(),
+      ReservationOffsetTable::kThreadIsolatedOffsetTableLength);
 
-#if PA_BUILDFLAG(PA_DCHECK_IS_ON)
+#if PA_BUILDFLAG(DCHECKS_ARE_ON)
   WriteProtectThreadIsolatedVariable(thread_isolation,
                                      ThreadIsolationSettings::settings);
 #endif

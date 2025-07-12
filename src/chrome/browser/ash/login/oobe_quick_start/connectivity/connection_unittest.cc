@@ -13,6 +13,7 @@
 #include "base/json/json_reader.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/task_environment.h"
@@ -155,10 +156,6 @@ class ConnectionTest : public testing::Test {
   ~ConnectionTest() override = default;
 
   void SetUp() override {
-    // Since this test doesn't run in a sandbox, disable the sandbox checks
-    // on QuickStartMessage. Without this, the Message class will fail.
-    QuickStartMessage::DisableSandboxCheckForTesting();
-
     fake_nearby_connection_ = std::make_unique<FakeNearbyConnection>();
     NearbyConnection* nearby_connection = fake_nearby_connection_.get();
     fake_quick_start_decoder_ = std::make_unique<FakeQuickStartDecoder>();

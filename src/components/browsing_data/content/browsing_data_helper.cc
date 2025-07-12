@@ -7,14 +7,13 @@
 #include <vector>
 
 #include "base/containers/contains.h"
-#include "base/functional/overloaded.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "components/content_settings/core/browser/content_settings_registry.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_pattern.h"
+#include "components/content_settings/core/common/features.h"
 #include "components/no_state_prefetch/browser/no_state_prefetch_manager.h"
-#include "components/origin_trials/common/features.h"
 #include "components/prefs/pref_service.h"
 #include "components/site_isolation/pref_names.h"
 #include "content/public/browser/browsing_data_filter_builder.h"
@@ -33,8 +32,9 @@ bool WebsiteSettingsFilterAdapter(
     const ContentSettingsPattern& primary_pattern,
     const ContentSettingsPattern& secondary_pattern) {
   // Ignore the default setting.
-  if (primary_pattern == ContentSettingsPattern::Wildcard())
+  if (primary_pattern == ContentSettingsPattern::Wildcard()) {
     return false;
+  }
 
   // Website settings only use origin-scoped patterns. The only content setting
   // this filter is used for is DURABLE_STORAGE, which also only uses
@@ -128,10 +128,12 @@ void RemoveEmbedderCookieData(
 
     network::mojom::CookieDeletionFilterPtr deletion_filter =
         filter_builder->BuildCookieDeletionFilter();
-    if (!delete_begin.is_null())
+    if (!delete_begin.is_null()) {
       deletion_filter->created_after_time = delete_begin;
-    if (!delete_end.is_null())
+    }
+    if (!delete_end.is_null()) {
       deletion_filter->created_before_time = delete_end;
+    }
 
     manager_ptr->DeleteCookies(
         std::move(deletion_filter),
@@ -164,13 +166,24 @@ void RemoveSiteSettingsData(const base::Time& delete_begin,
       HostContentSettingsMap::PatternSourcePredicate(),
       host_content_settings_map);
 
-#if !BUILDFLAG(IS_ANDROID)
   host_content_settings_map->ClearSettingsForOneTypeWithPredicate(
       ContentSettingsType::SERIAL_CHOOSER_DATA, delete_begin, delete_end,
       HostContentSettingsMap::PatternSourcePredicate());
 
+  if (base::FeatureList::IsEnabled(
+          content_settings::features::kApproximateGeolocationPermission)) {
+    host_content_settings_map->ClearSettingsForOneTypeWithPredicate(
+        ContentSettingsType::GEOLOCATION_WITH_OPTIONS, delete_begin, delete_end,
+        HostContentSettingsMap::PatternSourcePredicate());
+  }
+
+#if !BUILDFLAG(IS_ANDROID)
   host_content_settings_map->ClearSettingsForOneTypeWithPredicate(
       ContentSettingsType::HID_CHOOSER_DATA, delete_begin, delete_end,
+      HostContentSettingsMap::PatternSourcePredicate());
+
+  host_content_settings_map->ClearSettingsForOneTypeWithPredicate(
+      ContentSettingsType::INITIALIZED_TRANSLATIONS, delete_begin, delete_end,
       HostContentSettingsMap::PatternSourcePredicate());
 
   host_content_settings_map->ClearSettingsForOneTypeWithPredicate(
@@ -180,13 +193,18 @@ void RemoveSiteSettingsData(const base::Time& delete_begin,
   host_content_settings_map->ClearSettingsForOneTypeWithPredicate(
       ContentSettingsType::FILE_SYSTEM_ACCESS_EXTENDED_PERMISSION, delete_begin,
       delete_end, HostContentSettingsMap::PatternSourcePredicate());
-#endif
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(IS_CHROMEOS)
   host_content_settings_map->ClearSettingsForOneTypeWithPredicate(
       ContentSettingsType::SMART_CARD_DATA, delete_begin, delete_end,
       HostContentSettingsMap::PatternSourcePredicate());
-#endif
+#endif  // BUILDFLAG(IS_CHROMEOS)
+
+  host_content_settings_map->ClearSettingsForOneTypeWithPredicate(
+      ContentSettingsType::ON_DEVICE_SPEECH_RECOGNITION_LANGUAGES_DOWNLOADED,
+      delete_begin, delete_end,
+      HostContentSettingsMap::PatternSourcePredicate());
 }
 
 void RemoveFederatedSiteSettingsData(

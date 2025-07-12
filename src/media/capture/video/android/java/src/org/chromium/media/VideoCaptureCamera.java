@@ -13,6 +13,8 @@ import android.util.SparseArray;
 import org.jni_zero.JNINamespace;
 
 import org.chromium.base.Log;
+import org.chromium.build.annotations.NullUnmarked;
+import org.chromium.build.annotations.Nullable;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -21,14 +23,14 @@ import java.util.List;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * Video Capture Device extension of VideoCapture to provide common functionality
- * for capture using android.hardware.Camera API (deprecated in API 21). For Normal
- * Android devices, it provides functionality for receiving copies of preview
- * frames via Java-allocated buffers. It also includes class BuggyDeviceHack to
- * deal with troublesome devices.
- **/
+ * Video Capture Device extension of VideoCapture to provide common functionality for capture using
+ * android.hardware.Camera API (deprecated in API 21). For Normal Android devices, it provides
+ * functionality for receiving copies of preview frames via Java-allocated buffers. It also includes
+ * class BuggyDeviceHack to deal with troublesome devices.
+ */
 @JNINamespace("media")
 @SuppressWarnings("deprecation")
+@NullUnmarked
 public class VideoCaptureCamera extends VideoCapture
         implements android.hardware.Camera.PreviewCallback {
     private static final String TAG = "VideoCapture";
@@ -91,19 +93,19 @@ public class VideoCaptureCamera extends VideoCapture
 
     private int mPhotoWidth;
     private int mPhotoHeight;
-    private android.hardware.Camera.Area mAreaOfInterest;
-    private android.hardware.Camera.Parameters mPreviewParameters;
+    private android.hardware.Camera.@Nullable Area mAreaOfInterest;
+    private android.hardware.Camera.@Nullable Parameters mPreviewParameters;
 
-    private android.hardware.Camera mCamera;
+    private android.hardware.@Nullable Camera mCamera;
     // Lock to mutually exclude execution of OnPreviewFrame() and {start/stop}Capture().
-    private ReentrantLock mPreviewBufferLock = new ReentrantLock();
+    private final ReentrantLock mPreviewBufferLock = new ReentrantLock();
     // True when native code has started capture.
     private boolean mIsRunning;
 
-    private int[] mGlTextures;
-    private SurfaceTexture mSurfaceTexture;
+    private int @Nullable [] mGlTextures;
+    private @Nullable SurfaceTexture mSurfaceTexture;
 
-    private static android.hardware.Camera.CameraInfo getCameraInfo(int id) {
+    private static android.hardware.Camera.@Nullable CameraInfo getCameraInfo(int id) {
         android.hardware.Camera.CameraInfo cameraInfo = new android.hardware.Camera.CameraInfo();
         try {
             android.hardware.Camera.getCameraInfo(id, cameraInfo);
@@ -114,8 +116,8 @@ public class VideoCaptureCamera extends VideoCapture
         return cameraInfo;
     }
 
-    private static android.hardware.Camera.Parameters getCameraParameters(
-            android.hardware.Camera camera) {
+    private static android.hardware.Camera.@Nullable Parameters getCameraParameters(
+            android.hardware.@Nullable Camera camera) {
         android.hardware.Camera.Parameters parameters;
         try {
             parameters = camera.getParameters();
@@ -127,7 +129,7 @@ public class VideoCaptureCamera extends VideoCapture
         return parameters;
     }
 
-    private String getClosestWhiteBalance(
+    private @Nullable String getClosestWhiteBalance(
             int colorTemperature, List<String> supportedTemperatures) {
         int minDiff = Integer.MAX_VALUE;
         String matchedTemperature = null;
@@ -146,7 +148,6 @@ public class VideoCaptureCamera extends VideoCapture
         @Override
         public void onError(int error, android.hardware.Camera camera) {
             VideoCaptureCamera.this.onError(
-                    VideoCaptureCamera.this,
                     AndroidVideoCaptureError.ANDROID_API_1_CAMERA_ERROR_CALLBACK_RECEIVED,
                     "Error id: " + error);
 
@@ -174,7 +175,7 @@ public class VideoCaptureCamera extends VideoCapture
             }
             synchronized (mPhotoTakenCallbackLock) {
                 if (mPhotoTakenCallbackId != 0) {
-                    onPhotoTaken(VideoCaptureCamera.this, mPhotoTakenCallbackId, data);
+                    onPhotoTaken(mPhotoTakenCallbackId, data);
                 }
                 mPhotoTakenCallbackId = 0;
             }
@@ -227,7 +228,7 @@ public class VideoCaptureCamera extends VideoCapture
         }
     }
 
-    static String getName(int id) {
+    static @Nullable String getName(int id) {
         android.hardware.Camera.CameraInfo cameraInfo = VideoCaptureCamera.getCameraInfo(id);
         if (cameraInfo == null) return null;
 
@@ -236,14 +237,15 @@ public class VideoCaptureCamera extends VideoCapture
                 + ", facing "
                 + (cameraInfo.facing == android.hardware.Camera.CameraInfo.CAMERA_FACING_FRONT
                         ? "front"
-                        : "back");
+                        : "back")
+                + ", legacy";
     }
 
     static String getDeviceId(int id) {
         return Integer.toString(id);
     }
 
-    static VideoCaptureFormat[] getDeviceSupportedFormats(int id) {
+    static VideoCaptureFormat @Nullable [] getDeviceSupportedFormats(int id) {
         android.hardware.Camera camera;
         try {
             camera = android.hardware.Camera.open(id);
@@ -498,7 +500,7 @@ public class VideoCaptureCamera extends VideoCapture
 
         mPreviewBufferLock.lock();
         try {
-            onStarted(VideoCaptureCamera.this);
+            onStarted();
             mIsRunning = true;
         } finally {
             mPreviewBufferLock.unlock();
@@ -533,7 +535,7 @@ public class VideoCaptureCamera extends VideoCapture
         final android.hardware.Camera.Parameters parameters = getCameraParameters(mCamera);
         if (parameters == null) {
             mCamera = null;
-            onGetPhotoCapabilitiesReply(VideoCaptureCamera.this, callbackId, null);
+            onGetPhotoCapabilitiesReply(callbackId, null);
             return;
         }
         PhotoCapabilities.Builder builder = new PhotoCapabilities.Builder();
@@ -715,7 +717,7 @@ public class VideoCaptureCamera extends VideoCapture
             builder.setFillLightModeArray(integerArrayListToArray(modes));
         }
 
-        onGetPhotoCapabilitiesReply(VideoCaptureCamera.this, callbackId, builder.build());
+        onGetPhotoCapabilitiesReply(callbackId, builder.build());
     }
 
     @Override
@@ -968,7 +970,7 @@ public class VideoCaptureCamera extends VideoCapture
         }
     }
 
-    private void setPreviewCallback(android.hardware.Camera.PreviewCallback cb) {
+    private void setPreviewCallback(android.hardware.Camera.@Nullable PreviewCallback cb) {
         mCamera.setPreviewCallbackWithBuffer(cb);
     }
 
@@ -980,11 +982,9 @@ public class VideoCaptureCamera extends VideoCapture
                 return;
             }
             if (data != null && data.length == mExpectedFrameSize) {
-                onFrameAvailable(
-                        VideoCaptureCamera.this, data, mExpectedFrameSize, getCameraRotation());
+                onFrameAvailable(data, mExpectedFrameSize, getCameraRotation());
             } else {
                 onFrameDropped(
-                        VideoCaptureCamera.this,
                         AndroidVideoCaptureFrameDropReason.ANDROID_API_1_UNEXPECTED_DATA_LENGTH);
             }
         } finally {

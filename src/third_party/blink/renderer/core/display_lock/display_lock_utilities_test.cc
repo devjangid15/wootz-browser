@@ -12,7 +12,6 @@
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
 #include "third_party/blink/renderer/core/testing/intersection_observer_test_helper.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 
 namespace blink {
@@ -72,7 +71,8 @@ TEST_F(DisplayLockUtilitiesTest, DISABLED_ActivatableLockedInclusiveAncestors) {
   Element& innermost = *GetDocument().getElementById(AtomicString("innermost"));
   ShadowRoot& shadow_root =
       inner_b.AttachShadowRootForTesting(ShadowRootMode::kOpen);
-  shadow_root.setInnerHTML("<div id='shadowDiv'>shadow!</div>");
+  shadow_root.SetInnerHTMLWithoutTrustedTypes(
+      "<div id='shadowDiv'>shadow!</div>");
   Element& shadow_div = *shadow_root.getElementById(AtomicString("shadowDiv"));
 
   LockElement(outer, true);
@@ -279,7 +279,7 @@ TEST_F(DisplayLockUtilitiesTest, InteractionWithIntersectionObserver) {
   LockElement(*container, false);
   EXPECT_TRUE(ChildDocument().View()->ShouldThrottleRenderingForTest());
 
-  target->setInnerHTML("Hello, world!");
+  target->SetInnerHTMLWithoutTrustedTypes("Hello, world!");
   UpdateAllLifecyclePhasesForTest();
   EXPECT_TRUE(ChildDocument().View()->ShouldThrottleRenderingForTest());
   EXPECT_TRUE(ChildDocument().Lifecycle().GetState() ==

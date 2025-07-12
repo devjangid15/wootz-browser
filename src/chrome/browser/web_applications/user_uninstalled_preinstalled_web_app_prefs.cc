@@ -9,10 +9,11 @@
 
 #include "base/containers/contains.h"
 #include "base/metrics/user_metrics.h"
-#include "base/strings/string_piece.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/web_applications/web_app.h"
 #include "chrome/browser/web_applications/web_app_constants.h"
+#include "chrome/browser/web_applications/web_app_management_type.h"
 #include "content/public/browser/browser_thread.h"
 
 namespace web_app {
@@ -40,9 +41,9 @@ void UserUninstalledPreinstalledWebAppPrefs::Add(
 
   AppendExistingInstallUrlsPerAppId(app_id, install_urls);
 
-  for (auto install_url : install_urls)
+  for (const auto& install_url : install_urls) {
     url_list.Append(install_url.spec());
-
+  }
   if (!DoesAppIdExist(app_id)) {
     base::RecordAction(
         base::UserMetricsAction(kUserUninstalledPreinstalledAppAction));
@@ -190,7 +191,7 @@ bool UserUninstalledPreinstalledWebAppPrefs::AppIdContainsAllUrls(
     existing_urls.emplace(url.GetString());
   }
 
-  for (auto it : url_map) {
+  for (const auto& it : url_map) {
     if (only_default && !(it.first == WebAppManagement::kDefault))
       continue;
 
@@ -201,5 +202,11 @@ bool UserUninstalledPreinstalledWebAppPrefs::AppIdContainsAllUrls(
   }
   return true;
 }
+
+#if BUILDFLAG(IS_CHROMEOS)
+void UserUninstalledPreinstalledWebAppPrefs::ClearAllApps() {
+  pref_service_->ClearPref(prefs::kUserUninstalledPreinstalledWebAppPref);
+}
+#endif
 
 }  // namespace web_app

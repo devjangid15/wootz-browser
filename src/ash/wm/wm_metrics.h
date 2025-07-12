@@ -5,6 +5,10 @@
 #ifndef ASH_WM_WM_METRICS_H_
 #define ASH_WM_WM_METRICS_H_
 
+#include <ostream>
+
+#include "ash/ash_export.h"
+
 namespace ash {
 
 // Used to record different ways to snap a window. Note this should be kept in
@@ -12,26 +16,30 @@ namespace ash {
 // tools/metrics/histograms/metadata/ash/enums.xml.
 enum class WindowSnapActionSource {
   // Default value for any snap action actions that's not covered below.
-  kNotSpecified,
-  kDragWindowToEdgeToSnap,
-  kLongPressCaptionButtonToSnap,
-  kKeyboardShortcutToSnap,
-  kDragOrSelectOverviewWindowToSnap,
-  kLongPressOverviewButtonToSnap,
-  kDragUpFromShelfToSnap,
-  kDragDownFromTopToSnap,
-  kDragTabToSnap,
-  kAutoSnapInSplitView,
-  kSnapByWindowStateRestore,
-  kSnapByWindowLayoutMenu,
-  kSnapByFullRestoreOrDeskTemplateOrSavedDesk,
-  kSnapByClamshellTabletTransition,
-  kSnapByDeskOrSessionChange,
-  kSnapGroupWindowUpdate,
-  kTest,
-  kLacrosSnapButtonOrWindowLayoutMenu,
-  kMaxValue = kLacrosSnapButtonOrWindowLayoutMenu,
+  kNotSpecified = 0,
+  kDragWindowToEdgeToSnap = 1,
+  kLongPressCaptionButtonToSnap = 2,
+  kKeyboardShortcutToSnap = 3,
+  kDragOrSelectOverviewWindowToSnap = 4,
+  kLongPressOverviewButtonToSnap = 5,
+  kDragUpFromShelfToSnap = 6,
+  kDragDownFromTopToSnap = 7,
+  kDragTabToSnap = 8,
+  kAutoSnapInSplitView = 9,
+  kSnapByWindowStateRestore = 10,
+  kSnapByWindowLayoutMenu = 11,
+  kSnapByFullRestoreOrDeskTemplateOrSavedDesk = 12,
+  kSnapByClamshellTabletTransition = 13,
+  kSnapByDeskOrSessionChange = 14,
+  kSnapGroupWindowUpdate = 15,
+  // 16 was removed.
+  // 17 was removed.
+  kSnapBySwapWindowsInSnapGroup = 18,
+  kMaxValue = kSnapBySwapWindowsInSnapGroup,
 };
+
+ASH_EXPORT std::ostream& operator<<(std::ostream& out,
+                                    WindowSnapActionSource source);
 
 // Used to save histogram metrics about how the user initiates window snapping.
 constexpr char kWindowSnapActionSourceHistogram[] =

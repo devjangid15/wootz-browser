@@ -6,25 +6,17 @@
 
 #include <string>
 
-#include "components/prefs/android/jni_headers/PrefService_jni.h"
+#include "base/android/jni_string.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/prefs_export.h"
 
-using base::android::JavaParamRef;
-using base::android::JavaRef;
-using base::android::ScopedJavaLocalRef;
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "components/prefs/android/jni_headers/PrefService_jni.h"
+
 using jni_zero::AttachCurrentThread;
-
-namespace jni_zero {
-
-template <>
-COMPONENTS_PREFS_EXPORT PrefService* FromJniType<PrefService*>(
-    JNIEnv* env,
-    const JavaRef<jobject>& obj) {
-  return PrefServiceAndroid::FromPrefServiceAndroid(obj);
-}
-
-}  // namespace jni_zero
+using jni_zero::JavaParamRef;
+using jni_zero::JavaRef;
+using jni_zero::ScopedJavaLocalRef;
 
 PrefServiceAndroid::PrefServiceAndroid(PrefService* pref_service)
     : pref_service_(pref_service) {}
@@ -115,6 +107,19 @@ void PrefServiceAndroid::SetDouble(JNIEnv* env,
       base::android::ConvertJavaStringToUTF8(env, j_preference), j_value);
 }
 
+jlong PrefServiceAndroid::GetLong(JNIEnv* env,
+                                  const JavaParamRef<jstring>& j_preference) {
+  return pref_service_->GetInt64(
+      base::android::ConvertJavaStringToUTF8(env, j_preference));
+}
+
+void PrefServiceAndroid::SetLong(JNIEnv* env,
+                                 const JavaParamRef<jstring>& j_preference,
+                                 const jlong j_value) {
+  pref_service_->SetInt64(
+      base::android::ConvertJavaStringToUTF8(env, j_preference), j_value);
+}
+
 ScopedJavaLocalRef<jstring> PrefServiceAndroid::GetString(
     JNIEnv* env,
     const JavaParamRef<jstring>& j_preference) {
@@ -137,6 +142,14 @@ jboolean PrefServiceAndroid::IsManagedPreference(
     const JavaParamRef<jstring>& j_preference) {
   return pref_service_->IsManagedPreference(
       base::android::ConvertJavaStringToUTF8(env, j_preference));
+}
+
+jboolean PrefServiceAndroid::IsRecommendedPreference(
+    JNIEnv* env,
+    const JavaParamRef<jstring>& j_preference) {
+  const PrefService::Preference* pref = pref_service_->FindPreference(
+      base::android::ConvertJavaStringToUTF8(env, j_preference));
+  return pref && pref->IsRecommended();
 }
 
 jboolean PrefServiceAndroid::IsDefaultValuePreference(

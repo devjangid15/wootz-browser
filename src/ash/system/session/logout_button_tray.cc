@@ -29,6 +29,7 @@
 #include "ui/chromeos/styles/cros_tokens_color_mappings.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/paint_vector_icon.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/controls/button/md_text_button.h"
 #include "ui/views/layout/fill_layout.h"
 
@@ -38,6 +39,12 @@ LogoutButtonTray::LogoutButtonTray(Shelf* shelf)
     : TrayBackgroundView(shelf, TrayBackgroundViewCatalogName::kLogoutButton) {
   DCHECK(shelf);
   Shell::Get()->session_controller()->AddObserver(this);
+  // Restore Active state
+  PrefService* active_pref =
+      Shell::Get()->session_controller()->GetLastActiveUserPrefService();
+  if (active_pref) {
+    OnActiveUserPrefServiceChanged(active_pref);
+  }
 
   button_ =
       tray_container()->AddChildView(std::make_unique<views::MdTextButton>(
@@ -48,6 +55,7 @@ LogoutButtonTray::LogoutButtonTray(Shelf* shelf)
   set_use_bounce_in_animation(false);
 
   SetFocusBehavior(FocusBehavior::NEVER);
+  SubscribeCallbacksForAccessibility();
 }
 
 LogoutButtonTray::~LogoutButtonTray() {
@@ -89,6 +97,11 @@ void LogoutButtonTray::OnActiveUserPrefServiceChanged(PrefService* prefs) {
   UpdateLogoutDialogDuration();
 }
 
+std::u16string LogoutButtonTray::GetLoginStatusString() {
+  LoginStatus login_status = shelf()->GetStatusAreaWidget()->login_status();
+  return user::GetLocalizedSignOutStringForStatus(login_status, false);
+}
+
 void LogoutButtonTray::OnThemeChanged() {
   TrayBackgroundView::OnThemeChanged();
   const auto* color_provider = GetColorProvider();
@@ -119,10 +132,6 @@ void LogoutButtonTray::HideBubbleWithView(const TrayBubbleView* bubble_view) {}
 
 void LogoutButtonTray::HideBubble(const TrayBubbleView* bubble_view) {}
 
-std::u16string LogoutButtonTray::GetAccessibleNameForTray() {
-  return button_->GetText();
-}
-
 void LogoutButtonTray::HandleLocaleChange() {
   UpdateButtonTextAndImage();
 }
@@ -135,16 +144,13 @@ void LogoutButtonTray::UpdateVisibility() {
 }
 
 void LogoutButtonTray::UpdateButtonTextAndImage() {
-  LoginStatus login_status = shelf()->GetStatusAreaWidget()->login_status();
-  const std::u16string title =
-      user::GetLocalizedSignOutStringForStatus(login_status, false);
   if (shelf()->IsHorizontalAlignment()) {
-    button_->SetText(title);
+    button_->SetText(GetLoginStatusString());
     button_->SetImageModel(views::Button::STATE_NORMAL, ui::ImageModel());
     button_->SetMinSize(gfx::Size(0, kTrayItemSize));
   } else {
     button_->SetText(std::u16string());
-    button_->SetAccessibleName(title);
+    button_->GetViewAccessibility().SetName(GetLoginStatusString());
     button_->SetImageModel(
         views::Button::STATE_NORMAL,
         ui::ImageModel::FromVectorIcon(
@@ -154,6 +160,22 @@ void LogoutButtonTray::UpdateButtonTextAndImage() {
     button_->SetMinSize(gfx::Size(kTrayItemSize, kTrayItemSize));
   }
   UpdateVisibility();
+}
+
+void LogoutButtonTray::OnButtonTextChangedCallback(
+    ax::mojom::StringAttribute attribute,
+    const std::optional<std::string>& name) {
+  if (name.has_value()) {
+    GetViewAccessibility().SetName(name.value());
+  }
+}
+
+void LogoutButtonTray::SubscribeCallbacksForAccessibility() {
+  button_text_changed_subscription_ =
+      button_->GetViewAccessibility().AddStringAttributeChangedCallback(
+          ax::mojom::StringAttribute::kName,
+          base::BindRepeating(&LogoutButtonTray::OnButtonTextChangedCallback,
+                              base::Unretained(this)));
 }
 
 void LogoutButtonTray::ButtonPressed() {

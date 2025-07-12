@@ -59,6 +59,10 @@ public final class QuicTestServer {
         return QuicTestServerJni.get().getServerPort();
     }
 
+    public static String getConnectionClosePath() {
+        return QuicTestServerJni.get().getConnectionClosePath();
+    }
+
     public static void delayResponse(String path, int delayInSeconds) {
         QuicTestServerJni.get().delayResponse(path, delayInSeconds);
     }
@@ -74,6 +78,10 @@ public final class QuicTestServer {
     public static long createMockCertVerifier() {
         TestFilesInstaller.installIfNeeded(ContextUtils.getApplicationContext());
         return MockCertVerifier.createMockCertVerifier(CERTS_USED, true);
+    }
+
+    public static int numSessions() {
+        return QuicTestServerJni.get().numSessions();
     }
 
     @NativeMethods("cronet_tests")
@@ -101,5 +109,18 @@ public final class QuicTestServer {
          * the way down to QUICHE though.
          */
         void delayResponse(String path, int delayInSeconds);
+
+        /*
+         * The server will send a CONNECTION_CLOSE packet to the client upon receiving a connection
+         * on the specified path.
+         *
+         * The expected error code is QUIC_NO_ERROR.
+         */
+        String getConnectionClosePath();
+
+        /*
+         * Returns the number of sessions.
+         */
+        int numSessions();
     }
 }

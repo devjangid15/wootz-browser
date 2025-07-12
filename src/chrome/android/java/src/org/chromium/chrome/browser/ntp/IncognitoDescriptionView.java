@@ -10,9 +10,7 @@ import android.content.Context;
 import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.text.SpannableString;
-import android.text.TextPaint;
 import android.text.method.LinkMovementMethod;
-import android.text.style.ClickableSpan;
 import android.text.style.ForegroundColorSpan;
 import android.util.AttributeSet;
 import android.view.Gravity;
@@ -24,24 +22,30 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.annotation.IdRes;
-import androidx.annotation.NonNull;
 import androidx.annotation.StringRes;
 import androidx.appcompat.widget.SwitchCompat;
 
+import org.chromium.base.Callback;
+import org.chromium.build.annotations.EnsuresNonNullIf;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
+import org.chromium.chrome.browser.settings.SettingsNavigationFactory;
 import org.chromium.chrome.browser.tab.TabLaunchType;
 import org.chromium.chrome.browser.tabmodel.document.ChromeAsyncTabLauncher;
+import org.chromium.components.browser_ui.settings.SettingsNavigation;
 import org.chromium.components.content_settings.CookieControlsEnforcement;
+import org.chromium.components.privacy_sandbox.IncognitoTrackingProtectionsFragment;
 import org.chromium.ui.base.ViewUtils;
-import org.chromium.ui.text.NoUnderlineClickableSpan;
+import org.chromium.ui.text.ChromeClickableSpan;
 import org.chromium.ui.text.SpanApplier;
 import org.chromium.ui.text.SpanApplier.SpanInfo;
 import org.chromium.ui.widget.ChromeBulletSpan;
-import org.chromium.base.ContextUtils;
-// import log
-import android.util.Log;
+import org.chromium.ui.widget.TextViewWithClickableSpans;
 
 /** The view to describle incognito mode. */
+@NullMarked
 public class IncognitoDescriptionView extends LinearLayout {
     private int mWidthDp;
     private int mHeightDp;
@@ -50,13 +54,13 @@ public class IncognitoDescriptionView extends LinearLayout {
     private TextView mHeader;
     private TextView mSubtitle;
     private LinearLayout mBulletpointsContainer;
-    private TextView mLearnMore;
+    private TextViewWithClickableSpans mLearnMore;
     private TextView[] mParagraphs;
-    private ViewGroup mCookieControlsCard;
-    private SwitchCompat mCookieControlsToggle;
-    private ImageView mCookieControlsManagedIcon;
-    private TextView mCookieControlsTitle;
-    private TextView mCookieControlsSubtitle;
+    private @Nullable ViewGroup mCookieControlsCard;
+    private @Nullable SwitchCompat mCookieControlsToggle;
+    private @Nullable ImageView mCookieControlsManagedIcon;
+    private @Nullable TextView mCookieControlsTitle;
+    private @Nullable TextView mCookieControlsSubtitle;
 
     private static final int BULLETPOINTS_HORIZONTAL_SPACING_DP = 40;
     private static final int BULLETPOINTS_MARGIN_BOTTOM_DP = 12;
@@ -91,6 +95,12 @@ public class IncognitoDescriptionView extends LinearLayout {
         mCookieControlsManagedIcon.setOnClickListener(listener);
     }
 
+    private void showIncognitoTrackingProtectionSettings() {
+        SettingsNavigation settingsNavigation =
+                SettingsNavigationFactory.createSettingsNavigation();
+        settingsNavigation.startSettings(getContext(), IncognitoTrackingProtectionsFragment.class);
+    }
+
     @Override
     protected void onFinishInflate() {
         super.onFinishInflate();
@@ -98,13 +108,8 @@ public class IncognitoDescriptionView extends LinearLayout {
         mWidthDp = getContext().getResources().getConfiguration().screenWidthDp;
         mHeightDp = getContext().getResources().getConfiguration().screenHeightDp;
 
-        populateBulletpointsDynamic(R.id.new_tab_incognito_features, R.string.new_tab_otr_not_saved);
+        populateBulletpoints(R.id.new_tab_incognito_features, R.string.new_tab_otr_not_saved);
         populateBulletpoints(R.id.new_tab_incognito_warning, R.string.new_tab_otr_visible);
-        setTextWithAppNameReplacement(
-            R.id.tracking_protection_card,
-            R.id.tracking_protection_description_one,
-            R.string.new_tab_otr_third_party_blocked_cookie_part_one
-        );
 
         mContainer = findViewById(R.id.new_tab_incognito_container);
         mHeader = findViewById(R.id.new_tab_incognito_title);
@@ -136,27 +141,46 @@ public class IncognitoDescriptionView extends LinearLayout {
     }
 
     public void formatTrackingProtectionText(Context context, View layout) {
-        TextView view = (TextView) layout.findViewById(R.id.tracking_protection_description_two);
-        if (view == null) return;
+        TextViewWithClickableSpans view =
+                layout.findViewById(R.id.tracking_protection_description_two);
+        if (view == null) {
+            adjustCookieControlsCard();
+            return;
+        }
 
-        String text =
-                context.getResources()
-                        .getString(R.string.new_tab_otr_third_party_blocked_cookie_part_two);
-        ClickableSpan span =
-                new ClickableSpan() {
-                    @Override
-                    public void onClick(View view) {
-                        new ChromeAsyncTabLauncher(/* incognito= */ true)
-                                .launchUrl(TRACKING_PROTECTION_URL, TabLaunchType.FROM_CHROME_UI);
-                    }
-
-                    @Override
-                    public void updateDrawState(TextPaint textPaint) {
-                        super.updateDrawState(textPaint);
-                        textPaint.setColor(
-                                context.getColor(R.color.default_text_color_secondary_light_list));
-                    }
+        TextView title = layout.findViewById(R.id.tracking_protection_card_title);
+        String text = context.getString(R.string.new_tab_otr_third_party_blocked_cookie_part_two);
+        Callback<View> spanOnClickCallback =
+                (unused) -> {
+                    new ChromeAsyncTabLauncher(/* incognito= */ true)
+                            .launchUrl(TRACKING_PROTECTION_URL, TabLaunchType.FROM_CHROME_UI);
                 };
+
+        if (ChromeFeatureList.isEnabled(ChromeFeatureList.IP_PROTECTION_UX)
+                || ChromeFeatureList.isEnabled(ChromeFeatureList.FINGERPRINTING_PROTECTION_UX)) {
+            title.setText(
+                    context.getString(
+                            R.string.incognito_ntp_incognito_tracking_protections_header));
+            text =
+                    context.getString(
+                            R.string
+                                    .incognito_ntp_incognito_tracking_protections_description_android);
+            spanOnClickCallback =
+                    (unused) -> {
+                        showIncognitoTrackingProtectionSettings();
+                    };
+        } else if (ChromeFeatureList.isEnabled(ChromeFeatureList.ALWAYS_BLOCK_3PCS_INCOGNITO)) {
+            title.setText(
+                    context.getString(R.string.incognito_ntp_block_third_party_cookies_header));
+            text =
+                    context.getString(
+                            R.string.incognito_ntp_block_third_party_cookies_description_android);
+        } else {
+            layout.findViewById(R.id.tracking_protection_description_one)
+                    .setVisibility(View.VISIBLE);
+        }
+        ChromeClickableSpan span =
+                new ChromeClickableSpan(view.getSpanColor(), spanOnClickCallback);
         view.setText(
                 SpanApplier.applySpans(text, new SpanApplier.SpanInfo("<link>", "</link>", span)));
         view.setMovementMethod(LinkMovementMethod.getInstance());
@@ -177,53 +201,13 @@ public class IncognitoDescriptionView extends LinearLayout {
      *     <li>items, which will be converted to bulletpoints. Populates |element| with |content|.
      */
     private void populateBulletpoints(@IdRes int element, @StringRes int content) {
-        TextView view = (TextView) findViewById(element);
+        TextView view = findViewById(element);
         SpannableString spannedText = getSpannedBulletText(getContext(), content);
         view.setText(spannedText);
     }
-    
-    public void setTextWithAppNameReplacement(@IdRes int parentId, @IdRes int elementId, @StringRes int content) {
-        View parent = findViewById(parentId);
-        // log the parent
-        Log.d("IncognitoDescriptionView", "Parent: ");
-        if (parent == null) return; // Parent not found
-        Log.d("IncognitoDescriptionView", "Parent found");
-        TextView view = parent.findViewById(elementId);
-        if (view == null) {
-            Log.d("IncognitoDescriptionView", "Child not found");
-            return; // Child not found
-        }
-    
-        String appName = ContextUtils.getAppSharedPreferences().getString("app_name", "Browser");
-        String text = getContext().getString(content);
-        if (text.contains("WootzApp")) {
-            text = text.replace("WootzApp", appName);
-        }
-        view.setText(text);
-    }
 
-    private void populateBulletpointsDynamic(@IdRes int element, @StringRes int content) {
-        TextView view = (TextView) findViewById(element);
-        
-        String appName = ContextUtils.getAppSharedPreferences().getString("app_name", "Browser");
-        boolean hasCustomBranding = !appName.equals("Browser");
-        
-        SpannableString spannedText;
-        if (hasCustomBranding) {
-            String originalText = getContext().getResources().getString(content);
-            String dynamicText = originalText.replace("WootzApp", appName);
-            
-            spannedText = getSpannedBulletTextDynamic(getContext(), dynamicText);
-        } else {
-            spannedText = getSpannedBulletText(getContext(), content);
-        }
-        
-        view.setText(spannedText);
-    }
-
-    @NonNull
     static SpannableString getSpannedBulletText(Context context, @StringRes int content) {
-        String text = context.getResources().getString(content);
+        String text = context.getString(content);
         // Some translations don't have a line break between list entries.
         text = text.replaceAll("([^\n ]) *(<li>|</?ul>)", "$1\n$2");
 
@@ -246,48 +230,10 @@ public class IncognitoDescriptionView extends LinearLayout {
                 "Format error. Locale: "
                         + context.getResources().getConfiguration().getLocales()
                         + " \nstring: "
-                        + context.getResources().getString(content);
+                        + context.getString(content);
         assert text.contains("<li1>") : error;
         assert text.contains("<li2>") : error;
         assert text.contains("<li3>") : error;
-
-        // Remove the <ul></ul> tags which serve no purpose here, including the whitespace around
-        // them.
-        text = text.replaceAll(" *</?ul>\\n?", "");
-
-        SpannableString spannedText =
-                SpanApplier.applySpans(
-                        text,
-                        new SpanInfo(
-                                "<em>",
-                                "</em>",
-                                new ForegroundColorSpan(
-                                        context.getColor(R.color.incognito_emphasis))),
-                        new SpanInfo("<li1>", "</li1>", new ChromeBulletSpan(context)),
-                        new SpanInfo("<li2>", "</li2>", new ChromeBulletSpan(context)),
-                        new SpanInfo("<li3>", "</li3>", new ChromeBulletSpan(context)));
-        return spannedText;
-    }
-
-    @NonNull
-    static SpannableString getSpannedBulletTextDynamic(Context context, String text) {
-        // Some translations don't have a line break between list entries.
-        text = text.replaceAll("([^\n ]) *(<li>|</?ul>)", "$1\n$2");
-
-        // TODO(msramek): Unfortunately, our strings are missing the closing "</li>" tag, which
-        // is not a problem when they're used in the Desktop WebUI (omitting the tag is valid in
-        // HTML5), but it is a problem for SpanApplier. Update the strings and remove this regex.
-        // Note that modifying the strings is a non-trivial operation as they went through a special
-        // translation process.
-        text = text.replaceAll("<li>([^<]+)\n", "<li>$1</li>\n");
-
-        // Format the bulletpoints:
-        //   - Disambiguate the <li></li> spans for SpanApplier.
-        //   - Remove leading whitespace (caused by formatting in the .grdp file)
-        //   - Remove the trailing newline after the last bulletpoint.
-        text = text.replaceFirst(" *<li>([^<]*)</li>", "<li1>$1</li1>");
-        text = text.replaceFirst(" *<li>([^<]*)</li>", "<li2>$1</li2>");
-        text = text.replaceFirst(" *<li>([^<]*)</li>\n", "<li3>$1</li3>");
 
         // Remove the <ul></ul> tags which serve no purpose here, including the whitespace around
         // them.
@@ -325,11 +271,34 @@ public class IncognitoDescriptionView extends LinearLayout {
             // Decide the bulletpoints orientation.
             bulletpointsArrangedHorizontally = false;
 
+            // Adjust the horizontal padding for |mContainer| and its children, |mHeader|,
+            // |mSubtitle| and |mBulletpointsContainer| to account for the horizontal offset, when
+            // layout width is small. There should be no additional horizontal padding for these
+            // views when layout width is large.
+            int horizontalOffset =
+                    getContext()
+                            .getResources()
+                            .getDimensionPixelSize(R.dimen.md_incognito_ntp_view_horizontal_offset);
+            float pxToDp = 1.f / getContext().getResources().getDisplayMetrics().density;
+            float horizontalOffsetDp = horizontalOffset * pxToDp;
+            paddingHorizontalDp = (int) (paddingHorizontalDp - horizontalOffsetDp);
+
+            mHeader.setPadding(
+                    horizontalOffset,
+                    mHeader.getPaddingTop(),
+                    horizontalOffset,
+                    mHeader.getPaddingBottom());
+
             // The subtitle is sized automatically, but not wider than CONTENT_WIDTH_DP.
             mSubtitle.setLayoutParams(
                     new LinearLayout.LayoutParams(
                             LinearLayout.LayoutParams.WRAP_CONTENT,
                             LinearLayout.LayoutParams.WRAP_CONTENT));
+            mSubtitle.setPadding(
+                    horizontalOffset,
+                    mSubtitle.getPaddingTop(),
+                    horizontalOffset,
+                    mSubtitle.getPaddingBottom());
             mSubtitle.setMaxWidth(dpToPx(getContext(), CONTENT_WIDTH_DP));
 
             // The bulletpoints container takes the same width as subtitle. Since the width can
@@ -338,6 +307,11 @@ public class IncognitoDescriptionView extends LinearLayout {
                     dpToPx(
                             getContext(),
                             Math.min(CONTENT_WIDTH_DP, mWidthDp - 2 * paddingHorizontalDp));
+            mBulletpointsContainer.setPadding(
+                    horizontalOffset,
+                    mBulletpointsContainer.getPaddingTop(),
+                    horizontalOffset,
+                    mBulletpointsContainer.getPaddingBottom());
         } else {
             // Large padding.
             paddingHorizontalDp = 0; // Should not be necessary on a screen this large.
@@ -350,10 +324,21 @@ public class IncognitoDescriptionView extends LinearLayout {
             bulletpointsArrangedHorizontally = true;
 
             int contentWidthPx = dpToPx(getContext(), CONTENT_WIDTH_DP);
+
+            // Reset any horizontal padding added to account for the horizontal offset, for
+            // |mHeader|, |mSubtitle| and |mBulletpointsContainer|. This padding should be applied
+            // only for a small-width layout.
+            mHeader.setPadding(0, mHeader.getPaddingTop(), 0, mHeader.getPaddingBottom());
             mSubtitle.setLayoutParams(
                     new LinearLayout.LayoutParams(
                             contentWidthPx, LinearLayout.LayoutParams.WRAP_CONTENT));
+            mSubtitle.setPadding(0, mSubtitle.getPaddingTop(), 0, mSubtitle.getPaddingBottom());
             mBulletpointsContainer.getLayoutParams().width = contentWidthPx;
+            mBulletpointsContainer.setPadding(
+                    0,
+                    mBulletpointsContainer.getPaddingTop(),
+                    0,
+                    mBulletpointsContainer.getPaddingBottom());
         }
 
         // Apply the bulletpoints orientation.
@@ -429,7 +414,7 @@ public class IncognitoDescriptionView extends LinearLayout {
             sizeDp = mHeightDp <= 480 ? 72 : 120;
         }
 
-        ImageView icon = (ImageView) findViewById(R.id.new_tab_incognito_icon);
+        ImageView icon = findViewById(R.id.new_tab_incognito_icon);
         icon.getLayoutParams().width = dpToPx(getContext(), sizeDp);
         icon.getLayoutParams().height = dpToPx(getContext(), sizeDp);
     }
@@ -437,14 +422,22 @@ public class IncognitoDescriptionView extends LinearLayout {
     /** Adjust the "Learn More" link. */
     private void adjustLearnMore() {
         final String subtitleText =
-                getContext()
-                        .getResources()
-                        .getString(R.string.new_tab_otr_subtitle_with_reading_list);
-        boolean learnMoreInSubtitle = mWidthDp > WIDE_LAYOUT_THRESHOLD_DP;
+                getContext().getString(R.string.new_tab_otr_subtitle_with_reading_list);
 
+        final ChromeClickableSpan learnMoreSpan =
+                new ChromeClickableSpan(
+                        mLearnMore.getSpanColor(), (view) -> mLearnMore.callOnClick());
+
+        boolean learnMoreInSubtitle = mWidthDp > WIDE_LAYOUT_THRESHOLD_DP;
         mLearnMore.setVisibility(learnMoreInSubtitle ? View.GONE : View.VISIBLE);
 
         if (!learnMoreInSubtitle) {
+            // Format the "Learn more" link.
+            SpannableString learnMoreLink =
+                    new SpannableString(getContext().getString(R.string.learn_more));
+            learnMoreLink.setSpan(learnMoreSpan, 0, learnMoreLink.length(), /* flags= */ 0);
+            mLearnMore.setText(learnMoreLink);
+
             // Revert to the original text.
             mSubtitle.setText(subtitleText);
             mSubtitle.setMovementMethod(null);
@@ -455,16 +448,14 @@ public class IncognitoDescriptionView extends LinearLayout {
         StringBuilder concatenatedText = new StringBuilder();
         concatenatedText.append(subtitleText);
         concatenatedText.append(" ");
-        concatenatedText.append(getContext().getResources().getString(R.string.learn_more));
+        concatenatedText.append(getContext().getString(R.string.learn_more));
         SpannableString textWithLearnMoreLink = new SpannableString(concatenatedText.toString());
 
-        NoUnderlineClickableSpan span =
-                new NoUnderlineClickableSpan(
-                        getContext(),
-                        R.color.baseline_primary_80,
-                        (view) -> mLearnMore.callOnClick());
         textWithLearnMoreLink.setSpan(
-                span, subtitleText.length() + 1, textWithLearnMoreLink.length(), /* flags= */ 0);
+                learnMoreSpan,
+                subtitleText.length() + 1,
+                textWithLearnMoreLink.length(),
+                /* flags= */ 0);
         mSubtitle.setText(textWithLearnMoreLink);
         mSubtitle.setMovementMethod(LinkMovementMethod.getInstance());
     }
@@ -527,12 +518,21 @@ public class IncognitoDescriptionView extends LinearLayout {
     }
 
     /** Finds the 3PC controls and returns true if they exist. */
+    @EnsuresNonNullIf({
+        "mCookieControlsToggle",
+        "mCookieControlsManagedIcon",
+        "mCookieControlsTitle",
+        "mCookieControlsSubtitle"
+    })
     private boolean findCookieControlElements() {
         mCookieControlsToggle = findViewById(R.id.cookie_controls_card_toggle);
         if (mCookieControlsToggle == null) return false;
         mCookieControlsManagedIcon = findViewById(R.id.cookie_controls_card_managed_icon);
         mCookieControlsTitle = findViewById(R.id.cookie_controls_card_title);
         mCookieControlsSubtitle = findViewById(R.id.cookie_controls_card_subtitle);
+        assert mCookieControlsManagedIcon != null
+                && mCookieControlsTitle != null
+                && mCookieControlsSubtitle != null;
         return true;
     }
 }

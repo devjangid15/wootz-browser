@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/functional/callback_helpers.h"
+#include "base/strings/string_util.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/web_apps/web_app_views_utils.h"
 #include "chrome/grit/generated_resources.h"
@@ -81,7 +82,7 @@ SiteIconTextAndOriginView::SiteIconTextAndOriginView(
 
   auto icon_view = std::make_unique<views::ImageView>();
   icon_view->SetImage(ui::ImageModel::FromImageSkia(icon));
-  AddChildView(icon_view.release());
+  AddChildViewRaw(icon_view.release());
 
   std::u16string current_title =
       NormalizeSuggestedTitle(GetTrimmedTitle(initial_title));
@@ -101,7 +102,7 @@ SiteIconTextAndOriginView::SiteIconTextAndOriginView(
   AddChildView(views::Builder<views::View>().Build());
 
   // TODO(dibyapal): Modify to support full urls for Create Shortcut dialog.
-  AddChildView(
+  AddChildViewRaw(
       web_app::CreateOriginLabelFromStartUrl(url, /*is_primary_text=*/false)
           .release());
   title_field_->SelectAll(true);

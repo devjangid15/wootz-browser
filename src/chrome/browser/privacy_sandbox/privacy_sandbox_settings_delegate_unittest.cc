@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "base/strings/to_string.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
@@ -49,6 +50,7 @@ namespace {
 
 using ::privacy_sandbox::tracking_protection::
     TrackingProtectionOnboardingStatus;
+
 constexpr char kTestEmail[] = "test@test.com";
 
 class PrivacySandboxSettingsDelegateTest : public testing::Test {
@@ -63,7 +65,8 @@ class PrivacySandboxSettingsDelegateTest : public testing::Test {
     experiment_manager_ =
         std::make_unique<tpcd::experiment::MockExperimentManager>();
     delegate_ = std::make_unique<PrivacySandboxSettingsDelegate>(
-        profile_.get(), experiment_manager_.get());
+        profile_.get(), experiment_manager_.get(),
+        GetSingletonPrivacySandboxCountries());
   }
 
  protected:
@@ -251,17 +254,6 @@ TEST_F(PrivacySandboxSettingsDelegateTest,
 
   prefs()->SetBoolean(prefs::kPrivacySandboxTopicsConsentGiven, false);
   EXPECT_FALSE(delegate()->HasAppropriateTopicsConsent());
-}
-
-TEST_F(PrivacySandboxSettingsDelegateTest,
-       CapabilityRestrictionWhenForcedRestictedUser) {
-  feature_list()->InitAndEnableFeatureWithParameters(
-      privacy_sandbox::kPrivacySandboxSettings4,
-      {{privacy_sandbox::kPrivacySandboxSettings4ForceRestrictedUserForTesting
-            .name,
-        "true"}});
-  EXPECT_TRUE(delegate()->IsPrivacySandboxRestricted());
-  EXPECT_FALSE(delegate()->IsPrivacySandboxCurrentlyUnrestricted());
 }
 
 namespace {
@@ -528,20 +520,20 @@ TEST_P(CookieDeprecationExperimentEligibilityTest, IsEligible) {
   feature_list()->InitAndEnableFeatureWithParameters(
       features::kCookieDeprecationFacilitatedTesting,
       {{"use_profile_filtering", "true"},
-       {"force_eligible", test_case.force_eligible ? "true" : "false"},
+       {"force_eligible", base::ToString(test_case.force_eligible)},
        {tpcd::experiment::kExclude3PCBlockedName,
-        test_case.exclude_3pc_blocked ? "true" : "false"},
+        base::ToString(test_case.exclude_3pc_blocked)},
        {tpcd::experiment::kExcludeNotSeenAdsAPIsNoticeName,
-        test_case.exclude_not_seen_notice ? "true" : "false"},
+        base::ToString(test_case.exclude_not_seen_notice)},
        {tpcd::experiment::kExcludeDasherAccountName,
-        test_case.exclude_dasher_account ? "true" : "false"},
+        base::ToString(test_case.exclude_dasher_account)},
        {tpcd::experiment::kExcludeNewUserName,
-        test_case.exclude_new_user ? "true" : "false"},
+        base::ToString(test_case.exclude_new_user)},
        {tpcd::experiment::kInstallTimeForNewUserName,
         test_case.install_time_new_user},
 #if BUILDFLAG(IS_ANDROID)
        {tpcd::experiment::kExcludePwaOrTwaInstalledName,
-        test_case.exclude_pwa_twa_installed ? "true" : "false"}
+        base::ToString(test_case.exclude_pwa_twa_installed)}
 #endif
       });
 
@@ -595,20 +587,22 @@ TEST_P(CookieDeprecationExperimentEligibilityOTRProfileTest, IsEligible) {
   Profile* off_the_record_profile = profile()->GetOffTheRecordProfile(
       Profile::OTRProfileID::CreateUniqueForTesting(),
       /*create_if_needed=*/true);
-  PrivacySandboxSettingsDelegate otr_delegate_under_test(off_the_record_profile,
-                                                         experiment_manager());
+  PrivacySandboxSettingsDelegate otr_delegate_under_test(
+      off_the_record_profile, experiment_manager(),
+      GetSingletonPrivacySandboxCountries());
 
   // Android does not have guest profiles.
 #if !BUILDFLAG(IS_ANDROID)
   auto guest_profile = TestingProfile::Builder().SetGuestSession().Build();
   PrivacySandboxSettingsDelegate guest_delegate_under_test(
-      guest_profile.get(), experiment_manager());
+      guest_profile.get(), experiment_manager(),
+      GetSingletonPrivacySandboxCountries());
 #endif  // !BUILDFLAG(IS_ANDROID)
 
   const bool use_profile_filtering = GetParam();
 
-  const char* use_profile_filtering_param =
-      use_profile_filtering ? "true" : "false";
+  const std::string use_profile_filtering_param =
+      base::ToString(use_profile_filtering);
 
   {
     feature_list()->InitAndEnableFeatureWithParameters(
@@ -667,16 +661,15 @@ INSTANTIATE_TEST_SUITE_P(All,
 TEST_P(CookieDeprecationLabelAllowedTest, IsClientEligibleChecked) {
   feature_list()->InitAndEnableFeatureWithParameters(
       features::kCookieDeprecationFacilitatedTesting,
-      {{tpcd::experiment::kDisable3PCookiesName,
-        GetParam() ? "true" : "false"}});
+      {{tpcd::experiment::kDisable3PCookiesName, base::ToString(GetParam())}});
 
   const bool disable_3pcs = GetParam();
   if (disable_3pcs) {
-    auto* onboarding_service =
-        TrackingProtectionOnboardingFactory::GetForProfile(profile());
     // Simulate onboarding a profile.
-    onboarding_service->MaybeMarkEligible();
-    onboarding_service->OnboardingNoticeShown();
+    prefs()->SetInteger(
+        prefs::kTrackingProtectionOnboardingStatus,
+        static_cast<int>(privacy_sandbox::TrackingProtectionOnboarding::
+                             OnboardingStatus::kOnboarded));
   }
 
   for (bool is_client_eligible : {false, true}) {
@@ -710,16 +703,6 @@ TEST_P(CookieDeprecationLabelAllowedTest, OnboardingStatusChecked) {
           .expected_allowed = false,
       },
       {
-          .onboarding_status = TrackingProtectionOnboardingStatus::kRequested,
-          .need_onboarding = false,
-          .expected_allowed = true,
-      },
-      {
-          .onboarding_status = TrackingProtectionOnboardingStatus::kRequested,
-          .need_onboarding = true,
-          .expected_allowed = true,
-      },
-      {
           .onboarding_status = TrackingProtectionOnboardingStatus::kOnboarded,
           .need_onboarding = false,
           .expected_allowed = true,
@@ -743,21 +726,14 @@ TEST_P(CookieDeprecationLabelAllowedTest, OnboardingStatusChecked) {
     feature_list()->InitAndEnableFeatureWithParameters(
         features::kCookieDeprecationFacilitatedTesting,
         {{tpcd::experiment::kDisable3PCookiesName,
-          disable_3pcs ? "true" : "false"},
+          base::ToString(disable_3pcs)},
          {tpcd::experiment::kNeedOnboardingForLabelName,
-          test_case.need_onboarding ? "true" : "false"},
+          base::ToString(test_case.need_onboarding)},
          {tpcd::experiment::kEnableSilentOnboardingName, "true"}});
 
     if (disable_3pcs) {
       prefs()->SetInteger(prefs::kTrackingProtectionOnboardingStatus,
                           static_cast<int>(test_case.onboarding_status));
-      EXPECT_EQ(delegate()->IsCookieDeprecationLabelAllowed(),
-                test_case.expected_allowed);
-    } else if (test_case.onboarding_status !=
-               TrackingProtectionOnboardingStatus::
-                   kRequested)  // Silent Onboarding can never be combined with
-                                // the requested status.
-    {
       prefs()->SetInteger(prefs::kTrackingProtectionSilentOnboardingStatus,
                           static_cast<int>(test_case.onboarding_status));
       EXPECT_EQ(delegate()->IsCookieDeprecationLabelAllowed(),
@@ -834,11 +810,12 @@ TEST_P(ThirdPartyCookiesBlockedByCookieDeprecationExperimentTest,
       test_case = GetParam();
 
   if (test_case.is_profile_onboarded) {
-    auto* onboarding_service =
-        TrackingProtectionOnboardingFactory::GetForProfile(profile());
     // Simulate onboarding a profile.
-    onboarding_service->MaybeMarkEligible();
-    onboarding_service->OnboardingNoticeShown();
+    prefs()->SetInteger(
+        prefs::kTrackingProtectionOnboardingStatus,
+        static_cast<int>(privacy_sandbox::TrackingProtectionOnboarding::
+                             OnboardingStatus::kOnboarded));
+    prefs()->SetBoolean(prefs::kTrackingProtection3pcdEnabled, true);
   }
 
   prefs()->SetInteger(prefs::kCookieControlsMode,

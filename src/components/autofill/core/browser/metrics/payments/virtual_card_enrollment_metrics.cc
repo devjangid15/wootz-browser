@@ -76,7 +76,7 @@ void LogGetDetailsForEnrollmentRequestResult(VirtualCardEnrollmentSource source,
 
 void LogGetDetailsForEnrollmentRequestLatency(
     VirtualCardEnrollmentSource source,
-    AutofillClient::PaymentsRpcResult result,
+    payments::PaymentsAutofillClient::PaymentsRpcResult result,
     base::TimeDelta latency) {
   base::UmaHistogramMediumTimes(
       "Autofill.VirtualCard.GetDetailsForEnrollment.Latency." +
@@ -143,10 +143,14 @@ void LogVirtualCardEnrollBubbleCardArtAvailable(
       card_art_available);
 }
 
-void LogVirtualCardEnrollBubbleLatencySinceUpstream(
-    const base::TimeDelta& latency) {
+void LogVirtualCardEnrollBubbleLatencySinceUpstream(base::TimeDelta latency) {
   base::UmaHistogramTimes(
       "Autofill.VirtualCardEnrollBubble.LatencySinceUpstream", latency);
+}
+
+void LogVirtualCardEnrollBubbleLatencySinceDownstream(base::TimeDelta latency) {
+  base::UmaHistogramTimes(
+      "Autofill.VirtualCardEnrollBubble.LatencySinceDownstream", latency);
 }
 
 void LogVirtualCardEnrollmentNotOfferedDueToMaxStrikes(

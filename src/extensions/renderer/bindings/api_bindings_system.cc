@@ -167,7 +167,7 @@ v8::Local<v8::Object> APIBindingsSystem::CreateCustomType(
     const std::string& property_name,
     const base::Value::List* property_values) {
   auto iter = custom_types_.find(type_name);
-  DCHECK(iter != custom_types_.end()) << "Custom type not found: " << type_name;
+  CHECK(iter != custom_types_.end()) << "Custom type not found: " << type_name;
   return iter->second.Run(isolate, property_name, property_values,
                           &request_handler_, &event_handler_,
                           &type_reference_map_, &access_checker_);

@@ -16,6 +16,7 @@
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/webui/print_preview/print_preview_handler.h"
+#include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "components/prefs/pref_service.h"
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
@@ -68,26 +69,21 @@ class FakePrintPreviewUI : public PrintPreviewUI {
 };
 
 // Hands out `FakePrintPreviewUI` instances instead of real ones.
-class TestPrintPreviewUIConfig : public content::WebUIConfig {
+class TestPrintPreviewUIConfig
+    : public content::DefaultWebUIConfig<FakePrintPreviewUI> {
  public:
   TestPrintPreviewUIConfig()
-      : content::WebUIConfig(content::kChromeUIScheme,
-                             chrome::kChromeUIPrintHost) {}
+      : DefaultWebUIConfig(content::kChromeUIScheme,
+                           chrome::kChromeUIPrintHost) {}
   TestPrintPreviewUIConfig(const TestPrintPreviewUIConfig&) = delete;
   TestPrintPreviewUIConfig& operator=(const TestPrintPreviewUIConfig&) = delete;
   ~TestPrintPreviewUIConfig() override = default;
 
-  // content::WebUIConfig:
+  // content::DefaultWebUIConfig:
   bool IsWebUIEnabled(content::BrowserContext* browser_context) override {
     return true;
   }
   bool ShouldHandleURL(const GURL& url) override { return url.path() == "/"; }
-
-  std::unique_ptr<content::WebUIController> CreateWebUIController(
-      content::WebUI* web_ui,
-      const GURL& url) override {
-    return std::make_unique<FakePrintPreviewUI>(web_ui);
-  }
 };
 
 }  // namespace

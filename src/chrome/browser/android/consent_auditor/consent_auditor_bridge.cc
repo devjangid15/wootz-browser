@@ -15,7 +15,7 @@
 #include "components/consent_auditor/consent_auditor.h"
 #include "components/signin/public/identity_manager/account_info.h"
 
-// Must come after other includes, because FromJniType() uses Profile.
+// Must come after all headers that specialize FromJniType() / ToJniType().
 #include "chrome/browser/consent_auditor/android/jni_headers/ConsentAuditorBridge_jni.h"
 
 using base::android::JavaParamRef;
@@ -24,7 +24,7 @@ static void JNI_ConsentAuditorBridge_RecordConsent(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj,
     Profile* profile,
-    const JavaParamRef<jobject>& j_account_id,
+    GaiaId& gaia_id,
     jint j_feature,
     const JavaParamRef<jintArray>& j_consent_description,
     jint j_consent_confirmation) {
@@ -44,5 +44,5 @@ static void JNI_ConsentAuditorBridge_RecordConsent(
     sync_consent.add_description_grd_ids(id);
   }
   ConsentAuditorFactory::GetForProfile(profile)->RecordSyncConsent(
-      ConvertFromJavaCoreAccountId(env, j_account_id), sync_consent);
+      gaia_id, sync_consent);
 }

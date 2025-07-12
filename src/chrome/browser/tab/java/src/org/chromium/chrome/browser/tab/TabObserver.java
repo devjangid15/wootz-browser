@@ -6,9 +6,11 @@ package org.chromium.chrome.browser.tab;
 
 import android.graphics.Bitmap;
 
-import androidx.annotation.Nullable;
-
 import org.chromium.base.Token;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+import org.chromium.cc.input.BrowserControlsState;
+import org.chromium.chrome.browser.browser_controls.BrowserControlsOffsetTagsInfo;
 import org.chromium.chrome.browser.tab.Tab.LoadUrlResult;
 import org.chromium.components.find_in_page.FindMatchRectsDetails;
 import org.chromium.components.find_in_page.FindNotificationDetails;
@@ -20,14 +22,16 @@ import org.chromium.ui.mojom.VirtualKeyboardMode;
 import org.chromium.url.GURL;
 
 /** An observer that is notified of changes to a {@link Tab} object. */
+@NullMarked
 public interface TabObserver {
     /**
-     * Called when a {@link Tab} finished initialization. The {@link TabState} contains,
-     * if not {@code null}, various states that a Tab should restore itself from.
+     * Called when a {@link Tab} finished initialization. The {@link TabState} contains, if not
+     * {@code null}, various states that a Tab should restore itself from.
+     *
      * @param tab The notifying {@link Tab}.
      * @param appId ID of the external app that opened this tab.
      */
-    void onInitialized(Tab tab, String appId);
+    void onInitialized(Tab tab, @Nullable String appId);
 
     /**
      * Called when a {@link Tab} is shown.
@@ -103,11 +107,12 @@ public interface TabObserver {
 
     /**
      * Called when the favicon of a {@link Tab} has been updated.
+     *
      * @param tab The notifying {@link Tab}.
      * @param icon The favicon that was received.
      * @param iconUrl The URL that the icon was fetched from.
      */
-    void onFaviconUpdated(Tab tab, Bitmap icon, GURL iconUrl);
+    void onFaviconUpdated(Tab tab, @Nullable Bitmap icon, @Nullable GURL iconUrl);
 
     /**
      * Called when the title of a {@link Tab} changes.
@@ -328,6 +333,7 @@ public interface TabObserver {
     /**
      * Called when offset values related with the browser controls have been changed by the
      * renderer.
+     *
      * @param topControlsOffsetY The Y offset of the top controls in physical pixels.
      * @param bottomControlsOffsetY The Y offset of the bottom controls in physical pixels.
      * @param contentOffsetY The Y offset of the content in physical pixels.
@@ -343,6 +349,15 @@ public interface TabObserver {
             int bottomControlsMinHeightOffsetY);
 
     /**
+     * @see BrowserControlsStateProvider.onControlsConstraintsChanged
+     */
+    void onBrowserControlsConstraintsChanged(
+            Tab tab,
+            BrowserControlsOffsetTagsInfo oldOffsetTagsInfo,
+            BrowserControlsOffsetTagsInfo offsetTagsInfo,
+            @BrowserControlsState int constraints);
+
+    /**
      * Called when the tab is about to notify its renderer to show the browser controls.
      *
      * @param tab The notifying {@link Tab}.
@@ -356,6 +371,12 @@ public interface TabObserver {
      * @param scrolling {@code true} if scrolling started; {@code false} if stopped.
      */
     void onContentViewScrollingStateChanged(boolean scrolling);
+
+    /** Called when the gesture begin event is received. */
+    void onGestureBegin();
+
+    /** Called when the gesture end event is received. */
+    void onGestureEnd();
 
     /** Back press refactor related. Called when navigation state is invalidated. */
     void onNavigationStateChanged();
@@ -393,4 +414,30 @@ public interface TabObserver {
      * @param tabGroupId The new tab group ID, may be null.
      */
     default void onTabGroupIdChanged(Tab tab, @Nullable Token tabGroupId) {}
+
+    /**
+     * Called when the animation state for the back forward session history navigation has changed.
+     * Retrieve the current animation state using the Tab's WebContents.
+     *
+     * @param tab The {@link Tab} whose back forward transition animation state is updated.
+     */
+    default void didBackForwardTransitionAnimationChange(Tab tab) {}
+
+    /** Called when the content sensitivity of the tab changes. */
+    default void onTabContentSensitivityChanged(Tab tab, boolean contentIsSensitive) {}
+
+    /**
+     * Called when the tab is unarchived from archived tab model.
+     *
+     * @param tab the {@link Tab} has been unarchived
+     */
+    default void onTabUnarchived(Tab tab) {}
+
+    /**
+     * Called when the pinned state of the tab changes.
+     *
+     * @param tab the {@link Tab} whose pinned state is changed.
+     * @param isPinned boolean indicator to represent whether tab is pinned or unpinned.
+     */
+    default void onTabPinnedStateChanged(Tab tab, boolean isPinned) {}
 }

@@ -5,6 +5,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_BREAKOUT_BOX_FRAME_QUEUE_UNDERLYING_SOURCE_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_BREAKOUT_BOX_FRAME_QUEUE_UNDERLYING_SOURCE_H_
 
+#include "base/feature_list.h"
 #include "base/synchronization/lock.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/threading/thread_checker.h"
@@ -18,6 +19,8 @@
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 
 namespace blink {
+
+MODULES_EXPORT BASE_DECLARE_FEATURE(kBreakoutBoxInsertVideoCaptureTimestamp);
 
 template <typename NativeFrameType>
 class FrameQueueUnderlyingSource : public UnderlyingSourceBase {
@@ -39,11 +42,11 @@ class FrameQueueUnderlyingSource : public UnderlyingSourceBase {
       delete;
 
   // UnderlyingSourceBase
-  ScriptPromiseUntyped Pull(ScriptState*, ExceptionState&) override;
-  ScriptPromiseUntyped Start(ScriptState*, ExceptionState&) override;
-  ScriptPromiseUntyped Cancel(ScriptState*,
-                              ScriptValue reason,
-                              ExceptionState&) override;
+  ScriptPromise<IDLUndefined> Pull(ScriptState*, ExceptionState&) override;
+  ScriptPromise<IDLUndefined> Start(ScriptState*) override;
+  ScriptPromise<IDLUndefined> Cancel(ScriptState*,
+                                     ScriptValue reason,
+                                     ExceptionState&) override;
 
   // ExecutionLifecycleObserver
   void ContextDestroyed() override;
@@ -148,6 +151,8 @@ class FrameQueueUnderlyingSource : public UnderlyingSourceBase {
   // Maximum number of distinct frames allowed to be used by this source.
   // This limit applies only when |device_id_| is nonempty.
   const wtf_size_t frame_pool_size_ = 0;
+
+  std::optional<base::TimeTicks> first_frame_ticks_;
 };
 
 template <>

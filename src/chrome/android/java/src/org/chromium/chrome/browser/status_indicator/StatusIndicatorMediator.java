@@ -34,15 +34,15 @@ class StatusIndicatorMediator
     private static final int UPDATE_COLOR_TRANSITION_DURATION_MS = 400;
 
     private PropertyModel mModel;
-    private BrowserControlsStateProvider mBrowserControlsStateProvider;
-    private HashSet<StatusIndicatorCoordinator.StatusIndicatorObserver> mObservers =
+    private final BrowserControlsStateProvider mBrowserControlsStateProvider;
+    private final HashSet<StatusIndicatorCoordinator.StatusIndicatorObserver> mObservers =
             new HashSet<>();
     private final TabObscuringHandler mTabObscuringHandler;
-    private Supplier<Integer> mStatusBarWithoutIndicatorColorSupplier;
+    private final Supplier<Integer> mStatusBarWithoutIndicatorColorSupplier;
     private Runnable mOnShowAnimationEnd;
     private Runnable mRegisterResource;
     private Runnable mUnregisterResource;
-    private Supplier<Boolean> mCanAnimateNativeBrowserControls;
+    private final Supplier<Boolean> mCanAnimateNativeBrowserControls;
     private Callback<Runnable> mInvalidateCompositorView;
     private Runnable mRequestLayout;
 
@@ -57,16 +57,15 @@ class StatusIndicatorMediator
 
     /**
      * Constructs the status indicator mediator.
-     * @param browserControlsStateProvider The {@link BrowserControlsStateProvider} to listen to
-     *                                     for the changes in controls offsets.
+     *
+     * @param browserControlsStateProvider The {@link BrowserControlsStateProvider} to listen to for
+     *     the changes in controls offsets.
      * @param tabObscuringHandler Delegate object handling obscuring views.
      * @param statusBarWithoutIndicatorColorSupplier A supplier that will get the status bar color
-     *                                               without taking the status indicator into
-     *                                               account.
+     *     without taking the status indicator into account.
      * @param canAnimateNativeBrowserControls Will supply a boolean denoting whether the native
-     *                                        browser controls can be animated. This will be false
-     *                                        where we can't have a reliable cc::BCOM instance, e.g.
-     *                                        tab switcher.
+     *     browser controls can be animated. This will be false where we can't have a reliable
+     *     cc::BCOM instance, e.g. tab switcher.
      */
     StatusIndicatorMediator(
             BrowserControlsStateProvider browserControlsStateProvider,
@@ -107,9 +106,12 @@ class StatusIndicatorMediator
     public void onControlsOffsetChanged(
             int topOffset,
             int topControlsMinHeightOffset,
+            boolean topControlsMinHeightChanged,
             int bottomOffset,
             int bottomControlsMinHeightOffset,
-            boolean needsAnimate) {
+            boolean bottomControlsMinHeightChanged,
+            boolean requestNewFrame,
+            boolean isVisibilityForced) {
         onOffsetChanged(topControlsMinHeightOffset);
     }
 
@@ -236,10 +238,10 @@ class StatusIndicatorMediator
         mTextFadeInAnimation.setInterpolator(Interpolators.FAST_OUT_SLOW_IN_INTERPOLATOR);
         mTextFadeInAnimation.setDuration(FADE_TEXT_DURATION_MS);
         mTextFadeInAnimation.addUpdateListener(
-                (anim -> {
+                anim -> {
                     final float currentAlpha = (float) anim.getAnimatedValue();
                     mModel.set(StatusIndicatorProperties.TEXT_ALPHA, currentAlpha);
-                }));
+                });
         mTextFadeInAnimation.addListener(
                 new CancelAwareAnimatorListener() {
                     @Override
@@ -293,7 +295,8 @@ class StatusIndicatorMediator
                         || textColor != mModel.get(StatusIndicatorProperties.TEXT_COLOR)
                         || iconTint != mModel.get(StatusIndicatorProperties.ICON_TINT);
         assert changed
-                : "#animateUpdate() shouldn't be called without any change to the status indicator.";
+                : "#animateUpdate() shouldn't be called without any change to the status"
+                        + " indicator.";
 
         // 1. Fade out old text.
         ValueAnimator fadeOldOut = ValueAnimator.ofFloat(1.f, 0.f);
@@ -514,5 +517,19 @@ class StatusIndicatorMediator
     @Override
     public void updateObscured(boolean obscureTabContent, boolean obscureToolbar) {
         mModel.set(StatusIndicatorProperties.IS_OBSCURED, obscureToolbar);
+    }
+
+    /**
+     * Returns the "effective height" of the status indicator, which is the height that appears
+     * visually to the user. This is the height that is relevant for determining the y-offsets of
+     * TopControls below the status indicator.
+     *
+     * @return The height of the status indicator as it appears visually to users.
+     */
+    int getEffectiveHeight() {
+        // TODO(crbug.com/417238089): Stacker needs to know this value is changing with animations.
+        return mIsHiding
+                ? mModel.get(StatusIndicatorProperties.CURRENT_VISIBLE_HEIGHT)
+                : mJavaLayoutHeight;
     }
 }

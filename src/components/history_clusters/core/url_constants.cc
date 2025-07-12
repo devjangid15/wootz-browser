@@ -9,7 +9,7 @@
 namespace history_clusters {
 
 const char* GetChromeUIHistoryClustersURL() {
-  return "wootzapp://history/grouped";
+  return "chrome://history/grouped";
 }
 
 }  // namespace history_clusters

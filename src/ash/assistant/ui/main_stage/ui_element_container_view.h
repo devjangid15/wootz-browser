@@ -5,7 +5,6 @@
 #ifndef ASH_ASSISTANT_UI_MAIN_STAGE_UI_ELEMENT_CONTAINER_VIEW_H_
 #define ASH_ASSISTANT_UI_MAIN_STAGE_UI_ELEMENT_CONTAINER_VIEW_H_
 
-#include <deque>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -43,7 +42,6 @@ class COMPONENT_EXPORT(ASSISTANT_UI) UiElementContainerView
   // AnimatedContainerView:
   gfx::Size CalculatePreferredSize(
       const views::SizeBounds& available_size) const override;
-  int GetHeightForWidth(int width) const override;
   gfx::Size GetMinimumSize() const override;
   void Layout(PassKey) override;
   void OnCommittedQueryChanged(const AssistantQuery& query) override;

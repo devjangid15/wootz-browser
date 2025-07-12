@@ -14,25 +14,28 @@
 #include <utility>
 #include <vector>
 
+#include "ash/app_list/apps_collections_controller.h"
 #include "ash/public/cpp/app_list/app_list_client.h"
 #include "ash/public/cpp/app_list/app_list_metrics.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ref.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
 #include "base/time/time.h"
 #include "chrome/browser/ash/app_list/app_list_controller_delegate.h"
-#include "chrome/browser/profiles/profile_manager_observer.h"
+#include "chromeos/ash/services/assistant/public/cpp/assistant_browser_delegate.h"
 #include "components/feature_engagement/public/tracker.h"
 #include "components/search_engines/template_url_service.h"
 #include "components/search_engines/template_url_service_observer.h"
 #include "components/session_manager/core/session_manager_observer.h"
 #include "components/user_manager/user_manager.h"
+#include "ui/base/models/image_model.h"
 #include "ui/display/types/display_constants.h"
-
-class ProfileManager;
+#include "ui/gfx/image/image.h"
 
 namespace app_list {
+class AppListSurveyHandler;
 class SearchController;
 }  // namespace app_list
 
@@ -45,10 +48,10 @@ class Profile;
 class AppListClientImpl
     : public ash::AppListClient,
       public AppListControllerDelegate,
+      public user_manager::UserManager::Observer,
       public user_manager::UserManager::UserSessionStateObserver,
       public session_manager::SessionManagerObserver,
-      public TemplateURLServiceObserver,
-      public ProfileManagerObserver {
+      public TemplateURLServiceObserver {
  public:
   // Indicates the launcher usage state during the session started by a new user
   // (i.e. the session completing the OOBE flow) but before any account
@@ -71,7 +74,8 @@ class AppListClientImpl
     kMaxValue = kNotUsedBeforeSwitchingAccounts,
   };
 
-  AppListClientImpl();
+  // `user_manage` must be non-null and must outlive `this`.
+  explicit AppListClientImpl(user_manager::UserManager* user_manager);
   AppListClientImpl(const AppListClientImpl&) = delete;
   AppListClientImpl& operator=(const AppListClientImpl&) = delete;
   ~AppListClientImpl() override;
@@ -121,6 +125,11 @@ class AppListClientImpl
       const std::vector<std::string>& apps_above_the_fold,
       const std::vector<std::string>& apps_below_the_fold,
       bool is_apps_collections_page) override;
+  bool HasReordered() override;
+  gfx::Image GetGeminiIcon() override;
+
+  // user_manager::UserManager::Observer:
+  void OnUserProfileCreated(const user_manager::User& user) override;
 
   // user_manager::UserManager::UserSessionStateObserver:
   void ActiveUserChanged(user_manager::User* active_user) override;
@@ -140,10 +149,6 @@ class AppListClientImpl
                const GURL& url,
                ui::PageTransition transition,
                WindowOpenDisposition disposition) override;
-
-  // ProfileManagerObserver:
-  void OnProfileAdded(Profile* profile) override;
-  void OnProfileManagerDestroying() override;
 
   // Associates this client with the current active user, called when this
   // client is accessed or active user is changed.
@@ -172,7 +177,11 @@ class AppListClientImpl
   // Initializes as if a new user logged in for testing.
   void InitializeAsIfNewUserLoginForTest();
 
+  // Recalculate the default position of apps with a modified order.
+  void MaybeRecalculateAppsGridDefaultOrder();
+
  private:
+  friend class AppListSurveyTriggerTest;
   FRIEND_TEST_ALL_PREFIXES(AppListClientWithProfileTest, CheckDataRace);
 
   struct StateForNewUser {
@@ -222,6 +231,8 @@ class AppListClientImpl
       ash::AppListLaunchedFrom launched_from,
       bool is_app_above_the_fold);
 
+  const raw_ref<user_manager::UserManager> user_manager_;
+
   // Unowned pointer to the associated profile. May change if SetProfile is
   // called.
   raw_ptr<Profile> profile_ = nullptr;
@@ -237,7 +248,8 @@ class AppListClientImpl
   // (https://crbug.com/939755).
   // TODO: Replace the mojo interface functions provided by AppListClient with
   // callbacks.
-  std::map<int, AppListModelUpdater*> profile_model_mappings_;
+  std::map<int, raw_ptr<AppListModelUpdater, CtnExperimental>>
+      profile_model_mappings_;
 
   std::unique_ptr<app_list::SearchController> search_controller_;
   std::unique_ptr<AppSyncUIStateWatcher> app_sync_ui_state_watcher_;
@@ -270,10 +282,11 @@ class AppListClientImpl
   // app list sync of the session is completed.
   std::optional<bool> is_primary_profile_new_user_;
 
-  // The profile manager is observed in order to ensure that the AppList has the
-  // necessary dependencies to identify new users.
-  base::ScopedObservation<ProfileManager, ProfileManagerObserver>
-      profile_manager_observation_{this};
+  std::unique_ptr<app_list::AppListSurveyHandler> survey_handler_;
+
+  base::ScopedObservation<user_manager::UserManager,
+                          user_manager::UserManager::Observer>
+      user_manager_observation_{this};
 
   base::WeakPtrFactory<AppListClientImpl> weak_ptr_factory_{this};
 };

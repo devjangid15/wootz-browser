@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "mojo/public/cpp/bindings/lib/multiplex_router.h"
 
 #include <stdint.h>
@@ -14,7 +19,6 @@
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr_exclusion.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/strings/string_util.h"
@@ -518,10 +522,6 @@ void MultiplexRouter::CloseEndpointHandle(
 }
 
 void MultiplexRouter::NotifyLocalEndpointOfPeerClosure(InterfaceId id) {
-  if (!base::FeatureList::IsEnabled(features::kMojoFixAssociatedHandleLeak)) {
-    return;
-  }
-
   if (!task_runner_->RunsTasksInCurrentSequence()) {
     task_runner_->PostTask(
         FROM_HERE,

@@ -31,15 +31,12 @@ class GL_EXPORT ChildWindowWin {
   void Initialize();
   HWND window() const { return window_; }
 
-  bool Resize(const gfx::Size& size);
+  void Resize(const gfx::Size& size);
 
   scoped_refptr<base::TaskRunner> GetTaskRunnerForTesting();
 
  private:
   class ChildWindowThread;
-
-  // The window owner thread.
-  scoped_refptr<ChildWindowThread> thread_;
 
   HWND window_ = nullptr;
   // The window is initially created with this parent window. We need to keep it

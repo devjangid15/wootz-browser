@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/optimization_guide/core/delivery/prediction_manager.h"
+
 #include <memory>
 
 #include "base/base64.h"
@@ -15,7 +17,6 @@
 #include "base/test/scoped_run_loop_timeout.h"
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/optimization_guide/browser_test_util.h"
 #include "chrome/browser/optimization_guide/optimization_guide_keyed_service.h"
@@ -30,16 +31,15 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/component_updater/pref_names.h"
 #include "components/metrics/content/subprocess_metrics_provider.h"
-#include "components/optimization_guide/core/model_util.h"
+#include "components/optimization_guide/core/delivery/model_util.h"
+#include "components/optimization_guide/core/delivery/prediction_model_download_manager.h"
+#include "components/optimization_guide/core/delivery/prediction_model_override.h"
+#include "components/optimization_guide/core/hints/optimization_guide_store.h"
+#include "components/optimization_guide/core/hints/store_update_data.h"
 #include "components/optimization_guide/core/optimization_guide_constants.h"
 #include "components/optimization_guide/core/optimization_guide_features.h"
 #include "components/optimization_guide/core/optimization_guide_prefs.h"
-#include "components/optimization_guide/core/optimization_guide_store.h"
 #include "components/optimization_guide/core/optimization_guide_switches.h"
-#include "components/optimization_guide/core/optimization_guide_test_util.h"
-#include "components/optimization_guide/core/prediction_manager.h"
-#include "components/optimization_guide/core/prediction_model_download_manager.h"
-#include "components/optimization_guide/core/store_update_data.h"
 #include "components/optimization_guide/proto/models.pb.h"
 #include "components/prefs/pref_service.h"
 #include "components/variations/hashing.h"
@@ -52,7 +52,7 @@
 #include "net/test/embedded_test_server/http_response.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "ash/constants/ash_switches.h"
 #endif
 
@@ -182,9 +182,7 @@ class PredictionManagerBrowserTestBase : public InProcessBrowserTest {
   }
 
   void SetUpCommandLine(base::CommandLine* cmd) override {
-    cmd->AppendSwitch(switches::kDisableCheckingUserPermissionsForTesting);
-    cmd->AppendSwitchASCII(switches::kFetchHintsOverride,
-                           "whatever.com,somehost.com");
+    cmd->AppendSwitch(switches::kGoogleApiKeyConfigurationCheckOverride);
     cmd->AppendSwitchASCII(
         switches::kOptimizationGuideServiceGetModelsURL,
         models_server_
@@ -224,12 +222,15 @@ class PredictionManagerBrowserTestBase : public InProcessBrowserTest {
       const net::test_server::HttpRequest& request) {
     // Returning nullptr will cause the test server to fallback to serving the
     // file from the test data directory.
-    if (request.GetURL() == model_file_url_)
+    if (request.GetURL() == model_file_url_) {
       return nullptr;
-    if (request.GetURL() == model_file_with_good_additional_file_url_)
+    }
+    if (request.GetURL() == model_file_with_good_additional_file_url_) {
       return nullptr;
-    if (request.GetURL() == model_file_with_nonexistent_additional_file_url_)
+    }
+    if (request.GetURL() == model_file_with_nonexistent_additional_file_url_) {
       return nullptr;
+    }
 
     std::unique_ptr<net::test_server::BasicHttpResponse> response;
 
@@ -309,7 +310,6 @@ class PredictionManagerBrowserTest : public PredictionManagerBrowserTestBase {
   void InitializeFeatureList() override {
     std::vector<base::test::FeatureRefAndParams> enabled_features = {
         {optimization_guide::features::kOptimizationHints, {}},
-        {optimization_guide::features::kRemoteOptimizationGuideFetching, {}},
         {optimization_guide::features::kOptimizationTargetPrediction,
          {{"fetch_startup_delay_ms", "8000"}}},
     };
@@ -406,7 +406,7 @@ class PredictionManagerModelDownloadingBrowserTest
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
     PredictionManagerBrowserTest::SetUpCommandLine(command_line);
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     command_line->AppendSwitch(
         ash::switches::kIgnoreUserProfileMappingForTests);
 #endif
@@ -434,7 +434,6 @@ class PredictionManagerModelDownloadingBrowserTest
   void InitializeFeatureList() override {
     std::vector<base::test::FeatureRefAndParams> enabled_features = {
         {features::kOptimizationHints, {}},
-        {features::kRemoteOptimizationGuideFetching, {}},
         {features::kOptimizationTargetPrediction, {}},
         {features::kOptimizationGuideModelDownloading,
          {{"unrestricted_model_downloading", "true"}}},
@@ -498,7 +497,7 @@ IN_PROC_BROWSER_TEST_F(PredictionManagerModelDownloadingBrowserTest,
 }
 
 // TODO(crbug.com/336399137): Flaky on Linux Chromium OS ASan LSan Tests.
-#if BUILDFLAG(IS_CHROMEOS_ASH) && defined(ADDRESS_SANITIZER)
+#if BUILDFLAG(IS_CHROMEOS) && defined(ADDRESS_SANITIZER)
 #define MAYBE_TestIncognitoDoesntFetchModels \
   DISABLED_TestIncognitoDoesntFetchModels
 #else
@@ -614,19 +613,19 @@ IN_PROC_BROWSER_TEST_F(PredictionManagerModelDownloadingBrowserTest,
       histogram_tester.GetAllSamples("OptimizationGuide.PredictionManager."
                                      "ModelDeliveryEvents.PainfulPageLoad"),
       testing::UnorderedElementsAre(
-          base::Bucket(static_cast<base::HistogramBase::Sample>(
+          base::Bucket(static_cast<base::HistogramBase::Sample32>(
                            ModelDeliveryEvent::kGetModelsRequest),
                        1),
-          base::Bucket(static_cast<base::HistogramBase::Sample>(
+          base::Bucket(static_cast<base::HistogramBase::Sample32>(
                            ModelDeliveryEvent::kDownloadServiceRequest),
                        1),
-          base::Bucket(static_cast<base::HistogramBase::Sample>(
+          base::Bucket(static_cast<base::HistogramBase::Sample32>(
                            ModelDeliveryEvent::kModelDownloadStarted),
                        1),
-          base::Bucket(static_cast<base::HistogramBase::Sample>(
+          base::Bucket(static_cast<base::HistogramBase::Sample32>(
                            ModelDeliveryEvent::kModelDownloaded),
                        1),
-          base::Bucket(static_cast<base::HistogramBase::Sample>(
+          base::Bucket(static_cast<base::HistogramBase::Sample32>(
                            ModelDeliveryEvent::kModelDelivered),
                        1)));
 }
@@ -671,19 +670,19 @@ IN_PROC_BROWSER_TEST_F(PredictionManagerModelDownloadingBrowserTest,
       histogram_tester.GetAllSamples("OptimizationGuide.PredictionManager."
                                      "ModelDeliveryEvents.PainfulPageLoad"),
       testing::UnorderedElementsAre(
-          base::Bucket(static_cast<base::HistogramBase::Sample>(
+          base::Bucket(static_cast<base::HistogramBase::Sample32>(
                            ModelDeliveryEvent::kGetModelsRequest),
                        1),
-          base::Bucket(static_cast<base::HistogramBase::Sample>(
+          base::Bucket(static_cast<base::HistogramBase::Sample32>(
                            ModelDeliveryEvent::kDownloadServiceRequest),
                        1),
-          base::Bucket(static_cast<base::HistogramBase::Sample>(
+          base::Bucket(static_cast<base::HistogramBase::Sample32>(
                            ModelDeliveryEvent::kModelDownloadStarted),
                        1),
-          base::Bucket(static_cast<base::HistogramBase::Sample>(
+          base::Bucket(static_cast<base::HistogramBase::Sample32>(
                            ModelDeliveryEvent::kModelDownloaded),
                        1),
-          base::Bucket(static_cast<base::HistogramBase::Sample>(
+          base::Bucket(static_cast<base::HistogramBase::Sample32>(
                            ModelDeliveryEvent::kModelDelivered),
                        1)));
 }
@@ -883,7 +882,7 @@ IN_PROC_BROWSER_TEST_F(PredictionManagerModelDownloadingBrowserTest,
   CreateBrowser(&profile);
 }
 
-#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS)
 // CreateGuestBrowser() is not supported for Android or ChromeOS out of the box.
 IN_PROC_BROWSER_TEST_F(PredictionManagerModelDownloadingBrowserTest,
                        GuestProfileReceivesModel) {

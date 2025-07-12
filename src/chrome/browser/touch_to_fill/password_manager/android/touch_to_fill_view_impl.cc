@@ -14,9 +14,6 @@
 #include "base/android/jni_string.h"
 #include "base/time/time.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/touch_to_fill/password_manager/android/internal/jni/TouchToFillBridge_jni.h"
-#include "chrome/browser/touch_to_fill/password_manager/android/jni_headers/Credential_jni.h"
-#include "chrome/browser/touch_to_fill/password_manager/android/jni_headers/WebauthnCredential_jni.h"
 #include "chrome/browser/touch_to_fill/password_manager/touch_to_fill_controller.h"  // nogncheck
 #include "chrome/browser/ui/passwords/ui_utils.h"
 #include "components/password_manager/core/browser/origin_credential_store.h"
@@ -28,6 +25,11 @@
 #include "url/android/gurl_android.h"
 #include "url/gurl.h"
 #include "url/origin.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "chrome/browser/touch_to_fill/password_manager/android/internal/jni/TouchToFillBridge_jni.h"
+#include "chrome/browser/touch_to_fill/password_manager/android/jni_headers/Credential_jni.h"
+#include "chrome/browser/touch_to_fill/password_manager/android/jni_headers/WebauthnCredential_jni.h"
 
 using base::android::AttachCurrentThread;
 using base::android::ConvertJavaStringToUTF16;
@@ -49,10 +51,14 @@ UiCredential ConvertJavaCredential(JNIEnv* env,
                                Java_Credential_getPassword(env, credential)),
       url::Origin::Create(GURL(ConvertJavaStringToUTF8(
           env, Java_Credential_getOriginUrl(env, credential)))),
+      ConvertJavaStringToUTF8(env,
+                              Java_Credential_getDisplayName(env, credential)),
       static_cast<password_manager_util::GetLoginMatchType>(
           Java_Credential_getMatchType(env, credential)),
       base::Time::FromMillisecondsSinceUnixEpoch(
-          Java_Credential_lastUsedMsSinceEpoch(env, credential)));
+          Java_Credential_lastUsedMsSinceEpoch(env, credential)),
+      UiCredential::IsBackupCredential(
+          Java_Credential_isBackupCredential(env, credential)));
 }
 
 PasskeyCredential ConvertJavaWebauthnCredential(
@@ -124,7 +130,8 @@ bool TouchToFillViewImpl::Show(
         ConvertUTF16ToJavaString(env, credential.sender_name()),
         url::GURLAndroid::FromNativeGURL(env,
                                          credential.sender_profile_image_url()),
-        credential.sharing_notification_displayed());
+        credential.sharing_notification_displayed(),
+        credential.is_backup_credential().value());
   }
 
   base::android::ScopedJavaLocalRef<jobjectArray> passkey_array =

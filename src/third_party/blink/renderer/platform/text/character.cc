@@ -38,7 +38,6 @@
 #include <algorithm>
 
 #include "base/synchronization/lock.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/text/character_property_data.h"
 #include "third_party/blink/renderer/platform/text/icu_error.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
@@ -61,7 +60,7 @@ UCPTrie* CreateTrie() {
 
 unsigned GetProperty(UChar32 c, CharacterProperty property) {
   static const UCPTrie* trie = CreateTrie();
-  return UCPTRIE_FAST_GET(trie, UCPTRIE_16, c) &
+  return UNSAFE_TODO(UCPTRIE_FAST_GET(trie, UCPTRIE_16, c)) &
          static_cast<CharacterPropertyType>(property);
 }
 
@@ -108,10 +107,18 @@ bool Character::IsHangulSlow(UChar32 character) {
   return GetProperty(character, CharacterProperty::kIsHangul);
 }
 
+// static
 HanKerningCharType Character::GetHanKerningCharType(UChar32 character) {
   return static_cast<HanKerningCharType>(
       GetProperty(character, CharacterProperty::kHanKerningShiftedMask) >>
       static_cast<unsigned>(CharacterProperty::kHanKerningShift));
+}
+
+// static
+EastAsianSpacingType Character::GetEastAsianSpacingType(UChar32 character) {
+  return static_cast<EastAsianSpacingType>(
+      GetProperty(character, CharacterProperty::kEastAsianSpacingShiftedMask) >>
+      static_cast<unsigned>(CharacterProperty::kEastAsianSpacingShift));
 }
 
 bool Character::MaybeHanKerningOpenSlow(UChar32 ch) {
@@ -180,9 +187,7 @@ unsigned Character::ExpansionOpportunityCount(
         count++;
         is_after_expansion = true;
         continue;
-      } else if (!RuntimeEnabledFeatures::
-                     TextAlignJustifyBidiIsolateEnabled() ||
-                 !IsDefaultIgnorable(character)) {
+      } else if (!IsDefaultIgnorable(character)) {
         is_after_expansion = false;
       }
     }
@@ -204,9 +209,7 @@ unsigned Character::ExpansionOpportunityCount(
         count++;
         is_after_expansion = true;
         continue;
-      } else if (!RuntimeEnabledFeatures::
-                     TextAlignJustifyBidiIsolateEnabled() ||
-                 !IsDefaultIgnorable(character)) {
+      } else if (!IsDefaultIgnorable(character)) {
         is_after_expansion = false;
       }
     }
@@ -215,9 +218,10 @@ unsigned Character::ExpansionOpportunityCount(
 }
 
 bool Character::CanTextDecorationSkipInk(UChar32 codepoint) {
-  if (codepoint == kSolidusCharacter || codepoint == kReverseSolidusCharacter ||
-      codepoint == kLowLineCharacter)
+  if (codepoint == uchar::kSolidus || codepoint == uchar::kReverseSolidus ||
+      codepoint == uchar::kLowLine) {
     return false;
+  }
 
   if (Character::IsCJKIdeographOrSymbol(codepoint))
     return false;
@@ -239,30 +243,43 @@ bool Character::CanTextDecorationSkipInk(UChar32 codepoint) {
 }
 
 bool Character::CanReceiveTextEmphasis(UChar32 c) {
-  WTF::unicode::CharCategory category = WTF::unicode::Category(c);
-  if (category &
-      (WTF::unicode::kSeparator_Space | WTF::unicode::kSeparator_Line |
-       WTF::unicode::kSeparator_Paragraph | WTF::unicode::kOther_NotAssigned |
-       WTF::unicode::kOther_Control | WTF::unicode::kOther_Format))
+  unicode::CharCategory category = unicode::Category(c);
+  if (category & (unicode::kSeparator_Space | unicode::kSeparator_Line |
+                  unicode::kSeparator_Paragraph | unicode::kOther_NotAssigned |
+                  unicode::kOther_Control | unicode::kOther_Format)) {
     return false;
+  }
 
   // Additional word-separator characters listed in CSS Text Level 3 Editor's
   // Draft 3 November 2010.
-  if (c == kEthiopicWordspaceCharacter ||
-      c == kAegeanWordSeparatorLineCharacter ||
-      c == kAegeanWordSeparatorDotCharacter ||
-      c == kUgariticWordDividerCharacter ||
-      c == kTibetanMarkIntersyllabicTshegCharacter ||
-      c == kTibetanMarkDelimiterTshegBstarCharacter)
+  // https://www.w3.org/TR/css-text-3/#word-separator
+  if (c == uchar::kEthiopicWordspace || c == uchar::kAegeanWordSeparatorLine ||
+      c == uchar::kAegeanWordSeparatorDot || c == uchar::kUgariticWordDivider ||
+      c == uchar::kTibetanMarkIntersyllabicTsheg ||
+      c == uchar::kTibetanMarkDelimiterTshegBstar) {
     return false;
+  }
+
+  // Punctuation
+  if (category &
+      (unicode::kPunctuation_Dash | unicode::kPunctuation_Open |
+       unicode::kPunctuation_Close | unicode::kPunctuation_Connector |
+       unicode::kPunctuation_Other | unicode::kPunctuation_InitialQuote |
+       unicode::kPunctuation_FinalQuote)) {
+    return false;
+  }
+  // TODO(layout-dev): css/css-text-decor/text-emphasis-punctuation-3.html
+  // requires implementation for the following rule in the specification:
+  // > do not NFKD normalize to any of the following symbols:
 
   return true;
 }
 
 bool Character::IsEmojiTagSequence(UChar32 c) {
   // http://www.unicode.org/reports/tr51/proposed.html#valid-emoji-tag-sequences
-  return (c >= kTagDigitZero && c <= kTagDigitNine) ||
-         (c >= kTagLatinSmallLetterA && c <= kTagLatinSmallLetterZ);
+  return (c >= uchar::kTagDigitZero && c <= uchar::kTagDigitNine) ||
+         (c >= uchar::kTagLatinSmallLetterA &&
+          c <= uchar::kTagLatinSmallLetterZ);
 }
 
 bool Character::IsExtendedPictographic(UChar32 c) {
@@ -274,11 +291,11 @@ bool Character::IsEmojiComponent(UChar32 c) {
 }
 
 bool Character::MaybeEmojiPresentation(UChar32 c) {
-  return c == kZeroWidthJoinerCharacter || c == 0x00A9 /* copyright sign */ ||
+  return c == uchar::kZeroWidthJoiner || c == 0x00A9 /* copyright sign */ ||
          c == 0x00AE /* registered sign */ || IsEmojiKeycapBase(c) ||
-         IsInRange(c, 0x203C, 0x2B55) || c == kVariationSelector15Character ||
+         IsInRange(c, 0x203C, 0x2B55) || c == uchar::kVariationSelector15 ||
          c == 0x3030 || c == 0x303D || c == 0x3297 || c == 0x3299 ||
-         c == kVariationSelector16Character || c >= 65536;
+         c == uchar::kVariationSelector16 || c >= 65536;
 }
 
 bool Character::IsCommonOrInheritedScript(UChar32 character) {
@@ -289,7 +306,7 @@ bool Character::IsCommonOrInheritedScript(UChar32 character) {
 }
 
 bool Character::IsPrivateUse(UChar32 character) {
-  return WTF::unicode::Category(character) & WTF::unicode::kOther_PrivateUse;
+  return unicode::Category(character) & unicode::kOther_PrivateUse;
 }
 
 bool Character::IsNonCharacter(UChar32 character) {
@@ -321,12 +338,14 @@ static const UChar stretchy_operator_with_inline_axis[]{
     0x295B, 0x295E, 0x295F, 0x2B45, 0x2B46, 0xFE35, 0xFE36, 0xFE37, 0xFE38};
 
 bool Character::IsVerticalMathCharacter(UChar32 text_content) {
-  return text_content != kArabicMathematicalOperatorMeemWithHahWithTatweel &&
-         text_content != kArabicMathematicalOperatorHahWithDal &&
-         !std::binary_search(stretchy_operator_with_inline_axis,
-                             stretchy_operator_with_inline_axis +
-                                 std::size(stretchy_operator_with_inline_axis),
-                             text_content);
+  return text_content !=
+             uchar::kArabicMathematicalOperatorMeemWithHahWithTatweel &&
+         text_content != uchar::kArabicMathematicalOperatorHahWithDal &&
+         !std::binary_search(
+             stretchy_operator_with_inline_axis,
+             UNSAFE_TODO(stretchy_operator_with_inline_axis +
+                         std::size(stretchy_operator_with_inline_axis)),
+             text_content);
 }
 
 }  // namespace blink

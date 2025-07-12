@@ -10,13 +10,15 @@ import 'chrome://resources/polymer/v3_0/iron-icon/iron-icon.js';
 
 import {CrContainerShadowMixin} from 'chrome://resources/ash/common/cr_elements/cr_container_shadow_mixin.js';
 import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
+import {loadTimeData} from 'chrome://resources/ash/common/load_time_data.m.js';
 import {assert} from 'chrome://resources/js/assert.js';
 import {afterNextRender, PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {getShimlessRmaService} from './mojo_interface_provider.js';
 import {getTemplate} from './reimaging_device_information_page.html.js';
-import {FeatureLevel, ShimlessRmaServiceInterface, StateResult} from './shimless_rma.mojom-webui.js';
-import {disableNextButton, enableNextButton, focusPageTitle, isComplianceCheckEnabled} from './shimless_rma_util.js';
+import type {ShimlessRmaServiceInterface, StateResult} from './shimless_rma.mojom-webui.js';
+import {FeatureLevel} from './shimless_rma.mojom-webui.js';
+import {disableNextButton, enableNextButton, focusPageTitle} from './shimless_rma_util.js';
 
 /**
  * @fileoverview
@@ -90,6 +92,36 @@ export class ReimagingDeviceInformationPage extends
         type: Boolean,
         computed: 'getDisableResetDramPartNumber(' +
             'originalDramPartNumber, dramPartNumber, allButtonsDisabled)',
+      },
+
+      disableModifySerialNumber: {
+        type: Boolean,
+        value: false,
+      },
+
+      disableModifyRegion: {
+        type: Boolean,
+        value: false,
+      },
+
+      disableModifySku: {
+        type: Boolean,
+        value: false,
+      },
+
+      disableModifyCustomLabel: {
+        type: Boolean,
+        value: false,
+      },
+
+      disableModifyDramPartNumber: {
+        type: Boolean,
+        value: false,
+      },
+
+      disableModifyFeatureLevel: {
+        type: Boolean,
+        value: false,
       },
 
       originalSerialNumber: {
@@ -206,6 +238,12 @@ export class ReimagingDeviceInformationPage extends
   protected disableResetSku: boolean;
   protected disableResetCustomLabel: boolean;
   protected disableResetDramPartNumber: boolean;
+  protected disableModifySerialNumber: boolean;
+  protected disableModifyRegion: boolean;
+  protected disableModifySku: boolean;
+  protected disableModifyCustomLabel: boolean;
+  protected disableModifyDramPartNumber: boolean;
+  protected disableModifyFeatureLevel: boolean;
   protected originalSerialNumber: string;
   protected serialNumber: string;
 
@@ -216,10 +254,8 @@ export class ReimagingDeviceInformationPage extends
     this.getOriginalSkuAndSkuList();
     this.getOriginalCustomLabelAndCustomLabelList();
     this.getOriginalDramPartNumber();
-
-    if (isComplianceCheckEnabled()) {
-      this.getOriginalFeatureLevel();
-    }
+    this.getOriginalFeatureLevel();
+    this.updateInputFieldModifiabilities();
 
     focusPageTitle(this);
   }
@@ -326,7 +362,7 @@ export class ReimagingDeviceInformationPage extends
             const customLabelSelect: HTMLSelectElement|null =
                 this.shadowRoot!.querySelector('#customLabelSelect');
             assert(customLabelSelect);
-            customLabelSelect!.selectedIndex = this.customLabelIndex;
+            customLabelSelect.selectedIndex = this.customLabelIndex;
           });
         });
   }
@@ -466,8 +502,7 @@ export class ReimagingDeviceInformationPage extends
   }
 
   private shouldShowComplianceSection(): boolean {
-    return isComplianceCheckEnabled() &&
-        this.featureLevel !== FeatureLevel.kRmadFeatureLevelUnsupported;
+    return this.featureLevel !== FeatureLevel.kRmadFeatureLevelUnsupported;
   }
 
   private isComplianceStatusKnown(): boolean {
@@ -485,6 +520,33 @@ export class ReimagingDeviceInformationPage extends
         this.featureLevel >= FeatureLevel.kRmadFeatureLevel1;
     return deviceIsCompliant ? this.i18n('confirmDeviceInfoDeviceCompliant') :
                                this.i18n('confirmDeviceInfoDeviceNotCompliant');
+  }
+
+  private async updateInputFieldModifiabilities(): Promise<void> {
+    if (!loadTimeData.getBoolean('dynamicDeviceInfoInputsEnabled')) {
+      return;
+    }
+
+    const result = await this.shimlessRmaService.getStateProperties();
+
+    if (result?.statePropertyResult.property?.updateDeviceInfoStateProperty ===
+        undefined) {
+      return;
+    }
+
+    const properties =
+        result.statePropertyResult.property.updateDeviceInfoStateProperty;
+
+    this.disableModifySerialNumber = !properties.serialNumberModifiable;
+    this.disableModifyRegion = !properties.regionModifiable;
+    this.disableModifySku = !properties.skuModifiable;
+    this.disableModifyCustomLabel = !properties.customLabelModifiable;
+    this.disableModifyDramPartNumber = !properties.dramPartNumberModifiable;
+    this.disableModifyFeatureLevel = !properties.featureLevelModifiable;
+  }
+
+  protected isInputDisabled(inputDisabled: boolean): boolean {
+    return inputDisabled || this.allButtonsDisabled;
   }
 }
 

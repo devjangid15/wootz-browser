@@ -21,15 +21,15 @@
 #include "net/http/http_util.h"
 #include "net/log/net_log_capture_mode.h"
 #include "net/log/net_log_values.h"
+#include "third_party/abseil-cpp/absl/container/inlined_vector.h"
 
 namespace net {
 
 namespace {
 
-bool SupportsStreamType(
-    const std::optional<base::flat_set<SourceStream::SourceType>>&
-        accepted_stream_types,
-    SourceStream::SourceType type) {
+bool SupportsStreamType(const std::optional<base::flat_set<SourceStreamType>>&
+                            accepted_stream_types,
+                        SourceStreamType type) {
   if (!accepted_stream_types)
     return true;
   return accepted_stream_types->contains(type);
@@ -113,13 +113,12 @@ HttpRequestHeaders& HttpRequestHeaders::operator=(
 HttpRequestHeaders& HttpRequestHeaders::operator=(HttpRequestHeaders&& other) =
     default;
 
-bool HttpRequestHeaders::GetHeader(std::string_view key,
-                                   std::string* out) const {
+std::optional<std::string> HttpRequestHeaders::GetHeader(
+    std::string_view key) const {
   auto it = FindHeader(key);
   if (it == headers_.end())
-    return false;
-  out->assign(it->value);
-  return true;
+    return std::nullopt;
+  return it->value;
 }
 
 void HttpRequestHeaders::Clear() {
@@ -178,7 +177,7 @@ void HttpRequestHeaders::AddHeaderFromString(std::string_view header_line) {
     return;
   }
 
-  const std::string_view header_key(header_line.data(), key_end_index);
+  const std::string_view header_key = header_line.substr(0, key_end_index);
   if (!HttpUtil::IsValidHeaderName(header_key)) {
     LOG(DFATAL) << "\"" << header_line << "\" has invalid header key.";
     return;
@@ -187,8 +186,7 @@ void HttpRequestHeaders::AddHeaderFromString(std::string_view header_line) {
   const std::string::size_type value_index = key_end_index + 1;
 
   if (value_index < header_line.size()) {
-    std::string_view header_value(header_line.data() + value_index,
-                                  header_line.size() - value_index);
+    std::string_view header_value = header_line.substr(value_index);
     header_value = HttpUtil::TrimLWS(header_value);
     if (!HttpUtil::IsValidHeaderValue(header_value)) {
       LOG(DFATAL) << "\"" << header_line << "\" has invalid header value.";
@@ -198,7 +196,7 @@ void HttpRequestHeaders::AddHeaderFromString(std::string_view header_line) {
   } else if (value_index == header_line.size()) {
     SetHeader(header_key, "");
   } else {
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
 }
 
@@ -216,13 +214,22 @@ void HttpRequestHeaders::MergeFrom(const HttpRequestHeaders& other) {
 }
 
 std::string HttpRequestHeaders::ToString() const {
-  std::string output;
+  static constexpr std::string_view kColon = ": ";
+  static constexpr std::string_view kCrNl = "\r\n";
+
+  // As of January 2024, 99% of of HttpRequestHeaders objects had 27 headers or
+  // less. Allow space for 128 string pieces without heap allocation as it is a
+  // nice round number.
+  absl::InlinedVector<std::string_view, 128> pieces;
+  const size_t expected_size = headers_.size() * 4 + 1;
+
+  pieces.reserve(expected_size);
   for (const auto& header : headers_) {
-    base::StringAppendF(&output, "%s: %s\r\n", header.key.c_str(),
-                        header.value.c_str());
+    pieces.insert(pieces.end(), {header.key, kColon, header.value, kCrNl});
   }
-  output.append("\r\n");
-  return output;
+  pieces.push_back(kCrNl);
+  CHECK_EQ(pieces.size(), expected_size);
+  return base::StrCat(pieces);
 }
 
 base::Value::Dict HttpRequestHeaders::NetLogParams(
@@ -243,7 +250,7 @@ base::Value::Dict HttpRequestHeaders::NetLogParams(
 
 void HttpRequestHeaders::SetAcceptEncodingIfMissing(
     const GURL& url,
-    const std::optional<base::flat_set<SourceStream::SourceType>>&
+    const std::optional<base::flat_set<SourceStreamType>>&
         accepted_stream_types,
     bool enable_brotli,
     bool enable_zstd) {
@@ -262,12 +269,10 @@ void HttpRequestHeaders::SetAcceptEncodingIfMissing(
   // to filter and analyze the streams to assure that a proxy has not damaged
   // these headers. Some proxies deliberately corrupt Accept-Encoding headers.
   std::vector<std::string> advertised_encoding_names;
-  if (SupportsStreamType(accepted_stream_types,
-                         SourceStream::SourceType::TYPE_GZIP)) {
+  if (SupportsStreamType(accepted_stream_types, SourceStreamType::kGzip)) {
     advertised_encoding_names.push_back("gzip");
   }
-  if (SupportsStreamType(accepted_stream_types,
-                         SourceStream::SourceType::TYPE_DEFLATE)) {
+  if (SupportsStreamType(accepted_stream_types, SourceStreamType::kDeflate)) {
     advertised_encoding_names.push_back("deflate");
   }
 
@@ -276,23 +281,20 @@ void HttpRequestHeaders::SetAcceptEncodingIfMissing(
 
   // Advertise "br" encoding only if transferred data is opaque to proxy.
   if (enable_brotli &&
-      SupportsStreamType(accepted_stream_types,
-                         SourceStream::SourceType::TYPE_BROTLI) &&
+      SupportsStreamType(accepted_stream_types, SourceStreamType::kBrotli) &&
       can_use_advanced_encodings) {
     advertised_encoding_names.push_back("br");
   }
   // Advertise "zstd" encoding only if transferred data is opaque to proxy.
   if (enable_zstd &&
-      SupportsStreamType(accepted_stream_types,
-                         SourceStream::SourceType::TYPE_ZSTD) &&
+      SupportsStreamType(accepted_stream_types, SourceStreamType::kZstd) &&
       can_use_advanced_encodings) {
     advertised_encoding_names.push_back("zstd");
   }
   if (!advertised_encoding_names.empty()) {
     // Tell the server what compression formats are supported.
-    SetHeader(
-        kAcceptEncoding,
-        base::JoinString(base::make_span(advertised_encoding_names), ", "));
+    SetHeader(kAcceptEncoding,
+              base::JoinString(base::span(advertised_encoding_names), ", "));
   }
 }
 

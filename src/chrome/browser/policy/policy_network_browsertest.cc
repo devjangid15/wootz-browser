@@ -4,13 +4,13 @@
 
 #include <string_view>
 
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/policy/policy_test_utils.h"
 #include "chrome/common/pref_names.h"
@@ -36,10 +36,6 @@
 #include "third_party/boringssl/src/include/openssl/nid.h"
 #include "third_party/boringssl/src/include/openssl/ssl.h"
 #include "url/gurl.h"
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "chrome/browser/ash/net/secure_dns_manager.h"
-#endif
 
 namespace policy {
 
@@ -71,6 +67,13 @@ class SSLPolicyTest : public PolicyTest {
     return g_browser_process->local_state()->GetBoolean(pref_name);
   }
 
+  std::optional<bool> GetManagedBooleanPref(const std::string& pref_name) {
+    if (g_browser_process->local_state()->IsManagedPreference(pref_name)) {
+      return GetBooleanPref(pref_name);
+    }
+    return std::nullopt;
+  }
+
   LoadResult LoadPage(std::string_view path) {
     return LoadPage(https_server_.GetURL(path));
   }
@@ -99,24 +102,15 @@ class SSLPolicyTest : public PolicyTest {
   net::EmbeddedTestServer https_server_;
 };
 
-class PostQuantumPolicyTest : public SSLPolicyTest {
- public:
-  PostQuantumPolicyTest() {
-    scoped_feature_list_.InitAndEnableFeature(net::features::kPostQuantumKyber);
-  }
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
-};
-
-IN_PROC_BROWSER_TEST_F(PostQuantumPolicyTest, PostQuantumEnabledPolicy) {
+IN_PROC_BROWSER_TEST_F(SSLPolicyTest, PostQuantumEnabledPolicy) {
   net::SSLServerConfig ssl_config;
-  ssl_config.curves_for_testing = {NID_X25519Kyber768Draft00};
+  ssl_config.curves_for_testing = {NID_X25519MLKEM768};
   ASSERT_TRUE(StartTestServer(ssl_config));
 
   // Should be able to load a page from the test server because policy is in
   // the default state and feature is enabled.
-  EXPECT_FALSE(GetBooleanPref(prefs::kPostQuantumKeyAgreementEnabled));
+  EXPECT_EQ(GetManagedBooleanPref(prefs::kPostQuantumKeyAgreementEnabled),
+            std::nullopt);
   LoadResult result = LoadPage("/title2.html");
   EXPECT_TRUE(result.success);
   EXPECT_EQ(u"Title Of Awesomeness", result.title);
@@ -129,7 +123,8 @@ IN_PROC_BROWSER_TEST_F(PostQuantumPolicyTest, PostQuantumEnabledPolicy) {
   content::FlushNetworkServiceInstanceForTesting();
 
   // Page loads should now fail.
-  EXPECT_FALSE(GetBooleanPref(prefs::kPostQuantumKeyAgreementEnabled));
+  EXPECT_EQ(GetManagedBooleanPref(prefs::kPostQuantumKeyAgreementEnabled),
+            false);
   result = LoadPage("/title3.html");
   EXPECT_FALSE(result.success);
 
@@ -141,11 +136,104 @@ IN_PROC_BROWSER_TEST_F(PostQuantumPolicyTest, PostQuantumEnabledPolicy) {
   content::FlushNetworkServiceInstanceForTesting();
 
   // Page load should now succeed.
-  EXPECT_TRUE(GetBooleanPref(prefs::kPostQuantumKeyAgreementEnabled));
+  EXPECT_EQ(GetManagedBooleanPref(prefs::kPostQuantumKeyAgreementEnabled),
+            true);
   result = LoadPage("/title2.html");
   EXPECT_TRUE(result.success);
   EXPECT_EQ(u"Title Of Awesomeness", result.title);
 }
+
+#if BUILDFLAG(IS_CHROMEOS)
+IN_PROC_BROWSER_TEST_F(SSLPolicyTest, DevicePostQuantumEnabledPolicy) {
+  net::SSLServerConfig ssl_config;
+  ssl_config.curves_for_testing = {NID_X25519MLKEM768};
+  ASSERT_TRUE(StartTestServer(ssl_config));
+
+  // Should be able to load a page from the test server because policy is in
+  // the default state and feature is enabled.
+  EXPECT_EQ(GetManagedBooleanPref(prefs::kPostQuantumKeyAgreementEnabled),
+            std::nullopt);
+  EXPECT_EQ(GetManagedBooleanPref(prefs::kDevicePostQuantumKeyAgreementEnabled),
+            std::nullopt);
+  LoadResult result = LoadPage("/title2.html");
+  EXPECT_TRUE(result.success);
+  EXPECT_EQ(u"Title Of Awesomeness", result.title);
+
+  {
+    // Disable the device policy.
+    PolicyMap policies;
+    SetPolicy(&policies, key::kDevicePostQuantumKeyAgreementEnabled,
+              base::Value(false));
+    UpdateProviderPolicy(policies);
+    content::FlushNetworkServiceInstanceForTesting();
+  }
+
+  // Page loads should now fail.
+  EXPECT_EQ(GetManagedBooleanPref(prefs::kPostQuantumKeyAgreementEnabled),
+            std::nullopt);
+  EXPECT_EQ(GetManagedBooleanPref(prefs::kDevicePostQuantumKeyAgreementEnabled),
+            false);
+  result = LoadPage("/title3.html");
+  EXPECT_FALSE(result.success);
+
+  {
+    // Try enabling the non-device policy, while the device policy is disabled.
+    PolicyMap policies;
+    SetPolicy(&policies, key::kPostQuantumKeyAgreementEnabled,
+              base::Value(true));
+    SetPolicy(&policies, key::kDevicePostQuantumKeyAgreementEnabled,
+              base::Value(false));
+    UpdateProviderPolicy(policies);
+    content::FlushNetworkServiceInstanceForTesting();
+  }
+
+  // Page loads should still fail since the device policy takes precedence.
+  EXPECT_EQ(GetManagedBooleanPref(prefs::kPostQuantumKeyAgreementEnabled),
+            true);
+  EXPECT_EQ(GetManagedBooleanPref(prefs::kDevicePostQuantumKeyAgreementEnabled),
+            false);
+  result = LoadPage("/title3.html");
+  EXPECT_FALSE(result.success);
+
+  {
+    // Enable the device policy.
+    PolicyMap policies;
+    SetPolicy(&policies, key::kDevicePostQuantumKeyAgreementEnabled,
+              base::Value(true));
+    UpdateProviderPolicy(policies);
+    content::FlushNetworkServiceInstanceForTesting();
+  }
+
+  // Page load should now succeed.
+  EXPECT_EQ(GetManagedBooleanPref(prefs::kPostQuantumKeyAgreementEnabled),
+            std::nullopt);
+  EXPECT_EQ(GetManagedBooleanPref(prefs::kDevicePostQuantumKeyAgreementEnabled),
+            true);
+  result = LoadPage("/title2.html");
+  EXPECT_TRUE(result.success);
+  EXPECT_EQ(u"Title Of Awesomeness", result.title);
+
+  {
+    // Try disabling the non-device policy, while the device policy is enabled.
+    PolicyMap policies;
+    SetPolicy(&policies, key::kPostQuantumKeyAgreementEnabled,
+              base::Value(false));
+    SetPolicy(&policies, key::kDevicePostQuantumKeyAgreementEnabled,
+              base::Value(true));
+    UpdateProviderPolicy(policies);
+    content::FlushNetworkServiceInstanceForTesting();
+  }
+
+  // Page load should still succeed since the device policy takes precedence.
+  EXPECT_EQ(GetManagedBooleanPref(prefs::kPostQuantumKeyAgreementEnabled),
+            false);
+  EXPECT_EQ(GetManagedBooleanPref(prefs::kDevicePostQuantumKeyAgreementEnabled),
+            true);
+  result = LoadPage("/title2.html");
+  EXPECT_TRUE(result.success);
+  EXPECT_EQ(u"Title Of Awesomeness", result.title);
+}
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 class ECHPolicyTest : public SSLPolicyTest {
  public:
@@ -208,14 +296,6 @@ class ECHPolicyTest : public SSLPolicyTest {
     SetPolicy(&policies, key::kDnsOverHttpsMode, base::Value("secure"));
     SetPolicy(&policies, key::kDnsOverHttpsTemplates,
               base::Value(doh_server_.GetTemplate()));
-
-// On Lacros, the DnsOverHttpsTemplates policy gets mapped to the
-// kDnsOverHttpsEffectiveTemplatesChromeOS pref which is set in Ash.
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-    g_browser_process->local_state()->SetString(
-        prefs::kDnsOverHttpsEffectiveTemplatesChromeOS,
-        doh_server_.GetTemplate());
-#endif
     return policies;
   }
 
@@ -244,13 +324,6 @@ class ECHPolicyTest : public SSLPolicyTest {
 };
 
 IN_PROC_BROWSER_TEST_F(ECHPolicyTest, ECHEnabledPolicy) {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  // SecureDnsManager does the identifier placeholder replacement for the
-  // template URI and maps the final value to the
-  // prefs::kDnsOverHttpsEffectiveTemplatesChromeOS local state pref.
-  std::unique_ptr<ash::SecureDnsManager> secure_dns_manager =
-      std::make_unique<ash::SecureDnsManager>(g_browser_process->local_state());
-#endif
   // By default, the policy does not inhibit ECH.
   EXPECT_TRUE(GetBooleanPref(prefs::kEncryptedClientHelloEnabled));
   LoadResult result = LoadPage(GetURL("/a"));
@@ -268,6 +341,128 @@ IN_PROC_BROWSER_TEST_F(ECHPolicyTest, ECHEnabledPolicy) {
   result = LoadPage(GetURL("/b"));
   EXPECT_TRUE(result.success);
   EXPECT_EQ(base::ASCIIToUTF16(kECHFailureTitle), result.title);
+}
+
+// TLS13EarlyDataPolicyTest relies on the fact that EmbeddedTestServer
+// uses HTTP/1.1 without connection reuse (unless the protocol is explicitly
+// specified). If EmbeddedTestServer ever gains connection reuse by default,
+// we'll need to force it off.
+class TLS13EarlyDataPolicyTest : public SSLPolicyTest,
+                                 public ::testing::WithParamInterface<bool> {
+ public:
+  static constexpr std::string_view kHostname = "a.test";
+  static constexpr std::string_view kEarlyDataCheckPath = "/test-request";
+  static constexpr std::string_view kEarlyDataAcceptedTitle = "accepted";
+  static constexpr std::string_view kEarlyDataNotAcceptedTitle = "not accepted";
+
+  TLS13EarlyDataPolicyTest()
+      : test_server_{net::EmbeddedTestServer::TYPE_HTTPS} {
+    std::vector<base::test::FeatureRef> enabled_features;
+    std::vector<base::test::FeatureRef> disabled_features;
+    if (GetParam()) {
+      enabled_features.emplace_back(net::features::kHappyEyeballsV3);
+    } else {
+      disabled_features.emplace_back(net::features::kHappyEyeballsV3);
+    }
+    disabled_features.emplace_back(net::features::kEnableTLS13EarlyData);
+    feature_list_.InitWithFeatures(enabled_features, disabled_features);
+  }
+
+  void SetUpOnMainThread() override {
+    net::SSLServerConfig server_config;
+    server_config.early_data_enabled = true;
+    test_server_.RegisterRequestHandler(
+        base::BindRepeating(&TLS13EarlyDataPolicyTest::HandleRequest));
+    test_server_.SetSSLConfig(net::EmbeddedTestServer::CERT_TEST_NAMES,
+                              server_config);
+    ASSERT_TRUE(test_server_.Start());
+
+    host_resolver()->AddRule(kHostname, "127.0.0.1");
+  }
+
+  GURL GetURL(std::string_view path) {
+    return test_server_.GetURL(kHostname, path);
+  }
+
+  void NavigateToTestPage() {
+    ASSERT_TRUE(NavigateToUrl(GetURL("/index.html"), this));
+  }
+
+  std::string FetchResourceForEarlyDataCheck(GURL url) {
+    content::EvalJsResult result =
+        content::EvalJs(chrome_test_utils::GetActiveWebContents(this),
+                        content::JsReplace(R"(
+      fetch($1).then(res => res.text())
+    )",
+                                           GetURL(kEarlyDataCheckPath)));
+    return result.ExtractString();
+  }
+
+ private:
+  static std::unique_ptr<net::test_server::HttpResponse> HandleRequest(
+      const net::test_server::HttpRequest& request) {
+    auto response = std::make_unique<net::test_server::BasicHttpResponse>();
+    response->AddCustomHeader("Connection", "close");
+    if (request.GetURL().path() == kEarlyDataCheckPath) {
+      response->set_content_type("text/plain; charset=utf-8");
+      if (request.ssl_info->early_data_accepted) {
+        response->set_content(kEarlyDataAcceptedTitle);
+      } else {
+        response->set_content(kEarlyDataNotAcceptedTitle);
+      }
+    } else {
+      response->set_content_type("text/html; charset=utf-8");
+      response->set_content("<html></html>");
+    }
+    return response;
+  }
+
+  base::test::ScopedFeatureList feature_list_;
+  net::EmbeddedTestServer test_server_;
+};
+
+INSTANTIATE_TEST_SUITE_P(, TLS13EarlyDataPolicyTest, ::testing::Bool());
+
+IN_PROC_BROWSER_TEST_P(TLS13EarlyDataPolicyTest,
+                       TLS13EarlyDataPolicyNoOverride) {
+  EXPECT_FALSE(GetBooleanPref(prefs::kTLS13EarlyDataEnabled));
+
+  NavigateToTestPage();
+
+  EXPECT_EQ(FetchResourceForEarlyDataCheck(GetURL(kEarlyDataCheckPath)),
+            kEarlyDataNotAcceptedTitle);
+}
+
+// TODO(crbug.com/418717917, crbug.com/419211957): Flaky on Windows and Android.
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_ANDROID)
+#define MAYBE_TLS13EarlyDataPolicyEnable DISABLED_TLS13EarlyDataPolicyEnable
+#else
+#define MAYBE_TLS13EarlyDataPolicyEnable TLS13EarlyDataPolicyEnable
+#endif
+IN_PROC_BROWSER_TEST_P(TLS13EarlyDataPolicyTest,
+                       MAYBE_TLS13EarlyDataPolicyEnable) {
+  PolicyMap policies;
+  SetPolicy(&policies, key::kTLS13EarlyDataEnabled, base::Value(true));
+  UpdateProviderPolicy(policies);
+  EXPECT_TRUE(GetBooleanPref(prefs::kTLS13EarlyDataEnabled));
+  content::FlushNetworkServiceInstanceForTesting();
+
+  NavigateToTestPage();
+
+  EXPECT_EQ(FetchResourceForEarlyDataCheck(GetURL(kEarlyDataCheckPath)),
+            kEarlyDataAcceptedTitle);
+}
+
+IN_PROC_BROWSER_TEST_P(TLS13EarlyDataPolicyTest, TLS13EarlyDataPolicyDisable) {
+  PolicyMap policies;
+  SetPolicy(&policies, key::kTLS13EarlyDataEnabled, base::Value(false));
+  UpdateProviderPolicy(policies);
+  EXPECT_FALSE(GetBooleanPref(prefs::kTLS13EarlyDataEnabled));
+
+  NavigateToTestPage();
+
+  EXPECT_EQ(FetchResourceForEarlyDataCheck(GetURL(kEarlyDataCheckPath)),
+            kEarlyDataNotAcceptedTitle);
 }
 
 }  // namespace policy

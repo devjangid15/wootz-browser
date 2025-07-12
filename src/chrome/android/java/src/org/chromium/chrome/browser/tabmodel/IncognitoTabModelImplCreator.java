@@ -4,13 +4,18 @@
 
 package org.chromium.chrome.browser.tabmodel;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.flags.ActivityType;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.profiles.ProfileProvider;
 import org.chromium.chrome.browser.tab_ui.TabContentManager;
 import org.chromium.chrome.browser.tabmodel.IncognitoTabModelImpl.IncognitoTabModelDelegate;
 import org.chromium.chrome.browser.tabmodel.NextTabPolicy.NextTabPolicySupplier;
 
 /** Stores all the variables needed to create an Incognito TabModelImpl when it is needed. */
+@NullMarked
 class IncognitoTabModelImplCreator implements IncognitoTabModelDelegate {
     private final ProfileProvider mProfileProvider;
     private final TabCreator mRegularTabCreator;
@@ -20,6 +25,8 @@ class IncognitoTabModelImplCreator implements IncognitoTabModelDelegate {
     private final NextTabPolicySupplier mNextTabPolicySupplier;
     private final AsyncTabParamsManager mAsyncTabParamsManager;
     private final TabModelDelegate mModelDelegate;
+    private final TabRemover mTabRemover;
+    private final TabUngrouperFactory mTabUngrouperFactory;
 
     private final @ActivityType int mActivityType;
 
@@ -39,6 +46,8 @@ class IncognitoTabModelImplCreator implements IncognitoTabModelDelegate {
      * @param asyncTabParamsManager An {@link AsyncTabParamsManager} instance.
      * @param activityType Type of the activity for the tab model.
      * @param modelDelegate Delegate to handle external dependencies and interactions.
+     * @param tabRemover Delegate to handle removing tabs tabs.
+     * @param tabUngrouperFactory Factory to create a {@link TabUngrouper}.
      */
     IncognitoTabModelImplCreator(
             ProfileProvider profileProvider,
@@ -49,7 +58,9 @@ class IncognitoTabModelImplCreator implements IncognitoTabModelDelegate {
             NextTabPolicySupplier nextTabPolicySupplier,
             AsyncTabParamsManager asyncTabParamsManager,
             @ActivityType int activityType,
-            TabModelDelegate modelDelegate) {
+            TabModelDelegate modelDelegate,
+            TabRemover tabRemover,
+            TabUngrouperFactory tabUngrouperFactory) {
         mProfileProvider = profileProvider;
         mRegularTabCreator = regularTabCreator;
         mIncognitoTabCreator = incognitoTabCreator;
@@ -59,12 +70,36 @@ class IncognitoTabModelImplCreator implements IncognitoTabModelDelegate {
         mAsyncTabParamsManager = asyncTabParamsManager;
         mActivityType = activityType;
         mModelDelegate = modelDelegate;
+        mTabRemover = tabRemover;
+        mTabUngrouperFactory = tabUngrouperFactory;
     }
 
     @Override
-    public TabModel createTabModel() {
+    public TabModelInternal createTabModel() {
+        if (ChromeFeatureList.sTabCollectionAndroid.isEnabled()) {
+            TabGroupModelFilter[] filterHolder = new TabGroupModelFilter[1];
+            TabUngrouper tabUngrouper =
+                    mTabUngrouperFactory.create(
+                            /* isIncognitoBranded= */ true, () -> filterHolder[0]);
+            TabCollectionTabModelImpl model =
+                    new TabCollectionTabModelImpl(
+                            assumeNonNull(mProfileProvider.getOffTheRecordProfile(true)),
+                            mActivityType,
+                            /* isArchivedTabModel= */ false,
+                            mRegularTabCreator,
+                            mIncognitoTabCreator,
+                            mOrderController,
+                            mTabContentManager,
+                            mNextTabPolicySupplier,
+                            mModelDelegate,
+                            mAsyncTabParamsManager,
+                            mTabRemover,
+                            tabUngrouper);
+            filterHolder[0] = model;
+            return model;
+        }
         return new TabModelImpl(
-                mProfileProvider.getOffTheRecordProfile(true),
+                assumeNonNull(mProfileProvider.getOffTheRecordProfile(true)),
                 mActivityType,
                 mRegularTabCreator,
                 mIncognitoTabCreator,
@@ -73,7 +108,13 @@ class IncognitoTabModelImplCreator implements IncognitoTabModelDelegate {
                 mNextTabPolicySupplier,
                 mAsyncTabParamsManager,
                 mModelDelegate,
+                mTabRemover,
                 /* supportUndo= */ false,
-                /* trackInNativeModelList= */ true);
+                /* isArchivedTabModel= */ false);
+    }
+
+    @Override
+    public TabCreator getIncognitoTabCreator() {
+        return mIncognitoTabCreator;
     }
 }

@@ -12,6 +12,8 @@
 #include "components/signin/public/identity_manager/identity_test_environment.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 
+using endpoint_fetcher::EndpointFetcher;
+
 namespace manta {
 
 namespace {
@@ -27,9 +29,7 @@ constexpr char kEmail[] = "mock_email@gmail.com";
 FakeBaseProvider::FakeBaseProvider(
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     signin::IdentityManager* identity_manager)
-    : BaseProvider(url_loader_factory,
-                   identity_manager,
-                   /*is_demo_mode=*/false) {}
+    : BaseProvider(url_loader_factory, identity_manager) {}
 
 FakeBaseProvider::~FakeBaseProvider() = default;
 
@@ -39,7 +39,8 @@ void FakeBaseProvider::RequestInternal(
     const net::NetworkTrafficAnnotationTag& annotation_tag,
     manta::proto::Request& request,
     const MantaMetricType metric_type,
-    MantaProtoResponseCallback done_callback) {
+    MantaProtoResponseCallback done_callback,
+    const base::TimeDelta timeout) {
   if (!identity_manager_observation_.IsObserving()) {
     std::move(done_callback)
         .Run(nullptr, {MantaStatusCode::kNoIdentityManager});

@@ -67,8 +67,7 @@ class ScriptError(Exception):
             message += '\n\noutput: %s' % shortened_output
 
         Exception.__init__(self, message)
-        if six.PY3:
-            self.message = message
+        self.message = message
         self.script_args = script_args  # 'args' is already used by Exception
         self.exit_code = exit_code
         self.output = output
@@ -274,6 +273,13 @@ class Executive:
         except OSError:
             # Silently ignore when the pid doesn't exist.
             # It's impossible for callers to avoid race conditions with process shutdown.
+            pass
+
+    def terminate(self, pid):
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            # Silently ignore when the pid doesn't exist.
             pass
 
     # Error handlers do not need to be static methods once all callers are

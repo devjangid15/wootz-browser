@@ -12,8 +12,11 @@
 #include "base/check_op.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_util.h"
 #include "base/system/sys_info.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/thread_pool.h"
@@ -94,18 +97,9 @@ void ExtractIOTask::FinishedExtraction(base::FilePath directory, bool success) {
     any_archive_failed_ = true;
   }
 
-  // Release the unpacker parameters stored for the extraction.
-  auto unpacker = unpackers_[directory];
-  if (unpacker) {
-    unpacker->CleanUp();
-    // Wait for the task runner to clean up the UnpackParams object.
-    while (!unpacker->CleanUpDone()) {
-      // Yield until the cancellation tasks are done.
-      base::PlatformThread::Sleep(base::Microseconds(1));
-    }
-  }
   DCHECK_GT(extractCount_, 0u);
   if (--extractCount_ == 0) {
+    cancellation_chain_ = base::DoNothing();
     progress_.state = any_archive_failed_ ? State::kError : State::kSuccess;
     RecordUmaExtractStatus(any_archive_failed_ ? ExtractStatus::kUnknownError
                                                : ExtractStatus::kSuccess);
@@ -162,18 +156,18 @@ void ExtractIOTask::ExtractIntoNewDirectory(
     bool created_ok) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   if (created_ok) {
-    unzip::mojom::UnzipOptionsPtr options =
-        unzip::mojom::UnzipOptions::New("auto", password_);
-    scoped_refptr<unzip::ZipFileUnpacker> unpacker =
-        base::MakeRefCounted<unzip::ZipFileUnpacker>();
-    unpacker->Unpack(
-        unzip::LaunchUnzipper(), source_file, destination_directory,
-        std::move(options),
-        base::BindRepeating(&ExtractIOTask::ZipListenerCallback,
-                            weak_ptr_factory_.GetWeakPtr()),
-        base::BindOnce(&ExtractIOTask::ZipExtractCallback,
-                       weak_ptr_factory_.GetWeakPtr(), destination_directory));
-    unpackers_.insert({destination_directory, std::move(unpacker)});
+    // Accumulate the new cancellation callback into the cancellation chain.
+    cancellation_chain_ =
+        unzip::Unzip(unzip::LaunchUnzipper(), source_file,
+                     destination_directory,
+                     unzip::mojom::UnzipOptions::New("auto", password_),
+                     unzip::AllContents(),
+                     base::BindRepeating(&ExtractIOTask::ZipListenerCallback,
+                                         weak_ptr_factory_.GetWeakPtr()),
+                     base::BindOnce(&ExtractIOTask::ZipExtractCallback,
+                                    weak_ptr_factory_.GetWeakPtr(),
+                                    destination_directory))
+            .Then(std::move(cancellation_chain_));
   } else {
     LOG(ERROR) << "Cannot create directory "
                << zip::Redact(destination_directory);
@@ -367,16 +361,8 @@ void ExtractIOTask::Execute(IOTask::ProgressCallback progress_callback,
 void ExtractIOTask::Cancel() {
   progress_.state = State::kCancelled;
   RecordUmaExtractStatus(ExtractStatus::kCancelled);
-  // Run through all existing extraction instances and cancel them all.
-  for (auto unpacker : unpackers_) {
-    if (unpacker.second) {
-      unpacker.second->Stop();
-      while (!unpacker.second->CleanUpDone()) {
-        // Yield until the UnpackParams objects have been released.
-        base::PlatformThread::Sleep(base::Microseconds(1));
-      }
-    }
-  }
+  std::move(cancellation_chain_).Run();
+  cancellation_chain_ = base::DoNothing();
 }
 
 // Calls the completion callback for the task. |progress_| should not be

@@ -25,6 +25,9 @@ async function createCardElement(
 
   const card = document.createElement('password-details-card');
   card.password = password;
+  if (password.backupPassword) {
+    card.isBackup = true;
+  }
   card.prefs = makePasswordManagerPrefs();
   document.body.appendChild(card);
   await flushTasks();
@@ -79,6 +82,22 @@ suite('PasswordDetailsCardTest', function() {
     assertFalse(isVisible(card.$.showPasswordButton));
     assertFalse(isVisible(card.$.copyPasswordButton));
     assertFalse(isVisible(card.$.editButton));
+    assertTrue(isVisible(card.$.deleteButton));
+  });
+
+  test('Content displayed properly for backup credential', async function() {
+    const password = createPasswordEntry(
+        {url: 'test.com', username: 'vik', backupPassword: 'backup'});
+
+    const card = await createCardElement(password);
+
+    assertEquals(password.username, card.$.usernameValue.value);
+    assertEquals(password.backupPassword, card.$.passwordValue.value);
+    assertEquals('password', card.$.passwordValue.type);
+    assertTrue(isVisible(card.$.noteValue));
+    assertTrue(isVisible(card.$.showPasswordButton));
+    assertTrue(isVisible(card.$.copyPasswordButton));
+    assertTrue(isVisible(card.$.editButton));
     assertTrue(isVisible(card.$.deleteButton));
   });
 
@@ -349,11 +368,9 @@ suite('PasswordDetailsCardTest', function() {
         loadTimeData.getString('sitesAndAppsLabel'));
   });
 
+  // <if expr="_google_chrome">
   test('share button available when sync enabled', async function() {
-    loadTimeData.overrideValues({enableSendPasswords: true});
-
     syncProxy.syncInfo = {
-      isEligibleForAccountStorage: false,
       isSyncingPasswords: true,
     };
 
@@ -374,14 +391,11 @@ suite('PasswordDetailsCardTest', function() {
   });
 
   test('share button available for account store users', async function() {
-    loadTimeData.overrideValues({enableSendPasswords: true});
-
     syncProxy.syncInfo = {
-      isEligibleForAccountStorage: true,
       isSyncingPasswords: false,
     };
 
-    passwordManager.data.isOptedInAccountStorage = true;
+    passwordManager.data.isAccountStorageEnabled = true;
 
     const card = await createCardElement();
 
@@ -392,10 +406,7 @@ suite('PasswordDetailsCardTest', function() {
   });
 
   test('sharing disabled by policy', async function() {
-    loadTimeData.overrideValues({enableSendPasswords: true});
-
     syncProxy.syncInfo = {
-      isEligibleForAccountStorage: false,
       isSyncingPasswords: true,
     };
 
@@ -413,10 +424,7 @@ suite('PasswordDetailsCardTest', function() {
   });
 
   test('sharing unavailable for federated credentials', async function() {
-    loadTimeData.overrideValues({enableSendPasswords: true});
-
     syncProxy.syncInfo = {
-      isEligibleForAccountStorage: false,
       isSyncingPasswords: true,
     };
 
@@ -430,28 +438,8 @@ suite('PasswordDetailsCardTest', function() {
     assertFalse(!!sharePasswordFlow);
   });
 
-  test('sharing unavailable without enableSendPasswords', async function() {
-    loadTimeData.overrideValues({enableSendPasswords: false});
-
-    syncProxy.syncInfo = {
-      isEligibleForAccountStorage: false,
-      isSyncingPasswords: true,
-    };
-
-    const card = await createCardElement();
-
-    assertFalse(isVisible(card.$.shareButton));
-
-    const sharePasswordFlow =
-        card.shadowRoot!.querySelector('share-password-flow');
-    assertFalse(!!sharePasswordFlow);
-  });
-
   test('share button unavailable when sync disabled', async function() {
-    loadTimeData.overrideValues({enableSendPasswords: true});
-
     syncProxy.syncInfo = {
-      isEligibleForAccountStorage: false,
       isSyncingPasswords: false,
     };
 
@@ -463,14 +451,13 @@ suite('PasswordDetailsCardTest', function() {
         card.shadowRoot!.querySelector('share-password-flow');
     assertFalse(!!sharePasswordFlow);
   });
+  // </if>
 
   test(
       'clicking save password in account opens move password dialog',
       async function() {
-        loadTimeData.overrideValues({enableButterOnDesktopFollowup: true});
-        passwordManager.data.isOptedInAccountStorage = true;
+        passwordManager.data.isAccountStorageEnabled = true;
         syncProxy.syncInfo = {
-          isEligibleForAccountStorage: true,
           isSyncingPasswords: false,
         };
 
@@ -478,18 +465,18 @@ suite('PasswordDetailsCardTest', function() {
         card.isUsingAccountStore = true;
         await flushTasks();
 
-        const movePasswordLabel = card!.shadowRoot!.querySelector<HTMLElement>(
+        const movePasswordLabel = card.shadowRoot!.querySelector<HTMLElement>(
             '.move-password-container div');
         assertTrue(!!movePasswordLabel);
         assertTrue(isVisible(movePasswordLabel));
 
-        movePasswordLabel!.click();
+        movePasswordLabel.click();
         await flushTasks();
 
         const moveDialog =
             card.shadowRoot!.querySelector('move-single-password-dialog');
         assertTrue(!!moveDialog);
-        const dialog = moveDialog!.shadowRoot!.querySelector('#dialog');
+        const dialog = moveDialog.shadowRoot!.querySelector('#dialog');
         assertTrue(!!dialog);
       });
 

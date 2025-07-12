@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/credential_provider/gaiacp/os_user_manager.h"
 
 #include <windows.h>
@@ -22,6 +27,7 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/scoped_native_library.h"
+#include "base/strings/string_number_conversions_win.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/win/registry.h"
@@ -86,7 +92,7 @@ std::wstring OSUserManager::GetLocalDomain() {
   return std::wstring(computer_name, length);
 }
 
-OSUserManager::~OSUserManager() {}
+OSUserManager::~OSUserManager() = default;
 
 #define IS_PASSWORD_STRONG_ENOUGH()    \
   (cur_length > kMinPasswordLength) && \

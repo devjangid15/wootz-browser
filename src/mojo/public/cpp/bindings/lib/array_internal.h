@@ -2,21 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #ifndef MOJO_PUBLIC_CPP_BINDINGS_LIB_ARRAY_INTERNAL_H_
 #define MOJO_PUBLIC_CPP_BINDINGS_LIB_ARRAY_INTERNAL_H_
 
 #include <stddef.h>
 #include <stdint.h>
 
-#include <limits>
-#include <new>
-
 #include "base/check.h"
 #include "base/component_export.h"
 #include "base/memory/raw_ptr.h"
-#include "mojo/public/c/system/macros.h"
 #include "mojo/public/cpp/bindings/lib/bindings_internal.h"
-#include "mojo/public/cpp/bindings/lib/buffer.h"
 #include "mojo/public/cpp/bindings/lib/message_fragment.h"
 #include "mojo/public/cpp/bindings/lib/template_util.h"
 #include "mojo/public/cpp/bindings/lib/validate_params.h"
@@ -194,7 +194,7 @@ struct ArrayDataTraits<std::optional<bool>> {
 // TODO(ffred): consider merging with the optional<bool> specialization using
 // if constexpr.
 template <typename T>
-  requires(base::is_instantiation<std::optional, T>)
+  requires(base::is_instantiation<T, std::optional>)
 struct ArrayDataTraits<T> {
   using StorageType = typename T::value_type;
 

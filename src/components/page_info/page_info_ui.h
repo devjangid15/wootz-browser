@@ -14,12 +14,12 @@
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/content_settings/core/common/cookie_blocking_3pcd_status.h"
+#include "components/content_settings/core/common/cookie_controls_state.h"
 #include "components/page_info/page_info.h"
 #include "components/permissions/object_permission_context_base.h"
 #include "components/privacy_sandbox/canonical_topic.h"
 #include "components/safe_browsing/buildflags.h"
 #include "ui/base/models/image_model.h"
-#include "ui/gfx/native_widget_types.h"
 
 #if !BUILDFLAG(IS_ANDROID)
 #include "ui/gfx/image/image_skia.h"
@@ -71,20 +71,20 @@ class PageInfoUI {
     SecurityDescriptionType type;
   };
 
-  // |CookiesFpsInfo| contains information about a specific First-Party Set.
-  struct CookiesFpsInfo {
-    explicit CookiesFpsInfo(const std::u16string& owner_name);
-    ~CookiesFpsInfo();
+  // `CookiesRwsInfo` contains information about a specific Related website set.
+  struct CookiesRwsInfo {
+    explicit CookiesRwsInfo(const std::u16string& owner_name);
+    ~CookiesRwsInfo();
 
-    // The name of the owner of the FPS.
+    // The name of the owner of the RWS.
     std::u16string owner_name;
 
-    // Whether the Fps are managed by the company.
+    // Whether the Rws are managed by the company.
     bool is_managed = false;
   };
 
-  // |CookiesNewInfo| contains information about the sites that are allowed
-  // to access cookies and fps cookies info for new UI.
+  // `CookiesNewInfo` contains information about the sites that are allowed
+  // to access cookies and rws cookies info for new UI.
   // TODO(crbug.com/40854087):  Change the name to "CookieInfo" after finishing
   // cookies subpage implementation
   struct CookiesNewInfo {
@@ -92,20 +92,8 @@ class PageInfoUI {
     CookiesNewInfo(CookiesNewInfo&&);
     ~CookiesNewInfo();
 
-    // The number of third-party sites blocked.
-    int blocked_third_party_sites_count = -1;
-
-    // The number of third-party sites allowed.
-    int allowed_third_party_sites_count = -1;
-
     // The number of sites allowed to access cookies.
     int allowed_sites_count = -1;
-
-    // Whether protections are enabled for the given site.
-    bool protections_on = true;
-
-    // Whether tracking protection controls should be shown.
-    bool controls_visible = true;
 
     // The type of third-party cookie blocking in 3PCD.
     CookieBlocking3pcdStatus blocking_status =
@@ -114,13 +102,16 @@ class PageInfoUI {
     // The status of enforcement of blocking third-party cookies.
     CookieControlsEnforcement enforcement;
 
-    std::optional<CookiesFpsInfo> fps_info;
+    // The state of cookie controls to display.
+    CookieControlsState controls_state;
+
+    std::optional<CookiesRwsInfo> rws_info;
 
     // The expiration of the active third-party cookie exception.
     base::Time expiration;
 
-    // Whether the current profile is "off the record".
-    bool is_otr = false;
+    // Whether the current profile is incognito.
+    bool is_incognito = false;
   };
 
   // |ChosenObjectInfo| contains information about a single |chooser_object| of
@@ -166,6 +157,8 @@ class PageInfoUI {
 
     // The server certificate if a secure connection.
     scoped_refptr<net::X509Certificate> certificate;
+    // The 2-QWAC certificate if the site has a valid 2-QWAC.
+    scoped_refptr<net::X509Certificate> two_qwac;
     // Status of the site's connection.
     PageInfo::SiteConnectionStatus connection_status;
     // Textual description of the site's connection status that is displayed to
@@ -221,6 +214,9 @@ class PageInfoUI {
   static std::u16string PermissionTooltipUiString(
       ContentSettingsType type,
       const std::optional<url::Origin>& requesting_origin);
+  // Returns a tooltip for a subpage button for permission |type|.
+  static std::u16string PermissionSubpageButtonTooltipString(
+      ContentSettingsType type);
 
   static base::span<const PermissionUIInfo>
   GetContentSettingsUIInfoForTesting();

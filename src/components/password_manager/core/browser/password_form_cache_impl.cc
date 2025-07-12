@@ -4,6 +4,7 @@
 
 #include "components/password_manager/core/browser/password_form_cache_impl.h"
 
+#include "components/password_manager/core/browser/password_form_manager.h"
 #include "components/password_manager/core/browser/password_manager_driver.h"
 #include "components/password_manager/core/browser/password_save_manager_impl.h"
 
@@ -13,16 +14,18 @@ PasswordFormCacheImpl::PasswordFormCacheImpl() = default;
 
 PasswordFormCacheImpl::~PasswordFormCacheImpl() = default;
 
-bool PasswordFormCacheImpl::HasPasswordForm(
+const PasswordForm* PasswordFormCacheImpl::GetPasswordForm(
     PasswordManagerDriver* driver,
     autofill::FormRendererId form_id) const {
-  return GetMatchedManager(driver, form_id) != nullptr;
+  const PasswordFormManager* form_manager = GetMatchedManager(driver, form_id);
+  return form_manager ? form_manager->GetParsedObservedForm() : nullptr;
 }
 
-bool PasswordFormCacheImpl::HasPasswordForm(
+const PasswordForm* PasswordFormCacheImpl::GetPasswordForm(
     PasswordManagerDriver* driver,
     autofill::FieldRendererId field_id) const {
-  return GetMatchedManager(driver, field_id) != nullptr;
+  const PasswordFormManager* form_manager = GetMatchedManager(driver, field_id);
+  return form_manager ? form_manager->GetParsedObservedForm() : nullptr;
 }
 
 PasswordFormManager* PasswordFormCacheImpl::GetMatchedManager(
@@ -49,18 +52,22 @@ PasswordFormManager* PasswordFormCacheImpl::GetMatchedManager(
 
 void PasswordFormCacheImpl::AddFormManager(
     std::unique_ptr<PasswordFormManager> manager) {
+  for (PasswordFormManagerObserver& form_manager_observer :
+       form_manager_observers_) {
+    manager->AddObserver(&form_manager_observer);
+  }
   form_managers_.emplace_back(std::move(manager));
 }
 
 void PasswordFormCacheImpl::ResetSubmittedManager() {
   auto submitted_manager =
-      base::ranges::find_if(form_managers_, &PasswordFormManager::is_submitted);
+      std::ranges::find_if(form_managers_, &PasswordFormManager::is_submitted);
   if (submitted_manager != form_managers_.end()) {
     form_managers_.erase(submitted_manager);
   }
 }
 
-PasswordFormManager* PasswordFormCacheImpl::GetSubmittedManager() {
+PasswordFormManager* PasswordFormCacheImpl::GetSubmittedManager() const {
   for (const std::unique_ptr<PasswordFormManager>& manager : form_managers_) {
     if (manager->is_submitted()) {
       return manager.get();
@@ -76,6 +83,12 @@ PasswordFormCacheImpl::MoveOwnedSubmittedManager() {
     if ((*iter)->is_submitted()) {
       std::unique_ptr<PasswordFormManager> submitted_manager = std::move(*iter);
       form_managers_.erase(iter);
+
+      // After PasswordFormManager is removed from cache it's impossible to
+      // reset observation. Thus, it's safer to stop observing immediately.
+      for (PasswordFormManagerObserver& observer : form_manager_observers_) {
+        submitted_manager->RemoveObserver(&observer);
+      }
       return submitted_manager;
     }
   }
@@ -92,7 +105,21 @@ bool PasswordFormCacheImpl::IsEmpty() const {
 
 base::span<const std::unique_ptr<PasswordFormManager>>
 PasswordFormCacheImpl::GetFormManagers() const {
-  return base::make_span(form_managers_);
+  return base::span(form_managers_);
+}
+
+void PasswordFormCacheImpl::AddObserver(PasswordFormManagerObserver* observer) {
+  if (!form_manager_observers_.HasObserver(observer)) {
+    form_manager_observers_.AddObserver(observer);
+  }
+}
+
+void PasswordFormCacheImpl::RemoveObserver(
+    PasswordFormManagerObserver* observer) {
+  form_manager_observers_.RemoveObserver(observer);
+  for (const std::unique_ptr<PasswordFormManager>& manager : form_managers_) {
+    manager->RemoveObserver(observer);
+  }
 }
 
 }  // namespace password_manager

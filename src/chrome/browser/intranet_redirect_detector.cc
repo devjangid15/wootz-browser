@@ -182,7 +182,7 @@ void IntranetRedirectDetector::OnSimpleLoaderComplete(
     std::unique_ptr<std::string> response_body) {
   // Delete the loader on this function's exit.
   auto it = simple_loaders_.find(source);
-  DCHECK(it != simple_loaders_.end());
+  CHECK(it != simple_loaders_.end());
   std::unique_ptr<network::SimpleURLLoader> simple_loader =
       std::move(it->second);
   simple_loaders_.erase(it);

@@ -5,21 +5,24 @@
 package org.chromium.components.signin.identitymanager;
 
 import androidx.annotation.MainThread;
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import org.jni_zero.CalledByNative;
+import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
 
 import org.chromium.base.Callback;
 import org.chromium.base.ObserverList;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.components.signin.base.AccountInfo;
-import org.chromium.components.signin.base.CoreAccountId;
 import org.chromium.components.signin.base.CoreAccountInfo;
+import org.chromium.google_apis.gaia.CoreAccountId;
 
 import java.util.List;
 
 /** IdentityManager provides access to native IdentityManager's public API to java components. */
+@NullMarked
 public class IdentityManager {
     /**
      * IdentityManager.Observer is notified when the available account information are updated. This
@@ -43,15 +46,11 @@ public class IdentityManager {
         default void onExtendedAccountInfoUpdated(AccountInfo accountInfo) {}
     }
 
-    /** A simple callback for getAccessToken. */
-    public interface GetAccessTokenCallback
-            extends ProfileOAuth2TokenServiceDelegate.GetAccessTokenCallback {}
-
     private long mNativeIdentityManager;
     private final ProfileOAuth2TokenServiceDelegate mProfileOAuth2TokenServiceDelegate;
 
     private final ObserverList<Observer> mObservers = new ObserverList<>();
-    private Callback<CoreAccountInfo> mRefreshTokenUpdateObserver;
+    private @Nullable Callback<CoreAccountInfo> mRefreshTokenUpdateObserver;
 
     /** Called by native to create an instance of IdentityManager. */
     @CalledByNative
@@ -159,10 +158,10 @@ public class IdentityManager {
 
     /**
      * Refreshes extended {@link AccountInfo} with image for all accounts with a refresh token or
-     * the given list of {@link CoreAccountInfo} if the existing ones are stale.
+     * the given list of {@link AccountInfo} if the existing ones are stale.
      */
-    public void refreshAccountInfoIfStale(List<CoreAccountInfo> accountInfos) {
-        for (CoreAccountInfo accountInfo : accountInfos) {
+    public void refreshAccountInfoIfStale(List<AccountInfo> accountInfos) {
+        for (AccountInfo accountInfo : accountInfos) {
             IdentityManagerJni.get()
                     .refreshAccountInfoIfStale(mNativeIdentityManager, accountInfo.getId());
         }
@@ -189,18 +188,26 @@ public class IdentityManager {
         mRefreshTokenUpdateObserver = callback;
     }
 
+    /** Can be called by native code to convert from Java to the corresponding C++ object. */
+    @CalledByNative
+    private long getNativePointer() {
+        return mNativeIdentityManager;
+    }
+
     @NativeMethods
     public interface Natives {
-        @Nullable
-        CoreAccountInfo getPrimaryAccountInfo(long nativeIdentityManager, int consentLevel);
 
-        @Nullable
-        AccountInfo findExtendedAccountInfoByEmailAddress(long nativeIdentityManager, String email);
+        @Nullable CoreAccountInfo getPrimaryAccountInfo(
+                long nativeIdentityManager, int consentLevel);
+
+        @Nullable AccountInfo findExtendedAccountInfoByEmailAddress(
+                long nativeIdentityManager, String email);
 
         CoreAccountInfo[] getAccountsWithRefreshTokens(long nativeIdentityManager);
 
         // TODO(crbug.com/40284908): Remove the accountId parameter.
-        void refreshAccountInfoIfStale(long nativeIdentityManager, CoreAccountId accountId);
+        void refreshAccountInfoIfStale(
+                long nativeIdentityManager, @JniType("CoreAccountId") CoreAccountId accountId);
 
         boolean isClearPrimaryAccountAllowed(long nativeIdentityManager);
     }

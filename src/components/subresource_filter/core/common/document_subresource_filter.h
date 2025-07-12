@@ -8,10 +8,12 @@
 #include <stddef.h>
 
 #include <memory>
+#include <string_view>
 
 #include "base/memory/ref_counted.h"
 #include "components/subresource_filter/core/common/indexed_ruleset.h"
 #include "components/subresource_filter/core/common/load_policy.h"
+#include "components/subresource_filter/core/common/scoped_rule.h"
 #include "components/subresource_filter/core/mojom/subresource_filter.mojom.h"
 #include "components/url_pattern_index/proto/rules.pb.h"
 
@@ -36,7 +38,8 @@ class DocumentSubresourceFilter {
   //  -- Hold a reference to and use |ruleset| for its entire lifetime.
   DocumentSubresourceFilter(url::Origin document_origin,
                             mojom::ActivationState activation_state,
-                            scoped_refptr<const MemoryMappedRuleset> ruleset);
+                            scoped_refptr<const MemoryMappedRuleset> ruleset,
+                            std::string_view uma_tag);
 
   DocumentSubresourceFilter(const DocumentSubresourceFilter&) = delete;
   DocumentSubresourceFilter& operator=(const DocumentSubresourceFilter&) =
@@ -58,7 +61,8 @@ class DocumentSubresourceFilter {
 
   LoadPolicy GetLoadPolicy(
       const GURL& subresource_url,
-      url_pattern_index::proto::ElementType subresource_type);
+      url_pattern_index::proto::ElementType subresource_type,
+      ScopedRule* out_rule = nullptr);
 
   // Returns the matching rule that determines whether the request url and type
   // should be allowed. If no rule matches, returns nullptr.
@@ -72,14 +76,6 @@ class DocumentSubresourceFilter {
     activation_state_ = state;
   }
 
-  // Callback triggered when a resource is blocked
-  using BlockedResourceCallback = 
-      base::RepeatingCallback<void(const GURL&)>;
-  
-  void SetBlockedResourceCallback(BlockedResourceCallback callback) {
-    blocked_resource_callback_ = std::move(callback);
-  }
-
  private:
   mojom::ActivationState activation_state_;
   const scoped_refptr<const MemoryMappedRuleset> ruleset_;
@@ -90,7 +86,7 @@ class DocumentSubresourceFilter {
 
   mojom::DocumentLoadStatistics statistics_;
 
-  BlockedResourceCallback blocked_resource_callback_;
+  std::string_view uma_tag_;
 };
 
 }  // namespace subresource_filter

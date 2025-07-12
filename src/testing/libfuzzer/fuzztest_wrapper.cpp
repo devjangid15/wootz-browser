@@ -15,6 +15,7 @@
 #include "base/process/launch.h"
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
+#include "base/strings/utf_ostream_operators.h"
 #include "base/strings/utf_string_conversions.h"
 #include "testing/libfuzzer/fuzztest_wrapper_buildflags.h"
 
@@ -28,6 +29,9 @@ void HandleReplayMode(auto& args) {
   // We're handling a centipede based fuzzer. If the last argument is a
   // filepath, we're trying to replay a testcase, since it doesn't make sense
   // to get a filepath when running with the centipede binary.
+  if (args.size() <= 1) {
+    return;
+  }
   base::FilePath test_case(args.back());
   if (!base::PathExists(test_case)) {
     return;

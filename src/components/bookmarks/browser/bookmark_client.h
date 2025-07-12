@@ -108,17 +108,31 @@ class BookmarkClient {
   virtual void DecodeLocalOrSyncableBookmarkSyncMetadata(
       const std::string& metadata_str,
       const base::RepeatingClosure& schedule_save_closure) = 0;
-  virtual void DecodeAccountBookmarkSyncMetadata(
+
+  // Decoding of sync metadata corresponding to account bookmarks may result in
+  // metadata being invalidated. In this case, account bookmarks are also
+  // deleted automatically.
+  enum class DecodeAccountBookmarkSyncMetadataResult {
+    kSuccess,
+    kMustRemoveAccountPermanentFolders,
+  };
+  virtual DecodeAccountBookmarkSyncMetadataResult
+  DecodeAccountBookmarkSyncMetadata(
       const std::string& metadata_str,
       const base::RepeatingClosure& schedule_save_closure) = 0;
 
   // Similar to BookmarkModelObserver::BookmarkNodeRemoved(), but transfers
   // ownership of BookmarkNode, which allows undoing the operation.
   virtual void OnBookmarkNodeRemovedUndoable(
-      BookmarkModel* model,
       const BookmarkNode* parent,
       size_t index,
       std::unique_ptr<BookmarkNode> node) = 0;
+
+  // Creates a persistent timer that allows recording metrics periodically
+  // (every 24hrs or on next startup). `metrics_callback` contains the logic to
+  // compute the metrics to be logged.
+  virtual void SchedulePersistentTimerForDailyMetrics(
+      base::RepeatingClosure metrics_callback) = 0;
 };
 
 }  // namespace bookmarks

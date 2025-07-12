@@ -8,6 +8,9 @@ import android.content.Context;
 import android.os.PersistableBundle;
 
 import org.chromium.base.Log;
+import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.components.background_task_scheduler.NativeBackgroundTask;
 import org.chromium.components.background_task_scheduler.TaskParameters;
 import org.chromium.components.gcm_driver.GCMDriver;
@@ -17,9 +20,10 @@ import org.chromium.components.gcm_driver.GCMMessage;
  * Processes jobs that have been scheduled for delivering GCM messages to the native GCM Driver,
  * processing for which may exceed the lifetime of the GcmListenerService.
  */
+@NullMarked
 public class GCMNativeBackgroundTask extends NativeBackgroundTask {
     private static final String TAG = GCMNativeBackgroundTask.class.getSimpleName();
-    private GCMMessage mMessage;
+    private @Nullable GCMMessage mMessage;
 
     @Override
     protected int onStartTaskBeforeNativeLoaded(
@@ -27,8 +31,11 @@ public class GCMNativeBackgroundTask extends NativeBackgroundTask {
         PersistableBundle extras = taskParameters.getExtras();
         mMessage = GCMMessage.createFromPersistableBundle(extras);
         if (mMessage == null) {
+            RecordHistogram.recordBooleanHistogram("GCM.MessageValid", false);
             Log.e(TAG, "The received bundle containing message data could not be validated.");
             return NativeBackgroundTask.StartBeforeNativeResult.DONE;
+        } else {
+            RecordHistogram.recordBooleanHistogram("GCM.MessageValid", true);
         }
         return NativeBackgroundTask.StartBeforeNativeResult.LOAD_NATIVE;
     }
@@ -42,6 +49,7 @@ public class GCMNativeBackgroundTask extends NativeBackgroundTask {
     @Override
     protected void onStartTaskWithNative(
             Context context, TaskParameters taskParameters, TaskFinishedCallback callback) {
+        assert mMessage != null;
         GCMDriver.dispatchMessage(mMessage);
         callback.taskFinished(false);
     }

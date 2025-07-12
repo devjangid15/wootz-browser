@@ -5,21 +5,20 @@
 package org.chromium.chrome.browser.back_press;
 
 import androidx.activity.BackEventCompat;
+import androidx.annotation.Nullable;
 import androidx.test.filters.SmallTest;
 
-import org.junit.AfterClass;
 import org.junit.Assert;
-import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.test.BaseJUnit4ClassRunner;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.components.browser_ui.widget.gesture.BackPressHandler;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 import java.util.concurrent.TimeoutException;
 
@@ -28,11 +27,17 @@ import java.util.concurrent.TimeoutException;
 @Batch(Batch.UNIT_TESTS)
 public class BackPressManagerTest {
 
-    private class EmptyBackPressHandler implements BackPressHandler {
-        private ObservableSupplierImpl<Boolean> mSupplier = new ObservableSupplierImpl<>();
+    private static class EmptyBackPressHandler implements BackPressHandler {
+        private final ObservableSupplierImpl<Boolean> mSupplier = new ObservableSupplierImpl<>();
+        protected final CallbackHelper mCallbackHelper = new CallbackHelper();
+
+        public CallbackHelper getCallbackHelper() {
+            return mCallbackHelper;
+        }
 
         @Override
         public @BackPressResult int handleBackPress() {
+            mCallbackHelper.notifyCalled();
             return BackPressResult.UNKNOWN;
         }
 
@@ -42,21 +47,33 @@ public class BackPressManagerTest {
         }
     }
 
-    private class FailedBackPressHandler extends EmptyBackPressHandler {
+    private static class FailedBackPressHandler extends EmptyBackPressHandler {
         @Override
         public @BackPressResult int handleBackPress() {
+            mCallbackHelper.notifyCalled();
             return BackPressResult.FAILURE;
         }
     }
 
-    @BeforeClass
-    public static void setUpClass() {
-        ObservableSupplierImpl.setIgnoreThreadChecksForTesting(true);
-    }
+    private static class EscModifyingBackPressHandler extends EmptyBackPressHandler {
 
-    @AfterClass
-    public static void afterClass() {
-        ObservableSupplierImpl.setIgnoreThreadChecksForTesting(false);
+        private final Boolean mReturnValue;
+
+        private EscModifyingBackPressHandler(Boolean mReturnValue) {
+            this.mReturnValue = mReturnValue;
+        }
+
+        @Override
+        public boolean invokeBackActionOnEscape() {
+            return false;
+        }
+
+        @Nullable
+        @Override
+        public Boolean handleEscPress() {
+            mCallbackHelper.notifyCalled();
+            return mReturnValue;
+        }
     }
 
     @Test
@@ -66,9 +83,8 @@ public class BackPressManagerTest {
                 HistogramWatcher.newBuilder().expectNoRecords(BackPressManager.HISTOGRAM).build();
 
         BackPressManager manager = new BackPressManager();
-        EmptyBackPressHandler h1 =
-                TestThreadUtils.runOnUiThreadBlockingNoException(EmptyBackPressHandler::new);
-        TestThreadUtils.runOnUiThreadBlocking(
+        EmptyBackPressHandler h1 = ThreadUtils.runOnUiThreadBlocking(EmptyBackPressHandler::new);
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     manager.addHandler(h1, BackPressHandler.Type.FIND_TOOLBAR);
                 });
@@ -81,7 +97,7 @@ public class BackPressManagerTest {
         histogramWatcher =
                 HistogramWatcher.newSingleRecordWatcher(
                         BackPressManager.HISTOGRAM, 16); // 16 is FIND_TOOLBAR
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     h1.getHandleBackPressChangedSupplier().set(true);
                     manager.getCallback().handleOnBackPressed();
@@ -90,7 +106,7 @@ public class BackPressManagerTest {
 
         histogramWatcher =
                 HistogramWatcher.newBuilder().expectNoRecords(BackPressManager.HISTOGRAM).build();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     h1.getHandleBackPressChangedSupplier().set(false);
                 });
@@ -106,11 +122,9 @@ public class BackPressManagerTest {
                 HistogramWatcher.newSingleRecordWatcher(
                         BackPressManager.HISTOGRAM, 18); // 18 is XR_DELEGATE
         BackPressManager manager = new BackPressManager();
-        EmptyBackPressHandler h1 =
-                TestThreadUtils.runOnUiThreadBlockingNoException(EmptyBackPressHandler::new);
-        EmptyBackPressHandler h2 =
-                TestThreadUtils.runOnUiThreadBlockingNoException(EmptyBackPressHandler::new);
-        TestThreadUtils.runOnUiThreadBlocking(
+        EmptyBackPressHandler h1 = ThreadUtils.runOnUiThreadBlocking(EmptyBackPressHandler::new);
+        EmptyBackPressHandler h2 = ThreadUtils.runOnUiThreadBlocking(EmptyBackPressHandler::new);
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     manager.addHandler(h1, BackPressHandler.Type.TEXT_BUBBLE);
                     manager.addHandler(h2, BackPressHandler.Type.XR_DELEGATE);
@@ -126,7 +140,7 @@ public class BackPressManagerTest {
                 HistogramWatcher.newSingleRecordWatcher(
                         BackPressManager.HISTOGRAM,
                         BackPressManager.getHistogramValue(BackPressHandler.Type.TEXT_BUBBLE));
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     h1.getHandleBackPressChangedSupplier().set(true);
                     manager.getCallback().handleOnBackPressed();
@@ -140,10 +154,9 @@ public class BackPressManagerTest {
     public void testFailedHandlers() {
         BackPressManager manager = new BackPressManager();
         var textBubbleFailedHandler =
-                TestThreadUtils.runOnUiThreadBlockingNoException(FailedBackPressHandler::new);
-        var arSuccessHandler =
-                TestThreadUtils.runOnUiThreadBlockingNoException(EmptyBackPressHandler::new);
-        TestThreadUtils.runOnUiThreadBlocking(
+                ThreadUtils.runOnUiThreadBlocking(FailedBackPressHandler::new);
+        var arSuccessHandler = ThreadUtils.runOnUiThreadBlocking(EmptyBackPressHandler::new);
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     manager.addHandler(textBubbleFailedHandler, BackPressHandler.Type.TEXT_BUBBLE);
                     manager.addHandler(arSuccessHandler, BackPressHandler.Type.XR_DELEGATE);
@@ -173,8 +186,8 @@ public class BackPressManagerTest {
         BackPressManager manager = new BackPressManager();
         manager.setFallbackOnBackPressed(callbackHelper::notifyCalled);
         var textBubbleFailedHandler =
-                TestThreadUtils.runOnUiThreadBlockingNoException(FailedBackPressHandler::new);
-        TestThreadUtils.runOnUiThreadBlocking(
+                ThreadUtils.runOnUiThreadBlocking(FailedBackPressHandler::new);
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     manager.addHandler(textBubbleFailedHandler, BackPressHandler.Type.TEXT_BUBBLE);
                     textBubbleFailedHandler.getHandleBackPressChangedSupplier().set(true);
@@ -188,7 +201,7 @@ public class BackPressManagerTest {
                                         BackPressHandler.Type.TEXT_BUBBLE))
                         .build();
         triggerBackPressWithoutAssertionError(manager);
-        callbackHelper.waitForFirst("Fallback should be triggered if all handlers failed.");
+        callbackHelper.waitForOnly("Fallback should be triggered if all handlers failed.");
         watcher.assertExpected();
     }
 
@@ -197,8 +210,7 @@ public class BackPressManagerTest {
     public void testNoRecordWhenBackIsCancelled() {
         BackPressManager manager = new BackPressManager();
 
-        EmptyBackPressHandler h1 =
-                TestThreadUtils.runOnUiThreadBlockingNoException(EmptyBackPressHandler::new);
+        EmptyBackPressHandler h1 = ThreadUtils.runOnUiThreadBlocking(EmptyBackPressHandler::new);
 
         var record =
                 HistogramWatcher.newBuilder()
@@ -208,7 +220,7 @@ public class BackPressManagerTest {
                         .expectNoRecords("Android.BackPress.Intercept.RightEdge")
                         .expectNoRecords("Android.BackPress.SwipeEdge.TabHistoryNavigation")
                         .build();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     manager.addHandler(h1, BackPressHandler.Type.TAB_HISTORY);
                     h1.getHandleBackPressChangedSupplier().set(true);
@@ -230,10 +242,8 @@ public class BackPressManagerTest {
         BackPressManager manager = new BackPressManager();
         manager.setIsGestureNavEnabledSupplier(() -> true);
 
-        EmptyBackPressHandler h1 =
-                TestThreadUtils.runOnUiThreadBlockingNoException(EmptyBackPressHandler::new);
-        EmptyBackPressHandler h2 =
-                TestThreadUtils.runOnUiThreadBlockingNoException(EmptyBackPressHandler::new);
+        EmptyBackPressHandler h1 = ThreadUtils.runOnUiThreadBlocking(EmptyBackPressHandler::new);
+        EmptyBackPressHandler h2 = ThreadUtils.runOnUiThreadBlocking(EmptyBackPressHandler::new);
 
         var edgeRecords =
                 HistogramWatcher.newBuilder()
@@ -246,7 +256,7 @@ public class BackPressManagerTest {
                         .expectNoRecords("Android.BackPress.SwipeEdge.TabHistoryNavigation")
                         .build();
         // Trigger XR delegate back press handler from left side.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     manager.addHandler(h1, BackPressHandler.Type.TEXT_BUBBLE);
                     manager.addHandler(h2, BackPressHandler.Type.XR_DELEGATE);
@@ -275,7 +285,7 @@ public class BackPressManagerTest {
                         .expectNoRecords("Android.BackPress.SwipeEdge.TabHistoryNavigation")
                         .build();
         // Trigger Text bubble delegate back press handler from right side.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     h1.getHandleBackPressChangedSupplier().set(true);
                     h2.getHandleBackPressChangedSupplier().set(true);
@@ -297,8 +307,7 @@ public class BackPressManagerTest {
         BackPressManager manager = new BackPressManager();
         manager.setIsGestureNavEnabledSupplier(() -> true);
 
-        EmptyBackPressHandler h1 =
-                TestThreadUtils.runOnUiThreadBlockingNoException(EmptyBackPressHandler::new);
+        EmptyBackPressHandler h1 = ThreadUtils.runOnUiThreadBlocking(EmptyBackPressHandler::new);
 
         var edgeRecords =
                 HistogramWatcher.newBuilder()
@@ -311,7 +320,7 @@ public class BackPressManagerTest {
                         .expectNoRecords("Android.BackPress.Intercept.RightEdge")
                         .build();
         // Trigger tab history navigation from left side.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     manager.addHandler(h1, BackPressHandler.Type.TAB_HISTORY);
                     h1.getHandleBackPressChangedSupplier().set(true);
@@ -337,7 +346,7 @@ public class BackPressManagerTest {
                         .expectNoRecords("Android.BackPress.Intercept.LeftEdge")
                         .build();
         // Trigger tab history navigation from right side.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     var backEvent = new BackEventCompat(0, 0, 0, BackEventCompat.EDGE_RIGHT);
                     manager.getCallback().handleOnBackStarted(backEvent);
@@ -350,9 +359,156 @@ public class BackPressManagerTest {
         edgeRecords2.assertExpected("Wrong histogram records for VR delegate.");
     }
 
+    @Test
+    @SmallTest
+    public void testEscapeUsageTrue() {
+        BackPressManager manager = new BackPressManager();
+        EscModifyingBackPressHandler h1 =
+                ThreadUtils.runOnUiThreadBlocking(
+                        () -> new EscModifyingBackPressHandler(true));
+
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    manager.addHandler(h1, 0);
+                    h1.getHandleBackPressChangedSupplier().set(true);
+                });
+
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    Assert.assertTrue(
+                            "Handler should have returned true and consumed esc event.",
+                            manager.processEscapeKeyEvent());
+                    Assert.assertEquals(
+                            "Handler did not execute custom esc key code.",
+                            1,
+                            h1.getCallbackHelper().getCallCount());
+                });
+    }
+
+    @Test
+    @SmallTest
+    public void testEscapeUsageFalse() {
+        BackPressManager manager = new BackPressManager();
+        EscModifyingBackPressHandler h1 =
+                ThreadUtils.runOnUiThreadBlocking(
+                        () -> new EscModifyingBackPressHandler(false));
+
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    manager.addHandler(h1, 1);
+                    h1.getHandleBackPressChangedSupplier().set(true);
+                });
+
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    Assert.assertNull(
+                            "Handler should have returned null and not consumed any event.",
+                            manager.processEscapeKeyEvent());
+                    Assert.assertEquals(
+                            "Handler did not execute custom esc key code.",
+                            1,
+                            h1.getCallbackHelper().getCallCount());
+                });
+    }
+
+    @Test
+    @SmallTest
+    public void testEscapeUsageFallthrough() {
+        BackPressManager manager = new BackPressManager();
+
+        EscModifyingBackPressHandler h1 =
+                ThreadUtils.runOnUiThreadBlocking(
+                        () -> new EscModifyingBackPressHandler(false));
+        FailedBackPressHandler h2 = ThreadUtils.runOnUiThreadBlocking(FailedBackPressHandler::new);
+        EmptyBackPressHandler h3 = ThreadUtils.runOnUiThreadBlocking(EmptyBackPressHandler::new);
+        EscModifyingBackPressHandler h4 =
+                ThreadUtils.runOnUiThreadBlocking(
+                        () -> new EscModifyingBackPressHandler(true));
+
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    manager.addHandler(h1, 1);
+                    manager.addHandler(h2, 3);
+                    manager.addHandler(h3, 5);
+                    manager.addHandler(h4, 9);
+                    h1.getHandleBackPressChangedSupplier().set(true);
+                    h2.getHandleBackPressChangedSupplier().set(true);
+                    h3.getHandleBackPressChangedSupplier().set(false);
+                    h4.getHandleBackPressChangedSupplier().set(true);
+                });
+
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    Assert.assertEquals(
+                            "Handler should have fallen through failures to success and consumed"
+                                    + " event.",
+                            true,
+                            manager.processEscapeKeyEvent());
+                    Assert.assertEquals(
+                            "Handler did not execute custom esc key code even though it will fail.",
+                            1,
+                            h1.getCallbackHelper().getCallCount());
+                    Assert.assertEquals(
+                            "Handler did not execute back press code even though it will fall"
+                                    + " through.",
+                            1,
+                            h2.getCallbackHelper().getCallCount());
+                    Assert.assertEquals(
+                            "Handler should not have executed back press code.",
+                            0,
+                            h3.getCallbackHelper().getCallCount());
+                    Assert.assertEquals(
+                            "Handler did not execute custom esc key code.",
+                            1,
+                            h4.getCallbackHelper().getCallCount());
+                });
+    }
+
+    @Test
+    @SmallTest
+    public void testEscapePressesDoNotUseFallback() {
+        BackPressManager manager = new BackPressManager();
+
+        EscModifyingBackPressHandler h1 =
+                ThreadUtils.runOnUiThreadBlocking(
+                        () -> new EscModifyingBackPressHandler(false));
+        EscModifyingBackPressHandler h2 =
+                ThreadUtils.runOnUiThreadBlocking(() -> new EscModifyingBackPressHandler(null));
+
+        // Fail if the BackPressManager calls the fallback method, which it shouldn't.
+        manager.setFallbackOnBackPressed(
+                () -> {
+                    assert false
+                            : "BackPressManager should not call fallback on escape key presses.";
+                });
+
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    manager.addHandler(h1, 2);
+                    manager.addHandler(h2, 4);
+                    h1.getHandleBackPressChangedSupplier().set(true);
+                    h2.getHandleBackPressChangedSupplier().set(true);
+                });
+
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    Assert.assertNull(
+                            "Manager should not have found any handlers to consume Esc.",
+                            manager.processEscapeKeyEvent());
+                    Assert.assertEquals(
+                            "Handler did not execute custom esc key code even though it will fail.",
+                            1,
+                            h1.getCallbackHelper().getCallCount());
+                    Assert.assertEquals(
+                            "Handler did not execute custom esc key code even though it will fail.",
+                            1,
+                            h2.getCallbackHelper().getCallCount());
+                });
+    }
+
     // Trigger back press ignoring built-in assertion errors.
     private void triggerBackPressWithoutAssertionError(BackPressManager manager) {
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     try {
                         manager.getCallback().handleOnBackPressed();

@@ -4,7 +4,10 @@
 
 package org.chromium.chrome.browser.compositor.overlays.strip;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.Context;
+import android.graphics.drawable.BitmapDrawable;
 import android.util.AttributeSet;
 import android.util.DisplayMetrics;
 import android.util.Size;
@@ -12,13 +15,15 @@ import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.TextView;
 
-import androidx.annotation.Nullable;
 import androidx.coordinatorlayout.widget.CoordinatorLayout;
 import androidx.core.view.ViewCompat;
 
+import org.chromium.base.Callback;
 import org.chromium.base.MathUtils;
 import org.chromium.base.SysUtils;
 import org.chromium.base.supplier.ObservableSupplier;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabUtils;
@@ -26,11 +31,11 @@ import org.chromium.chrome.browser.tab_ui.TabContentManager;
 import org.chromium.chrome.browser.tab_ui.TabThumbnailView;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
-import org.chromium.chrome.browser.tabmodel.TabModelSelectorObserver;
 import org.chromium.chrome.browser.tasks.tab_management.TabUiThemeProvider;
 import org.chromium.components.embedder_support.util.UrlUtilities;
 import org.chromium.ui.base.LocalizationUtils;
 
+@NullMarked
 public class StripTabHoverCardView extends FrameLayout {
     // The max width of the tab hover card in terms of the enclosing window width percent.
     static final float HOVER_CARD_MAX_WIDTH_PERCENT = 0.9f;
@@ -40,9 +45,9 @@ public class StripTabHoverCardView extends FrameLayout {
     private TextView mTitleView;
     private TextView mUrlView;
     private TabThumbnailView mThumbnailView;
-    private TabModelSelector mTabModelSelector;
-    private TabModelSelectorObserver mTabModelSelectorObserver;
-    private TabContentManager mTabContentManager;
+    private @Nullable TabModelSelector mTabModelSelector;
+    private @Nullable Callback<TabModel> mCurrentTabModelObserver;
+    private @Nullable TabContentManager mTabContentManager;
 
     private int mLastHoveredTabId = INVALID_TAB_ID;
     private boolean mIsShowing;
@@ -70,9 +75,15 @@ public class StripTabHoverCardView extends FrameLayout {
      * @param tabX To compute hover card positioning.
      * @param tabWidth To compute hover card positioning.
      * @param height The height of the tab strip stack.
+     * @param topPadding The top padding applied to the tab strip, in dp.
      */
     public void show(
-            Tab hoveredTab, boolean isSelectedTab, float tabX, float tabWidth, float height) {
+            @Nullable Tab hoveredTab,
+            boolean isSelectedTab,
+            float tabX,
+            float tabWidth,
+            float height,
+            float topPadding) {
         if (hoveredTab == null) return;
         mLastHoveredTabId = hoveredTab.getId();
         mIsShowing = true;
@@ -89,7 +100,7 @@ public class StripTabHoverCardView extends FrameLayout {
         }
         mUrlView.setText(url);
 
-        float[] position = getHoverCardPosition(isSelectedTab, tabX, tabWidth, height);
+        float[] position = getHoverCardPosition(isSelectedTab, tabX, tabWidth, height, topPadding);
         setX(position[0]);
         setY(position[1]);
 
@@ -106,7 +117,8 @@ public class StripTabHoverCardView extends FrameLayout {
 
     /**
      * Perform tasks after the view is inflated: update the hover card colors, and add a {@link
-     * TabModelSelectorObserver} to update the view when a tab model is selected.
+     * Callback<TabModel>} to tab model supplier to update the view when a tab model is selected.
+     *
      * @param tabModelSelector The {@link TabModelSelector} to observe.
      * @param tabContentManagerSupplier Supplier of the {@link TabContentManager} instance.
      */
@@ -115,14 +127,11 @@ public class StripTabHoverCardView extends FrameLayout {
             ObservableSupplier<TabContentManager> tabContentManagerSupplier) {
         mTabModelSelector = tabModelSelector;
         mTabContentManager = tabContentManagerSupplier.get();
-        mTabModelSelectorObserver =
-                new TabModelSelectorObserver() {
-                    @Override
-                    public void onTabModelSelected(TabModel newModel, TabModel oldModel) {
-                        updateHoverCardColors(newModel.isIncognito());
-                    }
+        mCurrentTabModelObserver =
+                (tabModel) -> {
+                    updateHoverCardColors(tabModel.isIncognitoBranded());
                 };
-        mTabModelSelector.addObserver(mTabModelSelectorObserver);
+        mTabModelSelector.getCurrentTabModelSupplier().addObserver(mCurrentTabModelObserver);
         updateHoverCardColors(mTabModelSelector.isIncognitoSelected());
     }
 
@@ -145,7 +154,8 @@ public class StripTabHoverCardView extends FrameLayout {
 
     public void destroy() {
         if (mTabModelSelector != null) {
-            mTabModelSelector.removeObserver(mTabModelSelectorObserver);
+            assumeNonNull(mCurrentTabModelObserver);
+            mTabModelSelector.getCurrentTabModelSupplier().removeObserver(mCurrentTabModelObserver);
             mTabModelSelector = null;
         }
     }
@@ -158,10 +168,12 @@ public class StripTabHoverCardView extends FrameLayout {
      * @param tabX The tab x-position to compute hover card positioning.
      * @param tabWidth The tab width to compute hover card positioning.
      * @param height The height of the strip stack, to determine the y position of the card.
+     * @param topPadding The top padding applied to the tab strip, in dp.
      * @return A float array specifying the x (array[0]) and y (array[1]) coordinates of the
      *     position of the hover card, in px.
      */
-    float[] getHoverCardPosition(boolean isSelectedTab, float tabX, float tabWidth, float height) {
+    float[] getHoverCardPosition(
+            boolean isSelectedTab, float tabX, float tabWidth, float height, float topPadding) {
         // 1. Determine the window width.
         DisplayMetrics displayMetrics = getContext().getResources().getDisplayMetrics();
         float displayDensity = displayMetrics.density;
@@ -221,7 +233,7 @@ public class StripTabHoverCardView extends FrameLayout {
         }
 
         // 4. Determine the vertical position of the hover card.
-        float hoverCardYDp = height;
+        float hoverCardYDp = height + topPadding;
 
         // On a low-end device adjust the card to account for the shadow length of the background
         // drawable.
@@ -251,6 +263,7 @@ public class StripTabHoverCardView extends FrameLayout {
                                 getContext()
                                         .getResources()
                                         .getDimension(R.dimen.tab_hover_card_thumbnail_height)));
+        assumeNonNull(mTabContentManager);
         mTabContentManager.getTabThumbnailWithCallback(
                 hoveredTab.getId(),
                 thumbnailSize,
@@ -260,21 +273,21 @@ public class StripTabHoverCardView extends FrameLayout {
                     // View is not visible any more.
                     if (!mIsShowing) return;
                     if (thumbnail != null) {
-                        TabUtils.setBitmapAndUpdateImageMatrix(
-                                mThumbnailView, thumbnail, thumbnailSize);
+                        TabUtils.setDrawableAndUpdateImageMatrix(
+                                mThumbnailView, new BitmapDrawable(thumbnail), thumbnailSize);
                     } else {
                         // Always use the unselected tab version of the thumbnail placeholder.
                         mThumbnailView.updateThumbnailPlaceholder(
-                                hoveredTab.isIncognito(), /* isSelected= */ false);
+                                hoveredTab.isIncognito(),
+                                /* isSelected= */ false,
+                                /* colorId */ null);
                     }
                     mThumbnailView.setVisibility(VISIBLE);
-                },
-                false,
-                false);
+                });
     }
 
-    TabModelSelectorObserver getTabModelSelectorObserverForTesting() {
-        return mTabModelSelectorObserver;
+    @Nullable Callback<TabModel> getCurrentTabModelObserverForTesting() {
+        return mCurrentTabModelObserver;
     }
 
     int getLastHoveredTabIdForTesting() {

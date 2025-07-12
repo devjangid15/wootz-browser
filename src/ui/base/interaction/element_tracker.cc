@@ -4,6 +4,7 @@
 
 #include "ui/base/interaction/element_tracker.h"
 
+#include <algorithm>
 #include <iterator>
 #include <list>
 #include <map>
@@ -15,7 +16,6 @@
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/no_destructor.h"
-#include "base/ranges/algorithm.h"
 #include "ui/base/interaction/element_identifier.h"
 
 namespace ui {
@@ -101,7 +101,7 @@ class ElementTracker::ElementData {
   void NotifyElementHidden(TrackedElement* element) {
     if (context_) {
       const auto it = element_lookup_.find(element);
-      DCHECK(it != element_lookup_.end());
+      CHECK(it != element_lookup_.end());
       elements_.erase(it->second);
       element_lookup_.erase(it);
     }
@@ -246,7 +246,7 @@ ElementTracker::ElementList ElementTracker::GetAllMatchingElements(
   const auto it = element_data_.find(LookupKey(id, context));
   ElementList result;
   if (it != element_data_.end()) {
-    base::ranges::copy(it->second.elements(), std::back_inserter(result));
+    std::ranges::copy(it->second.elements(), std::back_inserter(result));
   }
   return result;
 }
@@ -256,7 +256,7 @@ ElementTracker::ElementList ElementTracker::GetAllMatchingElementsInAnyContext(
   ElementList result;
   for (const auto& [key, data] : element_data_) {
     if (key.first == id) {
-      base::ranges::copy(data.elements(), std::back_inserter(result));
+      std::ranges::copy(data.elements(), std::back_inserter(result));
     }
   }
   return result;
@@ -410,7 +410,7 @@ void ElementTracker::NotifyElementActivated(TrackedElement* element) {
   GarbageCollector::Frame gc_frame(gc_.get());
   const auto it =
       element_data_.find(LookupKey(element->identifier(), element->context()));
-  DCHECK(it != element_data_.end());
+  CHECK(it != element_data_.end());
   it->second.NotifyElementActivated(safe_element);
 
   // Do "all contexts" notification:
@@ -439,7 +439,7 @@ void ElementTracker::NotifyElementHidden(TrackedElement* element) {
   // Call context-specific callbacks and erase entry.
   const auto it =
       element_data_.find(LookupKey(element->identifier(), element->context()));
-  DCHECK(it != element_data_.end());
+  CHECK(it != element_data_.end());
   ElementData* const data = &it->second;
   data->NotifyElementHidden(element);
   gc_frame.Add(data);
@@ -524,6 +524,14 @@ SafeElementReference::SafeElementReference(SafeElementReference&& other)
 SafeElementReference::SafeElementReference(const SafeElementReference& other)
     : element_(other.element_) {
   Subscribe();
+}
+
+SafeElementReference& SafeElementReference::operator=(TrackedElement* el) {
+  if (element_ != el) {
+    element_ = el;
+    Subscribe();
+  }
+  return *this;
 }
 
 SafeElementReference& SafeElementReference::operator=(

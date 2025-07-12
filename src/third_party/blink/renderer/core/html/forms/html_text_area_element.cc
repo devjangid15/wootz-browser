@@ -55,10 +55,12 @@
 #include "third_party/blink/renderer/core/layout/forms/layout_text_control_multi_line.h"
 #include "third_party/blink/renderer/core/layout/layout_box.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
+#include "third_party/blink/renderer/core/layout/layout_object_inlines.h"
 #include "third_party/blink/renderer/core/page/chrome_client.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/text/platform_locale.h"
@@ -170,9 +172,6 @@ int HTMLTextAreaElement::scrollHeight() {
 
 void HTMLTextAreaElement::ChildrenChanged(const ChildrenChange& change) {
   HTMLElement::ChildrenChanged(change);
-  if (!RuntimeEnabledFeatures::TextAreaChildrenChangedStillValidatesEnabled()) {
-    SetLastChangeWasNotUserEdit();
-  }
   if (is_dirty_)
     SetInnerEditorValue(Value());
   else
@@ -195,22 +194,22 @@ bool HTMLTextAreaElement::IsPresentationAttribute(
 void HTMLTextAreaElement::CollectStyleForPresentationAttribute(
     const QualifiedName& name,
     const AtomicString& value,
-    MutableCSSPropertyValueSet* style) {
+    HeapVector<CSSPropertyValue, 8>& style) {
   if (name == html_names::kWrapAttr) {
     if (ShouldWrapText()) {
       // Longhands of `white-space: pre-wrap`.
       AddPropertyToPresentationAttributeStyle(
           style, CSSPropertyID::kWhiteSpaceCollapse, CSSValueID::kPreserve);
-      AddPropertyToPresentationAttributeStyle(style, CSSPropertyID::kTextWrap,
-                                              CSSValueID::kWrap);
+      AddPropertyToPresentationAttributeStyle(
+          style, CSSPropertyID::kTextWrapMode, CSSValueID::kWrap);
       AddPropertyToPresentationAttributeStyle(
           style, CSSPropertyID::kOverflowWrap, CSSValueID::kBreakWord);
     } else {
       // Longhands of `white-space: pre`.
       AddPropertyToPresentationAttributeStyle(
           style, CSSPropertyID::kWhiteSpaceCollapse, CSSValueID::kPreserve);
-      AddPropertyToPresentationAttributeStyle(style, CSSPropertyID::kTextWrap,
-                                              CSSValueID::kNowrap);
+      AddPropertyToPresentationAttributeStyle(
+          style, CSSPropertyID::kTextWrapMode, CSSValueID::kNowrap);
       AddPropertyToPresentationAttributeStyle(
           style, CSSPropertyID::kOverflowWrap, CSSValueID::kNormal);
     }
@@ -284,7 +283,11 @@ void HTMLTextAreaElement::ParseAttribute(
   }
 }
 
-LayoutObject* HTMLTextAreaElement::CreateLayoutObject(const ComputedStyle&) {
+LayoutObject* HTMLTextAreaElement::CreateLayoutObject(
+    const ComputedStyle& style) {
+  if (style.IsVerticalWritingMode()) {
+    UseCounter::Count(GetDocument(), WebFeature::kVerticalFormControls);
+  }
   return MakeGarbageCollected<LayoutTextControlMultiLine>(this);
 }
 
@@ -314,8 +317,14 @@ bool HTMLTextAreaElement::HasCustomFocusLogic() const {
   return true;
 }
 
-bool HTMLTextAreaElement::IsKeyboardFocusable(
+bool HTMLTextAreaElement::IsKeyboardFocusableSlow(
     UpdateBehavior update_behavior) const {
+  // Interest invoker targets with partial interest aren't keyboard focusable.
+  if (IsInPartialInterestPopover()) {
+    CHECK(RuntimeEnabledFeatures::HTMLInterestForAttributeEnabled(
+        GetDocument().GetExecutionContext()));
+    return false;
+  }
   // If a given text area can be focused at all, then it will always be keyboard
   // focusable, unless it has a negative tabindex set.
   return IsFocusable(update_behavior) && tabIndex() >= 0;
@@ -357,6 +366,8 @@ void HTMLTextAreaElement::DefaultEventHandler(Event& event) {
 }
 
 void HTMLTextAreaElement::SubtreeHasChanged() {
+  TRACE_EVENT0("blink", "HTMLTextAreaElement::SubtreeHasChanged");
+  AdjustPlaceholderBreakElement();
 #if DCHECK_IS_ON()
   // The innerEditor should have either Text nodes or a placeholder break
   // element. If we see other nodes, it's a bug in editing code and we should
@@ -366,10 +377,15 @@ void HTMLTextAreaElement::SubtreeHasChanged() {
     if (node.IsTextNode())
       continue;
     DCHECK(IsA<HTMLBRElement>(node));
-    DCHECK_EQ(&node, inner_editor->lastChild());
+    if (RuntimeEnabledFeatures::TextareaLineEndingsAsBrEnabled()) {
+      if (IsPlaceholderBreakElement(&node)) {
+        DCHECK_EQ(&node, inner_editor->lastChild());
+      }
+    } else {
+      DCHECK_EQ(&node, inner_editor->lastChild());
+    }
   }
 #endif
-  AddPlaceholderBreakElementIfNecessary();
   SetValueBeforeFirstUserEditIfNotSet();
   UpdateValue();
   CheckIfValueWasReverted(Value());
@@ -377,19 +393,24 @@ void HTMLTextAreaElement::SubtreeHasChanged() {
   SetAutofillState(WebAutofillState::kNotFilled);
   UpdatePlaceholderVisibility();
 
+  if (HasDirectionAuto()) {
+    // When typing in a textarea, childrenChanged is not called, so we need to
+    // force the directionality check.
+    CalculateAndAdjustAutoDirectionality();
+  }
+
   if (!IsFocused())
     return;
 
-  // When typing in a textarea, childrenChanged is not called, so we need to
-  // force the directionality check.
-  CalculateAndAdjustAutoDirectionality();
-
   DCHECK(GetDocument().IsActive());
+  if (value_.empty()) {
+    GetDocument().GetPage()->GetChromeClient().DidClearValueInTextField(*this);
+  }
   GetDocument().GetPage()->GetChromeClient().DidChangeValueInTextField(*this);
 }
 
 void HTMLTextAreaElement::HandleBeforeTextInsertedEvent(
-    BeforeTextInsertedEvent* event) const {
+    BeforeTextInsertedEvent* event) {
   DCHECK(event);
   DCHECK(GetLayoutObject());
   int signed_max_length = maxLength();
@@ -422,6 +443,11 @@ void HTMLTextAreaElement::HandleBeforeTextInsertedEvent(
   unsigned appendable_length =
       unsigned_max_length > base_length ? unsigned_max_length - base_length : 0;
   event->SetText(SanitizeUserInputValue(event->GetText(), appendable_length));
+
+  if (selection_length == current_length && selection_length != 0 &&
+      !event->GetText().empty()) {
+    GetDocument().GetPage()->GetChromeClient().DidClearValueInTextField(*this);
+  }
 }
 
 String HTMLTextAreaElement::SanitizeUserInputValue(const String& proposed_value,
@@ -446,7 +472,7 @@ String HTMLTextAreaElement::SanitizeUserInputValue(const String& proposed_value,
 }
 
 void HTMLTextAreaElement::UpdateValue() {
-  value_ = InnerEditorValue();
+  value_ = SerializeInnerEditorValue();
   NotifyFormStateChanged();
   is_dirty_ = true;
   UpdatePlaceholderVisibility();
@@ -557,17 +583,12 @@ void HTMLTextAreaElement::SetValueCommon(const String& new_value,
       break;
   }
 
-  if (!RuntimeEnabledFeatures::AllowJavaScriptToResetAutofillStateEnabled()) {
-    // We set the Autofilled state again because setting the autofill value
-    // triggers JavaScript events and the site may override the autofilled
-    // value, which resets the autofill state. Even if the website modifies the
-    // form control element's content during the autofill operation, we want the
-    // state to show as autofilled.
-    // If AllowJavaScriptToResetAutofillState is enabled, the WebAutofillClient
-    // will monitor JavaScript induced changes and take care of resetting the
-    // autofill state when appropriate.
-    SetAutofillState(autofill_state);
-  }
+  // We set the Autofilled state again because setting the autofill value
+  // triggers JavaScript events and the site may override the autofilled
+  // value, which resets the autofill state. Even if the website modifies the
+  // form control element's content during the autofill operation, we want the
+  // state to show as autofilled.
+  SetAutofillState(autofill_state);
 }
 
 String HTMLTextAreaElement::defaultValue() const {
@@ -705,11 +726,15 @@ void HTMLTextAreaElement::SetPlaceholderVisibility(bool visible) {
 void HTMLTextAreaElement::CreateInnerEditorElementIfNecessary() const {
   // HTMLTextArea immediately creates the inner-editor, so this function should
   // never be called.
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 bool HTMLTextAreaElement::IsInnerEditorValueEmpty() const {
-  return InnerEditorValue().empty();
+  return Value().empty();
+}
+
+String HTMLTextAreaElement::InnerEditorValue() const {
+  return Value();
 }
 
 HTMLElement* HTMLTextAreaElement::UpdatePlaceholderText() {

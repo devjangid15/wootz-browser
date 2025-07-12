@@ -22,7 +22,7 @@ import type {SettingsSubpageElement} from './settings_page/settings_subpage.js';
  */
 export interface SearchResult {
   canceled: boolean;
-  didFindMatches: boolean;
+  matchCount: number;
   wasClearSearch: boolean;
 }
 
@@ -40,6 +40,7 @@ const IGNORED_ELEMENTS: Set<string> = new Set([
   'CONTENT',
   'CR-ACTION-MENU',
   'CR-DIALOG',
+  'CR-ICON',
   'CR-ICON-BUTTON',
   'CR-RIPPLE',
   'CR-SLIDER',
@@ -61,10 +62,10 @@ const IGNORED_ELEMENTS: Set<string> = new Set([
  * occurred under their subtree.
  *
  * @param root The root of the sub-tree to be searched
- * @return Whether or not matches were found.
+ * @return The number of matches that were found.
  */
-function findAndHighlightMatches(request: SearchRequest, root: Node): boolean {
-  let foundMatches = false;
+function findAndHighlightMatches(request: SearchRequest, root: Node): number {
+  let matchCount = 0;
   const highlights: HTMLElement[] = [];
 
   // Returns true if the node or any of its ancestors are a settings-subpage.
@@ -101,7 +102,7 @@ function findAndHighlightMatches(request: SearchRequest, root: Node): boolean {
     }
 
     if (node instanceof HTMLElement) {
-      const element = node as HTMLElement;
+      const element = node;
       if (element.hasAttribute(SKIP_SEARCH_CSS_ATTRIBUTE) ||
           element.hasAttribute('hidden') || element.style.display === 'none') {
         return;
@@ -121,7 +122,7 @@ function findAndHighlightMatches(request: SearchRequest, root: Node): boolean {
       }
 
       if (ranges.length > 0) {
-        foundMatches = true;
+        matchCount += ranges.length;
         revealParentSection(
             node, /*numResults=*/ ranges.length, request.bubbles);
 
@@ -167,7 +168,7 @@ function findAndHighlightMatches(request: SearchRequest, root: Node): boolean {
 
   doSearch(root);
   request.addHighlights(highlights);
-  return foundMatches;
+  return matchCount;
 }
 
 /**
@@ -177,6 +178,7 @@ function findAndHighlightMatches(request: SearchRequest, root: Node): boolean {
 function revealParentSection(
     node: Node, numResults: number, bubbles: Map<Node, number>) {
   let associatedControl: HTMLElement|null = null;
+  let subpageTitle: string = '';
 
   // Find corresponding SETTINGS-SECTION parent and make it visible.
   let parent = node;
@@ -190,14 +192,28 @@ function revealParentSection(
     }
     if (parent.nodeName === 'SETTINGS-SUBPAGE') {
       const subpage = parent as SettingsSubpageElement;
-      assert(
-          subpage.associatedControl,
-          'An associated control was expected for SETTINGS-SUBPAGE ' +
-              subpage.pageTitle + ', but was not found.');
       associatedControl = subpage.associatedControl;
+      subpageTitle = subpage.pageTitle;
     }
   }
-  (parent as SettingsSectionElement).hiddenBySearch = false;
+
+  const parentSection = parent as SettingsSectionElement;
+  parentSection.hiddenBySearch = false;
+
+  if (!parentSection.hasAttribute('section')) {
+    // Nothing else to do. A <settings-section> without a 'section' attribute
+    // indicates that it has been migrated to the plugin architecture, where
+    // <setttings-section> is just a presentational element and has no semantic
+    // meaning. Showing bubbles is handled by each individual plugin instead.
+    return;
+  }
+
+  if (subpageTitle !== '') {
+    assert(
+        associatedControl,
+        'An associated control was expected for SETTINGS-SUBPAGE ' +
+            subpageTitle + ', but was not found.');
+  }
 
   // Need to add the search bubble after the parent SETTINGS-SECTION has
   // become visible, otherwise |offsetWidth| returns zero.
@@ -208,7 +224,7 @@ function revealParentSection(
   }
 }
 
-function showBubble(
+export function showBubble(
     control: Node, numResults: number, bubbles: Map<Node, number>,
     horizontallyCenter: boolean) {
   const bubble = createEmptySearchBubble(control, horizontallyCenter);
@@ -238,20 +254,20 @@ abstract class Task {
  * rendering is done.
  */
 class RenderTask extends Task {
-  declare protected node: DomIf;
-
   exec() {
-    const routePath = this.node.getAttribute('route-path')!;
+    const domIfNode = this.node as DomIf;
+
+    const routePath = domIfNode.getAttribute('route-path')!;
 
     const content = DomIf._contentForTemplate(
-        this.node.firstElementChild as HTMLTemplateElement);
+        domIfNode.firstElementChild as HTMLTemplateElement);
     const subpageTemplate = content!.querySelector('settings-subpage')!;
     subpageTemplate.setAttribute('route-path', routePath);
-    assert(!this.node.if);
-    this.node.if = true;
+    assert(!domIfNode.if);
+    domIfNode.if = true;
 
     return new Promise<void>(resolve => {
-      const parent = this.node.parentNode!;
+      const parent = domIfNode.parentNode!;
       microTask.run(() => {
         const renderedNode =
             parent.querySelector('[route-path="' + routePath + '"]');
@@ -268,28 +284,27 @@ class RenderTask extends Task {
 
 class SearchAndHighlightTask extends Task {
   exec() {
-    const foundMatches = findAndHighlightMatches(this.request, this.node);
-    this.request.updateMatches(foundMatches);
+    const matchCount = findAndHighlightMatches(this.request, this.node);
+    this.request.updateMatchCount(matchCount);
     return Promise.resolve();
   }
 }
 
 class TopLevelSearchTask extends Task {
-  declare protected node: HTMLElement;
-
   exec() {
     const shouldSearch = this.request.regExp !== null;
     this.setSectionsVisibility_(!shouldSearch);
     if (shouldSearch) {
-      const foundMatches = findAndHighlightMatches(this.request, this.node);
-      this.request.updateMatches(foundMatches);
+      const matchCount = findAndHighlightMatches(this.request, this.node);
+      this.request.updateMatchCount(matchCount);
     }
 
     return Promise.resolve();
   }
 
   private setSectionsVisibility_(visible: boolean) {
-    const sections = this.node.querySelectorAll('settings-section');
+    const sections =
+        (this.node as HTMLElement).querySelectorAll('settings-section');
 
     for (let i = 0; i < sections.length; i++) {
       sections[i].hiddenBySearch = !visible;
@@ -385,8 +400,8 @@ export class SearchRequest {
   private root_: Element;
   regExp: RegExp|null;
   canceled: boolean;
-  private foundMatches_: boolean;
-  resolver: PromiseResolver<SearchRequest>;
+  private matchCount_: number = 0;
+  resolver: PromiseResolver<SearchRequest> = new PromiseResolver();
   queue: TaskQueue;
   private textObservers_: Set<MutationObserver>;
   private highlights_: HTMLElement[];
@@ -401,9 +416,6 @@ export class SearchRequest {
      * Whether this request was canceled before completing.
      */
     this.canceled = false;
-
-    this.foundMatches_ = false;
-    this.resolver = new PromiseResolver();
 
     this.queue = new TaskQueue(this);
     this.queue.onEmpty(() => {
@@ -477,16 +489,32 @@ export class SearchRequest {
   }
 
   /**
-   * Updates the result for this search request.
+   * Updates the number of search hits found for this search request.
    */
-  updateMatches(found: boolean) {
-    this.foundMatches_ = this.foundMatches_ || found;
+  updateMatchCount(newMatches: number) {
+    this.matchCount_ += newMatches;
   }
 
-  /** @return Whether any matches were found. */
-  didFindMatches(): boolean {
-    return this.foundMatches_;
+  getSearchResult(): SearchResult {
+    assert(this.resolver.isFulfilled);
+    return {
+      canceled: this.canceled,
+      matchCount: this.matchCount_,
+      wasClearSearch: this.isSame(''),
+    };
   }
+}
+
+// Helper to combine multiple SearchResult instances to a single one. The
+// combined result only makes sense when the results are coming from
+// SearchRequest instances that were issued for a single user query.
+export function combineSearchResults(results: SearchResult[]): SearchResult {
+  assert(results.length > 0);
+  return {
+    canceled: results.some(r => r.canceled),
+    matchCount: results.reduce((soFar, r) => soFar + r.matchCount, 0),
+    wasClearSearch: results[0].wasClearSearch,
+  };
 }
 
 const SANITIZE_REGEX: RegExp = /[-[\]{}()*+?.,\\^$|#\s]/g;

@@ -20,6 +20,7 @@ import type {PrivacyPageBrowserProxy} from '/shared/settings/privacy_page/privac
 import {PrivacyPageBrowserProxyImpl} from '/shared/settings/privacy_page/privacy_page_browser_proxy.js';
 import {HelpBubbleMixin} from 'chrome://resources/cr_components/help_bubble/help_bubble_mixin.js';
 import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
+import {WebUiListenerMixin} from 'chrome://resources/cr_elements/web_ui_listener_mixin.js';
 import {assert} from 'chrome://resources/js/assert.js';
 import {EventTracker} from 'chrome://resources/js/event_tracker.js';
 import {focusWithoutInk} from 'chrome://resources/js/focus_without_ink.js';
@@ -36,6 +37,10 @@ import {MetricsBrowserProxyImpl, PrivacyElementInteractions, SafeBrowsingInterac
 import {routes} from '../route.js';
 import type {Route} from '../router.js';
 import {RouteObserverMixin, Router} from '../router.js';
+import {ContentSettingsTypes} from '../site_settings/constants.js';
+import type {SiteSettingsPrefsBrowserProxy} from '../site_settings/site_settings_prefs_browser_proxy.js';
+import {SiteSettingsPrefsBrowserProxyImpl} from '../site_settings/site_settings_prefs_browser_proxy.js';
+import {isSettingEnabled} from '../site_settings/site_settings_util.js';
 
 import type {SettingsCollapseRadioButtonElement} from './collapse_radio_button.js';
 import {getTemplate} from './security_page.html.js';
@@ -58,8 +63,10 @@ export enum SafeBrowsingSetting {
  */
 export enum HttpsFirstModeSetting {
   DISABLED = 0,
-  ENABLED_INCOGNITO = 1,
+  // DEPRECATED: A separate Incognito setting never shipped.
+  // ENABLED_INCOGNITO = 1,
   ENABLED_FULL = 2,
+  ENABLED_BALANCED = 3,
 }
 
 export interface SettingsSecurityPageElement {
@@ -73,8 +80,8 @@ export interface SettingsSecurityPageElement {
   };
 }
 
-const SettingsSecurityPageElementBase =
-    HelpBubbleMixin(RouteObserverMixin(I18nMixin(PrefsMixin(PolymerElement))));
+const SettingsSecurityPageElementBase = HelpBubbleMixin(RouteObserverMixin(
+    WebUiListenerMixin(I18nMixin(PrefsMixin(PolymerElement)))));
 
 export class SettingsSecurityPageElement extends
     SettingsSecurityPageElementBase {
@@ -88,27 +95,6 @@ export class SettingsSecurityPageElement extends
 
   static get properties() {
     return {
-      /**
-       * Preferences state.
-       */
-      prefs: {
-        type: Object,
-        notify: true,
-      },
-
-      // <if expr="chrome_root_store_cert_management_ui">
-      /**
-       * Whether we should show the new cert management UI.
-       */
-      enableCertManagementUIV2_: {
-        type: Boolean,
-        readOnly: true,
-        value: function() {
-          return loadTimeData.getBoolean('enableCertManagementUIV2');
-        },
-      },
-      // </if>
-
       /**
        * Whether the secure DNS setting should be displayed.
        */
@@ -149,6 +135,19 @@ export class SettingsSecurityPageElement extends
         value: HttpsFirstModeSetting,
       },
 
+      /**
+       * Setting for HTTPS-First Mode when the toggle is off.
+       */
+      httpsFirstModeUncheckedValues_: {
+        type: Array,
+        value: () => [HttpsFirstModeSetting.DISABLED],
+      },
+
+      javascriptOptimizerSubLabel_: {
+        type: String,
+        value: '',
+      },
+
       enableHttpsFirstModeNewSettings_: {
         type: Boolean,
         readOnly: true,
@@ -165,36 +164,24 @@ export class SettingsSecurityPageElement extends
         },
       },
 
-      // <if expr="is_win">
-      enableSecurityKeysPhonesSubpage_: {
-        type: Boolean,
-        readOnly: true,
-        value() {
-          // The phones subpage is linked from the security keys subpage, if
-          // it exists. Thus the phones subpage is only linked from this page
-          // if the security keys subpage is disabled.
-          return !loadTimeData.getBoolean('enableSecurityKeysSubpage');
-        },
-      },
-      // </if>
-
       focusConfig: {
         type: Object,
         observer: 'focusConfigChanged_',
-      },
-
-      enableFriendlierSafeBrowsingSettings_: {
-        type: Boolean,
-        value() {
-          return loadTimeData.getBoolean(
-              'enableFriendlierSafeBrowsingSettings');
-        },
       },
 
       enableHashPrefixRealTimeLookups_: {
         type: Boolean,
         value() {
           return loadTimeData.getBoolean('enableHashPrefixRealTimeLookups');
+        },
+      },
+
+      hideExtendedReportingRadioButton_: {
+        type: Boolean,
+        value() {
+          return loadTimeData.getBoolean(
+                     'extendedReportingRemovePrefDependency') &&
+              loadTimeData.getBoolean('hashPrefixRealTimeLookupsSamplePing');
         },
       },
 
@@ -228,63 +215,54 @@ export class SettingsSecurityPageElement extends
       },
     };
   }
-  // <if expr="chrome_root_store_cert_management_ui">
-  private enableCertManagementUIV2_: boolean;
-  // </if>
-  private showSecureDnsSetting_: boolean;
+  declare private showSecureDnsSetting_: boolean;
 
   // <if expr="is_chromeos">
-  private showSecureDnsSettingLink_: boolean;
+  declare private showSecureDnsSettingLink_: boolean;
   // </if>
 
-  private enableSecurityKeysSubpage_: boolean;
-  focusConfig: FocusConfig;
-  private showDisableSafebrowsingDialog_: boolean;
-  private enableFriendlierSafeBrowsingSettings_: boolean;
-  private enableHashPrefixRealTimeLookups_: boolean;
-  private enableHttpsFirstModeNewSettings_: boolean;
-  private lastFocusTime_: number|undefined;
-  private totalTimeInFocus_: number;
-  private lastInteraction_: SecurityPageInteraction;
-  private safeBrowsingStateOnOpen_: SafeBrowsingSetting;
-  private isRouteSecurity_: boolean;
+  declare private enableSecurityKeysSubpage_: boolean;
+  declare focusConfig: FocusConfig;
+  declare private showDisableSafebrowsingDialog_: boolean;
+  declare private enableHashPrefixRealTimeLookups_: boolean;
+  declare private httpsFirstModeUncheckedValues_: HttpsFirstModeSetting[];
+  declare private enableHttpsFirstModeNewSettings_: boolean;
+  declare private javascriptOptimizerSubLabel_: string;
+  declare private lastFocusTime_: number|undefined;
+  declare private totalTimeInFocus_: number;
+  declare private lastInteraction_: SecurityPageInteraction;
+  declare private safeBrowsingStateOnOpen_: SafeBrowsingSetting;
+  declare private isRouteSecurity_: boolean;
   private eventTracker_: EventTracker = new EventTracker();
+  declare private hideExtendedReportingRadioButton_: boolean;
 
   private browserProxy_: PrivacyPageBrowserProxy =
       PrivacyPageBrowserProxyImpl.getInstance();
   private metricsBrowserProxy_: MetricsBrowserProxy =
       MetricsBrowserProxyImpl.getInstance();
+  private siteBrowserProxy_: SiteSettingsPrefsBrowserProxy =
+      SiteSettingsPrefsBrowserProxyImpl.getInstance();
 
   private focusConfigChanged_(_newConfig: FocusConfig, oldConfig: FocusConfig) {
     assert(!oldConfig);
-    // TODO(crbug.com/40928765): fix this for new cert management UI.
-    // <if expr="use_nss_certs">
-    if (routes.CERTIFICATES) {
-      this.focusConfig.set(routes.CERTIFICATES.path, () => {
-        const toFocus = this.shadowRoot!.querySelector<HTMLElement>(
-            '#manageCertificatesLinkRow');
-        assert(toFocus);
-        focusWithoutInk(toFocus);
-      });
-    }
-    // </if>
 
     if (routes.SECURITY_KEYS) {
       this.focusConfig.set(routes.SECURITY_KEYS.path, () => {
         const toFocus = this.shadowRoot!.querySelector<HTMLElement>(
-            '#security-keys-subpage-trigger');
+            '#securityKeysSubpageTrigger');
         assert(toFocus);
         focusWithoutInk(toFocus);
       });
     }
 
-    if (routes.SITE_SETTINGS_JAVASCRIPT_JIT) {
-      this.focusConfig.set(routes.SITE_SETTINGS_JAVASCRIPT_JIT.path, () => {
-        const toFocus =
-            this.shadowRoot!.querySelector<HTMLElement>('#v8-setting-link');
-        assert(toFocus);
-        focusWithoutInk(toFocus);
-      });
+    if (routes.SITE_SETTINGS_JAVASCRIPT_OPTIMIZER) {
+      this.focusConfig.set(
+          routes.SITE_SETTINGS_JAVASCRIPT_OPTIMIZER.path, () => {
+            const toFocus = this.shadowRoot!.querySelector<HTMLElement>(
+                '#javascriptOptimizerSettingLink');
+            assert(toFocus);
+            focusWithoutInk(toFocus);
+          });
     }
   }
 
@@ -304,11 +282,11 @@ export class SettingsSecurityPageElement extends
       this.safeBrowsingStateOnOpen_ = prefValue;
 
       // The HTTPS-First Mode generated pref should never be set to
-      // ENABLED_INCOGNITO if the feature flag is not enabled.
+      // ENABLED_BALANCED if the feature flag is not enabled.
       if (!loadTimeData.getBoolean('enableHttpsFirstModeNewSettings')) {
         assert(
             this.getPref('generated.https_first_mode_enabled').value !==
-            HttpsFirstModeSetting.ENABLED_INCOGNITO);
+            HttpsFirstModeSetting.ENABLED_BALANCED);
       }
     });
 
@@ -318,6 +296,14 @@ export class SettingsSecurityPageElement extends
 
     // Initialize the last focus time on page load.
     this.lastFocusTime_ = HatsBrowserProxyImpl.getInstance().now();
+
+    this.addWebUiListener(
+        'contentSettingCategoryChanged', (category: ContentSettingsTypes) => {
+          if (category === ContentSettingsTypes.JAVASCRIPT_OPTIMIZER) {
+            this.updateJavascriptOptimizerEnabledByDefault_();
+          }
+        });
+    this.updateJavascriptOptimizerEnabledByDefault_();
   }
 
   /**
@@ -408,6 +394,16 @@ export class SettingsSecurityPageElement extends
     this.$.safeBrowsingStandard.updateCollapsed();
   }
 
+  private async updateJavascriptOptimizerEnabledByDefault_() {
+    const defaultValue =
+        await this.siteBrowserProxy_.getDefaultValueForContentType(
+            ContentSettingsTypes.JAVASCRIPT_OPTIMIZER);
+    this.javascriptOptimizerSubLabel_ = this.i18n(
+        isSettingEnabled(defaultValue.setting) ?
+            'securityJavascriptOptimizerLinkRowLabelEnabled' :
+            'securityJavascriptOptimizerLinkRowLabelDisabled');
+  }
+
   /**
    * Possibly displays the Safe Browsing disable dialog based on the users
    * selection.
@@ -420,10 +416,6 @@ export class SettingsSecurityPageElement extends
       this.recordInteractionHistogramOnRadioChange_(selected);
       this.recordActionOnRadioChange_(selected);
       this.interactedWithPage_(selected);
-      this.setPrefValue(
-          'safebrowsing.esb_opt_in_with_friendlier_settings',
-          selected === SafeBrowsingSetting.ENHANCED &&
-              this.enableFriendlierSafeBrowsingSettings_);
     }
     if (selected === SafeBrowsingSetting.DISABLED) {
       this.showDisableSafebrowsingDialog_ = true;
@@ -443,48 +435,15 @@ export class SettingsSecurityPageElement extends
         SafeBrowsingSetting.STANDARD;
   }
 
-  private getSafeBrowsingDisabledSubLabel_(): string {
-    return this.i18n(
-        this.enableFriendlierSafeBrowsingSettings_ ?
-            'safeBrowsingNoneDescUpdated' :
-            'safeBrowsingNoneDesc');
-  }
-
-  private getSafeBrowsingEnhancedSubLabel_(): string {
-    return this.i18n(
-        this.enableFriendlierSafeBrowsingSettings_ ?
-            'safeBrowsingEnhancedDescUpdated' :
-            'safeBrowsingEnhancedDesc');
-  }
-
   private getSafeBrowsingStandardSubLabel_(): string {
     return this.i18n(
-        this.enableFriendlierSafeBrowsingSettings_ ?
-            this.enableHashPrefixRealTimeLookups_ ?
-            'safeBrowsingStandardDescUpdatedProxy' :
-            'safeBrowsingStandardDescUpdated' :
+        this.enableHashPrefixRealTimeLookups_ ?
+            'safeBrowsingStandardDescProxy' :
             'safeBrowsingStandardDesc');
   }
 
-  private getSafeBrowsingStandardBulTwo_(): string {
-    return this.i18n(
-        this.enableHashPrefixRealTimeLookups_ ?
-            'safeBrowsingStandardBulTwoProxy' :
-            'safeBrowsingStandardBulTwo');
-  }
-
-  private getPasswordsLeakToggleLabel_(): string {
-    return this.i18n(
-        this.enableFriendlierSafeBrowsingSettings_ ?
-            'passwordsLeakDetectionLabelUpdated' :
-            'passwordsLeakDetectionLabel');
-  }
-
   private getPasswordsLeakToggleSubLabel_(): string {
-    let subLabel = this.i18n(
-        this.enableFriendlierSafeBrowsingSettings_ ?
-            'passwordsLeakDetectionGeneralDescriptionUpdated' :
-            'passwordsLeakDetectionGeneralDescription');
+    let subLabel = this.i18n('passwordsLeakDetectionGeneralDescription');
     // If the backing password leak detection preference is enabled, but the
     // generated preference is off and user control is disabled, then additional
     // text explaining that the feature will be enabled if the user signs in is
@@ -514,53 +473,49 @@ export class SettingsSecurityPageElement extends
     // text explaining that the feature is locked down for Advanced Protection
     // users is added.
     const generatedPref = this.getPref('generated.https_first_mode_enabled');
-    return this.i18n(
-        generatedPref.userControlDisabled ?
-            'httpsOnlyModeDescriptionAdvancedProtection' :
-            'httpsOnlyModeDescription');
+    if (this.enableHttpsFirstModeNewSettings_) {
+      return this.i18n(
+          generatedPref.userControlDisabled ?
+              'httpsFirstModeDescriptionAdvancedProtection' :
+              'httpsFirstModeSectionDescription');
+    } else {
+      return this.i18n(
+          generatedPref.userControlDisabled ?
+              'httpsOnlyModeDescriptionAdvancedProtection' :
+              'httpsOnlyModeDescription');
+    }
+  }
+
+  private isHttpsFirstModeExpanded_(value: number): boolean {
+    // If the pref is not user-modifiable, we should only show the main toggle.
+    // (Note: this is not the case when the setting is policy-managed -- the
+    // radio group should be expanded and labeled with the enterprise
+    // indicator.)
+    const generatedPref = this.getPref('generated.https_first_mode_enabled');
+    if (generatedPref.userControlDisabled) {
+      return false;
+    }
+    return value !== HttpsFirstModeSetting.DISABLED;
   }
 
   private onManageCertificatesClick_() {
-    // <if expr="use_nss_certs">
-    Router.getInstance().navigateTo(routes.CERTIFICATES);
-    // </if>
-    // <if expr="is_win or is_macosx">
-    this.browserProxy_.showManageSslCertificates();
-    // </if>
     this.metricsBrowserProxy_.recordSettingsPageHistogram(
         PrivacyElementInteractions.MANAGE_CERTIFICATES);
-  }
-
-  private onNewManageCertificatesClick_() {
-    // Use the same route and histogram as the old NSS-only cert management
-    // page.
-    Router.getInstance().navigateTo(routes.CERTIFICATES);
-    this.metricsBrowserProxy_.recordSettingsPageHistogram(
-        PrivacyElementInteractions.MANAGE_CERTIFICATES);
-  }
-
-  private onChromeCertificatesClick_() {
     OpenWindowProxyImpl.getInstance().openUrl(
-        loadTimeData.getString('chromeRootStoreHelpCenterURL'));
+        loadTimeData.getString('certManagementV2URL'));
   }
 
   private onAdvancedProtectionProgramLinkClick_() {
     window.open(loadTimeData.getString('advancedProtectionURL'));
   }
 
-  private onV8SettingsClick_() {
-    Router.getInstance().navigateTo(routes.SITE_SETTINGS_JAVASCRIPT_JIT);
+  private onJavascriptOptimizerSettingsClick_() {
+    Router.getInstance().navigateTo(routes.SITE_SETTINGS_JAVASCRIPT_OPTIMIZER);
   }
 
   private onSecurityKeysClick_() {
     Router.getInstance().navigateTo(routes.SECURITY_KEYS);
   }
-
-  // <if expr="is_win">
-  private onManagePhonesClick_() {
-    Router.getInstance().navigateTo(routes.SECURITY_KEYS_PHONES);
-  }
-  // </if>
 
   private onEnhancedProtectionLearnMoreClick_(e: Event) {
     OpenWindowProxyImpl.getInstance().openUrl(

@@ -9,7 +9,11 @@ import unittest
 from typing import List
 from unittest import mock
 
-from blinkpy.common.checkout.git import CommitRange
+from blinkpy.common.checkout.git import (
+    CommitRange,
+    FileStatus,
+    FileStatusType,
+)
 from blinkpy.common.host_mock import MockHost
 from blinkpy.common.net.git_cl import CLRevisionID
 from blinkpy.common.net.rpc import RESPONSE_PREFIX
@@ -52,7 +56,7 @@ class ImportNotifierTest(unittest.TestCase):
         self.host.filesystem.write_text_file(
             self.finder.path_from_wpt_tests('MANIFEST.json'),
             json.dumps({
-                'version': 8,
+                'version': 9,
                 'items': {
                     'testharness': {
                         'foo': {
@@ -203,10 +207,8 @@ class ImportNotifierTest(unittest.TestCase):
 
     def _setup_import_cl(self, messages: List[str]):
         gerrit_query = (
-            'https://chromium-review.googlesource.com/changes/'
-            '?q=owner:wpt-autoroller%40chops-service-accounts.'
-            'iam.gserviceaccount.com'
-            f'+prefixsubject:"Import+wpt%40{"f" * 40}"+status:merged'
+            'https://chromium-review.googlesource.com/changes/?q='
+            f'prefixsubject:"Import+wpt%40{"f" * 40}"+status:merged'
             '&n=1&o=CURRENT_FILES&o=CURRENT_REVISION&o=COMMIT_FOOTERS'
             '&o=DETAILED_ACCOUNTS&o=MESSAGES')
         payload = {
@@ -356,6 +358,88 @@ class ImportNotifierTest(unittest.TestCase):
                 'platform/linux/external/wpt/foo/bar_a-expected.txt'),
         ])
 
+    def test_examine_baseline_changes_pure_rename_no_new_failures(self):
+        contents = textwrap.dedent("""\
+            [FAIL] subtest
+            """)
+        self._write_and_commit({
+            MOCK_WEB_TESTS + 'external/wpt/foo/DIR_METADATA':
+            '',
+            MOCK_WEB_TESTS + 'external/wpt/foo/bar.tentative.html':
+            '',
+            MOCK_WEB_TESTS + 'external/wpt/foo/bar.tentative_a-expected.txt':
+            contents,
+        })
+        self._write_and_commit({
+            MOCK_WEB_TESTS + 'external/wpt/foo/bar.html':
+            '',
+            MOCK_WEB_TESTS + 'external/wpt/foo/bar_a-expected.txt':
+            contents,
+        })
+
+        changed_files = {
+            RELATIVE_WEB_TESTS + 'external/wpt/foo/bar.html':
+            FileStatus(
+                FileStatusType.RENAME,
+                RELATIVE_WEB_TESTS + 'external/wpt/foo/bar.tentative.html'),
+            RELATIVE_WEB_TESTS + 'external/wpt/foo/bar_a-expected.txt':
+            FileStatus(
+                FileStatusType.RENAME, RELATIVE_WEB_TESTS +
+                'external/wpt/foo/bar.tentative_a-expected.txt'),
+        }
+        with mock.patch.object(self.notifier.git,
+                               'changed_files',
+                               return_value=changed_files):
+            self.notifier.examine_baseline_changes('HEAD',
+                                                   CLRevisionID(12345, 3))
+
+        self.assertEqual(self.notifier.new_failures_by_directory, {})
+
+    def test_examine_baseline_changes_rename_with_new_failures(self):
+        contents_before = textwrap.dedent("""\
+            [FAIL] subtest
+            """)
+        self._write_and_commit({
+            MOCK_WEB_TESTS + 'external/wpt/foo/DIR_METADATA':
+            '',
+            MOCK_WEB_TESTS + 'external/wpt/foo/bar.tentative.html':
+            '',
+            MOCK_WEB_TESTS + 'external/wpt/foo/bar.tentative_a-expected.txt':
+            contents_before,
+        })
+        contents_after = contents_before + '[FAIL] new subtest\n'
+        self._write_and_commit({
+            MOCK_WEB_TESTS + 'external/wpt/foo/bar.html':
+            '',
+            MOCK_WEB_TESTS + 'external/wpt/foo/bar_a-expected.txt':
+            contents_after,
+        })
+
+        changed_files = {
+            RELATIVE_WEB_TESTS + 'external/wpt/foo/bar.html':
+            FileStatus(
+                FileStatusType.RENAME,
+                RELATIVE_WEB_TESTS + 'external/wpt/foo/bar.tentative.html'),
+            RELATIVE_WEB_TESTS + 'external/wpt/foo/bar_a-expected.txt':
+            FileStatus(
+                FileStatusType.RENAME, RELATIVE_WEB_TESTS +
+                'external/wpt/foo/bar.tentative_a-expected.txt'),
+        }
+        with mock.patch.object(self.notifier.git,
+                               'changed_files',
+                               return_value=changed_files):
+            self.notifier.examine_baseline_changes('HEAD',
+                                                   CLRevisionID(12345, 3))
+
+        base_url = 'https://crrev.com/c/12345/3/third_party/blink/web_tests/'
+        self.assertEqual(set(self.notifier.new_failures_by_directory),
+                         {'external/wpt/foo'})
+        failures = self.notifier.new_failures_by_directory['external/wpt/foo']
+        self.assertEqual(failures.baseline_failures, [
+            BaselineFailure('external/wpt/foo/bar.html?a',
+                            base_url + 'external/wpt/foo/bar_a-expected.txt'),
+        ])
+
     def test_examine_new_test_expectations(self):
         contents_before = textwrap.dedent("""\
             # tags: [ Linux Mac Win ]
@@ -401,7 +485,7 @@ class ImportNotifierTest(unittest.TestCase):
         imported_commits = [
             ('SHA1', 'Subject 1'),
             # Use non-ASCII chars to really test Unicode handling.
-            ('SHA2', u'ABC~‾¥≈¤･・•∙·☼★星🌟星★☼·∙•・･¤≈¥‾~XYZ')
+            ('SHA2', 'ABC~‾¥≈¤･・•∙·☼★星🌟星★☼·∙•・･¤≈¥‾~XYZ')
         ]
 
         def _is_commit_affecting_directory(commit, directory):
@@ -413,8 +497,8 @@ class ImportNotifierTest(unittest.TestCase):
         self.assertEqual(
             self.notifier.format_commit_list(
                 imported_commits, MOCK_WEB_TESTS + 'external/wpt/foo'),
-            u'Subject 1: https://github.com/web-platform-tests/wpt/commit/SHA1 [affecting this directory]\n'
-            u'ABC~‾¥≈¤･・•∙·☼★星🌟星★☼·∙•・･¤≈¥‾~XYZ: https://github.com/web-platform-tests/wpt/commit/SHA2\n'
+            'Subject 1: https://github.com/web-platform-tests/wpt/commit/SHA1 [affecting this directory]\n'
+            'ABC~‾¥≈¤･・•∙·☼★星🌟星★☼·∙•・･¤≈¥‾~XYZ: https://github.com/web-platform-tests/wpt/commit/SHA2\n'
         )
 
     def test_find_directory_for_bug_non_virtual(self):

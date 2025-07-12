@@ -40,6 +40,10 @@
     padding-bottom: 20px;
   }
 
+  #helpText > a {
+    color: var(--cr-link-color);
+  }
+
   /*
    * adds horizontal padding to account for the removed padding from the dialog
    * body
@@ -57,7 +61,8 @@
     </cr-tabs>
   </div>
   <div id="body" slot="body">
-    <iron-pages selected="[[selectedTab_]]">
+    <cr-page-selector selected="[[selectedTab_]]"
+        on-iron-select="onSelectedTabChanged_">
       <tab-discard-exception-current-sites-list id="list" prefs="{{prefs}}"
           on-sites-populated="onSitesPopulated_"
           visible="[[isAddCurrentSitesTabSelected_(selectedTab_)]]"
@@ -71,7 +76,7 @@
             submit-disabled="{{submitDisabledManual_}}">
         </tab-discard-exception-add-input>
       </div>
-    </iron-pages>
+    </cr-page-selector>
   </div>
   <div slot="button-container">
     <cr-button id="cancelButton" class="cancel-button"

@@ -12,8 +12,7 @@
 #include "base/time/time.h"
 #include "components/services/app_service/public/cpp/app_types.h"
 
-namespace ash {
-namespace app_time {
+namespace ash::app_time {
 
 // Type of usage restriction that can be applied to the installed app.
 enum class AppRestriction {
@@ -93,8 +92,7 @@ class AppId {
   apps::AppType app_type() const { return app_type_; }
   const std::string& app_id() const { return app_id_; }
 
-  bool operator==(const AppId&) const;
-  bool operator!=(const AppId&) const;
+  friend bool operator==(const AppId&, const AppId&) = default;
   bool operator<(const AppId&) const;
   friend std::ostream& operator<<(std::ostream&, const AppId&);
 
@@ -255,7 +253,6 @@ class AppActivity {
   base::TimeTicks last_updated_time_ticks_;
 };
 
-}  // namespace app_time
-}  // namespace ash
+}  // namespace ash::app_time
 
 #endif  // CHROME_BROWSER_ASH_CHILD_ACCOUNTS_TIME_LIMITS_APP_TYPES_H_

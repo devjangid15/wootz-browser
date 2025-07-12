@@ -21,7 +21,6 @@
 
 namespace blink {
 
-class ExceptionState;
 class KURL;
 class ModuleScriptCreationParams;
 class ScriptFetchOptions;
@@ -64,7 +63,6 @@ class CORE_EXPORT ModuleRecord final {
       const ModuleScriptCreationParams& params,
       const ScriptFetchOptions&,
       const TextPosition&,
-      ExceptionState&,
       mojom::blink::V8CacheOptions = mojom::blink::V8CacheOptions::kDefault,
       ModuleRecordProduceCacheData** out_produce_cache_data = nullptr);
 
@@ -96,6 +94,12 @@ class CORE_EXPORT ModuleRecord final {
  private:
   static v8::MaybeLocal<v8::Module> ResolveModuleCallback(
       v8::Local<v8::Context>,
+      v8::Local<v8::String> specifier,
+      v8::Local<v8::FixedArray> import_attributes,
+      v8::Local<v8::Module> referrer);
+
+  static v8::MaybeLocal<v8::Object> ResolveSourceCallback(
+      v8::Local<v8::Context> context,
       v8::Local<v8::String> specifier,
       v8::Local<v8::FixedArray> import_attributes,
       v8::Local<v8::Module> referrer);

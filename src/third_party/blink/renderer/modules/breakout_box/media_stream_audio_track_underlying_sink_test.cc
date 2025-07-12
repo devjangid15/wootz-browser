@@ -38,17 +38,14 @@
 using testing::_;
 using testing::StrictMock;
 
-namespace WTF {
+namespace blink {
+
 template <>
-struct CrossThreadCopier<
-    std::unique_ptr<blink::WritableStreamTransferringOptimizer>> {
+struct CrossThreadCopier<std::unique_ptr<WritableStreamTransferringOptimizer>> {
   STATIC_ONLY(CrossThreadCopier);
-  using Type = std::unique_ptr<blink::WritableStreamTransferringOptimizer>;
+  using Type = std::unique_ptr<WritableStreamTransferringOptimizer>;
   static Type Copy(Type pointer) { return pointer; }
 };
-}  // namespace WTF
-
-namespace blink {
 
 class MediaStreamAudioTrackUnderlyingSinkTest : public testing::Test {
  public:
@@ -185,25 +182,31 @@ TEST_F(MediaStreamAudioTrackUnderlyingSinkTest, WriteInvalidDataFails) {
                   v8::Integer::New(script_state->GetIsolate(), 0));
 
   // Writing something that is not an AudioData to the sink should fail.
-  DummyExceptionStateForTesting dummy_exception_state;
-  sink->write(script_state, v8_integer, nullptr, dummy_exception_state);
-  EXPECT_TRUE(dummy_exception_state.HadException());
+  {
+    DummyExceptionStateForTesting dummy_exception_state;
+    sink->write(script_state, v8_integer, nullptr, dummy_exception_state);
+    EXPECT_TRUE(dummy_exception_state.HadException());
+  }
 
   // Writing a null value to the sink should fail.
-  dummy_exception_state.ClearException();
-  EXPECT_FALSE(dummy_exception_state.HadException());
-  sink->write(script_state, ScriptValue::CreateNull(v8_scope.GetIsolate()),
-              nullptr, dummy_exception_state);
-  EXPECT_TRUE(dummy_exception_state.HadException());
+  {
+    DummyExceptionStateForTesting dummy_exception_state;
+    EXPECT_FALSE(dummy_exception_state.HadException());
+    sink->write(script_state, ScriptValue::CreateNull(v8_scope.GetIsolate()),
+                nullptr, dummy_exception_state);
+    EXPECT_TRUE(dummy_exception_state.HadException());
+  }
 
   // Writing a closed AudioData to the sink should fail.
-  dummy_exception_state.ClearException();
-  AudioData* audio_data = nullptr;
-  auto chunk = CreateAudioData(script_state, &audio_data);
-  audio_data->close();
-  EXPECT_FALSE(dummy_exception_state.HadException());
-  sink->write(script_state, chunk, nullptr, dummy_exception_state);
-  EXPECT_TRUE(dummy_exception_state.HadException());
+  {
+    DummyExceptionStateForTesting dummy_exception_state;
+    AudioData* audio_data = nullptr;
+    auto chunk = CreateAudioData(script_state, &audio_data);
+    audio_data->close();
+    EXPECT_FALSE(dummy_exception_state.HadException());
+    sink->write(script_state, chunk, nullptr, dummy_exception_state);
+    EXPECT_TRUE(dummy_exception_state.HadException());
+  }
 }
 
 TEST_F(MediaStreamAudioTrackUnderlyingSinkTest, WriteToAbortedSinkFails) {

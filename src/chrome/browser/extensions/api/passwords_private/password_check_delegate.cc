@@ -20,7 +20,6 @@
 #include "base/memory/ref_counted.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/numerics/safe_conversions.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/escape.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
@@ -173,14 +172,13 @@ api::passwords_private::PasswordCheckState ConvertPasswordCheckState(
       return api::passwords_private::PasswordCheckState::kOtherError;
   }
 
-  NOTREACHED_IN_MIGRATION();
-  return api::passwords_private::PasswordCheckState::kNone;
+  NOTREACHED();
 }
 
 std::string FormatElapsedTime(base::Time time) {
   const base::TimeDelta elapsed_time = base::Time::Now() - time;
-  // if (elapsed_time < base::Minutes(1))
-  //   return l10n_util::GetStringUTF8(IDS_PASSWORD_MANAGER_UI_JUST_NOW);
+  if (elapsed_time < base::Minutes(1))
+    return l10n_util::GetStringUTF8(IDS_PASSWORD_MANAGER_UI_JUST_NOW);
 
   return base::UTF16ToUTF8(TimeFormat::SimpleWithMonthAndYear(
       TimeFormat::FORMAT_ELAPSED, TimeFormat::LENGTH_LONG, elapsed_time, true));
@@ -230,21 +228,17 @@ api::passwords_private::CompromisedInfo CreateCompromiseInfo(
 PasswordCheckDelegate::PasswordCheckDelegate(
     Profile* profile,
     password_manager::SavedPasswordsPresenter* presenter,
-    IdGenerator* id_generator)
+    IdGenerator* id_generator,
+    PasswordsPrivateEventRouter* event_router)
     : profile_(profile),
       saved_passwords_presenter_(presenter),
-      insecure_credentials_manager_(presenter,
-                                    ProfilePasswordStoreFactory::GetForProfile(
-                                        profile,
-                                        ServiceAccessType::EXPLICIT_ACCESS),
-                                    AccountPasswordStoreFactory::GetForProfile(
-                                        profile,
-                                        ServiceAccessType::EXPLICIT_ACCESS)),
+      insecure_credentials_manager_(presenter),
       bulk_leak_check_service_adapter_(
           presenter,
           BulkLeakCheckServiceFactory::GetForProfile(profile_),
           profile_->GetPrefs()),
-      id_generator_(id_generator) {
+      id_generator_(id_generator),
+      event_router_(event_router) {
   DCHECK(id_generator);
   observed_saved_passwords_presenter_.Observe(saved_passwords_presenter_.get());
   observed_insecure_credentials_manager_.Observe(
@@ -349,12 +343,12 @@ void PasswordCheckDelegate::StartPasswordCheck(
 void PasswordCheckDelegate::StartPasswordAnalyses(
     StartPasswordCheckCallback callback) {
   // Start the weakness check, and notify observers once done.
-  // insecure_credentials_manager_.StartWeakCheck(base::BindOnce(
-  //     &PasswordCheckDelegate::RecordAndNotifyAboutCompletedWeakPasswordCheck,
-  //     weak_ptr_factory_.GetWeakPtr()));
-  // insecure_credentials_manager_.StartReuseCheck(
-  //     base::BindOnce(&PasswordCheckDelegate::NotifyPasswordCheckStatusChanged,
-  //                    weak_ptr_factory_.GetWeakPtr()));
+  insecure_credentials_manager_.StartWeakCheck(base::BindOnce(
+      &PasswordCheckDelegate::RecordAndNotifyAboutCompletedWeakPasswordCheck,
+      weak_ptr_factory_.GetWeakPtr()));
+  insecure_credentials_manager_.StartReuseCheck(
+      base::BindOnce(&PasswordCheckDelegate::NotifyPasswordCheckStatusChanged,
+                     weak_ptr_factory_.GetWeakPtr()));
   auto progress = base::MakeRefCounted<PasswordCheckProgress>();
   for (const auto& password : saved_passwords_presenter_->GetSavedPasswords())
     progress->IncrementCounts(password);
@@ -446,9 +440,8 @@ void PasswordCheckDelegate::OnSavedPasswordsChanged(
 }
 
 void PasswordCheckDelegate::OnInsecureCredentialsChanged() {
-  if (auto* event_router =
-          PasswordsPrivateEventRouterFactory::GetForProfile(profile_)) {
-    event_router->OnInsecureCredentialsChanged(GetInsecureCredentials());
+  if (event_router_) {
+    event_router_->OnInsecureCredentialsChanged(GetInsecureCredentials());
   }
 }
 
@@ -516,9 +509,8 @@ void PasswordCheckDelegate::RecordAndNotifyAboutCompletedWeakPasswordCheck() {
 }
 
 void PasswordCheckDelegate::NotifyPasswordCheckStatusChanged() {
-  if (auto* event_router =
-          PasswordsPrivateEventRouterFactory::GetForProfile(profile_)) {
-    event_router->OnPasswordCheckStatusChanged(GetPasswordCheckStatus());
+  if (event_router_) {
+    event_router_->OnPasswordCheckStatusChanged(GetPasswordCheckStatus());
   }
 }
 

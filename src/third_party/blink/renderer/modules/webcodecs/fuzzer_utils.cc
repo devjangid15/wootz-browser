@@ -2,11 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/modules/webcodecs/fuzzer_utils.h"
 
 #include <algorithm>
 #include <string>
 
+#include "base/containers/span.h"
 #include "base/functional/callback_helpers.h"
 #include "media/base/limits.h"
 #include "media/base/sample_format.h"
@@ -85,8 +91,8 @@ VideoDecoderConfig* MakeVideoDecoderConfig(
     const wc_fuzzer::ConfigureVideoDecoder& proto) {
   auto* config = VideoDecoderConfig::Create();
   config->setCodec(proto.codec().c_str());
-  DOMArrayBuffer* data_copy = DOMArrayBuffer::Create(
-      proto.description().data(), proto.description().size());
+  DOMArrayBuffer* data_copy =
+      DOMArrayBuffer::Create(base::as_byte_span(proto.description()));
   config->setDescription(
       MakeGarbageCollected<AllowSharedBufferSource>(data_copy));
   return config;
@@ -99,8 +105,8 @@ AudioDecoderConfig* MakeAudioDecoderConfig(
   config->setSampleRate(proto.sample_rate());
   config->setNumberOfChannels(proto.number_of_channels());
 
-  DOMArrayBuffer* data_copy = DOMArrayBuffer::Create(
-      proto.description().data(), proto.description().size());
+  DOMArrayBuffer* data_copy =
+      DOMArrayBuffer::Create(base::as_byte_span(proto.description()));
   config->setDescription(
       MakeGarbageCollected<AllowSharedBufferSource>(data_copy));
 
@@ -352,7 +358,7 @@ EncodedVideoChunk* MakeEncodedVideoChunk(
     ScriptState* script_state,
     const wc_fuzzer::EncodedVideoChunk& proto) {
   auto* data = MakeGarbageCollected<AllowSharedBufferSource>(
-      DOMArrayBuffer::Create(proto.data().data(), proto.data().size()));
+      DOMArrayBuffer::Create(base::as_byte_span(proto.data())));
 
   auto* init = EncodedVideoChunkInit::Create();
   init->setTimestamp(proto.timestamp());
@@ -370,7 +376,7 @@ EncodedAudioChunk* MakeEncodedAudioChunk(
     ScriptState* script_state,
     const wc_fuzzer::EncodedAudioChunk& proto) {
   auto* data = MakeGarbageCollected<AllowSharedBufferSource>(
-      DOMArrayBuffer::Create(proto.data().data(), proto.data().size()));
+      DOMArrayBuffer::Create(base::as_byte_span(proto.data())));
 
   auto* init = EncodedAudioChunkInit::Create();
   init->setTimestamp(proto.timestamp());
@@ -632,8 +638,7 @@ VideoFrame* MakeVideoFrame(ScriptState* script_state,
   if (proto.bitmap_width() > 0 && proto.bitmap_width() < bitmap_size)
     bitmap_size -= bitmap_size % (proto.bitmap_width() * kBytesPerPixel);
   NotShared<DOMUint8ClampedArray> data_u8(DOMUint8ClampedArray::Create(
-      reinterpret_cast<const unsigned char*>(proto.rgb_bitmap().data()),
-      bitmap_size));
+      base::as_byte_span(proto.rgb_bitmap()).first(bitmap_size)));
 
   ImageData* image_data = ImageData::Create(data_u8, proto.bitmap_width(),
                                             IGNORE_EXCEPTION_FOR_TESTING);

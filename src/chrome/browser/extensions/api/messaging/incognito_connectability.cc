@@ -54,8 +54,7 @@ IncognitoConnectability::IncognitoConnectability(
   CHECK(context->IsOffTheRecord());
 }
 
-IncognitoConnectability::~IncognitoConnectability() {
-}
+IncognitoConnectability::~IncognitoConnectability() = default;
 
 // static
 IncognitoConnectability* IncognitoConnectability::Get(
@@ -149,7 +148,7 @@ void IncognitoConnectability::OnInteractiveResponse(
 
   PendingOriginMap::iterator origin_it =
       pending_origins_.find(make_pair(extension_id, origin));
-  DCHECK(origin_it != pending_origins_.end());
+  CHECK(origin_it != pending_origins_.end());
   PendingOrigin& pending_origin = origin_it->second;
   DCHECK(base::Contains(pending_origin, infobar_manager));
 

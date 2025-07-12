@@ -14,10 +14,13 @@ specify a priori).
 
 ### Directly Measure What You Want
 
-Measure exactly what you want, whether that's the time used for a function call,
-the number of bytes transmitted to fetch a page, the number of items in a list,
-etc. Do not assume you can calculate what you want from other histograms, as
-most ways of doing this are incorrect.
+Usually it's best to measure exactly what you want. The only exception is when
+you can derive what you want to measure from the data from a single histogram.
+(This is described in more detail below.) Values you should measure directly
+include: the time used for a function call, the number of bytes transmitted to
+fetch a page, the number of items in a list, etc. Do not assume you can
+calculate what you want from other histograms, as most ways of doing this are
+incorrect.
 
 For example, suppose you want to measure the runtime of a function that just
 calls two subfunctions, each of which is instrumented with histogram logging.
@@ -30,7 +33,20 @@ simply add up the two histograms to get a total duration histogram, you're
 implicitly assuming the two histograms' values are independent, which may not be
 the case.
 
-Directly measure what you care about; don't try to derive it from other data.
+Instead of logging in Chromium, custom queries or dashboard analysis over
+existing data can be used. Those should be used only if what you want can be
+trivially derived from a single histogram (plus their `client_id`). For example,
+suppose you have a "feature used" histogram. If you want to measure the number
+of clients who use a feature in a day, you can compute the number of clients who
+uploaded the "feature used = True" value. You don't need to write code to emit
+"did this Chrome client use this feature this day". (It's not even clear how to
+emit that histogram that correctly and reliably. Do you emit it when the browser
+closes? Periodically, every 24 hours? On startup, about the previous day(s)?) In
+some narrow circumstances, if you're careful, server-side analysis is an
+acceptable way to compute metrics.
+
+In short, directly measure what you care about; don't try to derive it from
+other data unless it can be derived trivially.
 
 ### Provide Context
 
@@ -54,6 +70,12 @@ taxonomy. If you're tempted to do so, please look through the existing
 categories to see whether any matches the metric(s) that you are adding. To
 create a new category, the CL must be reviewed by
 chromium-metrics-reviews@google.com.
+
+## Permitted Metrics
+
+Google has policies restricting what data can be collected and for what purpose.
+Googlers, see go/uma-privacy#principles to verify your desired histogram
+adheres to those policies.
 
 ## Coding (Emitting to Histograms)
 
@@ -93,12 +115,26 @@ name and you update one location and forget another.
 
 ### Efficiency
 
-Generally, don't be concerned about the processing cost of emitting to a
-histogram (unless you're using [sparse
+In most cases, you don't need to be concerned about the processing cost of
+emitting to a histogram (unless you're using [sparse
 histograms](#When-To-Use-Sparse-Histograms)). The normal histogram code is
-highly optimized. If you are recording to a histogram in particularly
-performance-sensitive or "hot" code, make sure you're using the histogram
-macros; see [reasons above](#Coding-Emitting-to-Histograms).
+highly optimized.
+
+If you are recording to a histogram in particularly
+performance-sensitive or "hot" code, follow one of these guidelines:
+- Use the histogram macros; see [reasons above](#Coding-Emitting-to-Histograms).
+- When total counts aren't important (for example, when measuring latency or
+  ratios) consider subsampling. For example:
+
+  ```c++
+  if (base::ShouldRecordSubsampledMetric(0.01)) {
+    base::UmaHistogramMicrosecondsTimes(
+      "Component.Feature.Duration.Subsampled", timer->Elapsed());
+  }
+  ```
+
+Examples where these optimizations are necessary include histograms that apply
+to every frame or every cookie.
 
 ## Picking Your Histogram Type
 
@@ -130,7 +166,7 @@ data would be much easier to make sense of if it included a baseline: how often
 is the button shown?
 
 There is another problem with using another histogram as a comparison point.
-Google systems for processing UMA data attempt to exclude data that this is
+Google systems for processing UMA data attempt to exclude data that is
 deemed unreliable or somehow anomalous. It's possible that it may exclude data
 from a client for one histogram and not exclude data from that client for the
 other.
@@ -155,6 +191,8 @@ Enums logged in histograms must:
 - not renumber or reuse enumerator values. When adding a new enumerator, append
   the new enumerator to the end. When removing an unused enumerator, comment it
   out, making it clear the value was previously used.
+  - Note that enum labels may be revised in some cases; see
+    [Revising Histograms](#revising).
 
 If your enum histogram has a catch-all / miscellaneous bucket, put that bucket
 first (`= 0`). This makes the bucket easy to find on the dashboard if additional
@@ -179,8 +217,8 @@ enum class NewTabPageAction {
 // LINT.ThenChange(//path/to/enums.xml:NewTabPageActionEnum)
 ```
 
-The `LINT.IfChange / LINT.ThenChange` comments point between the code and XML
-definitions of the enum, to encourage them to be kept in sync. See
+The `LINT.*` comments point between the code and XML definitions of the enum, to
+encourage them to be kept in sync. See
 [guide](https://www.chromium.org/chromium-os/developer-library/guides/development/keep-files-in-sync/)
 and [more details](http://go/gerrit-ifthisthenthat).
 
@@ -313,8 +351,8 @@ You can alternatively follow these steps:
 You can also use `tools/metrics/histograms/validate_format.py` to check the
 ordering (but not that the value is correct).
 
-Don't remove entries when removing a flag; they are still used to decode data
-from previous Chrome versions.
+Don't remove or modify entries when removing a flag; they are still used to
+decode data from previous Chrome versions.
 
 ### Count Histograms
 
@@ -596,7 +634,7 @@ If you have <enum> or <variant> entries that need to be updated to match code,
 you can use
 [HistogramEnumReader](https://cs.chromium.org/chromium/src/base/test/metrics/histogram_enum_reader.h)
 or
-[HistogramVariantsReader](https://cs.chromium.org/chromium/src/base/test/metrics/histogram_enum_reader.h)
+[HistogramVariantsReader](https://cs.chromium.org/chromium/src/base/test/metrics/histogram_variants_reader.h)
 to read and verify the expected values in a unit test. This prevents a mismatch
 between code and histogram data from slipping through CQ.
 
@@ -614,14 +652,26 @@ to remind you that users who update frequently / quickly are biased. Best take
 the initial statistics with a grain of salt; they're probably *mostly* right but
 not entirely so.
 
-## Revising Histograms
+## Revising Histograms {#revising}
 
 When changing the semantics of a histogram (when it's emitted, what the buckets
-represent, the bucket range or number of buckets, etc.), create a new histogram
-with a new name. Otherwise analysis that mixes the data pre- and post- change
-may be misleading. If the histogram name is still the best name choice, the
-recommendation is to simply append a '2' to the name. See [Cleaning Up Histogram
-Entries](#obsolete) for details on how to handle the XML changes.
+represent, the bucket range or number of buckets for numeric histograms, etc.),
+create a new histogram with a new name. A new histogram name is not required
+when adding a new value to an enum if users will not move between buckets, and
+bucket proportion is not meaningful. Otherwise analysis that mixes the data pre-
+and post- change may be misleading. If the histogram name is still the best name
+choice, the recommendation is to simply append a '2' to the name. See
+[Cleaning Up Histogram Entries](#obsolete) for details on how to handle the XML
+changes.
+
+Changes to a histogram are allowed in some cases when the semantics have not
+changed at all. Here are some examples that would be allowed:
+- A histogram's summary can be rewritten to be more accurate.
+- An enum bucket's label can be changed, as long it still refers to the same
+  thing that it did before, e.g. if an enum listed some manufacturer's products,
+  and the manufacturer later renamed one of them.
+  - Note that downstream tooling will apply the updated label to past data
+    retroactively.
 
 ## Deleting Histograms
 
@@ -700,11 +750,15 @@ contact for any questions or maintenance tasks, such as extending a histogram's
 expiry or deprecating the metric.
 
 Histograms must have a primary owner and may have secondary owners. A primary
-owner is a Googler with an @google.com or @chromium.org email address, e.g.
-<owner>lucy@chromium.org</owner>, who is ultimately responsible for maintaining
-the metric. Secondary owners may be other individuals, team mailing lists, e.g.
-<owner>my-team@google.com</owner>, or paths to OWNERS files, e.g.
-<owner>src/directory/OWNERS</owner>.
+owner is a Googler with an `@google.com` or `@chromium.org` email address, e.g.
+`<owner>lucy@chromium.org</owner>`, who is ultimately responsible for
+maintaining the metric. Secondary owners may be other individuals familiar with
+the implementation or the semantics of the metric, or a dev team mailing list,
+e.g. `<owner>my-team@google.com</owner>`, or paths to OWNERS files, e.g.
+`<owner>src/directory/OWNERS</owner>`. Do not put a `@chromium.org` group
+containing public users as an owner, since users of a feature have no knowledge
+of the codebase, can't perform any of the maintenance duties, nor should they be
+notified of any change to the histogram.
 
 It's a best practice to list multiple owners, so that there's no single point
 of failure for histogram-related questions and maintenance tasks. If you are
@@ -960,12 +1014,17 @@ chromium-metrics-reviews@google.com.
 When reviewing metrics CLs, look at the following, listed in approximate order
 of importance:
 
-## Privacy
+## Privacy and Purpose
 
-Does anything tickle your privacy senses? (Googlers, see
-[go/uma-privacy](https://goto.google.com/uma-privacy) for guidelines.)
+Google has policies restricting what data can be collected and for what purpose.
+Googlers, make sure the logging abides by the principles at
+go/uma-privacy#principles.
 
-**Please escalate if there's any doubt!**
+Furthermore, if anything tickles your privacy senses or provokes any other
+concerns (even if it's seemingly compatible with the principles), please express
+your concern.
+
+**Escalate if there's any doubt!**
 
 ## Clarity
 
@@ -1037,7 +1096,7 @@ interpretable and what data will have hidden surprises/gotchas.
     escalated by being assigned to chromium-metrics-reviews@google.com.
 
 * Are expiry dates being set
-  [appropriately](#How-to-choose-expiry-for-histograms)?
+  [appropriately](#How-to-choose-expiry-for-new-histograms)?
 
 ## Everything Else!
 

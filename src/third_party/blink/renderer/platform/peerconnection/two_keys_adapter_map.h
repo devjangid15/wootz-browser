@@ -56,7 +56,7 @@ class TwoKeysAdapterMap {
   // |FindByPrimary(primary) && !FindBySecondary(secondary)| must hold.
   void SetSecondaryKey(const PrimaryKey& primary, SecondaryKey secondary) {
     auto it = entries_by_primary_.find(primary);
-    DCHECK(it != entries_by_primary_.end());
+    CHECK(it != entries_by_primary_.end());
     DCHECK(entries_by_secondary_.find(secondary) ==
            entries_by_secondary_.end());
     Entry* entry = it->value.get();

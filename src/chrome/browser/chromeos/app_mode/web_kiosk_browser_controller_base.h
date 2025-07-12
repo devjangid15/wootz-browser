@@ -10,7 +10,6 @@
 #include <string>
 
 #include "base/functional/callback.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/ui/web_applications/app_browser_controller.h"
 #include "chrome/browser/web_applications/web_app_install_manager.h"
 #include "chrome/browser/web_applications/web_app_registrar.h"
@@ -45,16 +44,13 @@ class WebKioskBrowserControllerBase : public web_app::AppBrowserController {
   ui::ImageModel GetWindowIcon() const override;
   std::u16string GetAppShortName() const override;
   std::u16string GetFormattedUrlOrigin() const override;
-  GURL GetAppStartUrl() const override;
+  const GURL& GetAppStartUrl() const override;
   bool IsUrlInAppScope(const GURL& url) const override;
   bool CanUserUninstall() const override;
   bool IsInstalled() const override;
   bool IsHostedApp() const override;
   bool HasReloadButton() const override;
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
   bool ShouldShowCustomTabBar() const override;
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
  protected:
   // AppBrowserController:

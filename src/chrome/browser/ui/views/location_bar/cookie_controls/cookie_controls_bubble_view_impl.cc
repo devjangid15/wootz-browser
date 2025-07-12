@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/views/location_bar/cookie_controls/cookie_controls_bubble_view_impl.h"
 
 #include <string>
+
 #include "base/metrics/user_metrics.h"
 #include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/views/accessibility/non_accessible_image_view.h"
@@ -14,6 +15,8 @@
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
+#include "ui/views/controls/button/md_text_button_with_spinner.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/view_class_properties.h"
 #include "ui/views/view_utils.h"
@@ -28,10 +31,10 @@ CookieControlsBubbleViewImpl::CookieControlsBubbleViewImpl(
     views::View* anchor_view,
     content::WebContents* web_contents,
     OnCloseBubbleCallback callback)
-    : LocationBarBubbleDelegateView(anchor_view, web_contents,true),
+    : LocationBarBubbleDelegateView(anchor_view, web_contents, true),
       callback_(std::move(callback)) {
   SetShowCloseButton(true);
-  SetButtons(ui::DIALOG_BUTTON_NONE);
+  SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
   SetProperty(views::kElementIdentifierKey, kCookieControlsBubble);
   SetSubtitleAllowCharacterBreak(true);
 }
@@ -138,7 +141,8 @@ bool CookieControlsBubbleViewImpl::OnCloseRequested(
 
   // Ignore focus loss while the reloading view is visible. The reloading view
   // will automatically close when the page has loaded.
-  if (GetReloadingView()->GetVisible()) {
+  if (GetReloadingView()->GetVisible() ||
+      GetContentView()->GetTrackingProtectionsButton()->GetSpinnerVisible()) {
     return close_reason != views::Widget::ClosedReason::kLostFocus;
   }
 

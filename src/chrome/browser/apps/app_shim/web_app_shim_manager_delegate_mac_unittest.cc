@@ -28,7 +28,7 @@ namespace {
 
 class MockDelegate : public apps::AppShimManager::Delegate {
  public:
-  MockDelegate() {}
+  MockDelegate() = default;
   MockDelegate(const MockDelegate&) = delete;
   MockDelegate& operator=(const MockDelegate&) = delete;
   ~MockDelegate() override = default;
@@ -83,7 +83,7 @@ class MockDelegate : public apps::AppShimManager::Delegate {
 
 class WebAppShimManagerDelegateTest : public WebAppTest {
  public:
-  WebAppShimManagerDelegateTest() {}
+  WebAppShimManagerDelegateTest() = default;
   WebAppShimManagerDelegateTest(const WebAppShimManagerDelegateTest&) = delete;
   WebAppShimManagerDelegateTest& operator=(
       const WebAppShimManagerDelegateTest&) = delete;
@@ -97,16 +97,15 @@ class WebAppShimManagerDelegateTest : public WebAppTest {
     provider->SetOsIntegrationManager(
         std::make_unique<FakeOsIntegrationManager>(
             profile(),
-            /*app_shortcut_manager=*/nullptr,
             /*file_handler_manager=*/nullptr,
             /*protocol_handler_manager=*/nullptr));
 
     web_app::test::AwaitStartWebAppProviderAndSubsystems(profile());
 
     // Install a dummy app
-    auto web_app_info = std::make_unique<WebAppInstallInfo>();
+    auto web_app_info = WebAppInstallInfo::CreateWithStartUrlForTesting(
+        GURL("https://testpwa.com/"));
     web_app_info->title = u"WebAppTest";
-    web_app_info->start_url = GURL("https://testpwa.com/");
     web_app_info->scope = GURL("https://testpwa.com/");
     web_app_info->display_mode = blink::mojom::DisplayMode::kStandalone;
 
@@ -129,6 +128,14 @@ class WebAppShimManagerDelegateTest : public WebAppTest {
       entry.accept[0].file_extensions.insert(".png");
       entry.launch_type = apps::FileHandler::LaunchType::kMultipleClients;
       web_app_info->file_handlers.push_back(std::move(entry));
+    }
+
+    for (const char* protocol : {"mailto", "web+test"}) {
+      apps::ProtocolHandlerInfo protocol_handler;
+      protocol_handler.protocol = protocol;
+      protocol_handler.url =
+          GURL("https://testpwa.com/").Resolve("/index.html?params=%s");
+      web_app_info->protocol_handlers.push_back(protocol_handler);
     }
 
     app_id_ = test::InstallWebApp(profile(), std::move(web_app_info));
@@ -461,14 +468,14 @@ TEST_F(WebAppShimManagerDelegateTest, GetAppShortcutsMenuItemInfos) {
   // Validate array when app does declare shortcut menus in the manifest.
   {
     // Install a dummy app with shortcut menu items
-    auto web_app_info = std::make_unique<WebAppInstallInfo>();
     WebAppShortcutsMenuItemInfo shortcut_info1;
     WebAppShortcutsMenuItemInfo shortcut_info2;
     WebAppShortcutsMenuItemInfo shortcut_info3;
 
-    web_app_info->start_url = GURL("https://mytestpwa.com/");
+    auto web_app_info = WebAppInstallInfo::CreateWithStartUrlForTesting(
+        GURL("https://mytestpwa.com/"));
     web_app_info->title = u"WebAppTestWithShortcutMenuItems";
-    web_app_info->scope = web_app_info->start_url;
+    web_app_info->scope = web_app_info->start_url();
     web_app_info->description = web_app_info->title;
     web_app_info->user_display_mode =
         web_app::mojom::UserDisplayMode::kStandalone;

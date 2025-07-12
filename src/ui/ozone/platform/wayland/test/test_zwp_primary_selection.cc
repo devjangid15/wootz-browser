@@ -11,6 +11,7 @@
 #include <memory>
 
 #include "base/memory/raw_ptr.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "ui/ozone/platform/wayland/test/test_selection_device_manager.h"
 
@@ -77,7 +78,7 @@ struct ZwpPrimarySelectionSource : public TestSelectionSource::Delegate {
   }
 
   void SendFinished() override {
-    NOTREACHED_IN_MIGRATION() << "The interface does not support this method.";
+    NOTREACHED() << "The interface does not support this method.";
   }
 
   void SendCancelled() override {
@@ -85,11 +86,11 @@ struct ZwpPrimarySelectionSource : public TestSelectionSource::Delegate {
   }
 
   void SendDndAction(uint32_t action) override {
-    NOTREACHED_IN_MIGRATION() << "The interface does not support this method.";
+    NOTREACHED() << "The interface does not support this method.";
   }
 
   void SendDndDropPerformed() override {
-    NOTREACHED_IN_MIGRATION() << "The interface does not support this method.";
+    NOTREACHED() << "The interface does not support this method.";
   }
 
   raw_ptr<TestSelectionSource> source = nullptr;

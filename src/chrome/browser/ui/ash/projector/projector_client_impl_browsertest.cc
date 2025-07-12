@@ -23,10 +23,12 @@
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
 #include "chrome/browser/ash/drive/drive_integration_service.h"
+#include "chrome/browser/ash/drive/drive_integration_service_factory.h"
 #include "chrome/browser/ash/drive/drivefs_test_support.h"
 #include "chrome/browser/ash/login/test/device_state_mixin.h"
 #include "chrome/browser/ash/login/test/logged_in_user_mixin.h"
 #include "chrome/browser/ash/system_web_apps/system_web_app_manager.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/ash/projector/projector_app_client_impl.h"
 #include "chrome/browser/ui/ash/projector/projector_utils.h"
@@ -151,7 +153,8 @@ class ProjectorClientTest : public InProcessBrowserTest {
         std::make_unique<drive::FakeDriveFsHelper>(profile, mount_path);
     // The integration service is owned by `KeyedServiceFactory`.
     auto* integration_service = new drive::DriveIntegrationService(
-        profile, /*test_mount_point_name=*/std::string(), mount_path,
+        g_browser_process->local_state(), profile,
+        /*test_mount_point_name=*/std::string(), mount_path,
         fake_drivefs_helpers_[profile]->CreateFakeDriveFsListenerFactory());
     return integration_service;
   }
@@ -173,7 +176,6 @@ class ProjectorClientTest : public InProcessBrowserTest {
 // URLs are valid.
 IN_PROC_BROWSER_TEST_F(ProjectorClientTest, AppUrlsValid) {
   VerifyUrlValid(kChromeUIUntrustedProjectorUrl);
-  VerifyUrlValid(kChromeUIUntrustedAnnotatorUrl);
 }
 
 IN_PROC_BROWSER_TEST_F(ProjectorClientTest, OpenProjectorApp) {
@@ -335,8 +337,9 @@ class ProjectorClientManagedTest
   ProjectorClient* client() { return ProjectorClient::Get(); }
 
   std::string GetPolicy() {
-    if (is_child())
+    if (is_child()) {
       return prefs::kProjectorDogfoodForFamilyLinkEnabled;
+    }
     return prefs::kProjectorAllowByPolicy;
   }
 
@@ -381,8 +384,9 @@ IN_PROC_BROWSER_TEST_P(ProjectorClientManagedTest,
   ui_test_utils::BrowserChangeObserver browser_opened(
       nullptr, ui_test_utils::BrowserChangeObserver::ChangeType::kAdded);
   client()->OpenProjectorApp();
-  if (!is_child())
+  if (!is_child()) {
     browser_opened.Wait();
+  }
 
   // Verify that Projector App is opened.
   Browser* app_browser =

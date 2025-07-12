@@ -43,13 +43,17 @@ import java.util.concurrent.Callable;
  * A TestRule for creating Render Tests. The comparison is performed using the Skia Gold image
  * diffing service on the host.
  *
- * General usage:
+ * <p>General usage:
  *
  * <pre>
  * {@code
  *
  * @RunWith(BaseJUnit4ClassRunner.class)
- * public class MyTest extends BlankUiTestActivityTestCase {
+ * public class MyTest {
+ *     @ClassRule
+ *     public static final BaseActivityTestRule<BlankUiTestActivity> sActivityTestRule =
+ *             new BaseActivityTestRule<>(BlankUiTestActivity.class);
+ *
  *     @Rule
  *     public RenderTestRule mRenderTestRule = new RenderTestRule.Builder()
  *             // Required. If using ANDROID_RENDER_TESTS_PUBLIC, the Builder can be created with
@@ -103,11 +107,11 @@ public class RenderTestRule extends TestWatcher {
     /** Prefix on the render test images that describes light/dark mode. */
     private String mNightModePrefix;
 
-    private String mSkiaGoldCorpus;
-    private int mSkiaGoldRevision;
-    private String mSkiaGoldRevisionDescription;
-    private boolean mFailOnUnsupportedConfigs;
-    private String mBugComponent;
+    private final String mSkiaGoldCorpus;
+    private final int mSkiaGoldRevision;
+    private final String mSkiaGoldRevisionDescription;
+    private final boolean mFailOnUnsupportedConfigs;
+    private final String mBugComponent;
 
     @StringDef({
         Corpus.ANDROID_RENDER_TESTS_PUBLIC,
@@ -136,6 +140,7 @@ public class RenderTestRule extends TestWatcher {
         Component.UI_BROWSER_AUTOFILL,
         Component.UI_BROWSER_BOOKMARKS,
         Component.UI_BROWSER_BUBBLES_PAGE_INFO,
+        Component.UI_BROWSER_CHROME_TABS_CHROME_TAB_GROUPS_SHARED_TAB_GROUPS,
         Component.UI_BROWSER_CONTENT_SUGGESTIONS,
         Component.UI_BROWSER_CONTENT_SUGGESTIONS_FEED,
         Component.UI_BROWSER_CONTENT_SUGGESTIONS_HISTORY,
@@ -147,6 +152,7 @@ public class RenderTestRule extends TestWatcher {
         Component.UI_BROWSER_MOBILE_APP_MENU,
         Component.UI_BROWSER_MOBILE_CONTEXT_MENU,
         Component.UI_BROWSER_MOBILE_CUSTOM_TABS,
+        Component.UI_BROWSER_MOBILE_EDGE_TO_EDGE,
         Component.UI_BROWSER_MOBILE_HUB,
         Component.UI_BROWSER_MOBILE_MESSAGES,
         Component.UI_BROWSER_MOBILE_RECENT_TABS,
@@ -157,18 +163,19 @@ public class RenderTestRule extends TestWatcher {
         Component.UI_BROWSER_MOBILE_TAB_SWITCHER_GRID,
         Component.UI_BROWSER_NAVIGATION_GESTURENAV,
         Component.UI_BROWSER_NEW_TAB_PAGE,
-        Component.UI_BROWSER_NEW_TAB_PAGE_EXPLORE_SITES,
         Component.UI_BROWSER_OMNIBOX,
         Component.UI_BROWSER_PASSWORDS,
+        Component.UI_BROWSER_PRIVACY_SANDBOX,
         Component.UI_BROWSER_SEARCH_VOICE,
         Component.UI_BROWSER_SHARING,
         Component.UI_BROWSER_SHOPPING,
+        Component.UI_BROWSER_SHOPPING_DEALS,
         Component.UI_BROWSER_SHOPPING_MERCHANT_TRUST,
         Component.UI_BROWSER_SHOPPING_PRICE_TRACKING,
         Component.UI_BROWSER_TOOLBAR,
         Component.UI_BROWSER_THUMBNAIL,
         Component.UI_BROWSER_WEB_APP_INSTALLS,
-        Component.UI_SETTINGS_PRIVACY
+        Component.UI_SETTINGS_PRIVACY,
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface Component {
@@ -184,6 +191,8 @@ public class RenderTestRule extends TestWatcher {
         String UI_BROWSER_AUTOFILL = "UI>Browser>Autofill";
         String UI_BROWSER_BOOKMARKS = "UI>Browser>Bookmarks";
         String UI_BROWSER_BUBBLES_PAGE_INFO = "UI>Browser>Bubbles>PageInfo";
+        String UI_BROWSER_CHROME_TABS_CHROME_TAB_GROUPS_SHARED_TAB_GROUPS =
+                "UI>Browser>ChromeTabs>ChromeTabGroups>SharedTabGroups";
         String UI_BROWSER_CONTENT_SUGGESTIONS = "UI>Browser>ContentSuggestions";
         String UI_BROWSER_CONTENT_SUGGESTIONS_FEED = "UI>Browser>ContentSuggestions>Feed";
         String UI_BROWSER_CONTENT_SUGGESTIONS_HISTORY = "UI>Browser>ContentSuggestions>History";
@@ -195,6 +204,7 @@ public class RenderTestRule extends TestWatcher {
         String UI_BROWSER_MOBILE_APP_MENU = "UI>Browser>Mobile>AppMenu";
         String UI_BROWSER_MOBILE_CONTEXT_MENU = "UI>Browser>Mobile>ContextMenu";
         String UI_BROWSER_MOBILE_CUSTOM_TABS = "UI>Browser>Mobile>CustomTabs";
+        String UI_BROWSER_MOBILE_EDGE_TO_EDGE = "UI>Browser>Mobile>EdgeToEdge";
         String UI_BROWSER_MOBILE_HUB = "UI>Browser>Mobile>Hub";
         String UI_BROWSER_MOBILE_MESSAGES = "UI>Browser>Mobile>Messages";
         String UI_BROWSER_MOBILE_RECENT_TABS = "UI>Browser>Mobile>RecentTabs";
@@ -205,12 +215,13 @@ public class RenderTestRule extends TestWatcher {
         String UI_BROWSER_MOBILE_TAB_SWITCHER_GRID = "UI>Browser>Mobile>TabSwitcher>Grid";
         String UI_BROWSER_NAVIGATION_GESTURENAV = "UI>Browser>Navigation>GestureNav";
         String UI_BROWSER_NEW_TAB_PAGE = "UI>Browser>NewTabPage";
-        String UI_BROWSER_NEW_TAB_PAGE_EXPLORE_SITES = "UI>Browser>NewTabPage>ExploreSites";
         String UI_BROWSER_OMNIBOX = "UI>Browser>Omnibox";
         String UI_BROWSER_PASSWORDS = "UI>Browser>Passwords";
+        String UI_BROWSER_PRIVACY_SANDBOX = "UI>Browser>Privacy Sandbox";
         String UI_BROWSER_SEARCH_VOICE = "UI>Browser>Search>Voice";
         String UI_BROWSER_SHARING = "UI>Browser>Sharing";
         String UI_BROWSER_SHOPPING = "UI>Browser>Shopping";
+        String UI_BROWSER_SHOPPING_DEALS = "UI>Browser>Shopping>Deals";
         String UI_BROWSER_SHOPPING_MERCHANT_TRUST = "UI>Browser>Shopping>MerchantTrust";
         String UI_BROWSER_SHOPPING_PRICE_TRACKING = "UI>Browser>Shopping>PriceTracking";
         String UI_BROWSER_THUMBNAIL = "UI>Browser>Thumbnail";
@@ -274,8 +285,8 @@ public class RenderTestRule extends TestWatcher {
         // TODO(crbug.com/40260566): Remove this and properly fix flaky tests.
         TestThreadUtils.flushNonDelayedLooperTasks();
         Bitmap testBitmap =
-                ThreadUtils.runOnUiThreadBlockingNoException(
-                        new Callable<Bitmap>() {
+                ThreadUtils.runOnUiThreadBlocking(
+                        new Callable<>() {
                             @Override
                             public Bitmap call() {
                                 int height = view.getMeasuredHeight();
@@ -410,13 +421,6 @@ public class RenderTestRule extends TestWatcher {
         }
 
         return String.format("%s.%s.rev_%s", testClass, desc, mSkiaGoldRevision);
-    }
-
-    /**
-     * Returns a string encoding the device model and sdk. It is used to identify device goldens.
-     */
-    private static String modelSdkIdentifier() {
-        return Build.MODEL.replace(' ', '_') + "-" + Build.VERSION.SDK_INT;
     }
 
     /** Saves a the given |bitmap| to the |file|. */

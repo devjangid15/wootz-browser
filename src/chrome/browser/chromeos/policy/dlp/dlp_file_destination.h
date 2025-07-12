@@ -7,7 +7,7 @@
 
 #include <optional>
 
-#include "components/enterprise/data_controls/component.h"
+#include "components/enterprise/data_controls/core/browser/component.h"
 #include "url/gurl.h"
 
 namespace policy {
@@ -26,8 +26,9 @@ class DlpFileDestination {
   DlpFileDestination(DlpFileDestination&&);
   DlpFileDestination& operator=(DlpFileDestination&&);
 
-  bool operator==(const DlpFileDestination&) const;
-  bool operator!=(const DlpFileDestination&) const;
+  friend bool operator==(const DlpFileDestination&,
+                         const DlpFileDestination&) = default;
+
   bool operator<(const DlpFileDestination& other) const;
   bool operator<=(const DlpFileDestination& other) const;
   bool operator>(const DlpFileDestination& other) const;

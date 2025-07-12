@@ -11,15 +11,16 @@
 #include "third_party/blink/public/common/privacy_budget/identifiable_token.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/dom/dom_node_ids.h"
 #include "third_party/blink/renderer/core/dom/events/event_target.h"
 #include "third_party/blink/renderer/core/event_target_names.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
+#include "third_party/blink/renderer/core/html/canvas/canvas_rendering_context.h"
 #include "third_party/blink/renderer/core/html/canvas/canvas_rendering_context_host.h"
 #include "third_party/blink/renderer/core/html/canvas/html_canvas_element.h"
 #include "third_party/blink/renderer/core/imagebitmap/image_bitmap_source.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/graphics/canvas_resource_dispatcher.h"
+#include "third_party/blink/renderer/platform/graphics/dom_node_id.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/heap/prefinalizer.h"
 #include "ui/gfx/geometry/size.h"
@@ -38,7 +39,6 @@ class ScriptState;
 
 class CORE_EXPORT OffscreenCanvas final
     : public EventTarget,
-      public ImageBitmapSource,
       public CanvasRenderingContextHost,
       public CanvasResourceDispatcherClient {
   DEFINE_WRAPPERTYPEINFO();
@@ -60,8 +60,6 @@ class CORE_EXPORT OffscreenCanvas final
 
   // CanvasResourceDispatcherClient
   bool BeginFrame() override;
-  void SetFilterQualityInResource(
-      cc::PaintFlags::FilterQuality filter_quality) override;
 
   // API Methods
   ImageBitmap* transferToImageBitmap(ScriptState*, ExceptionState&);
@@ -83,7 +81,7 @@ class CORE_EXPORT OffscreenCanvas final
   void SetNeutered();
   CanvasRenderingContext* GetCanvasRenderingContext(
       ExecutionContext*,
-      const String&,
+      CanvasRenderingContext::CanvasRenderingAPI,
       const CanvasContextCreationAttributesCore&);
 
   static void RegisterRenderingContextFactory(
@@ -96,7 +94,7 @@ class CORE_EXPORT OffscreenCanvas final
     disable_reading_from_canvas_ = true;
   }
 
-  CanvasResourceProvider* GetOrCreateResourceProvider();
+  CanvasResourceProvider* GetOrCreateResourceProviderForCanvas2D();
 
   void SetFrameSinkId(uint32_t client_id, uint32_t sink_id) {
     client_id_ = client_id;
@@ -119,28 +117,37 @@ class CORE_EXPORT OffscreenCanvas final
   CanvasRenderingContext* RenderingContext() const override {
     return context_.Get();
   }
-
-  bool PushFrameIfNeeded();
-  bool PushFrame(scoped_refptr<CanvasResource>&& frame,
-                 const SkIRect& damage_rect) override;
-  void DidDraw(const SkIRect&) override;
-  using CanvasRenderingContextHost::DidDraw;
-  void Commit(scoped_refptr<CanvasResource>&& bitmap_image,
-              const SkIRect& damage_rect) override;
-  bool ShouldAccelerate2dContext() const override;
-  CanvasResourceDispatcher* GetOrCreateResourceDispatcher() override;
-  UkmParameters GetUkmParameters() override;
-
-  // Partial CanvasResourceHost implementation
-  void NotifyGpuContextLost() override;
-  void SetNeedsCompositingUpdate() override {}
   // TODO(fserb): Merge this with HTMLCanvasElement::UpdateMemoryUsage
   void UpdateMemoryUsage() override;
   size_t GetMemoryUsage() const override;
   // Because OffscreenCanvas is not tied to a DOM, it's visibility cannot be
   // determined synchronously.
   // TODO(junov): Propagate changes in visibility from the placeholder canvas.
-  bool IsPageVisible() override { return true; }
+  bool IsPageVisible() const override { return true; }
+  void SetTransferToGPUTextureWasInvoked() override {
+    transfer_to_gpu_texture_was_invoked_ = true;
+  }
+  void DiscardResources() override;
+
+  bool PushFrameIfNeeded();
+  bool PushFrame(scoped_refptr<CanvasResource>&& frame,
+                 const SkIRect& damage_rect) override;
+  void DidDraw(const SkIRect&) override;
+  using CanvasRenderingContextHost::DidDraw;
+  bool ShouldAccelerate2dContext() const override;
+  CanvasResourceDispatcher* GetOrCreateResourceDispatcher() override;
+  void DiscardResourceDispatcher() override { frame_dispatcher_ = nullptr; }
+  UkmParameters GetUkmParameters() override;
+  bool IsWebGL1Enabled() const override { return true; }
+  bool IsWebGL2Enabled() const override { return true; }
+  bool IsWebGLBlocked() const override { return false; }
+
+  // CanvasResourceProvider::Delegate implementation
+  void NotifyGpuContextLost() override;
+  bool TransferToGPUTextureWasInvoked() override {
+    return transfer_to_gpu_texture_was_invoked_;
+  }
+  void SetNeedsCompositingUpdate() override {}
 
   // EventTarget implementation
   const AtomicString& InterfaceName() const final {
@@ -159,18 +166,15 @@ class CORE_EXPORT OffscreenCanvas final
   }
 
   // ImageBitmapSource implementation
-  gfx::Size BitmapSourceSize() const final;
   ScriptPromise<ImageBitmap> CreateImageBitmap(ScriptState*,
                                                std::optional<gfx::Rect>,
                                                const ImageBitmapOptions*,
                                                ExceptionState&) final;
 
   // CanvasImageSource implementation
-  scoped_refptr<Image> GetSourceImageForCanvas(
-      FlushReason,
-      SourceImageStatus*,
-      const gfx::SizeF&,
-      const AlphaDisposition alpha_disposition = kPremultiplyAlpha) final;
+  scoped_refptr<Image> GetSourceImageForCanvas(FlushReason,
+                                               SourceImageStatus*,
+                                               const gfx::SizeF&) final;
   bool WouldTaintOrigin() const final { return !origin_clean_; }
   gfx::SizeF ElementSize(const gfx::SizeF& default_object_size,
                          const RespectImageOrientationEnum) const final {
@@ -178,26 +182,19 @@ class CORE_EXPORT OffscreenCanvas final
   }
   bool IsOpaque() const final;
 
-  // overrides CanvasImageSource::IsAccelerated()
-  bool IsAccelerated() const final;
-
-  // overrides CanvasRenderingContextHost::EnableAcceleration()
-  bool EnableAcceleration() final;
-
   DispatchEventResult HostDispatchEvent(Event* event) override {
     return DispatchEvent(*event);
   }
 
-  bool IsWebGL1Enabled() const override { return true; }
-  bool IsWebGL2Enabled() const override { return true; }
-  bool IsWebGLBlocked() const override { return false; }
-
-  void CheckForGpuContextLost();
-  void SetRestoringGpuContext(bool restoring_gpu_context) {
-    restoring_gpu_context_ = restoring_gpu_context;
+  TextDirection GetTextDirection(const ComputedStyle*) override;
+  void SetTextDirection(TextDirection direction) {
+    text_direction_ = direction;
   }
 
-  FontSelector* GetFontSelector() override;
+  const LayoutLocale* GetLocale() const override;
+  void SetLocale(scoped_refptr<const LayoutLocale> locale);
+
+  UniqueFontSelector* GetFontSelector() override;
 
   void Trace(Visitor*) const override;
 
@@ -262,6 +259,11 @@ class CORE_EXPORT OffscreenCanvas final
   WeakMember<ExecutionContext> execution_context_;
 
   DOMNodeId placeholder_canvas_id_ = kInvalidDOMNodeId;
+  std::optional<TextDirection> text_direction_;
+
+  // Required for the TextStyle lang attribute, only non-null if control
+  // was transferred from an HTML canvas.
+  scoped_refptr<const LayoutLocale> locale_ = nullptr;
 
   bool disposing_ = false;
   bool is_neutered_ = false;
@@ -288,7 +290,9 @@ class CORE_EXPORT OffscreenCanvas final
   uint32_t client_id_ = 0;
   uint32_t sink_id_ = 0;
 
-  bool restoring_gpu_context_ = false;
+  bool transfer_to_gpu_texture_was_invoked_ = false;
+
+  NO_UNIQUE_ADDRESS V8ExternalMemoryAccounterBase external_memory_accounter_;
 };
 
 }  // namespace blink

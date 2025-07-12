@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #import "ios/chrome/browser/memory/model/memory_debugger.h"
 
 #import <stdint.h>
@@ -341,8 +346,10 @@ const CGFloat kPadding = 10;
 // Flashes the debugger to indicate memory warning.
 - (void)lowMemoryWarningReceived:(NSNotification*)notification {
   UIColor* originalColor = self.backgroundColor;
-  self.backgroundColor =
-      [UIColor colorWithRed:1.0 green:0.0 blue:0.0 alpha:0.9];
+  self.backgroundColor = [UIColor colorWithRed:1.0
+                                         green:0.0
+                                          blue:0.0
+                                         alpha:0.9];
   [UIView animateWithDuration:1.0
                         delay:0.0
                       options:UIViewAnimationOptionAllowUserInteraction
@@ -356,8 +363,9 @@ const CGFloat kPadding = 10;
 
 - (void)didMoveToSuperview {
   UIView* superview = [self superview];
-  if (superview)
+  if (superview) {
     [self setCenter:[superview center]];
+  }
 }
 
 #pragma mark Keyboard notification callbacks
@@ -452,7 +460,8 @@ const CGFloat kPadding = 10;
     refreshTimerValue = 0.5;
     NSString* errorMessage = [NSString
         stringWithFormat:@"Invalid value \"%@\" for refresh interval.\n"
-                         @"Must be a positive number.\n" @"Resetting to %.1f",
+                         @"Must be a positive number.\n"
+                         @"Resetting to %.1f",
                          [_refreshField text], refreshTimerValue];
     [self alert:errorMessage];
     [_refreshField

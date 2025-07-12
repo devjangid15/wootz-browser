@@ -18,9 +18,10 @@
 #include "base/memory/ref_counted.h"
 #include "base/observer_list.h"
 #include "base/observer_list_threadsafe.h"
-#include "content/browser/service_worker/service_worker_context_core.h"
 #include "content/browser/service_worker/service_worker_context_core_observer.h"
 #include "content/browser/service_worker/service_worker_identifiability_metrics.h"
+#include "content/browser/service_worker/service_worker_process_manager.h"
+#include "content/browser/service_worker/service_worker_registry.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/global_routing_id.h"
@@ -37,7 +38,6 @@ class FilePath;
 
 namespace storage {
 class QuotaManagerProxy;
-class ServiceWorkerStorageControlImpl;
 class SpecialStoragePolicy;
 }  // namespace storage
 
@@ -49,6 +49,7 @@ namespace content {
 
 class BrowserContext;
 class ChromeBlobStorageContext;
+class ServiceWorkerContextCore;
 class ServiceWorkerContextObserver;
 class StoragePartitionImpl;
 
@@ -134,9 +135,11 @@ class CONTENT_EXPORT ServiceWorkerContextWrapper
   void OnRegistrationCompleted(int64_t registration_id,
                                const GURL& scope,
                                const blink::StorageKey& key) override;
-  void OnRegistrationStored(int64_t registration_id,
-                            const GURL& scope,
-                            const blink::StorageKey& key) override;
+  void OnRegistrationStored(
+      int64_t registration_id,
+      const GURL& scope,
+      const blink::StorageKey& key,
+      const ServiceWorkerRegistrationInformation& service_worker_info) override;
   void OnAllRegistrationsDeletedForStorageKey(
       const blink::StorageKey& key) override;
   void OnErrorReported(
@@ -195,10 +198,10 @@ class CONTENT_EXPORT ServiceWorkerContextWrapper
       StatusCodeCallback callback) override;
   void UnregisterServiceWorker(const GURL& scope,
                                const blink::StorageKey& key,
-                               ResultCallback callback) override;
+                               StatusCodeCallback callback) override;
   void UnregisterServiceWorkerImmediately(const GURL& scope,
                                           const blink::StorageKey& key,
-                                          ResultCallback callback) override;
+                                          StatusCodeCallback callback) override;
   ServiceWorkerExternalRequestResult StartingExternalRequest(
       int64_t service_worker_version_id,
       ServiceWorkerExternalRequestTimeoutType timeout_type,
@@ -218,15 +221,13 @@ class CONTENT_EXPORT ServiceWorkerContextWrapper
   void CheckHasServiceWorker(const GURL& url,
                              const blink::StorageKey& key,
                              CheckHasServiceWorkerCallback callback) override;
-  void CheckOfflineCapability(const GURL& url,
-                              const blink::StorageKey& key,
-                              CheckOfflineCapabilityCallback callback) override;
 
   void ClearAllServiceWorkersForTest(base::OnceClosure callback) override;
-  void StartWorkerForScope(const GURL& scope,
-                           const blink::StorageKey& key,
-                           StartWorkerCallback info_callback,
-                           StatusCodeCallback failure_callback) override;
+  void StartWorkerForScope(
+      const GURL& scope,
+      const blink::StorageKey& key,
+      StartWorkerCallback info_callback,
+      StatusCodeResponseCallback failure_callback) override;
   void StartServiceWorkerAndDispatchMessage(
       const GURL& scope,
       const blink::StorageKey& key,
@@ -250,6 +251,10 @@ class CONTENT_EXPORT ServiceWorkerContextWrapper
       int64_t service_worker_version_id) override;
   blink::AssociatedInterfaceProvider& GetRemoteAssociatedInterfaces(
       int64_t service_worker_version_id) override;
+
+  // Returns the running info for a worker with `version_id`, if found.
+  std::optional<ServiceWorkerRunningInfo> GetRunningServiceWorkerInfo(
+      int64_t version_id);
 
   scoped_refptr<ServiceWorkerRegistration> GetLiveRegistration(
       int64_t registration_id);
@@ -423,19 +428,18 @@ class CONTENT_EXPORT ServiceWorkerContextWrapper
       int64_t version_id,
       network::mojom::ClientSecurityStatePtr client_security_state);
 
-  // Binds a ServiceWorkerStorageControl.
-  void BindStorageControl(
-      mojo::PendingReceiver<storage::mojom::ServiceWorkerStorageControl>
-          receiver);
+  const base::FilePath& user_data_directory() { return user_data_directory_; }
 
   using StorageControlBinder = base::RepeatingCallback<void(
       mojo::PendingReceiver<storage::mojom::ServiceWorkerStorageControl>)>;
   // Sets a callback to bind ServiceWorkerStorageControl for testing.
   void SetStorageControlBinderForTest(StorageControlBinder binder);
-
-  ServiceWorkerContextCore* GetContextCoreForTest() {
-    return context_core_.get();
+  StorageControlBinder& storage_control_binder_for_test() {
+    return storage_control_binder_for_test_;
   }
+
+  void SetForceUpdateOnPageLoadForTesting(
+      bool force_update_on_page_load) override;
 
  private:
   friend class BackgroundSyncManagerTest;
@@ -470,12 +474,17 @@ class CONTENT_EXPORT ServiceWorkerContextWrapper
                                     bool include_installing_version,
                                     FindRegistrationCallback callback);
 
-  // Helper method for `UnregisterServiceWorker()` and
-  // `UnregisterServiceWorkerImmediately()`.
+  // Helper methods for `UnregisterServiceWorker()` and
+  // `UnregisterServiceWorkerImmediately()`. `callback` provides the status that
+  // was encountered. `blink::ServiceWorkerStatusCode::kOk` means the request to
+  // unregister was sent. It does not mean the worker has been fully
+  // unregistered though.
   void UnregisterServiceWorkerImpl(const GURL& scope,
                                    const blink::StorageKey& key,
-                                   bool is_immediate,
-                                   ResultCallback callback);
+                                   StatusCodeCallback callback);
+  void UnregisterServiceWorkerImmediatelyImpl(const GURL& scope,
+                                              const blink::StorageKey& key,
+                                              StatusCodeCallback callback);
 
   void MaybeProcessPendingWarmUpRequest();
 
@@ -591,10 +600,6 @@ class CONTENT_EXPORT ServiceWorkerContextWrapper
 
   std::unique_ptr<ServiceWorkerIdentifiabilityMetrics> identifiability_metrics_;
 
-  // TODO(crbug.com/40120038): Remove `storage_control_` when
-  // ServiceWorkerStorage is sandboxed. An instance of this impl should live in
-  // the storage service, not here.
-  std::unique_ptr<storage::ServiceWorkerStorageControlImpl> storage_control_;
   // These fields are used to (re)create `storage_control_`.
   base::FilePath user_data_directory_;
   scoped_refptr<storage::QuotaManagerProxy> quota_manager_proxy_;

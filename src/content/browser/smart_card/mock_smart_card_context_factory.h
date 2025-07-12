@@ -39,6 +39,8 @@ class MockSmartCardContextFactory
               (const std::string& reader,
                device::mojom::SmartCardShareMode share_mode,
                device::mojom::SmartCardProtocolsPtr preferred_protocols,
+               mojo::PendingRemote<device::mojom::SmartCardConnectionWatcher>
+                   connection_watcher,
                ConnectCallback callback),
               (override));
 
@@ -52,6 +54,7 @@ class MockSmartCardContextFactory
 
   // Expect a ListReaders() call. Will return `readers`.
   void ExpectListReaders(std::vector<std::string> readers);
+  void ExpectListReadersError(device::mojom::SmartCardError error);
 
   void ClearContextReceivers();
 

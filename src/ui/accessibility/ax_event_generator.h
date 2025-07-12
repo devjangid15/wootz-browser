@@ -95,7 +95,6 @@ class AX_EXPORT AXEventGenerator : public AXTreeObserver {
     ORIENTATION_CHANGED,
     PARENT_CHANGED,
     PLACEHOLDER_CHANGED,
-    PORTAL_ACTIVATED,
     POSITION_IN_SET_CHANGED,
     RANGE_VALUE_CHANGED,
     RANGE_VALUE_MAX_CHANGED,
@@ -179,7 +178,6 @@ class AX_EXPORT AXEventGenerator : public AXTreeObserver {
 
    private:
     AX_EXPORT friend bool operator==(const Iterator& lhs, const Iterator& rhs);
-    AX_EXPORT friend bool operator!=(const Iterator& lhs, const Iterator& rhs);
     AX_EXPORT friend void swap(Iterator& lhs, Iterator& rhs);
 
     std::map<AXNodeID, std::set<EventParams>>::const_iterator map_iter_;
@@ -241,7 +239,7 @@ class AX_EXPORT AXEventGenerator : public AXTreeObserver {
   // Note that events are organized by node and then by event id to
   // efficiently remove duplicates, so events won't be retrieved in the
   // same order they were added.
-  void AddEvent(ui::AXNode* node, Event event);
+  void AddEvent(AXNode* node, Event event);
 
   // Registers for events on the node or one of its descendants.
   // Registration offers a more performant path for event generation.
@@ -300,8 +298,8 @@ class AX_EXPORT AXEventGenerator : public AXTreeObserver {
       const std::vector<int32_t>& old_value,
       const std::vector<int32_t>& new_value) override;
   void OnTreeDataChanged(AXTree* tree,
-                         const ui::AXTreeData& old_data,
-                         const ui::AXTreeData& new_data) override;
+                         const AXTreeData& old_data,
+                         const AXTreeData& new_data) override;
   void OnSubtreeWillBeDeleted(AXTree* tree, AXNode* node) override;
   void OnNodeWillBeReparented(AXTree* tree, AXNode* node) override;
   void OnSubtreeWillBeReparented(AXTree* tree, AXNode* node) override;

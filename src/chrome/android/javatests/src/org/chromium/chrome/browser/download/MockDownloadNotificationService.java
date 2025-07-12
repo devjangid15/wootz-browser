@@ -11,12 +11,13 @@ import android.content.Intent;
 import android.graphics.Bitmap;
 
 import org.chromium.base.IntentUtils;
-import org.chromium.chrome.browser.profiles.OTRProfileID;
+import org.chromium.base.ThreadUtils;
+import org.chromium.chrome.browser.profiles.OtrProfileId;
+import org.chromium.components.download.DownloadDangerType;
 import org.chromium.components.offline_items_collection.ContentId;
 import org.chromium.components.offline_items_collection.FailState;
 import org.chromium.components.offline_items_collection.OfflineItem.Progress;
 import org.chromium.components.offline_items_collection.PendingState;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.url.GURL;
 
 import java.util.ArrayList;
@@ -24,7 +25,7 @@ import java.util.List;
 
 /** Mock class to DownloadNotificationService for testing purpose. */
 public class MockDownloadNotificationService extends DownloadNotificationService {
-    private final List<Integer> mNotificationIds = new ArrayList<Integer>();
+    private final List<Integer> mNotificationIds = new ArrayList<>();
     private boolean mPaused;
     private int mLastNotificationId = DEFAULT_NOTIFICATION_ID;
     private int mNumberOfNotifications;
@@ -66,7 +67,7 @@ public class MockDownloadNotificationService extends DownloadNotificationService
             final String filePath,
             final String fileName,
             final long systemDownloadId,
-            final OTRProfileID otrProfileID,
+            final OtrProfileId otrProfileId,
             final boolean isSupportedMimeType,
             final boolean isOpenable,
             final Bitmap icon,
@@ -74,14 +75,14 @@ public class MockDownloadNotificationService extends DownloadNotificationService
             final boolean shouldPromoteOrigin,
             final GURL referrer,
             final long totalBytes) {
-        return TestThreadUtils.runOnUiThreadBlockingNoException(
+        return ThreadUtils.runOnUiThreadBlocking(
                 () ->
                         MockDownloadNotificationService.super.notifyDownloadSuccessful(
                                 id,
                                 filePath,
                                 fileName,
                                 systemDownloadId,
-                                otrProfileID,
+                                otrProfileId,
                                 isSupportedMimeType,
                                 isOpenable,
                                 icon,
@@ -99,13 +100,13 @@ public class MockDownloadNotificationService extends DownloadNotificationService
             final long bytesReceived,
             final long timeRemainingInMillis,
             final long startTime,
-            final OTRProfileID otrProfileID,
+            final OtrProfileId otrProfileId,
             final boolean canDownloadWhileMetered,
             final boolean isTransient,
             final Bitmap icon,
             final GURL originalUrl,
             final boolean shouldPromoteOrigin) {
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () ->
                         MockDownloadNotificationService.super.notifyDownloadProgress(
                                 id,
@@ -114,7 +115,7 @@ public class MockDownloadNotificationService extends DownloadNotificationService
                                 bytesReceived,
                                 timeRemainingInMillis,
                                 startTime,
-                                otrProfileID,
+                                otrProfileId,
                                 canDownloadWhileMetered,
                                 isTransient,
                                 icon,
@@ -128,7 +129,7 @@ public class MockDownloadNotificationService extends DownloadNotificationService
             String fileName,
             boolean isResumable,
             boolean isAutoResumable,
-            OTRProfileID otrProfileID,
+            OtrProfileId otrProfileId,
             boolean isTransient,
             Bitmap icon,
             final GURL originalUrl,
@@ -136,14 +137,14 @@ public class MockDownloadNotificationService extends DownloadNotificationService
             boolean hasUserGesture,
             boolean forceRebuild,
             @PendingState int pendingState) {
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () ->
                         MockDownloadNotificationService.super.notifyDownloadPaused(
                                 id,
                                 fileName,
                                 isResumable,
                                 isAutoResumable,
-                                otrProfileID,
+                                otrProfileId,
                                 isTransient,
                                 icon,
                                 originalUrl,
@@ -160,9 +161,9 @@ public class MockDownloadNotificationService extends DownloadNotificationService
             final Bitmap icon,
             final GURL originalUrl,
             final boolean shouldPromoteOrigin,
-            OTRProfileID otrProfileID,
+            OtrProfileId otrProfileId,
             @FailState int failState) {
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () ->
                         MockDownloadNotificationService.super.notifyDownloadFailed(
                                 id,
@@ -170,13 +171,36 @@ public class MockDownloadNotificationService extends DownloadNotificationService
                                 icon,
                                 originalUrl,
                                 shouldPromoteOrigin,
-                                otrProfileID,
+                                otrProfileId,
                                 failState));
     }
 
     @Override
+    public void notifyDownloadDangerous(
+            ContentId id,
+            String fileName,
+            GURL originalUrl,
+            boolean shouldPromoteOrigin,
+            OtrProfileId otrProfileId,
+            boolean canDownloadWhileMetered,
+            boolean isTransient,
+            @DownloadDangerType int dangerType) {
+        ThreadUtils.runOnUiThreadBlocking(
+                () ->
+                        MockDownloadNotificationService.super.notifyDownloadDangerous(
+                                id,
+                                fileName,
+                                originalUrl,
+                                shouldPromoteOrigin,
+                                otrProfileId,
+                                canDownloadWhileMetered,
+                                isTransient,
+                                dangerType));
+    }
+
+    @Override
     public void notifyDownloadCanceled(final ContentId id, boolean hasUserGesture) {
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () ->
                         MockDownloadNotificationService.super.notifyDownloadCanceled(
                                 id, hasUserGesture));

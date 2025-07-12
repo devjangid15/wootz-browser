@@ -31,6 +31,7 @@ struct AppInfo {
   AppInfo(const UpdaterScope scope,
           const std::string& app_id,
           const std::string& ap,
+          const std::string& lang,
           const std::string& brand,
           const base::Version& app_version,
           const base::FilePath& ecp);
@@ -41,25 +42,27 @@ struct AppInfo {
   UpdaterScope scope;
   std::string app_id;
   std::string ap;
+  std::string lang;
   std::string brand;
   base::Version version;
   base::FilePath ecp;
 };
 
-using AppInstallerResult = update_client::CrxInstaller::Result;
-using InstallProgressCallback = update_client::CrxInstaller::ProgressCallback;
+using InstallProgressCallback = ::update_client::CrxInstaller::ProgressCallback;
+
+using InstallerResult = ::update_client::CrxInstaller::Result;
 
 // Runs an app installer.
 //   The file `server_install_data` contains additional application-specific
 // install configuration parameters extracted either from the update response or
 // the app manifest.
-AppInstallerResult RunApplicationInstaller(
+InstallerResult RunApplicationInstaller(
     const AppInfo& app_info,
     const base::FilePath& installer_path,
     const std::string& install_args,
-    const std::optional<base::FilePath>& server_install_data,
+    std::optional<base::FilePath> server_install_data,
     bool usage_stats_enabled,
-    const base::TimeDelta& timeout,
+    base::TimeDelta timeout,
     InstallProgressCallback progress_callback);
 
 // Retrieves the value of `keyname` from `path` (a plist, on macOS). If the
@@ -69,8 +72,14 @@ AppInstallerResult RunApplicationInstaller(
 std::string LookupString(const base::FilePath& path,
                          const std::string& keyname,
                          const std::string& default_value);
-base::Version LookupVersion(const base::FilePath& path,
-                            const std::string& keyname,
+
+// Retrieves the installed version of the provided `app_id`. If `app_id` is not
+// installed, the `default_value` is returned. `version_path` and `version_key`
+// are not used on Windows.
+base::Version LookupVersion(UpdaterScope scope,
+                            const std::string& app_id,
+                            const base::FilePath& version_path,
+                            const std::string& version_key,
                             const base::Version& default_value);
 
 // Manages the install of one application. Some of the functions of this
@@ -92,9 +101,12 @@ class Installer final : public update_client::CrxInstaller {
   Installer(const std::string& app_id,
             const std::string& client_install_data,
             const std::string& install_data_index,
+            const std::string& install_source,
             const std::string& target_channel,
             const std::string& target_version_prefix,
             bool rollback_allowed,
+            std::optional<int> major_version_rollout_policy,
+            std::optional<int> minor_version_rollout_policy,
             bool update_disabled,
             UpdateService::PolicySameVersionUpdate policy_same_version_update,
             scoped_refptr<PersistedData> persisted_data,
@@ -125,8 +137,8 @@ class Installer final : public update_client::CrxInstaller {
                std::unique_ptr<InstallParams> install_params,
                ProgressCallback progress_callback,
                Callback callback) override;
-  bool GetInstalledFile(const std::string& file,
-                        base::FilePath* installed_file) override;
+  std::optional<base::FilePath> GetInstalledFile(
+      const std::string& file) override;
   bool Uninstall() override;
 
   Result InstallHelper(const base::FilePath& unpack_path,
@@ -151,14 +163,16 @@ class Installer final : public update_client::CrxInstaller {
   const std::string app_id_;
   const std::string client_install_data_;
   const std::string install_data_index_;
+  const std::string install_source_;
   const bool rollback_allowed_;
+  const std::optional<int> major_version_rollout_policy_;
+  const std::optional<int> minor_version_rollout_policy_;
   const std::string target_channel_;
   const std::string target_version_prefix_;
   const bool update_disabled_;
   const UpdateService::PolicySameVersionUpdate policy_same_version_update_;
   scoped_refptr<PersistedData> persisted_data_;
   const crx_file::VerifierFormat crx_verifier_format_;
-  const bool usage_stats_enabled_;
 
   // AppInfo is set only after MakeCrxComponent is called, and is not updated
   // when the installer succeeds.

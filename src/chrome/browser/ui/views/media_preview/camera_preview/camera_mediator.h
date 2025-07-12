@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "base/memory/raw_ptr.h"
 #include "base/scoped_observation.h"
 #include "components/media_effects/media_device_info.h"
 #include "components/prefs/pref_service.h"
@@ -41,6 +42,8 @@ class CameraMediator : public media_effects::MediaDeviceInfo::Observer {
     return std::move(video_source_provider_);
   }
 
+  bool IsDeviceListInitialized() const { return is_device_list_initialized_; }
+
  private:
   // media_effects::MediaDeviceInfo::Observer overrides.
   void OnVideoDevicesChanged(
@@ -54,6 +57,8 @@ class CameraMediator : public media_effects::MediaDeviceInfo::Observer {
   DevicesChangedCallback devices_changed_callback_;
   base::ScopedObservation<media_effects::MediaDeviceInfo, CameraMediator>
       devices_observer_{this};
+
+  bool is_device_list_initialized_ = false;
 
   base::WeakPtrFactory<CameraMediator> weak_ptr_factory_{this};
 };

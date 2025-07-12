@@ -5,13 +5,15 @@
 #ifndef CHROME_BROWSER_ASH_KCER_NSSDB_MIGRATION_KCER_ROLLBACK_HELPER_H_
 #define CHROME_BROWSER_ASH_KCER_NSSDB_MIGRATION_KCER_ROLLBACK_HELPER_H_
 
-#include "chrome/browser/chromeos/kcer/kcer_factory.h"
+#include "base/memory/raw_ptr.h"
+#include "chromeos/ash/components/kcer/chaps/high_level_chaps_client.h"
 #include "chromeos/ash/components/tpm/tpm_token_info_getter.h"
 #include "components/prefs/pref_service.h"
 
 namespace kcer::internal {
 
-const char kNssDbClientCertsRollback[] = "Ash.KcerRollbackHelper.Events";
+inline constexpr char kNssDbClientCertsRollback[] =
+    "Ash.KcerRollbackHelper.Events";
 
 // This enum should be kept in sync with the `NssDbClientCertsRollbackEvent`
 // in tools/metrics/histograms/metadata/ash/enums.xml.

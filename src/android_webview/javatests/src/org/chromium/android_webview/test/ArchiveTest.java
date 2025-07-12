@@ -18,11 +18,11 @@ import org.junit.runners.Parameterized.UseParametersRunnerFactory;
 
 import org.chromium.android_webview.AwContents;
 import org.chromium.base.Callback;
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.UrlUtils;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 import java.io.File;
 import java.util.concurrent.Semaphore;
@@ -40,7 +40,7 @@ public class ArchiveTest extends AwParameterizedTest {
     private static final String TEST_PAGE =
             UrlUtils.encodeHtmlDataUri("<html><head></head><body>test</body></html>");
 
-    private TestAwContentsClient mContentsClient = new TestAwContentsClient();
+    private final TestAwContentsClient mContentsClient = new TestAwContentsClient();
     private AwTestContainerView mTestContainerView;
 
     public ArchiveTest(AwSettingsMutation param) {
@@ -203,7 +203,7 @@ public class ArchiveTest extends AwParameterizedTest {
         PostTask.runOrPostTask(
                 TaskTraits.UI_DEFAULT,
                 () -> mTestContainerView.getAwContents().saveWebArchive(path, false, callback));
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     // Just wait for this task to having been posted on the UI thread.
                     // This ensures that if the implementation of saveWebArchive posts a

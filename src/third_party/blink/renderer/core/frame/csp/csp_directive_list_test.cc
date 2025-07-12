@@ -398,6 +398,11 @@ TEST_F(CSPDirectiveListTest, AllowScriptFromSourceWithHash) {
 
       // At least one integrity hash must be present.
       {"'sha256-yay'", "https://a.com/file", "", false},
+
+      // script-src doesn't support url hashes by default.
+      {"'url-sha256-yay'", "https://a.com/file", "", false},
+      {"'url-sha256-IyodCgwKGmOP0Vm8YUQbOET0U+HGD3THhrHT5RqRzbA='",
+       "https://a.com/file", "", false},
   };
 
   ContentSecurityPolicy* context =
@@ -412,9 +417,9 @@ TEST_F(CSPDirectiveListTest, AllowScriptFromSourceWithHash) {
     const KURL resource(test.url);
 
     IntegrityMetadataSet integrity_metadata;
-    SubresourceIntegrity::ParseIntegrityAttribute(
-        test.integrity, SubresourceIntegrity::IntegrityFeatures::kDefault,
-        integrity_metadata);
+    SubresourceIntegrity::ParseIntegrityAttribute(test.integrity,
+                                                  integrity_metadata,
+                                                  /*feature_context=*/nullptr);
 
     // Report-only 'script-src'
     network::mojom::blink::ContentSecurityPolicyPtr directive_list = CreateList(
@@ -856,10 +861,6 @@ TEST_F(CSPDirectiveListTest, ReportURIInMeta) {
   EXPECT_FALSE(directive_list->report_endpoints.empty());
 }
 
-MATCHER_P(HasSubstr, s, "") {
-  return arg.Contains(s);
-}
-
 TEST_F(CSPDirectiveListTest, StrictDynamicIgnoresAllowlistWarning) {
   KURL blocked_url = KURL("https://blocked.com");
   KURL other_blocked_url = KURL("https://other-blocked.com");
@@ -935,10 +936,12 @@ TEST_F(CSPDirectiveListTest, StrictDynamicIgnoresAllowlistWarning) {
         "host-based allowlisting is disabled.";
     if (testCase.console_message) {
       EXPECT_THAT(test_delegate->console_messages(),
-                  testing::Contains(HasSubstr(message)));
+                  testing::Contains(
+                      HasConsole(message, ConsoleMessage::Level::kError)));
     } else {
       EXPECT_THAT(test_delegate->console_messages(),
-                  testing::Not(testing::Contains(HasSubstr(message))));
+                  testing::Not(testing::Contains(
+                      HasConsole(message, ConsoleMessage::Level::kError))));
     }
   }
 }

@@ -10,8 +10,10 @@
 #include <set>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
+#include "base/auto_reset.h"
 #include "base/containers/contains.h"
 #include "base/feature_list.h"
 #include "base/files/file_enumerator.h"
@@ -32,9 +34,6 @@
 #include "base/task/thread_pool.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
-#include "chrome/browser/web_applications/callback_utils.h"
-#include "chrome/browser/web_applications/web_app_provider.h"
 // TODO(crbug.com/40251079): Remove or at least isolate circular dependencies on
 // app service by moving this code to //c/b/web_applications/adjustments, or
 // flip entire dependency so web_applications depends on app_service.
@@ -42,6 +41,7 @@
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"  // nogncheck
 #include "chrome/browser/apps/user_type_filter.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/web_applications/callback_utils.h"
 #include "chrome/browser/web_applications/extension_status_utils.h"
 #include "chrome/browser/web_applications/externally_managed_app_manager.h"
 #include "chrome/browser/web_applications/file_utils_wrapper.h"
@@ -53,6 +53,8 @@
 #include "chrome/browser/web_applications/web_app.h"
 #include "chrome/browser/web_applications/web_app_helpers.h"
 #include "chrome/browser/web_applications/web_app_install_utils.h"
+#include "chrome/browser/web_applications/web_app_management_type.h"
+#include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/browser/web_applications/web_app_registrar.h"
 #include "chrome/browser/web_applications/web_app_ui_manager.h"
 #include "chrome/browser/web_applications/web_app_utils.h"
@@ -67,7 +69,7 @@
 #include "components/webapps/browser/install_result_code.h"
 #include "components/webapps/common/constants.h"
 #include "content/public/browser/browser_thread.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
+#include "extensions/common/constants.h"
 #include "ui/events/devices/device_data_manager.h"
 #include "ui/events/devices/input_device_event_observer.h"
 #include "ui/events/devices/touchscreen_device.h"
@@ -75,19 +77,12 @@
 
 #if BUILDFLAG(IS_CHROMEOS)
 // TODO(http://b/333583704): Revert CL which added this include after migration.
-#include "chrome/browser/chromeos/echo/echo_util.h"
-#endif  // BUILDFLAG(IS_CHROMEOS)
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "ash/components/arc/arc_util.h"
 #include "ash/constants/ash_switches.h"
+#include "ash/constants/web_app_id_constants.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-#include "chromeos/crosapi/mojom/crosapi.mojom.h"
-#include "chromeos/startup/browser_params_proxy.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
+#include "chromeos/ash/components/report/utils/time_utils.h"
+#include "chromeos/ash/experiences/arc/arc_util.h"
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 namespace web_app {
 
@@ -136,38 +131,8 @@ struct LoadedConfigs {
   std::vector<std::string> errors;
 };
 
-#if BUILDFLAG(IS_CHROMEOS)
-bool IsArcAvailable() {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  return arc::IsArcAvailable();
-#else
-  const chromeos::BrowserParamsProxy* init_params =
-      chromeos::BrowserParamsProxy::Get();
-  return init_params->DeviceProperties() &&
-         init_params->DeviceProperties()->is_arc_available;
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-}
-
-bool IsTabletFormFactor() {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  return ash::switches::IsTabletFormFactor();
-#else
-  const chromeos::BrowserParamsProxy* init_params =
-      chromeos::BrowserParamsProxy::Get();
-  return init_params->DeviceProperties() &&
-         init_params->DeviceProperties()->is_tablet_form_factor;
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-}
-#endif  // BUILDFLAG(IS_CHROMEOS)
-
 std::optional<bool> HasStylusEnabledTouchscreen() {
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  return chromeos::BrowserParamsProxy::Get()
-      ->DeviceProperties()
-      ->has_stylus_enabled_touchscreen;
-#else
   return DeviceHasStylusEnabledTouchscreen();
-#endif
 }
 
 LoadedConfigs LoadConfigsBlocking(
@@ -223,10 +188,10 @@ ParsedConfigs ParseConfigsBlocking(LoadedConfigs loaded_configs) {
         ParseConfig(*file_utils, loaded_config.file.DirName(),
                     loaded_config.file, loaded_config.contents);
     if (ExternalInstallOptions* options =
-            absl::get_if<ExternalInstallOptions>(&parse_result)) {
+            std::get_if<ExternalInstallOptions>(&parse_result)) {
       result.options_list.push_back(std::move(*options));
     } else {
-      result.errors.push_back(std::move(absl::get<std::string>(parse_result)));
+      result.errors.push_back(std::move(std::get<std::string>(parse_result)));
       VLOG(1) << result.errors.back();
     }
   }
@@ -293,8 +258,8 @@ SynchronizeDecision GetSynchronizeDecision(
   }
 
   // Remove if gated on a disabled feature.
-  if (options.gate_on_feature && !IsPreinstalledAppInstallFeatureEnabled(
-                                     *options.gate_on_feature, *profile)) {
+  if (options.gate_on_feature &&
+      !IsPreinstalledAppInstallFeatureEnabled(*options.gate_on_feature)) {
     return {.type = SynchronizeDecision::kUninstall,
             .reason = DisabledReason::kUninstallGatedFeatureNotEnabled,
             .log = base::StrCat({options.install_url.spec(),
@@ -407,7 +372,7 @@ SynchronizeDecision GetSynchronizeDecision(
   // any existing installations alone.
   if (options.gate_on_feature_or_installed &&
       !IsPreinstalledAppInstallFeatureEnabled(
-          *options.gate_on_feature_or_installed, *profile)) {
+          *options.gate_on_feature_or_installed)) {
     return {.type = SynchronizeDecision::kIgnore,
             .reason = DisabledReason::kIgnoreGatedFeatureNotEnabled,
             .log = base::StrCat(
@@ -416,14 +381,15 @@ SynchronizeDecision GetSynchronizeDecision(
   }
 
 #if BUILDFLAG(IS_CHROMEOS)
-  if (options.disable_if_arc_supported && IsArcAvailable()) {
+  if (options.disable_if_arc_supported && arc::IsArcAvailable()) {
     return {.type = SynchronizeDecision::kIgnore,
             .reason = DisabledReason::kIgnoreArcAvailable,
             .log = base::StrCat({options.install_url.spec(),
                                  " ignore because ARC is available."})};
   }
 
-  if (options.disable_if_tablet_form_factor && IsTabletFormFactor()) {
+  if (options.disable_if_tablet_form_factor &&
+      ash::switches::IsTabletFormFactor()) {
     return {.type = SynchronizeDecision::kIgnore,
             .reason = DisabledReason::kIgnoreTabletFormFactor,
             .log = base::StrCat({options.install_url.spec(),
@@ -513,17 +479,89 @@ bool ShouldForceReinstall(const ExternalInstallOptions& options,
     return true;
   }
 
-  if (base::FeatureList::IsEnabled(features::kWebAppDedupeInstallUrls)) {
-    // TODO(crbug.com/40261748): Add metrics for this event.
-    const WebApp* app = registrar.LookUpAppByInstallSourceInstallUrl(
-        WebAppManagement::Type::kDefault, options.install_url);
-    if (app && LooksLikePlaceholder(*app)) {
-      return true;
-    }
+  // TODO(crbug.com/40261748): Add metrics for this event.
+  const WebApp* app = registrar.LookUpAppByInstallSourceInstallUrl(
+      WebAppManagement::Type::kDefault, options.install_url);
+  if (app && LooksLikePlaceholder(*app)) {
+    return true;
   }
 
   return false;
 }
+
+#if BUILDFLAG(IS_CHROMEOS)
+// Modifies ExternalInstallOptions to be force_reinstall = true if they are
+// already installed but their uninstall_and_replace apps are also installed,
+// this is to re-trigger the migration logic that happens at the end of
+// installation. May not do anything depending on feature flags and platform.
+void MaybeForceInstallForRemigration(
+    std::vector<ExternalInstallOptions>* options_list,
+    Profile* profile,
+    const WebAppRegistrar& registrar) {
+  bool always_migrate_calculator = base::FeatureList::IsEnabled(
+      features::kPreinstalledWebAppAlwaysMigrateCalculator);
+  bool always_migrate =
+      base::FeatureList::IsEnabled(features::kPreinstalledWebAppAlwaysMigrate);
+  if (!always_migrate_calculator && !always_migrate) {
+    return;
+  }
+
+  // Record Calculator remigration metrics.
+  bool calculator_web_app_installed =
+      registrar.IsInstalledByDefaultManagement(ash::kCalculatorAppId);
+  bool calculator_chrome_app_installed = extensions::IsExtensionInstalled(
+      profile, extension_misc::kCalculatorAppId);
+  base::UmaHistogramBoolean(
+      "WebApp.Preinstalled.CalculatorForceMigration.WebAppInstalled",
+      calculator_web_app_installed);
+  base::UmaHistogramBoolean(
+      "WebApp.Preinstalled.CalculatorForceMigration."
+      "ChromeAppAndWebAppInstalled",
+      calculator_chrome_app_installed && calculator_web_app_installed);
+  base::UmaHistogramBoolean(
+      "WebApp.Preinstalled.CalculatorForceMigration.ChromeAppNoWebAppInstalled",
+      calculator_chrome_app_installed && !calculator_web_app_installed);
+
+  bool any_migration_needed = false;
+  bool calculator_migration_needed = false;
+  for (ExternalInstallOptions& options : *options_list) {
+    // Ignore preinstalled apps that aren't currently installed.
+    if (!registrar.LookUpAppByInstallSourceInstallUrl(
+            WebAppManagement::Type::kDefault, options.install_url)) {
+      continue;
+    }
+
+    // Force migration if corresponding Chrome app is installed, according to
+    // feature flags.
+    for (const std::string& app_id : options.uninstall_and_replace) {
+      bool migration_needed = false;
+      if (extensions::IsExtensionInstalled(profile, app_id)) {
+        if (always_migrate_calculator &&
+            app_id == extension_misc::kCalculatorAppId) {
+          calculator_migration_needed = true;
+          migration_needed = true;
+        }
+
+        if (always_migrate) {
+          migration_needed = true;
+        }
+      }
+
+      if (migration_needed) {
+        any_migration_needed = true;
+        options.force_reinstall = true;
+        break;
+      }
+    }
+  }
+
+  base::UmaHistogramBoolean("WebApp.Preinstalled.ChromeAppMigrationNeeded",
+                            any_migration_needed);
+  base::UmaHistogramBoolean(
+      "WebApp.Preinstalled.CalculatorForceMigration.MigrationTriggered",
+      calculator_migration_needed);
+}
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 }  // namespace
 
@@ -585,6 +623,14 @@ const char*
         "WebApp.Preinstalled.CorruptUserUninstallPrefsCount";
 const char* PreinstalledWebAppManager::kHistogramInstallResult =
     "Webapp.InstallResult.Default";
+const char* PreinstalledWebAppManager::kHistogramInstallCount =
+    "WebApp.Preinstalled.InstallCount";
+const char* PreinstalledWebAppManager::kHistogramUninstallTotalCount =
+    "WebApp.Preinstalled.UninstallTotalCount";
+const char* PreinstalledWebAppManager::kHistogramUninstallSourceRemovedCount =
+    "WebApp.Preinstalled.UninstallSourceRemovedCount";
+const char* PreinstalledWebAppManager::kHistogramUninstallAppRemovedCount =
+    "WebApp.Preinstalled.UninstallAppRemovedCount";
 const char* PreinstalledWebAppManager::kHistogramUninstallAndReplaceCount =
     "WebApp.Preinstalled.UninstallAndReplaceCount";
 const char*
@@ -724,13 +770,6 @@ void PreinstalledWebAppManager::Load(ConsumeInstallOptions callback) {
   bool preinstalling_enabled =
       base::FeatureList::IsEnabled(features::kPreinstalledWebAppInstallation);
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  // With Lacros, web apps are not installed using the Ash browser.
-  if (IsWebAppsCrosapiEnabled()) {
-    preinstalling_enabled = false;
-  }
-#endif
-
   if (!preinstalling_enabled) {
     std::move(callback).Run({});
     return;
@@ -749,18 +788,11 @@ void PreinstalledWebAppManager::Load(ConsumeInstallOptions callback) {
 // TODO(http://b/333583704): Revert CL which added this method after migration.
 void PreinstalledWebAppManager::LoadDeviceInfo(ConsumeDeviceInfo callback) {
 #if BUILDFLAG(IS_CHROMEOS)
-  chromeos::echo_util::GetOobeTimestamp(base::BindOnce(
-      [](ConsumeDeviceInfo callback,
-         base::expected<std::string, std::string> oobe_timestamp_or_error) {
-        DeviceInfo device_info;
-        if (oobe_timestamp_or_error.has_value() &&
-            oobe_timestamp_or_error.value().length()) {
-          device_info.oobe_timestamp =
-              std::move(oobe_timestamp_or_error.value());
-        }
-        std::move(callback).Run(std::move(device_info));
-      },
-      std::move(callback)));
+  // This needs to be consistent with echo_private_api to avoid inconsistency
+  // between promo offering and eligibility.
+  DeviceInfo device_info;
+  device_info.oobe_timestamp = ash::report::utils::GetFirstActiveWeek();
+  std::move(callback).Run(device_info);
 #else  // BUILDFLAG(IS_CHROMEOS)
   std::move(callback).Run(DeviceInfo());
 #endif
@@ -779,8 +811,9 @@ void PreinstalledWebAppManager::LoadConfigs(ConsumeLoadedConfigs callback) {
     LoadedConfigs loaded_configs;
     for (const base::Value& config : *g_configs_for_testing) {
       auto file = base::FilePath(FILE_PATH_LITERAL("test.json"));
-      if (GetPreinstalledWebAppConfigDirForTesting()) {
-        file = GetPreinstalledWebAppConfigDirForTesting()->Append(file);
+      if (test::GetPreinstalledWebAppConfigDirForTesting()) {  //  IN-TEST
+        file = test::GetPreinstalledWebAppConfigDirForTesting()->Append(
+            file);  // IN-TEST
       }
 
       loaded_configs.configs.push_back(
@@ -835,6 +868,15 @@ void PreinstalledWebAppManager::PostProcessConfigs(
     parsed_configs.options_list.push_back(std::move(options));
   }
 
+  // Allow tests to bypass kDisableDefaultApps with an allow list.
+  if (GetPreinstallUrlAllowListForTesting().has_value()) {
+    std::erase_if(
+        parsed_configs.options_list, [](const ExternalInstallOptions& options) {
+          return !GetPreinstallUrlAllowListForTesting().value().contains(
+              options.install_url);
+        });
+  }
+
   // Set common install options.
   for (ExternalInstallOptions& options : parsed_configs.options_list) {
     DCHECK_EQ(options.install_source, ExternalInstallSource::kExternalDefault);
@@ -861,6 +903,7 @@ void PreinstalledWebAppManager::PostProcessConfigs(
     options.add_to_management = false;
     options.add_to_desktop = false;
     options.add_to_quick_launch_bar = false;
+    options.install_without_os_integration = true;
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
     if (g_override_previous_user_uninstall_for_testing_) {
@@ -932,6 +975,11 @@ void PreinstalledWebAppManager::PostProcessConfigs(
     }
   }
 
+#if BUILDFLAG(IS_CHROMEOS)
+  MaybeForceInstallForRemigration(&parsed_configs.options_list, profile_.get(),
+                                  provider_->registrar_unsafe());
+#endif
+
   base::UmaHistogramCounts100(kHistogramEnabledCount,
                               parsed_configs.options_list.size());
   base::UmaHistogramCounts100(kHistogramDisabledCount, disabled_count);
@@ -975,7 +1023,7 @@ void PreinstalledWebAppManager::OnExternalWebAppsSynchronized(
     std::map<InstallUrl, std::vector<webapps::AppId>> desired_uninstalls,
     std::map<InstallUrl, ExternallyManagedAppManager::InstallResult>
         install_results,
-    std::map<InstallUrl, bool> uninstall_results) {
+    std::map<InstallUrl, webapps::UninstallResultCode> uninstall_results) {
   // Note that we are storing the Chrome version (milestone number) instead of a
   // "has synchronised" bool in order to do version update specific logic.
   profile_->GetPrefs()->SetString(
@@ -1052,6 +1100,25 @@ void PreinstalledWebAppManager::OnExternalWebAppsSynchronized(
       }
     }
   }
+
+  size_t uninstall_source_removed_count = 0;
+  size_t uninstall_app_removed_count = 0;
+
+  for (const auto& [url, result] : uninstall_results) {
+    if (result == webapps::UninstallResultCode::kInstallSourceRemoved) {
+      ++uninstall_source_removed_count;
+    } else if (result == webapps::UninstallResultCode::kAppRemoved) {
+      ++uninstall_app_removed_count;
+    }
+  }
+
+  base::UmaHistogramCounts100(kHistogramInstallCount, install_results.size());
+  base::UmaHistogramCounts100(kHistogramUninstallTotalCount,
+                              uninstall_results.size());
+  base::UmaHistogramCounts100(kHistogramUninstallSourceRemovedCount,
+                              uninstall_source_removed_count);
+  base::UmaHistogramCounts100(kHistogramUninstallAppRemovedCount,
+                              uninstall_app_removed_count);
   base::UmaHistogramCounts100(kHistogramUninstallAndReplaceCount,
                               uninstall_and_replace_count);
 
@@ -1079,7 +1146,7 @@ void PreinstalledWebAppManager::OnExternalWebAppsSynchronized(
 void PreinstalledWebAppManager::OnStartUpTaskCompleted(
     std::map<InstallUrl, ExternallyManagedAppManager::InstallResult>
         install_results,
-    std::map<InstallUrl, bool> uninstall_results) {
+    std::map<InstallUrl, webapps::UninstallResultCode> uninstall_results) {
   if (debug_info_) {
     debug_info_->is_start_up_task_complete = true;
     debug_info_->install_results = std::move(install_results);

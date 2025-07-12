@@ -14,6 +14,7 @@
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "base/notimplemented.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/task/bind_post_task.h"
 #include "base/task/sequenced_task_runner.h"
@@ -89,8 +90,7 @@ std::string EncodeResultToString(WebrtcVideoEncoder::EncodeResult result) {
     case EncodeResult::UNKNOWN_ERROR:
       return "Unknown error";
   }
-  NOTREACHED_IN_MIGRATION();
-  return "";
+  NOTREACHED();
 }
 
 }  // namespace
@@ -453,12 +453,12 @@ WebrtcVideoEncoderWrapper::ReturnEncodedFrame(
     h264_info->packetization_mode =
         webrtc::H264PacketizationMode::NonInterleaved;
 #else
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
 #endif
   } else if (frame.codec == webrtc::kVideoCodecAV1) {
     // TODO(joedow): Set codec specific params for AV1 here.
   } else {
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
 
   return encoded_callback_->OnEncodedImage(encoded_image, &codec_specific_info);

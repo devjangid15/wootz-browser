@@ -4,9 +4,12 @@
 
 #include "media/audio/audio_opus_encoder.h"
 
+#include <array>
 #include <utility>
 
 #include "base/containers/heap_array.h"
+#include "base/containers/span.h"
+#include "base/containers/span_writer.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
@@ -15,6 +18,7 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "media/base/audio_encoder.h"
+#include "media/base/audio_sample_types.h"
 #include "media/base/channel_mixer.h"
 #include "media/base/converting_audio_fifo.h"
 #include "media/base/encoder_status.h"
@@ -23,12 +27,6 @@
 namespace media {
 
 namespace {
-
-// Recommended value for opus_encode_float(), according to documentation in
-// third_party/opus/src/include/opus.h, so that the Opus encoder does not
-// degrade the audio due to memory constraints, and is independent of the
-// duration of the encoded buffer.
-constexpr int kOpusMaxDataBytes = 4000;
 
 // Opus preferred sampling rate for encoding. This is also the one WebM likes
 // to have: https://wiki.xiph.org/MatroskaOpus.
@@ -84,8 +82,6 @@ AudioParameters CreateOpusCompatibleParams(const AudioParameters& params,
 
 }  // namespace
 
-// TODO: Remove after switching to C++17
-constexpr int AudioOpusEncoder::kMinBitrate;
 
 AudioOpusEncoder::AudioOpusEncoder()
     : opus_encoder_(nullptr, OpusEncoderDeleter) {}
@@ -146,44 +142,44 @@ AudioOpusEncoder::CodecDescription AudioOpusEncoder::PrepareExtraData() {
   CodecDescription extra_data;
   // RFC #7845  Ogg Encapsulation for the Opus Audio Codec
   // https://tools.ietf.org/html/rfc7845
-  static const uint8_t kExtraDataTemplate[19] = {
-      'O', 'p', 'u', 's', 'H', 'e', 'a', 'd',
-      1,                 // offset 8, version, always 1
-      0,                 // offset 9, channel count
-      0,   0,            // offset 10, pre-skip
-      0,   0,   0,   0,  // offset 12, original input sample rate in Hz
-      0,   0,   0};
+  static constexpr auto kExtraDataTemplate = std::to_array<const uint8_t>(
+      {'O', 'p', 'u', 's', 'H', 'e', 'a', 'd',
+       1,           // offset 8, version, always 1
+       0,           // offset 9, channel count
+       0, 0,        // offset 10, pre-skip
+       0, 0, 0, 0,  // offset 12, original input sample rate in Hz
+       0, 0, 0});
 
-  extra_data.assign(kExtraDataTemplate,
-                    kExtraDataTemplate + sizeof(kExtraDataTemplate));
+  extra_data.assign(kExtraDataTemplate.begin(), kExtraDataTemplate.end());
 
   // Save number of channels
   base::CheckedNumeric<uint8_t> channels(converted_params_.channels());
-  if (channels.IsValid())
-    extra_data.data()[9] = channels.ValueOrDie();
-
+  base::SpanWriter extra_data_writer(base::as_writable_byte_span(extra_data));
+  extra_data_writer.Skip<9u>();
+  extra_data_writer.WriteU8NativeEndian(channels.ValueOrDefault(0));
   // Number of samples to skip from the start of the decoder's output.
   // Real data begins this many samples late. These samples need to be skipped
   // only at the very beginning of the audio stream, NOT at beginning of each
   // decoded output.
+  base::CheckedNumeric<uint16_t> samples_to_skip_safe = 0;
   if (opus_encoder_) {
     int32_t samples_to_skip = 0;
 
-    opus_encoder_ctl(opus_encoder_.get(), OPUS_GET_LOOKAHEAD(&samples_to_skip));
-    base::CheckedNumeric<uint16_t> samples_to_skip_safe = samples_to_skip;
-    if (samples_to_skip_safe.IsValid())
-      *reinterpret_cast<uint16_t*>(extra_data.data() + 10) =
-          samples_to_skip_safe.ValueOrDie();
+    static_assert(sizeof(int32_t) == sizeof(opus_int32));
+    opus_encoder_ctl(opus_encoder_.get(),
+                     // SAFETY: In `OPUS_GET_LOOKAHEAD`, we check the pointer
+                     // type. We require a pointer of type `opus_int32`. Our
+                     // static assertion ensures that it is safe.
+                     UNSAFE_BUFFERS(OPUS_GET_LOOKAHEAD(&samples_to_skip)));
+    samples_to_skip_safe = samples_to_skip;
   }
+  extra_data_writer.WriteU16NativeEndian(
+      samples_to_skip_safe.ValueOrDefault(0));
 
   // Save original sample rate
   base::CheckedNumeric<uint16_t> sample_rate = input_params_.sample_rate();
-  uint16_t* sample_rate_ptr =
-      reinterpret_cast<uint16_t*>(extra_data.data() + 12);
-  if (sample_rate.IsValid())
-    *sample_rate_ptr = sample_rate.ValueOrDie();
-  else
-    *sample_rate_ptr = uint16_t{kOpusPreferredSamplingRate};
+  extra_data_writer.WriteU16NativeEndian(
+      sample_rate.ValueOrDefault(uint16_t{kOpusPreferredSamplingRate}));
   return extra_data;
 }
 
@@ -202,7 +198,7 @@ void AudioOpusEncoder::Encode(std::unique_ptr<AudioBus> audio_bus,
 
   DCHECK(timestamp_tracker_);
 
-  if (timestamp_tracker_->base_timestamp() == kNoTimestamp) {
+  if (!timestamp_tracker_->base_timestamp()) {
     timestamp_tracker_->SetBaseTimestamp(capture_time - base::TimeTicks());
   }
 
@@ -231,7 +227,12 @@ void AudioOpusEncoder::Flush(EncoderStatusCB done_cb) {
 
   if (fifo_has_data_) {
     int32_t encoder_delay = 0;
-    opus_encoder_ctl(opus_encoder_.get(), OPUS_GET_LOOKAHEAD(&encoder_delay));
+    static_assert(sizeof(int32_t) == sizeof(opus_int32));
+    opus_encoder_ctl(opus_encoder_.get(),
+                     // SAFETY: In `OPUS_GET_LOOKAHEAD`, we check the pointer
+                     // type. We require a pointer of type `opus_int32`. Our
+                     // static assertion ensures that it is safe.
+                     UNSAFE_BUFFERS(OPUS_GET_LOOKAHEAD(&encoder_delay)));
 
     // Add enough silence to the queue to guarantee that all audible frames will
     // be output from the encoder.
@@ -251,7 +252,7 @@ void AudioOpusEncoder::Flush(EncoderStatusCB done_cb) {
     fifo_has_data_ = false;
   }
 
-  timestamp_tracker_->SetBaseTimestamp(kNoTimestamp);
+  timestamp_tracker_->Reset();
   if (current_done_cb_) {
     // Is |current_done_cb_| is null, it means OnFifoOutput() has already
     // reported an error.
@@ -273,10 +274,9 @@ void AudioOpusEncoder::DoEncode(const AudioBus* audio_bus) {
   if (!current_done_cb_)
     return;
 
-  auto encoded_data = base::HeapArray<uint8_t>::Uninit(kOpusMaxDataBytes);
   auto result = opus_encode_float(opus_encoder_.get(), buffer_.data(),
                                   converted_params_.frames_per_buffer(),
-                                  encoded_data.data(), kOpusMaxDataBytes);
+                                  encoding_buffer_.data(), kOpusMaxDataBytes);
 
   if (result < 0) {
     DCHECK(current_done_cb_);
@@ -311,9 +311,11 @@ void AudioOpusEncoder::DoEncode(const AudioBus* audio_bus) {
       return;
     }
 
-    EncodedAudioBuffer encoded_buffer(converted_params_,
-                                      std::move(encoded_data),
-                                      encoded_data_size, ts, duration);
+    EncodedAudioBuffer encoded_buffer(
+        converted_params_,
+        base::HeapArray<uint8_t>::CopiedFrom(
+            base::span(encoding_buffer_).first(encoded_data_size)),
+        ts, duration);
     output_cb_.Run(std::move(encoded_buffer), desc);
   }
   timestamp_tracker_->AddFrames(converted_params_.frames_per_buffer());

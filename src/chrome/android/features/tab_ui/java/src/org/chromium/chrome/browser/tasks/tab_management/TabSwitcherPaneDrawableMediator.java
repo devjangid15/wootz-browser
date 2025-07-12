@@ -4,74 +4,64 @@
 
 package org.chromium.chrome.browser.tasks.tab_management;
 
+import static org.chromium.chrome.browser.tasks.tab_management.TabSwitcherPaneDrawableProperties.SHOW_NOTIFICATION_DOT;
 import static org.chromium.chrome.browser.tasks.tab_management.TabSwitcherPaneDrawableProperties.TAB_COUNT;
 
-import androidx.annotation.NonNull;
-
 import org.chromium.base.Callback;
+import org.chromium.base.CallbackController;
 import org.chromium.base.supplier.ObservableSupplier;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+import org.chromium.chrome.browser.tab_ui.TabModelDotInfo;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
-import org.chromium.chrome.browser.tabmodel.TabModelSelectorObserver;
+import org.chromium.chrome.browser.tabmodel.TabModelUtils;
 import org.chromium.chrome.browser.toolbar.TabSwitcherDrawable;
 import org.chromium.ui.modelutil.PropertyModel;
 
 /** Mediator for the {@link TabSwitcherDrawable} for the {@link TabSwitcherPane}. */
+@NullMarked
 public class TabSwitcherPaneDrawableMediator {
+    private final CallbackController mCallbackController = new CallbackController();
+    private final Callback<TabModelDotInfo> mNotificationDotObserver = this::updateNotificationDot;
+    private final Callback<Integer> mTabCountSupplierObserver = this::updateTabCount;
+    private final ObservableSupplier<TabModelDotInfo> mNotificationDotSupplier;
     private final PropertyModel mModel;
-    private final Callback<Integer> mTabCountSupplierObserver;
 
-    private TabModelSelector mTabModelSelector;
-    private TabModelSelectorObserver mTabModelSelectorObserver;
-    private ObservableSupplier<Integer> mTabCountSupplier;
+    private @Nullable ObservableSupplier<Integer> mTabCountSupplier;
 
     public TabSwitcherPaneDrawableMediator(
-            @NonNull TabModelSelector tabModelSelector, @NonNull PropertyModel model) {
+            TabModelSelector tabModelSelector,
+            ObservableSupplier<TabModelDotInfo> notificationDotSupplier,
+            PropertyModel model) {
+        mNotificationDotSupplier = notificationDotSupplier;
         mModel = model;
 
-        mTabCountSupplierObserver =
-                tabCount -> {
-                    mModel.set(TAB_COUNT, tabCount);
-                };
-
-        if (tabModelSelector.isTabStateInitialized()) {
-            onTabStateInitializedInternal(tabModelSelector);
-        } else {
-            mTabModelSelector = tabModelSelector;
-            mTabModelSelectorObserver =
-                    new TabModelSelectorObserver() {
-                        @Override
-                        public void onTabStateInitialized() {
-                            if (mTabModelSelector == null) return;
-
-                            onTabStateInitializedInternal(mTabModelSelector);
-                            cleanupTabModelSelectorObserver();
-                        }
-                    };
-            tabModelSelector.addObserver(mTabModelSelectorObserver);
-        }
+        notificationDotSupplier.addObserver(mNotificationDotObserver);
+        TabModelUtils.runOnTabStateInitialized(
+                tabModelSelector,
+                mCallbackController.makeCancelable(this::onTabStateInitializedInternal));
     }
 
     /** Destroys the mediator, removing observers if present. */
     public void destroy() {
-        cleanupTabModelSelectorObserver();
+        mCallbackController.destroy();
+        mNotificationDotSupplier.removeObserver(mNotificationDotObserver);
         if (mTabCountSupplier != null) {
             mTabCountSupplier.removeObserver(mTabCountSupplierObserver);
             mTabCountSupplier = null;
         }
     }
 
-    private void onTabStateInitializedInternal(@NonNull TabModelSelector tabModelSelector) {
+    private void onTabStateInitializedInternal(TabModelSelector tabModelSelector) {
         mTabCountSupplier = tabModelSelector.getModel(false).getTabCountSupplier();
         mTabCountSupplier.addObserver(mTabCountSupplierObserver);
     }
 
-    private void cleanupTabModelSelectorObserver() {
-        if (mTabModelSelector != null) {
-            if (mTabModelSelectorObserver != null) {
-                mTabModelSelector.removeObserver(mTabModelSelectorObserver);
-                mTabModelSelectorObserver = null;
-            }
-            mTabModelSelector = null;
-        }
+    private void updateNotificationDot(TabModelDotInfo tabModelDotInfo) {
+        mModel.set(SHOW_NOTIFICATION_DOT, tabModelDotInfo.showDot);
+    }
+
+    private void updateTabCount(int tabCount) {
+        mModel.set(TAB_COUNT, tabCount);
     }
 }

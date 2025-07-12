@@ -4,9 +4,10 @@
 
 package org.chromium.chrome.browser.segmentation_platform;
 
+import static org.junit.Assert.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -17,27 +18,26 @@ import android.content.res.Resources;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.Mockito;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.Callback;
-import org.chromium.base.FeatureList;
-import org.chromium.base.FeatureList.TestValues;
+import org.chromium.base.UserDataHost;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.supplier.Supplier;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.Features.EnableFeatures;
-import org.chromium.base.test.util.JniMocker;
 import org.chromium.chrome.browser.bookmarks.BookmarkModel;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab_group_suggestion.toolbar.GroupSuggestionsButtonController;
+import org.chromium.chrome.browser.tab_group_suggestion.toolbar.GroupSuggestionsButtonControllerFactory;
 import org.chromium.chrome.browser.toolbar.adaptive.AdaptiveToolbarButtonController;
 import org.chromium.chrome.browser.toolbar.adaptive.AdaptiveToolbarButtonVariant;
 import org.chromium.components.commerce.core.ShoppingService;
@@ -47,8 +47,10 @@ import org.chromium.components.commerce.core.ShoppingService;
 @Config(manifest = Config.NONE)
 @EnableFeatures({ChromeFeatureList.CONTEXTUAL_PAGE_ACTIONS})
 public class ContextualPageActionControllerUnitTest {
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     private ObservableSupplierImpl<Profile> mProfileSupplier;
     private ObservableSupplierImpl<Tab> mTabSupplier;
+    private UserDataHost mTabUserDataHost;
 
     @Mock private Profile mMockProfile;
     @Mock private Tab mMockTab;
@@ -58,19 +60,17 @@ public class ContextualPageActionControllerUnitTest {
     @Mock private AdaptiveToolbarButtonController mMockAdaptiveToolbarController;
     @Mock private ContextualPageActionController.Natives mMockControllerJni;
 
-    @Rule public JniMocker mJniMocker = new JniMocker();
-    @Rule public TestRule mProcessor = new Features.JUnitProcessor();
-
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
 
         mProfileSupplier = new ObservableSupplierImpl<>();
         mTabSupplier = new ObservableSupplierImpl<>();
+        mTabUserDataHost = new UserDataHost();
 
-        mJniMocker.mock(ContextualPageActionControllerJni.TEST_HOOKS, mMockControllerJni);
-        doReturn(mMockConfiguration).when(mMockResources).getConfiguration();
-        doReturn(true).when(mMockActivityLifecycleDispatcher).isNativeInitializationFinished();
+        ContextualPageActionControllerJni.setInstanceForTesting(mMockControllerJni);
+        when(mMockResources.getConfiguration()).thenReturn(mMockConfiguration);
+        when(mMockActivityLifecycleDispatcher.isNativeInitializationFinished()).thenReturn(true);
+        when(mMockTab.getUserDataHost()).thenReturn(mTabUserDataHost);
     }
 
     private ContextualPageActionController createContextualPageActionController() {
@@ -85,13 +85,22 @@ public class ContextualPageActionControllerUnitTest {
                     protected void initActionProviders(
                             Supplier<ShoppingService> shoppingServiceSupplier,
                             Supplier<BookmarkModel> bookmarkModelSupplier) {
-                        mActionProviders.add(
-                                (tab, signalAccumulator) -> {
-                                    // Supply all signals and notify controller.
-                                    signalAccumulator.setHasReaderMode(true);
-                                    signalAccumulator.setHasPriceTracking(true);
-                                    signalAccumulator.notifySignalAvailable();
-                                });
+                        mActionProviders.put(
+                                AdaptiveToolbarButtonVariant.READER_MODE,
+                                (ActionProvider)
+                                        (tab, signalAccumulator) -> {
+                                            // Supply all signals and notify controller.
+                                            signalAccumulator.setSignal(
+                                                    AdaptiveToolbarButtonVariant.READER_MODE, true);
+                                            signalAccumulator.setSignal(
+                                                    AdaptiveToolbarButtonVariant.PRICE_TRACKING,
+                                                    true);
+                                            signalAccumulator.setSignal(
+                                                    AdaptiveToolbarButtonVariant.PRICE_INSIGHTS,
+                                                    true);
+                                            signalAccumulator.setSignal(
+                                                    AdaptiveToolbarButtonVariant.DISCOUNTS, true);
+                                        });
                     }
                 };
 
@@ -141,20 +150,23 @@ public class ContextualPageActionControllerUnitTest {
     }
 
     @Test
-    public void buttonNotShownWhenUiDisabled() {
-        mMockConfiguration.screenWidthDp = 450;
-        setMockSegmentationResult(AdaptiveToolbarButtonVariant.PRICE_TRACKING);
-        TestValues testValues = new TestValues();
-        testValues.addFeatureFlagOverride(ChromeFeatureList.CONTEXTUAL_PAGE_ACTIONS, true);
-        testValues.addFieldTrialParamOverride(
-                ChromeFeatureList.CONTEXTUAL_PAGE_ACTIONS, "enable_ui", "false");
-        FeatureList.setTestValues(testValues);
+    @EnableFeatures({ChromeFeatureList.CONTEXTUAL_PAGE_ACTION_TAB_GROUPING})
+    public void tabGroupingControllerIsCreatedWithFlag() {
+        var groupSuggestionButtonController = mock(GroupSuggestionsButtonController.class);
+        GroupSuggestionsButtonControllerFactory.setControllerForTesting(
+                groupSuggestionButtonController);
 
-        createContextualPageActionController();
-        mTabSupplier.set(mMockTab);
+        var cpaController =
+                new ContextualPageActionController(
+                        mProfileSupplier,
+                        mTabSupplier,
+                        mMockAdaptiveToolbarController,
+                        /* shoppingServiceSupplier= */ null,
+                        /* bookmarkModelSupplier= */ null);
 
-        verify(mMockAdaptiveToolbarController, never()).showDynamicAction(anyInt());
-        // Even if the UI is disabled segmentation should be called.
-        verify(mMockControllerJni).computeContextualPageAction(any(), any(), any());
+        mProfileSupplier.set(mMockProfile);
+
+        assertNotNull(
+                cpaController.mActionProviders.get(AdaptiveToolbarButtonVariant.TAB_GROUPING));
     }
 }

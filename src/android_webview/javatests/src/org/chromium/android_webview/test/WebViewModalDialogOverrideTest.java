@@ -19,11 +19,12 @@ import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.JsPromptResultReceiver;
 import org.chromium.android_webview.JsResultReceiver;
 import org.chromium.android_webview.test.util.AwTestTouchUtils;
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.Feature;
 import org.chromium.content_public.browser.GestureListenerManager;
 import org.chromium.content_public.browser.GestureStateListener;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
+import org.chromium.content_public.browser.test.util.WebContentsUtils;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -34,12 +35,23 @@ public class WebViewModalDialogOverrideTest extends AwParameterizedTest {
     @Rule public AwActivityTestRule mActivityTestRule;
 
     private static final String EMPTY_PAGE =
-            "<!doctype html>" + "<title>Modal Dialog Test</title><p>Testcase.</p>";
+            """
+        <!doctype html>
+        <title>Modal Dialog Test</title>
+        <p>Testcase.</p>
+        """;
     private static final String BEFORE_UNLOAD_URL =
-            "<!doctype html>"
-                    + "<head><script>window.onbeforeunload=function() {"
-                    + "return 'Are you sure?';"
-                    + "};</script></head></body>";
+            """
+        <!doctype html>
+        <head>
+            <script>
+                window.onbeforeunload = function() {
+                    return 'Are you sure?';
+                };
+            </script>
+        </head>
+        </body>
+        """;
 
     public WebViewModalDialogOverrideTest(AwSettingsMutation param) {
         this.mActivityTestRule = new AwActivityTestRule(param.getMutation());
@@ -183,7 +195,7 @@ public class WebViewModalDialogOverrideTest extends AwParameterizedTest {
     }
 
     private static class TapGestureStateListener extends GestureStateListener {
-        private CallbackHelper mCallbackHelper = new CallbackHelper();
+        private final CallbackHelper mCallbackHelper = new CallbackHelper();
 
         public int getCallCount() {
             return mCallbackHelper.getCallCount();
@@ -203,7 +215,7 @@ public class WebViewModalDialogOverrideTest extends AwParameterizedTest {
     private void tapViewAndWait(AwTestContainerView view) throws Throwable {
         final TapGestureStateListener tapGestureStateListener = new TapGestureStateListener();
         int callCount = tapGestureStateListener.getCallCount();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     GestureListenerManager.fromWebContents(view.getWebContents())
                             .addListener(tapGestureStateListener);
@@ -240,6 +252,9 @@ public class WebViewModalDialogOverrideTest extends AwParameterizedTest {
                 BEFORE_UNLOAD_URL,
                 "text/html",
                 false);
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> WebContentsUtils.simulateEndOfPaintHolding(awContents.getWebContents()));
+
         AwActivityTestRule.enableJavaScriptOnUiThread(awContents);
         // JavaScript onbeforeunload dialogs require a user gesture.
         tapViewAndWait(view);

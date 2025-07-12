@@ -4,6 +4,7 @@
 
 #include "ash/accelerometer/accel_gyro_samples_observer.h"
 
+#include <array>
 #include <memory>
 #include <utility>
 
@@ -23,7 +24,7 @@ constexpr int kFakeAccelerometerId = 1;
 
 constexpr int kFakeGyroscopeId = 2;
 
-constexpr int64_t kFakeSampleData[] = {1, 2, 3};
+constexpr std::array<int64_t, 3> kFakeSampleData = {1, 2, 3};
 
 constexpr double kFakeScaleValue = 10.0;
 

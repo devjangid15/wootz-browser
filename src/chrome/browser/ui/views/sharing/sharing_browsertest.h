@@ -12,38 +12,15 @@
 #include "base/memory/raw_ptr.h"
 #include "chrome/browser/gcm/gcm_profile_service_factory.h"
 #include "chrome/browser/renderer_context_menu/render_view_context_menu_test_util.h"
-#include "chrome/browser/sharing/sharing_message_bridge.h"
-#include "chrome/browser/sharing/sharing_service.h"
-#include "chrome/browser/sharing/sharing_target_device_info.h"
-#include "chrome/browser/sharing/web_push/web_push_sender.h"
 #include "chrome/browser/sync/test/integration/sync_test.h"
 #include "chrome/browser/ui/page_action/page_action_icon_type.h"
+#include "components/sharing_message/sharing_message_bridge.h"
+#include "components/sharing_message/sharing_service.h"
+#include "components/sharing_message/sharing_target_device_info.h"
 #include "components/sync_device_info/fake_device_info_tracker.h"
 #include "url/gurl.h"
 
 class PageActionIconView;
-
-class FakeWebPushSender : public WebPushSender {
- public:
-  FakeWebPushSender() : WebPushSender(/*url_loader_factory=*/nullptr) {}
-
-  FakeWebPushSender(const FakeWebPushSender&) = delete;
-  FakeWebPushSender& operator=(const FakeWebPushSender&) = delete;
-
-  ~FakeWebPushSender() override = default;
-
-  void SendMessage(const std::string& fcm_token,
-                   crypto::ECPrivateKey* vapid_key,
-                   WebPushMessage message,
-                   WebPushCallback callback) override;
-
-  const std::string& fcm_token() { return fcm_token_; }
-  const WebPushMessage& message() { return message_; }
-
- private:
-  std::string fcm_token_;
-  WebPushMessage message_;
-};
 
 class FakeSharingMessageBridge : public SharingMessageBridge {
  public:
@@ -60,7 +37,7 @@ class FakeSharingMessageBridge : public SharingMessageBridge {
       CommitFinishedCallback on_commit_callback) override;
 
   // SharingMessageBridge:
-  base::WeakPtr<syncer::ModelTypeControllerDelegate> GetControllerDelegate()
+  base::WeakPtr<syncer::DataTypeControllerDelegate> GetControllerDelegate()
       override;
 
   const sync_pb::SharingMessageSpecifics& specifics() const {
@@ -96,7 +73,7 @@ class SharingBrowserTest : public SyncTest {
 
   void CheckLastReceiver(const SharingTargetDeviceInfo& device) const;
 
-  chrome_browser_sharing::SharingMessage GetLastSharingMessageSent() const;
+  components_sharing_message::SharingMessage GetLastSharingMessageSent() const;
 
   SharingService* sharing_service() const;
 
@@ -120,8 +97,6 @@ class SharingBrowserTest : public SyncTest {
   syncer::FakeDeviceInfoTracker fake_device_info_tracker_;
   std::vector<std::unique_ptr<syncer::DeviceInfo>> device_infos_;
   raw_ptr<SharingService, AcrossTasksDanglingUntriaged> sharing_service_;
-  raw_ptr<FakeWebPushSender, AcrossTasksDanglingUntriaged>
-      fake_web_push_sender_;
   FakeSharingMessageBridge fake_sharing_message_bridge_;
 };
 

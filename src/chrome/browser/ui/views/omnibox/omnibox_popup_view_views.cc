@@ -7,10 +7,14 @@
 #include <memory>
 #include <numeric>
 #include <optional>
+#include <string_view>
+#include <utility>
 
 #include "base/auto_reset.h"
+#include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/memory/weak_ptr.h"
+#include "base/metrics/histogram_functions.h"
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
@@ -21,7 +25,6 @@
 #include "chrome/browser/ui/views/omnibox/omnibox_view_views.h"
 #include "chrome/browser/ui/views/omnibox/rounded_omnibox_results_frame.h"
 #include "chrome/browser/ui/views/theme_copying_widget.h"
-#include "chrome/browser/ui/views/user_education/browser_feature_promo_controller.h"
 #include "components/omnibox/browser/omnibox_controller.h"
 #include "components/omnibox/browser/omnibox_edit_model.h"
 #include "components/omnibox/common/omnibox_features.h"
@@ -35,6 +38,26 @@
 #include "ui/views/cascading_property.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/widget/widget.h"
+// TODO(crbug.com/365733574): used for debugging the misplaced bubble issue on
+// mac fullscreen.
+#if BUILDFLAG(IS_MAC)
+#include "chrome/browser/platform_util.h"
+#endif  // BUILDFLAG(IS_MAC)
+
+namespace {
+
+#if BUILDFLAG(IS_MAC)
+// Returns true if the browser is in fullscreen. This depends on the fact in mac
+// fullscreen the topchrome UI is hosted in an overlay widget.
+// TODO(crbug.com/365733574): used for debugging the misplaced bubble issue on
+// mac fullscreen.
+bool IsInFullscreen(views::Widget* topchrome_host_widget) {
+  CHECK(topchrome_host_widget);
+  return topchrome_host_widget->GetName() == "mac-fullscreen-overlay";
+}
+#endif  // BUILDFLAG(IS_MAC)
+
+}  // namespace
 
 class OmniboxPopupViewViews::AutocompletePopupWidget final
     : public ThemeCopyingWidget {
@@ -47,10 +70,12 @@ class OmniboxPopupViewViews::AutocompletePopupWidget final
   AutocompletePopupWidget(const AutocompletePopupWidget&) = delete;
   AutocompletePopupWidget& operator=(const AutocompletePopupWidget&) = delete;
 
-  ~AutocompletePopupWidget() override {}
+  ~AutocompletePopupWidget() override = default;
 
-  void InitOmniboxPopup(views::Widget* parent_widget) {
-    views::Widget::InitParams params(views::Widget::InitParams::TYPE_POPUP);
+  void InitOmniboxPopup(const views::Widget* parent_widget) {
+    views::Widget::InitParams params(
+        views::Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET,
+        views::Widget::InitParams::TYPE_POPUP);
 #if BUILDFLAG(IS_WIN)
     // On Windows use the software compositor to ensure that we don't block
     // the UI thread during command buffer creation. We can revert this change
@@ -74,6 +99,14 @@ class OmniboxPopupViewViews::AutocompletePopupWidget final
   void SetTargetBounds(const gfx::Rect& bounds) {
     base::AutoReset<bool> reset(&is_setting_popup_bounds_, true);
     SetBounds(bounds);
+#if BUILDFLAG(IS_MAC)
+    // TODO(crbug.com/365733574): debug for the misplaced bubble issue on mac
+    // fullscreen.
+    if (IsInFullscreen(parent())) {
+      base::UmaHistogramSparse("Mac.Fullscreen.OmniboxPopupTargetScreenY",
+                               bounds.y());
+    }
+#endif  // BUILDFLAG(IS_MAC)
   }
 
   void ShowAnimated() {
@@ -81,7 +114,7 @@ class OmniboxPopupViewViews::AutocompletePopupWidget final
     GetLayer()->SetOpacity(0.0);
     ShowInactive();
 
-    auto scoped_settings = GetScopedAnimationSettings();
+    const auto scoped_settings = GetScopedAnimationSettings();
     GetLayer()->SetOpacity(1.0);
   }
 
@@ -99,12 +132,21 @@ class OmniboxPopupViewViews::AutocompletePopupWidget final
         base::BindOnce(&AutocompletePopupWidget::Close, AsWeakPtr())));
   }
 
-  void OnNativeWidgetDestroying() override {
-    // End all our animations immediately, as our closing animation may trigger
-    // a Close call which will be invalid once the native widget is gone.
-    GetLayer()->GetAnimator()->AbortAllAnimations();
+  void OnWidgetDestroying(views::Widget* widget) override {
+    // ThemeCopyingWidget observation is set on the role_model widget, which in
+    // the case of `AutocompletePopupWidget` is the hosting parent widget.
+    CHECK_NE(widget, this);
+    ThemeCopyingWidget::OnWidgetDestroying(widget);
 
-    ThemeCopyingWidget::OnNativeWidgetDestroying();
+    // In the case the host widget is destroyed, close the popup widget
+    // synchronously. This is necessary as the popup widget's contents view has
+    // dependencies on the hosting widget's BrowserView (see
+    // `SetPopupContentsView()` above). Since the popup widget is owned by its
+    // NativeWidget there is a risk of dangling pointers if it is not destroyed
+    // synchronously with its parent.
+    // TODO(crbug.com/40232479): Once this is migrated to CLIENT_OWNS_WIDGET
+    // this will no longer be necessary.
+    CloseNow();
   }
 
   void OnMouseEvent(ui::MouseEvent* event) override {
@@ -168,11 +210,21 @@ OmniboxPopupViewViews::OmniboxPopupViewViews(OmniboxViewViews* omnibox_view,
       location_bar_view_(location_bar_view) {
   model()->set_popup_view(this);
 
+  if (omnibox_view_) {
+    GetViewAccessibility().SetPopupForId(
+        omnibox_view_->GetViewAccessibility().GetUniqueId());
+  }
+
   // The contents is owned by the LocationBarView.
-  set_owned_by_client();
+  set_owned_by_client(OwnedByClientPassKey());
 
   SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kVertical));
+
+  GetViewAccessibility().SetRole(ax::mojom::Role::kListBox);
+  UpdateAccessibleStates();
+  UpdateAccessibleControlIds();
+  UpdateAccessibleActiveDescendantForInvokingView();
 }
 
 OmniboxPopupViewViews::~OmniboxPopupViewViews() {
@@ -183,12 +235,19 @@ OmniboxPopupViewViews::~OmniboxPopupViewViews() {
   }
   CHECK(!IsInObserverList());
   model()->set_popup_view(nullptr);
+  UpdateAccessibleControlIds();
 }
 
 gfx::Image OmniboxPopupViewViews::GetMatchIcon(
     const AutocompleteMatch& match,
     SkColor vector_icon_color) const {
-  return model()->GetMatchIcon(match, vector_icon_color);
+  bool dark_mode = false;
+  auto* color_provider = GetColorProvider();
+  if (color_provider) {
+    dark_mode = color_utils::IsDark(
+        color_provider->GetColor(kColorOmniboxResultsBackground));
+  }
+  return model()->GetMatchIcon(match, vector_icon_color, dark_mode);
 }
 
 void OmniboxPopupViewViews::SetSelectedIndex(size_t index) {
@@ -236,6 +295,7 @@ void OmniboxPopupViewViews::OnSelectionChanged(
   if (new_selection.line != OmniboxPopupSelection::kNoMatch) {
     InvalidateLine(new_selection.line);
   }
+  UpdateAccessibleActiveDescendantForInvokingView();
 }
 
 void OmniboxPopupViewViews::UpdatePopupAppearance() {
@@ -251,9 +311,12 @@ void OmniboxPopupViewViews::UpdatePopupAppearance() {
         return;
       }
       popup_->CloseAnimated();  // This will eventually delete the popup.
+      popup_->RemoveObserver(this);
       popup_.reset();
-      NotifyAccessibilityEvent(ax::mojom::Event::kExpandedChanged, true);
+      UpdateAccessibleStates();
+      UpdateAccessibleControlIds();
       // The active descendant should be cleared when the popup closes.
+      UpdateAccessibleActiveDescendantForInvokingView();
       FireAXEventsForNewActiveDescendant(nullptr);
     }
     return;
@@ -303,19 +366,11 @@ void OmniboxPopupViewViews::UpdatePopupAppearance() {
 
     const AutocompleteMatch& match = GetMatchAtIndex(i);
     std::u16string current_row_header =
-        match.suggestion_group_id.has_value()
-            ? autocomplete_controller->result().GetHeaderForSuggestionGroup(
-                  match.suggestion_group_id.value())
-            : u"";
-    bool row_hidden = controller()->IsSuggestionHidden(match);
-    bool group_hidden = match.suggestion_group_id.has_value() &&
-                        controller()->IsSuggestionGroupHidden(
-                            match.suggestion_group_id.value());
+        model()->GetSuggestionGroupHeaderText(match.suggestion_group_id);
     // Show the header if it's distinct from the previous match's header.
     if (!current_row_header.empty() &&
         current_row_header != previous_row_header) {
-      // Set toggle state of the header based on whether the group is hidden.
-      row_view->ShowHeader(current_row_header, group_hidden);
+      row_view->ShowHeader(current_row_header);
     } else {
       row_view->HideHeader();
     }
@@ -323,8 +378,9 @@ void OmniboxPopupViewViews::UpdatePopupAppearance() {
 
     OmniboxResultView* const result_view = row_view->result_view();
     result_view->SetMatch(match);
-    // Set visibility of the result view based on whether the group is hidden.
-    result_view->SetVisible(!group_hidden && !row_hidden);
+    // Set visibility of the result view based on whether the row is hidden.
+    result_view->SetVisible(!controller()->IsSuggestionHidden(match));
+    result_view->UpdateAccessibilityProperties();
 
     const SkBitmap* bitmap = model()->GetPopupRichSuggestionBitmap(i);
     if (bitmap) {
@@ -343,9 +399,12 @@ void OmniboxPopupViewViews::UpdatePopupAppearance() {
     popup_->ShowAnimated();
 
     // Popup is now expanded and first item will be selected.
-    NotifyAccessibilityEvent(ax::mojom::Event::kExpandedChanged, true);
+    UpdateAccessibleStates();
+    UpdateAccessibleControlIds();
+    UpdateAccessibleActiveDescendantForInvokingView();
     OmniboxResultView* result_view = result_view_at(0);
     if (result_view) {
+      result_view->GetViewAccessibility().SetIsSelected(true);
       FireAXEventsForNewActiveDescendant(result_view);
     }
 
@@ -362,6 +421,11 @@ void OmniboxPopupViewViews::ProvideButtonFocusHint(size_t line) {
   // TODO(tommycli): |active_button| can sometimes be nullptr, because the
   // suggestion button row is not completely implemented.
   if (active_button) {
+    // The accessible selection cannot be in both the button and the result
+    // view. When the button gets selected and is active, remove the selected
+    // state from the result view. This is so that if a subsequent action
+    // creates a OmniboxPopupSelection::NORMAL we fire the event.
+    result_view_at(line)->GetViewAccessibility().SetIsSelected(false);
     FireAXEventsForNewActiveDescendant(active_button);
   }
 }
@@ -377,43 +441,22 @@ void OmniboxPopupViewViews::OnDragCanceled() {
 }
 
 void OmniboxPopupViewViews::GetPopupAccessibleNodeData(
-    ui::AXNodeData* node_data) {
-  return GetAccessibleNodeData(node_data);
+    ui::AXNodeData* node_data) const {
+  return GetViewAccessibility().GetAccessibleNodeData(node_data);
 }
 
-void OmniboxPopupViewViews::AddPopupAccessibleNodeData(
-    ui::AXNodeData* node_data) {
-  // Establish a "CONTROLS" relationship between the omnibox and the
-  // the popup. This allows a screen reader to understand the relationship
-  // between the omnibox and the list of suggestions, and determine which
-  // suggestion is currently selected, even though focus remains here on
-  // the omnibox.
-  int32_t popup_view_id = GetViewAccessibility().GetUniqueId().Get();
-  node_data->AddIntListAttribute(ax::mojom::IntListAttribute::kControlsIds,
-                                 {popup_view_id});
-  size_t selected_line = GetSelection().line;
-  if (selected_line != OmniboxPopupSelection::kNoMatch) {
-    if (OmniboxResultView* result_view = result_view_at(selected_line)) {
-      node_data->AddIntAttribute(
-          ax::mojom::IntAttribute::kActivedescendantId,
-          result_view->GetViewAccessibility().GetUniqueId().Get());
-    }
-  }
-}
-
-std::u16string OmniboxPopupViewViews::GetAccessibleButtonTextForResult(
-    size_t line) {
-  if (OmniboxResultView* result_view = result_view_at(line)) {
-    return static_cast<views::LabelButton*>(
+std::u16string_view OmniboxPopupViewViews::GetAccessibleButtonTextForResult(
+    size_t line) const {
+  if (const OmniboxResultView* result_view = result_view_at(line)) {
+    return static_cast<const views::LabelButton*>(
                result_view->GetActiveAuxiliaryButtonForAccessibility())
         ->GetText();
-  } else {
-    return u"";
   }
+  return std::u16string_view();
 }
 
 bool OmniboxPopupViewViews::OnMouseDragged(const ui::MouseEvent& event) {
-  size_t index = GetIndexForPoint(event.location());
+  const size_t index = GetIndexForPoint(event.location());
 
   // If the drag event is over the bounds of one of the result views, pass
   // control to that view.
@@ -436,13 +479,13 @@ void OmniboxPopupViewViews::OnGestureEvent(ui::GestureEvent* event) {
   }
 
   switch (event->type()) {
-    case ui::ET_GESTURE_TAP_DOWN:
-    case ui::ET_GESTURE_SCROLL_BEGIN:
-    case ui::ET_GESTURE_SCROLL_UPDATE:
+    case ui::EventType::kGestureTapDown:
+    case ui::EventType::kGestureScrollBegin:
+    case ui::EventType::kGestureScrollUpdate:
       SetSelectedIndex(index);
       break;
-    case ui::ET_GESTURE_TAP:
-    case ui::ET_GESTURE_SCROLL_END: {
+    case ui::EventType::kGestureTap:
+    case ui::EventType::kGestureScrollEnd: {
       DCHECK(HasMatchAt(index));
       model()->OpenSelection(OmniboxPopupSelection(index), event->time_stamp());
       break;
@@ -455,15 +498,9 @@ void OmniboxPopupViewViews::OnGestureEvent(ui::GestureEvent* event) {
 
 void OmniboxPopupViewViews::FireAXEventsForNewActiveDescendant(
     View* descendant_view) {
-  if (descendant_view) {
-    descendant_view->NotifyAccessibilityEvent(ax::mojom::Event::kSelection,
-                                              true);
-  }
   // Selected children changed is fired on the popup.
-  NotifyAccessibilityEvent(ax::mojom::Event::kSelectedChildrenChanged, true);
-  // Active descendant changed is fired on the focused text field.
-  omnibox_view_->NotifyAccessibilityEvent(
-      ax::mojom::Event::kActiveDescendantChanged, true);
+  NotifyAccessibilityEventDeprecated(ax::mojom::Event::kSelectedChildrenChanged,
+                                     true);
 }
 
 void OmniboxPopupViewViews::OnWidgetBoundsChanged(views::Widget* widget,
@@ -510,6 +547,15 @@ void OmniboxPopupViewViews::OnWidgetVisibilityChanged(views::Widget* widget,
   }
 }
 
+void OmniboxPopupViewViews::OnWidgetDestroying(views::Widget* widget) {
+  CHECK_EQ(widget, popup_.get());
+  if (popup_) {
+    popup_->RemoveObserver(this);
+    popup_ = nullptr;
+  }
+  UpdateAccessibleStates();
+}
+
 gfx::Rect OmniboxPopupViewViews::GetTargetBounds() const {
   int popup_height = 0;
   const auto* autocomplete_controller = controller()->autocomplete_controller();
@@ -521,12 +567,19 @@ gfx::Rect OmniboxPopupViewViews::GetTargetBounds() const {
         return height + v->GetPreferredSize().height();
       });
 
-  // Add 8dp at the bottom for aesthetic reasons. https://crbug.com/1076646
-  // It's expected that this space is dead unclickable/unhighlightable space.
-  // This extra padding is not added if the results section has no height
-  // (result set is empty or all results are hidden).
+  // Add space at the bottom for aesthetic reasons. It's expected that this
+  // space is dead unclickable/unhighlightable space. This extra padding is not
+  // added if the results section has no height (result set is empty or all
+  // results are hidden). See https://crbug.com/1076646 for additional context.
   if (popup_height != 0) {
-    constexpr int kExtraBottomPadding = 8;
+    // The amount of extra space is dependent on whether the last match is the
+    // toolbelt or not. The toolbelt doesn't have an icon or image on the left
+    // like a regular suggestion nor a big background highlight like an IPH
+    // suggestion so it doesn't require as much space.
+    const size_t last_result_index =
+        autocomplete_controller->result().size() - 1;
+    int kExtraBottomPadding =
+        GetMatchAtIndex(last_result_index).IsToolbelt() ? 2 : 8;
     popup_height += kExtraBottomPadding;
   }
 
@@ -537,6 +590,24 @@ gfx::Rect OmniboxPopupViewViews::GetTargetBounds() const {
 
   // The rounded popup is always offset the same amount from the omnibox.
   gfx::Rect content_rect = location_bar_view_->GetBoundsInScreen();
+
+#if BUILDFLAG(IS_MAC)
+  // TODO(crbug.com/365733574): debug for the misplaced bubble issue on mac
+  // fullscreen.
+  views::Widget* topchrome_host_widget = location_bar_view_->GetWidget();
+  if (IsInFullscreen(topchrome_host_widget)) {
+    base::UmaHistogramSparse(
+        "Mac.Fullscreen.OverlayWidgetScreenY",
+        topchrome_host_widget->GetWindowBoundsInScreen().y());
+    base::UmaHistogramSparse("Mac.Fullscreen.OverlayNSWindowScreenY",
+                             platform_util::GetWindowScreenBounds(
+                                 topchrome_host_widget->GetNativeWindow())
+                                 .y());
+    base::UmaHistogramSparse("Mac.Fullscreen.LocationBarViewScreenY",
+                             content_rect.y());
+  }
+#endif  // BUILDFLAG(IS_MAC)
+
   content_rect.Inset(
       -RoundedOmniboxResultsFrame::GetLocationBarAlignmentInsets());
   content_rect.set_height(popup_height);
@@ -555,6 +626,10 @@ OmniboxHeaderView* OmniboxPopupViewViews::header_view_at(size_t i) {
 }
 
 OmniboxResultView* OmniboxPopupViewViews::result_view_at(size_t i) {
+  return const_cast<OmniboxResultView*>(std::as_const(*this).result_view_at(i));
+}
+
+const OmniboxResultView* OmniboxPopupViewViews::result_view_at(size_t i) const {
   if (i >= children().size()) {
     return nullptr;
   }
@@ -571,7 +646,7 @@ const AutocompleteMatch& OmniboxPopupViewViews::GetMatchAtIndex(
   return controller()->autocomplete_controller()->result().match_at(index);
 }
 
-size_t OmniboxPopupViewViews::GetIndexForPoint(const gfx::Point& point) {
+size_t OmniboxPopupViewViews::GetIndexForPoint(const gfx::Point& point) const {
   if (!HitTestPoint(point)) {
     return OmniboxPopupSelection::kNoMatch;
   }
@@ -589,37 +664,55 @@ size_t OmniboxPopupViewViews::GetIndexForPoint(const gfx::Point& point) {
   return OmniboxPopupSelection::kNoMatch;
 }
 
-void OmniboxPopupViewViews::SetSuggestionGroupVisibility(
-    size_t match_index,
-    bool suggestion_group_hidden) {
-  if (OmniboxHeaderView* header_view = header_view_at(match_index)) {
-    header_view->SetSuggestionGroupVisibility(suggestion_group_hidden);
+void OmniboxPopupViewViews::UpdateAccessibleStates() const {
+  if (IsOpen()) {
+    GetViewAccessibility().SetIsExpanded();
+    GetViewAccessibility().SetIsInvisible(false);
+  } else {
+    GetViewAccessibility().SetIsCollapsed();
+    GetViewAccessibility().SetIsInvisible(true);
   }
-  if (OmniboxResultView* result_view = result_view_at(match_index)) {
-    result_view->SetVisible(!suggestion_group_hidden);
-  }
-
-  // This is necssary for the popup to actually resize to accommodate newly
-  // shown or hidden matches.
-  if (popup_) {
-    popup_->SetTargetBounds(GetTargetBounds());
-  }
-
-  InvalidateLayout();
 }
 
-void OmniboxPopupViewViews::GetAccessibleNodeData(ui::AXNodeData* node_data) {
-  node_data->role = ax::mojom::Role::kListBox;
-  if (IsOpen()) {
-    node_data->AddState(ax::mojom::State::kExpanded);
-  } else {
-    node_data->AddState(ax::mojom::State::kCollapsed);
-    node_data->AddState(ax::mojom::State::kInvisible);
+void OmniboxPopupViewViews::UpdateAccessibleControlIds() {
+  if (!omnibox_view_) {
+    return;
   }
 
-  if (omnibox_view_) {
-    int32_t view_id = omnibox_view_->GetViewAccessibility().GetUniqueId().Get();
-    node_data->AddIntAttribute(ax::mojom::IntAttribute::kPopupForId, view_id);
+  // Establish a "CONTROLS" relationship between the omnibox and the
+  // the popup. This allows a screen reader to understand the relationship
+  // between the omnibox and the list of suggestions, and determine which
+  // suggestion is currently selected, even though focus remains here on
+  // the omnibox.
+  if (IsOpen()) {
+    int32_t popup_view_id = GetViewAccessibility().GetUniqueId();
+    omnibox_view_->GetViewAccessibility().SetControlIds({popup_view_id});
+  } else {
+    omnibox_view_->GetViewAccessibility().RemoveControlIds();
+  }
+}
+
+void OmniboxPopupViewViews::UpdateAccessibleActiveDescendantForInvokingView() {
+  if (!omnibox_view_) {
+    return;
+  }
+
+  // This logic aims to update the "active descendant" accessibility
+  // property of the omnibox text field (`omnibox_view_`).
+  //
+  // This property tells assistive technologies (like screen readers) which
+  // element within the popup should be considered the currently "active" or
+  // "focused" item, even though the actual keyboard focus remains on the
+  // text field.
+  OmniboxPopupSelection selection = GetSelection();
+  if (IsOpen() && selection.line != OmniboxPopupSelection::kNoMatch) {
+    if (OmniboxResultView* result_view = result_view_at(selection.line)) {
+      omnibox_view_->GetViewAccessibility().SetActiveDescendant(*result_view);
+    } else {
+      omnibox_view_->GetViewAccessibility().ClearActiveDescendant();
+    }
+  } else {
+    omnibox_view_->GetViewAccessibility().ClearActiveDescendant();
   }
 }
 

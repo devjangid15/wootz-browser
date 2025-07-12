@@ -43,8 +43,8 @@
 #include <utility>
 
 #include "base/check_op.h"
+#include "base/compiler_specific.h"
 #include "base/logging.h"
-
 #include "components/exo/wayland/clients/client_helper.h"
 
 namespace exo::wayland::clients {
@@ -74,8 +74,6 @@ struct Globals {
       zwp_input_timestamps_manager_v1;
   std::unique_ptr<zwp_fullscreen_shell_v1> zwp_fullscreen_shell_v1;
   std::unique_ptr<wl_output> wl_output;
-  std::unique_ptr<zwp_linux_explicit_synchronization_v1>
-      zwp_linux_explicit_synchronization_v1;
   std::unique_ptr<zcr_vsync_feedback_v1> zcr_vsync_feedback_v1;
   std::unique_ptr<wl_data_device_manager> wl_data_device_manager;
   std::unique_ptr<wp_content_type_manager_v1> wp_content_type_manager_v1;
@@ -136,7 +134,8 @@ void RegistryHandler(void* data,
   if (globals->protocol_tested.length() == 0) {
     globals->protocols.push_back(interface);
     return;
-  } else if (strcmp(interface, globals->protocol_tested.c_str()) == 0) {
+  } else if (UNSAFE_TODO(strcmp(interface, globals->protocol_tested.c_str())) ==
+             0) {
     switch (globals->validity_type) {
       case ClientVersionTest::VersionValidityType::INVALID_NULL:
         version = 0;
@@ -172,8 +171,6 @@ void RegistryHandler(void* data,
                             zwp_input_timestamps_manager_v1),
           REGISTRY_CALLBACK(zwp_fullscreen_shell_v1, zwp_fullscreen_shell_v1),
           REGISTRY_CALLBACK(wl_output, wl_output),
-          REGISTRY_CALLBACK(zwp_linux_explicit_synchronization_v1,
-                            zwp_linux_explicit_synchronization_v1),
           REGISTRY_CALLBACK(zcr_vsync_feedback_v1, zcr_vsync_feedback_v1),
           REGISTRY_CALLBACK(wl_data_device_manager, wl_data_device_manager),
           REGISTRY_CALLBACK(wp_content_type_manager_v1,

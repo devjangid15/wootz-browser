@@ -2,11 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #import "ios/chrome/browser/signin/model/fake_system_identity_manager_storage.h"
 
 #import "base/check.h"
+#import "ios/chrome/browser/signin/model/fake_system_identity.h"
 #import "ios/chrome/browser/signin/model/fake_system_identity_details.h"
-#import "ios/chrome/browser/signin/model/system_identity.h"
 
 @implementation FakeSystemIdentityManagerStorage {
   // Stores the key in insertion order.
@@ -29,35 +34,37 @@
   return self;
 }
 
-- (BOOL)containsIdentity:(id<SystemIdentity>)identity {
-  return [self detailsForIdentity:identity] != nil;
+- (BOOL)containsIdentityWithGaiaID:(NSString*)gaiaID {
+  return [self detailsForGaiaID:gaiaID] != nil;
 }
 
-- (FakeSystemIdentityDetails*)detailsForIdentity:(id<SystemIdentity>)identity {
-  return [_details objectForKey:identity.gaiaID];
+- (FakeSystemIdentityDetails*)detailsForGaiaID:(NSString*)gaiaID {
+  return [_details objectForKey:gaiaID];
 }
 
-- (void)addIdentity:(id<SystemIdentity>)identity {
-  NSString* key = identity.gaiaID;
-  if ([_details objectForKey:key])
+- (void)addFakeIdentity:(FakeSystemIdentity*)fakeIdentity {
+  NSString* key = fakeIdentity.gaiaID;
+  if ([_details objectForKey:key]) {
     return;
+  }
 
   DCHECK(![_orderedKeys containsObject:key]);
-  _details[key] = [[FakeSystemIdentityDetails alloc] initWithIdentity:identity];
+  _details[key] =
+      [[FakeSystemIdentityDetails alloc] initWithFakeIdentity:fakeIdentity];
   [_orderedKeys addObject:key];
 
   // Storage has changed, invalidate current iterations.
   ++_mutations;
 }
 
-- (void)removeIdentity:(id<SystemIdentity>)identity {
-  NSString* key = identity.gaiaID;
-  if (![_details objectForKey:key])
+- (void)removeIdentityWithGaiaID:(NSString*)gaiaID {
+  if (![_details objectForKey:gaiaID]) {
     return;
+  }
 
-  DCHECK([_orderedKeys containsObject:key]);
-  [_details removeObjectForKey:key];
-  [_orderedKeys removeObject:key];
+  DCHECK([_orderedKeys containsObject:gaiaID]);
+  [_details removeObjectForKey:gaiaID];
+  [_orderedKeys removeObject:gaiaID];
 
   // Storage has changed, invalidate current iterations.
   ++_mutations;

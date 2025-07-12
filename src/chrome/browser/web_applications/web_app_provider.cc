@@ -19,9 +19,7 @@
 #include "base/location.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/run_loop.h"
-#include "base/types/pass_key.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/web_applications/commands/web_app_command.h"
 #include "chrome/browser/web_applications/extensions_manager.h"
@@ -31,12 +29,13 @@
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_installation_manager.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_update_manager.h"
 #include "chrome/browser/web_applications/manifest_update_manager.h"
+#include "chrome/browser/web_applications/navigation_capturing_log.h"
 #include "chrome/browser/web_applications/os_integration/os_integration_manager.h"
 #include "chrome/browser/web_applications/os_integration/web_app_file_handler_manager.h"
 #include "chrome/browser/web_applications/os_integration/web_app_protocol_handler_manager.h"
-#include "chrome/browser/web_applications/os_integration/web_app_shortcut_manager.h"
 #include "chrome/browser/web_applications/policy/web_app_policy_manager.h"
 #include "chrome/browser/web_applications/preinstalled_web_app_manager.h"
+#include "chrome/browser/web_applications/visited_manifest_manager.h"
 #include "chrome/browser/web_applications/web_app.h"
 #include "chrome/browser/web_applications/web_app_audio_focus_id_map.h"
 #include "chrome/browser/web_applications/web_app_command_manager.h"
@@ -46,6 +45,7 @@
 #include "chrome/browser/web_applications/web_app_install_finalizer.h"
 #include "chrome/browser/web_applications/web_app_install_manager.h"
 #include "chrome/browser/web_applications/web_app_origin_association_manager.h"
+#include "chrome/browser/web_applications/web_app_profile_deletion_manager.h"
 #include "chrome/browser/web_applications/web_app_provider_factory.h"
 #include "chrome/browser/web_applications/web_app_registrar.h"
 #include "chrome/browser/web_applications/web_app_sync_bridge.h"
@@ -57,21 +57,37 @@
 #include "content/public/browser/web_contents.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
-#include "chrome/browser/web_applications/isolated_web_apps/policy/isolated_web_app_policy_manager.h"
-#include "chrome/browser/web_applications/migrations/adobe_express_oem_to_default_migration.h"
-#include "chrome/browser/web_applications/web_app_run_on_os_login_manager.h"
-#endif
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
 #include "ash/constants/ash_features.h"
+#include "chrome/browser/web_applications/ash/migrations/adobe_express_oem_to_default_migration.h"
+#include "chrome/browser/web_applications/isolated_web_apps/policy/isolated_web_app_cache_manager.h"
+#include "chrome/browser/web_applications/isolated_web_apps/policy/isolated_web_app_policy_manager.h"
+#include "chrome/browser/web_applications/web_app_run_on_os_login_manager.h"
 #include "chromeos/ash/components/browser_context_helper/browser_context_types.h"
 #endif
 
+#if BUILDFLAG(IS_MAC)
+#include "base/feature_list.h"
+#include "base/mac/mac_util.h"
+#include "base/metrics/histogram_functions.h"
+#include "base/rand_util.h"
+#include "chrome/browser/web_applications/commands/rewrite_diy_icons_command.h"
+#include "chrome/browser/web_applications/os_integration/mac/apps_folder_support.h"
+#include "chrome/browser/web_applications/os_integration/mac/web_app_shortcut_creator.h"
+#include "chrome/browser/web_applications/os_integration/web_app_shortcut.h"
+#include "chrome/browser/web_applications/web_app_registry_update.h"
+#include "content/public/browser/browser_thread.h"
+#endif
 namespace webapps {
 enum class WebappInstallSource;
 }
 
 namespace web_app {
+
+#if BUILDFLAG(IS_MAC)
+BASE_FEATURE(kDiyAppIconsMaskedOnMacUpdate,
+             "DiyAppIconsMaskedOnMacUpdate",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+#endif
 
 // static
 WebAppProvider* WebAppProvider::GetDeprecated(Profile* profile) {
@@ -80,18 +96,6 @@ WebAppProvider* WebAppProvider::GetDeprecated(Profile* profile) {
 
 // static
 WebAppProvider* WebAppProvider::GetForWebApps(Profile* profile) {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  // If features::kWebAppsCrosapi is enabled, Ash browser only manages system
-  // web apps (return nullptr here). Otherwise, Ash browser manages all web apps
-  // (return WebAppProvider).
-  // An exception is that Shimless RMA app always requires loading IWA on Ash.
-  // TODO(b/292227137): Migrate Shimless RMA app to LaCrOS.
-  if (IsWebAppsCrosapiEnabled() &&
-      (!::ash::features::IsShimlessRMA3pDiagnosticsEnabled() ||
-       !::ash::IsShimlessRmaAppBrowserContext(profile))) {
-    return nullptr;
-  }
-#endif
   return WebAppProviderFactory::GetForProfile(profile);
 }
 
@@ -108,11 +112,13 @@ WebAppProvider* WebAppProvider::GetForTest(Profile* profile) {
   CHECK_IS_TEST();
 
   WebAppProvider* provider = GetForLocalAppsUnchecked(profile);
-  if (!provider)
+  if (!provider) {
     return nullptr;
+  }
 
-  if (provider->on_registry_ready().is_signaled())
+  if (provider->on_registry_ready().is_signaled()) {
     return provider;
+  }
 
   base::RunLoop run_loop;
   provider->on_registry_ready().Post(FROM_HERE, run_loop.QuitClosure());
@@ -134,9 +140,10 @@ WebAppProvider::WebAppProvider(Profile* profile) : profile_(profile) {
 
   // WebApp System must have only one instance in original profile.
   // Exclude secondary off-the-record profiles.
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  if (!profile_->IsGuestSession())
+#if BUILDFLAG(IS_CHROMEOS)
+  if (!profile_->IsGuestSession()) {
     DCHECK(!profile_->IsOffTheRecord());
+  }
 #else
   DCHECK(!profile_->IsOffTheRecord());
 #endif
@@ -228,11 +235,16 @@ WebAppRunOnOsLoginManager& WebAppProvider::run_on_os_login_manager() {
   return *web_app_run_on_os_login_manager_;
 }
 
+IwaBundleCacheManager& WebAppProvider::iwa_cache_manager() {
+  CheckIsConnected();
+  return *iwa_cache_manager_;
+}
+#endif
+
 IsolatedWebAppPolicyManager& WebAppProvider::iwa_policy_manager() {
   CheckIsConnected();
   return *isolated_web_app_policy_manager_;
 }
-#endif
 
 WebAppUiManager& WebAppProvider::ui_manager() {
   CheckIsConnected();
@@ -293,18 +305,37 @@ AbstractWebAppDatabaseFactory& WebAppProvider::database_factory() {
   return *database_factory_;
 }
 
+VisitedManifestManager& WebAppProvider::visited_manifest_manager() {
+  CheckIsConnected();
+  return *visited_manifest_manager_;
+}
+
+NavigationCapturingLog& WebAppProvider::navigation_capturing_log() {
+  CheckIsConnected();
+  return *navigation_capturing_log_;
+}
+
 void WebAppProvider::Shutdown() {
   command_scheduler_->Shutdown();
+  // The `command_manager_` has already shut down at this point if the profile
+  // was managed by a ProfileManager that was being destroyed, but this still
+  // happens here because:
+  // 1. One shutdown is enough, duplicate shut downs do not affect the working
+  // of the `command_manager_`.
+  // 2. Sometimes a profile is used without a `ProfileManager` (like in some
+  // tests). In those cases, the `command_manager_` needs to be explicitly
+  // shutdown.
   command_manager_->Shutdown();
   ui_manager_->Shutdown();
   externally_managed_app_manager_->Shutdown();
   manifest_update_manager_->Shutdown();
   iwa_update_manager_->Shutdown();
   install_manager_->Shutdown();
+  isolated_web_app_policy_manager_->Shutdown();
   web_app_policy_manager_->Shutdown();
   icon_manager_->Shutdown();
   install_finalizer_->Shutdown();
-  registrar_->Shutdown();
+  profile_deletion_manager_->Shutdown();
   is_registry_ready_ = false;
 }
 
@@ -333,6 +364,8 @@ void WebAppProvider::CreateSubsystems(Profile* profile) {
   isolated_web_app_installation_manager_ =
       std::make_unique<IsolatedWebAppInstallationManager>(*profile);
   iwa_update_manager_ = std::make_unique<IsolatedWebAppUpdateManager>(*profile);
+  isolated_web_app_policy_manager_ =
+      std::make_unique<IsolatedWebAppPolicyManager>(profile);
   extensions_manager_ = std::make_unique<ExtensionsManager>(profile);
   generated_icon_fix_manager_ = std::make_unique<GeneratedIconFixManager>();
 
@@ -351,11 +384,9 @@ void WebAppProvider::CreateSubsystems(Profile* profile) {
       std::make_unique<WebAppFileHandlerManager>(profile);
   auto protocol_handler_manager =
       std::make_unique<WebAppProtocolHandlerManager>(profile);
-  auto shortcut_manager = std::make_unique<WebAppShortcutManager>(
-      profile, file_handler_manager.get(), protocol_handler_manager.get());
 
   os_integration_manager_ = std::make_unique<OsIntegrationManager>(
-      profile, std::move(shortcut_manager), std::move(file_handler_manager),
+      profile, std::move(file_handler_manager),
       std::move(protocol_handler_manager));
 
   command_manager_ = std::make_unique<WebAppCommandManager>(profile);
@@ -367,11 +398,14 @@ void WebAppProvider::CreateSubsystems(Profile* profile) {
 #if BUILDFLAG(IS_CHROMEOS)
   web_app_run_on_os_login_manager_ =
       std::make_unique<WebAppRunOnOsLoginManager>(profile);
-  isolated_web_app_policy_manager_ =
-      std::make_unique<IsolatedWebAppPolicyManager>(profile);
+  iwa_cache_manager_ = std::make_unique<IwaBundleCacheManager>(*profile);
 #endif
 
   web_contents_manager_ = std::make_unique<WebContentsManager>();
+  visited_manifest_manager_ = std::make_unique<VisitedManifestManager>();
+  navigation_capturing_log_ = std::make_unique<NavigationCapturingLog>();
+  profile_deletion_manager_ =
+      std::make_unique<WebAppProfileDeletionManager>(profile);
 }
 
 void WebAppProvider::ConnectSubsystems() {
@@ -395,13 +429,15 @@ void WebAppProvider::ConnectSubsystems() {
   command_scheduler_->SetProvider(pass_key, *this);
   isolated_web_app_installation_manager_->SetProvider(pass_key, *this);
   iwa_update_manager_->SetProvider(pass_key, *this);
+  isolated_web_app_policy_manager_->SetProvider(pass_key, *this);
 #if BUILDFLAG(IS_CHROMEOS)
   web_app_run_on_os_login_manager_->SetProvider(pass_key, *this);
-  isolated_web_app_policy_manager_->SetProvider(pass_key, *this);
+  iwa_cache_manager_->SetProvider(pass_key, *this);
 #endif
   icon_manager_->SetProvider(pass_key, *this);
   translation_manager_->SetProvider(pass_key, *this);
   generated_icon_fix_manager_->SetProvider(pass_key, *this);
+  profile_deletion_manager_->SetProvider(pass_key, *this);
 
   connected_ = true;
 }
@@ -442,15 +478,17 @@ void WebAppProvider::OnSyncBridgeReady() {
   web_app_policy_manager_->Start(
       std::move(on_web_app_policy_manager_done_callback));
   isolated_web_app_installation_manager_->Start();
-
   iwa_update_manager_->Start();
+  isolated_web_app_policy_manager_->Start(concurrent.CreateClosure());
   manifest_update_manager_->Start();
   os_integration_manager_->Start();
   ui_manager_->Start();
   generated_icon_fix_manager_->Start();
   command_manager_->Start();
+  profile_deletion_manager_->Start();
+
 #if BUILDFLAG(IS_CHROMEOS)
-  isolated_web_app_policy_manager_->Start(concurrent.CreateClosure());
+  iwa_cache_manager_->Start();
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
   // Note: This does not wait for the call from the ChromeOS
@@ -467,6 +505,17 @@ void WebAppProvider::OnSyncBridgeReady() {
 
   on_registry_ready_.Signal();
   is_registry_ready_ = true;
+
+#if BUILDFLAG(IS_MAC)
+  if (base::FeatureList::IsEnabled(kDiyAppIconsMaskedOnMacUpdate)) {
+    content::GetUIThreadTaskRunner({base::TaskPriority::BEST_EFFORT})
+        ->PostDelayedTask(
+            FROM_HERE,
+            base::BindOnce(&WebAppProvider::DoDelayedPostStartupWork,
+                           AsWeakPtr()),
+            base::Minutes(1));
+  }
+#endif
 }
 
 void WebAppProvider::CheckIsConnected() const {
@@ -474,5 +523,34 @@ void WebAppProvider::CheckIsConnected() const {
                         "WebAppProvider is not connected. You may need to wait "
                         "for on_registry_ready().";
 }
+
+#if BUILDFLAG(IS_MAC)
+void WebAppProvider::DoDelayedPostStartupWork() {
+  CHECK(base::FeatureList::IsEnabled(kDiyAppIconsMaskedOnMacUpdate));
+
+  const WebAppRegistrar& registrar = registrar_unsafe();
+
+  for (const auto& app : registrar.GetApps()) {
+    // Skip apps that don't match our criteria
+    if (!registrar.AppMatches(app.app_id(),
+                              WebAppFilter::IsDiyWithOsShortcut())) {
+      continue;
+    }
+
+    // Skip apps that are already masked
+    if (registrar.IsDiyAppIconsMarkedMaskedOnMac(app.app_id())) {
+      continue;
+    }
+
+    // Skip apps with open windows
+    if (ui_manager_->GetNumWindowsForApp(app.app_id()) != 0) {
+      continue;
+    }
+
+    // Schedule the command for eligible apps
+    scheduler().RewriteDiyIcons(app.app_id(), base::DoNothing());
+  }
+}
+#endif
 
 }  // namespace web_app

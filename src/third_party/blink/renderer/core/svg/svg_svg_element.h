@@ -105,9 +105,14 @@ class SVGSVGElement final : public SVGGraphicsElement,
 
   AffineTransform ViewBoxToViewTransform(const gfx::SizeF& viewport_size) const;
 
-  void SetupInitialView(const String& fragment_identifier,
-                        Element* anchor_node);
+  const SVGViewSpec* ParseViewSpec(const String& fragment_identifier,
+                                   Element* anchor_node) const;
+  void SetViewSpec(const SVGViewSpec*);
+
   bool ZoomAndPanEnabled() const;
+
+  CSSPropertyValueSet* CreateWidthAndHeightPresentationAttributeStyleIfNeeded(
+      const Element& original_element);
 
   SVGAnimatedLength* x() const { return x_.Get(); }
   SVGAnimatedLength* y() const { return y_.Get(); }
@@ -117,14 +122,12 @@ class SVGSVGElement final : public SVGGraphicsElement,
   void Trace(Visitor*) const override;
 
  private:
-  void SetViewSpec(const SVGViewSpec*);
-
   void ParseAttribute(const AttributeModificationParams&) override;
   bool IsPresentationAttribute(const QualifiedName&) const override;
   void CollectStyleForPresentationAttribute(
       const QualifiedName&,
       const AtomicString&,
-      MutableCSSPropertyValueSet*) override;
+      HeapVector<CSSPropertyValue, 8>&) override;
 
   void AttachLayoutTree(AttachContext&) override;
   bool LayoutObjectIsNeeded(const DisplayStyle&) const override;
@@ -150,7 +153,7 @@ class SVGSVGElement final : public SVGGraphicsElement,
       const QualifiedName& attribute_name) const override;
   void SynchronizeAllSVGAttributes() const override;
   void CollectExtraStyleForPresentationAttribute(
-      MutableCSSPropertyValueSet* style) override;
+      HeapVector<CSSPropertyValue, 8>& style) override;
 
   Member<SVGAnimatedLength> x_;
   Member<SVGAnimatedLength> y_;

@@ -41,11 +41,15 @@ struct ResolvedIPAddress;
 // User data stored in DownloadItem for referrer chain information.
 class ReferrerChainData : public base::SupportsUserData::Data {
  public:
-  ReferrerChainData(std::unique_ptr<ReferrerChain> referrer_chain,
+  ReferrerChainData(ReferrerChainProvider::AttributionResult attribution_result,
+                    std::unique_ptr<ReferrerChain> referrer_chain,
                     size_t referrer_chain_length,
                     size_t recent_navigation_to_collect);
   ~ReferrerChainData() override;
-  ReferrerChain* GetReferrerChain();
+  ReferrerChainProvider::AttributionResult attribution_result() const {
+    return attribution_result_;
+  }
+  ReferrerChain* GetReferrerChain() const;
   size_t referrer_chain_length() { return referrer_chain_length_; }
   size_t recent_navigations_to_collect() {
     return recent_navigations_to_collect_;
@@ -54,8 +58,14 @@ class ReferrerChainData : public base::SupportsUserData::Data {
   // Unique user data key used to get and set referrer chain data in
   // DownloadItem.
   static const char kDownloadReferrerChainDataKey[];
+  static const char kDownloadReferrerChainDataKeyForEnterprise[];
 
  private:
+  // Result of trying to get the referrer chain. Referrer chains are
+  // fetched once per download, at the beginning of downloading to disk.
+  ReferrerChainProvider::AttributionResult attribution_result_ =
+      ReferrerChainProvider::AttributionResult::NAVIGATION_EVENT_NOT_FOUND;
+  // The referrer chain itself
   std::unique_ptr<ReferrerChain> referrer_chain_;
   // This is the actual referrer chain length before appending recent navigation
   // events;

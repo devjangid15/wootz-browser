@@ -11,6 +11,7 @@
 #include "base/containers/contains.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "chrome/browser/notifications/scheduler/internal/scheduler_utils.h"
 
@@ -46,8 +47,7 @@ std::string ToDatabaseKey(SchedulerClientType type) {
       return "Test3";
     case SchedulerClientType::kUnknown:
     case SchedulerClientType::kDeprecatedFeatureGuide:
-      NOTREACHED_IN_MIGRATION();
-      return std::string();
+      NOTREACHED();
     case SchedulerClientType::kWebUI:
       return "WebUI";
     case SchedulerClientType::kChromeUpdate:
@@ -321,8 +321,7 @@ void ImpressionHistoryTrackerImpl::GenerateImpressionResult(
         impression->impression = ImpressionResult::kNegative;
         break;
       case UserFeedback::kNoFeedback:
-        NOTREACHED_IN_MIGRATION();
-        break;
+        NOTREACHED();
     }
   }
 }
@@ -343,8 +342,7 @@ void ImpressionHistoryTrackerImpl::UpdateThrottling(ClientState* client_state,
     case ImpressionResult::kNeutral:
       break;
     case ImpressionResult::kInvalid:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
 }
 

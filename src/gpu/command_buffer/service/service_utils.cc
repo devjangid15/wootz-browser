@@ -11,22 +11,19 @@
 #include "base/logging.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
+#include "base/strings/string_util.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "gpu/command_buffer/common/gles2_cmd_utils.h"
-#include "gpu/command_buffer/common/gpu_memory_buffer_support.h"
 #include "gpu/command_buffer/service/context_group.h"
 #include "gpu/command_buffer/service/gpu_switches.h"
 #include "gpu/config/gpu_finch_features.h"
 #include "skia/buildflags.h"
 #include "ui/gl/gl_bindings.h"
+#include "ui/gl/gl_features.h"
 #include "ui/gl/gl_implementation.h"
+#include "ui/gl/gl_surface_egl.h"
 #include "ui/gl/gl_switches.h"
 #include "ui/gl/gl_utils.h"
-
-#if defined(USE_EGL)
-#include "ui/gl/gl_surface_egl.h"
-#endif  // defined(USE_EGL)
 
 namespace gpu {
 namespace gles2 {
@@ -41,6 +38,93 @@ bool GetUintFromSwitch(const base::CommandLine* command_line,
   }
   std::string switch_value(command_line->GetSwitchValueASCII(switch_string));
   return base::StringToUint(switch_value, value);
+}
+
+// Parse the value of --use-vulkan from the command line. If unspecified and
+// features::kVulkan is enabled (GrContext is going to use vulkan), default to
+// the native implementation.
+VulkanImplementationName ParseVulkanImplementationName(
+    const base::CommandLine* command_line) {
+#if BUILDFLAG(IS_ANDROID)
+  if (command_line->HasSwitch(switches::kWebViewDrawFunctorUsesVulkan)) {
+    return VulkanImplementationName::kForcedNative;
+  }
+#endif
+
+  if (command_line->HasSwitch(switches::kUseVulkan)) {
+    auto value = command_line->GetSwitchValueASCII(switches::kUseVulkan);
+    if (value.empty() || value == switches::kVulkanImplementationNameNative) {
+      return VulkanImplementationName::kForcedNative;
+    } else if (value == switches::kVulkanImplementationNameSwiftshader) {
+      return VulkanImplementationName::kSwiftshader;
+    }
+  }
+
+  if (features::IsUsingVulkan()) {
+    // If the vulkan feature is enabled from command line, we will force to use
+    // vulkan even if it is blocklisted.
+    return base::FeatureList::GetInstance()->IsFeatureOverriddenFromCommandLine(
+               features::kVulkan.name,
+               base::FeatureList::OVERRIDE_ENABLE_FEATURE)
+               ? VulkanImplementationName::kForcedNative
+               : VulkanImplementationName::kNative;
+  }
+
+  // GrContext is not going to use Vulkan.
+  return VulkanImplementationName::kNone;
+}
+
+WebGPUAdapterName ParseWebGPUAdapterName(
+    const base::CommandLine* command_line) {
+  if (command_line->HasSwitch(switches::kUseWebGPUAdapter)) {
+    auto value = command_line->GetSwitchValueASCII(switches::kUseWebGPUAdapter);
+
+    static const struct {
+      const char* name;
+      WebGPUAdapterName value;
+    } kAdapterNames[] = {
+        {"", WebGPUAdapterName::kDefault},
+        {"default", WebGPUAdapterName::kDefault},
+        {"d3d11", WebGPUAdapterName::kD3D11},
+        {"opengles", WebGPUAdapterName::kOpenGLES},
+        {"swiftshader", WebGPUAdapterName::kSwiftShader},
+    };
+
+    for (const auto& adapter_name : kAdapterNames) {
+      if (value == adapter_name.name) {
+        return adapter_name.value;
+      }
+    }
+
+    DLOG(ERROR) << "Invalid switch " << switches::kUseWebGPUAdapter << "="
+                << value << ".";
+  }
+  return WebGPUAdapterName::kDefault;
+}
+
+WebGPUPowerPreference ParseWebGPUPowerPreference(
+    const base::CommandLine* command_line) {
+  if (command_line->HasSwitch(switches::kUseWebGPUPowerPreference)) {
+    auto value =
+        command_line->GetSwitchValueASCII(switches::kUseWebGPUPowerPreference);
+    if (value.empty()) {
+      return WebGPUPowerPreference::kNone;
+    } else if (value == "none") {
+      return WebGPUPowerPreference::kNone;
+    } else if (value == "default-low-power") {
+      return WebGPUPowerPreference::kDefaultLowPower;
+    } else if (value == "default-high-performance") {
+      return WebGPUPowerPreference::kDefaultHighPerformance;
+    } else if (value == "force-low-power") {
+      return WebGPUPowerPreference::kForceLowPower;
+    } else if (value == "force-high-performance") {
+      return WebGPUPowerPreference::kForceHighPerformance;
+    } else {
+      DLOG(ERROR) << "Invalid switch " << switches::kUseWebGPUPowerPreference
+                  << "=" << value << ".";
+    }
+  }
+  return WebGPUPowerPreference::kNone;
 }
 
 }  // namespace
@@ -62,6 +146,7 @@ gl::GLContextAttribs GenerateGLContextAttribsForDecoder(
 
     attribs.robust_resource_initialization = true;
     attribs.robust_buffer_access = true;
+    attribs.allow_client_arrays = false;
 
     // Request a specific context version instead of always 3.0
     if (IsWebGL2OrES3ContextType(attribs_helper.context_type)) {
@@ -104,10 +189,13 @@ gl::GLContextAttribs GenerateGLContextAttribsForCompositor(
     attribs.global_texture_share_group = true;
     attribs.global_semaphore_share_group = true;
 
+    attribs.passthrough_shaders = features::IsANGLEPassthroughShadersAllowed();
+
     // Disable resource initialization and buffer bounds checks for trusted
     // contexts.
     attribs.robust_resource_initialization = false;
     attribs.robust_buffer_access = false;
+    attribs.allow_client_arrays = true;
   }
 
   bool force_es2_context = gl::GetGlWorkarounds().disable_es3gl_context;
@@ -123,10 +211,6 @@ gl::GLContextAttribs GenerateGLContextAttribsForCompositor(
 
 bool UsePassthroughCommandDecoder(const base::CommandLine* command_line) {
   return gl::UsePassthroughCommandDecoder(command_line);
-}
-
-bool PassthroughCommandDecoderSupported() {
-  return gl::PassthroughCommandDecoderSupported();
 }
 
 GpuPreferences ParseGpuPreferences(const base::CommandLine* command_line) {
@@ -151,10 +235,6 @@ GpuPreferences ParseGpuPreferences(const base::CommandLine* command_line) {
       command_line->HasSwitch(switches::kDisableGpuProgramCache);
   gpu_preferences.enforce_gl_minimums =
       command_line->HasSwitch(switches::kEnforceGLMinimums);
-  if (GetUintFromSwitch(command_line, switches::kForceGpuMemAvailableMb,
-                        &gpu_preferences.force_gpu_mem_available_bytes)) {
-    gpu_preferences.force_gpu_mem_available_bytes *= 1024 * 1024;
-  }
   if (GetUintFromSwitch(
           command_line, switches::kForceGpuMemDiscardableLimitMb,
           &gpu_preferences.force_gpu_mem_discardable_limit_bytes)) {
@@ -259,90 +339,6 @@ GrContextType ParseGrContextType(const base::CommandLine* command_line) {
   return GrContextType::kGL;
 }
 
-VulkanImplementationName ParseVulkanImplementationName(
-    const base::CommandLine* command_line) {
-#if BUILDFLAG(IS_ANDROID)
-  if (command_line->HasSwitch(switches::kWebViewDrawFunctorUsesVulkan)) {
-    return VulkanImplementationName::kForcedNative;
-  }
-#endif
-
-  if (command_line->HasSwitch(switches::kUseVulkan)) {
-    auto value = command_line->GetSwitchValueASCII(switches::kUseVulkan);
-    if (value.empty() || value == switches::kVulkanImplementationNameNative) {
-      return VulkanImplementationName::kForcedNative;
-    } else if (value == switches::kVulkanImplementationNameSwiftshader) {
-      return VulkanImplementationName::kSwiftshader;
-    }
-  }
-
-  if (features::IsUsingVulkan()) {
-    // If the vulkan feature is enabled from command line, we will force to use
-    // vulkan even if it is blocklisted.
-    return base::FeatureList::GetInstance()->IsFeatureOverriddenFromCommandLine(
-               features::kVulkan.name,
-               base::FeatureList::OVERRIDE_ENABLE_FEATURE)
-               ? VulkanImplementationName::kForcedNative
-               : VulkanImplementationName::kNative;
-  }
-
-  // GrContext is not going to use Vulkan.
-  return VulkanImplementationName::kNone;
-}
-
-WebGPUAdapterName ParseWebGPUAdapterName(
-    const base::CommandLine* command_line) {
-  if (command_line->HasSwitch(switches::kUseWebGPUAdapter)) {
-    auto value = command_line->GetSwitchValueASCII(switches::kUseWebGPUAdapter);
-
-    static const struct {
-      const char* name;
-      WebGPUAdapterName value;
-    } kAdapterNames[] = {
-        {"", WebGPUAdapterName::kDefault},
-        {"default", WebGPUAdapterName::kDefault},
-        {"d3d11", WebGPUAdapterName::kD3D11},
-        {"opengles", WebGPUAdapterName::kOpenGLES},
-        {"swiftshader", WebGPUAdapterName::kSwiftShader},
-    };
-
-    for (const auto& adapter_name : kAdapterNames) {
-      if (value == adapter_name.name) {
-        return adapter_name.value;
-      }
-    }
-
-    DLOG(ERROR) << "Invalid switch " << switches::kUseWebGPUAdapter << "="
-                << value << ".";
-  }
-  return WebGPUAdapterName::kDefault;
-}
-
-WebGPUPowerPreference ParseWebGPUPowerPreference(
-    const base::CommandLine* command_line) {
-  if (command_line->HasSwitch(switches::kUseWebGPUPowerPreference)) {
-    auto value =
-        command_line->GetSwitchValueASCII(switches::kUseWebGPUPowerPreference);
-    if (value.empty()) {
-      return WebGPUPowerPreference::kNone;
-    } else if (value == "none") {
-      return WebGPUPowerPreference::kNone;
-    } else if (value == "default-low-power") {
-      return WebGPUPowerPreference::kDefaultLowPower;
-    } else if (value == "default-high-performance") {
-      return WebGPUPowerPreference::kDefaultHighPerformance;
-    } else if (value == "force-low-power") {
-      return WebGPUPowerPreference::kForceLowPower;
-    } else if (value == "force-high-performance") {
-      return WebGPUPowerPreference::kForceHighPerformance;
-    } else {
-      DLOG(ERROR) << "Invalid switch " << switches::kUseWebGPUPowerPreference
-                  << "=" << value << ".";
-    }
-  }
-  return WebGPUPowerPreference::kNone;
-}
-
 bool MSAAIsSlow(const GpuDriverBugWorkarounds& workarounds) {
   // Only query the kEnableMSAAOnNewIntelGPUs feature flag if the host device
   // is affected by the experiment (i.e. is a new Intel GPU).
@@ -359,7 +355,7 @@ bool MSAAIsSlow(const GpuDriverBugWorkarounds& workarounds) {
 }  // namespace gles2
 
 #if BUILDFLAG(IS_MAC)
-uint32_t GetMacOSSpecificTextureTargetForCurrentGLImplementation() {
+uint32_t GetTextureTargetForIOSurfaces() {
   // On MacOS, the default texture target for native GpuMemoryBuffers is
   // GL_TEXTURE_RECTANGLE_ARB. This is due to CGL's requirements for creating
   // a GL surface. However, when ANGLE is used on top of SwiftShader or Metal,
@@ -371,13 +367,41 @@ uint32_t GetMacOSSpecificTextureTargetForCurrentGLImplementation() {
        gl::GetANGLEImplementation() == gl::ANGLEImplementation::kMetal)) {
     return GL_TEXTURE_2D;
   }
-  return GL_TEXTURE_RECTANGLE_ARB;
-}
-
-void SetMacOSSpecificTextureTargetFromCurrentGLImplementation() {
-  SetMacOSSpecificTextureTarget(
-      GetMacOSSpecificTextureTargetForCurrentGLImplementation());
+  return GL_TEXTURE_RECTANGLE_ANGLE;
 }
 #endif  // BUILDFLAG(IS_MAC)
+
+size_t UpdateShaderCacheSizeOnMemoryPressure(
+    size_t max_cache_size,
+    base::MemoryPressureListener::MemoryPressureLevel memory_pressure_level) {
+  switch (memory_pressure_level) {
+    case base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_NONE:
+      return max_cache_size;
+    case base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_MODERATE:
+      if (base::FeatureList::IsEnabled(
+              ::features::kAggressiveShaderCacheLimits)) {
+        // Ignore moderate memory pressure.
+      } else {
+        max_cache_size /= 4;
+      }
+      break;
+    case base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_CRITICAL:
+      if (base::FeatureList::IsEnabled(
+              ::features::kAggressiveShaderCacheLimits)) {
+#if BUILDFLAG(IS_ANDROID)
+        // On Android, critical memory pressure notifications are very common,
+        // and not necessarily tied to actual critical memory pressure. Ignore.
+        break;
+#else
+        max_cache_size /= 4;
+#endif
+      } else {
+        max_cache_size = 0;
+      }
+      break;
+  }
+
+  return max_cache_size;
+}
 
 }  // namespace gpu

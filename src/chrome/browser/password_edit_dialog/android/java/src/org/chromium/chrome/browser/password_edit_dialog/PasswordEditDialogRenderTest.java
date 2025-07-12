@@ -4,9 +4,9 @@
 
 package org.chromium.chrome.browser.password_edit_dialog;
 
+import static org.chromium.base.ThreadUtils.runOnUiThreadBlocking;
 import static org.chromium.base.test.util.ApplicationTestUtils.finishActivity;
 import static org.chromium.chrome.browser.password_edit_dialog.R.style.Theme_BrowserUI_DayNight;
-import static org.chromium.content_public.browser.test.util.TestThreadUtils.runOnUiThreadBlocking;
 
 import androidx.test.filters.MediumTest;
 
@@ -14,7 +14,6 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.test.BaseActivityTestRule;
@@ -24,7 +23,6 @@ import org.chromium.base.test.params.ParameterizedRunner;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
-import org.chromium.base.test.util.Features;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.test.ChromeJUnit4RunnerDelegate;
 import org.chromium.chrome.test.util.ChromeRenderTestRule;
@@ -48,15 +46,13 @@ import java.util.List;
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class PasswordEditDialogRenderTest {
     @ParameterAnnotations.ClassParameter
-    private static List<ParameterSet> sClassParams =
+    private static final List<ParameterSet> sClassParams =
             Arrays.asList(
                     new ParameterSet().value(false).name("Default"),
                     new ParameterSet().value(true).name("NightMode"));
 
     private static final String USERNAME = "John Doe";
     private static final String PASSWORD = "passwordForTest";
-
-    @Rule public TestRule mProcessor = new Features.JUnitProcessor();
 
     @Rule
     public final ChromeRenderTestRule mRenderTestRule =

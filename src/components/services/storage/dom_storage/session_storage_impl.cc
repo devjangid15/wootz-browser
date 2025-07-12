@@ -82,13 +82,11 @@ void RecordSessionStorageCachePurgedHistogram(
           purged_size_kib);
       break;
     case SessionStorageCachePurgeReason::kNotNeeded:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
 }
 
-void SessionStorageErrorResponse(base::OnceClosure callback,
-                                 leveldb::Status status) {
+void SessionStorageErrorResponse(base::OnceClosure callback, DbStatus status) {
   std::move(callback).Run();
 }
 
@@ -100,8 +98,10 @@ SessionStorageImpl::SessionStorageImpl(
     scoped_refptr<base::SequencedTaskRunner> memory_dump_task_runner,
     BackingMode backing_mode,
     std::string database_name,
+    DestructSessionStorageCallback destruct_callback,
     mojo::PendingReceiver<mojom::SessionStorageControl> receiver)
-    : backing_mode_(backing_mode),
+    : destruct_callback_(std::move(destruct_callback)),
+      backing_mode_(backing_mode),
       database_name_(std::move(database_name)),
       partition_directory_(partition_directory),
       database_task_runner_(std::move(blocking_task_runner)),
@@ -114,6 +114,9 @@ SessionStorageImpl::SessionStorageImpl(
       ->RegisterDumpProviderWithSequencedTaskRunner(
           this, "SessionStorage", std::move(memory_dump_task_runner),
           base::trace_event::MemoryDumpProvider::Options());
+  receiver_.set_disconnect_handler(
+      base::BindOnce(&SessionStorageImpl::OnReceiverDisconnected,
+                     weak_ptr_factory_.GetWeakPtr()));
 }
 
 SessionStorageImpl::~SessionStorageImpl() {
@@ -245,7 +248,7 @@ void SessionStorageImpl::CloneNamespace(
                                                  namespace_entry, &save_tasks);
         if (database_) {
           database_->RunBatchDatabaseTasks(
-              std::move(save_tasks),
+              RunBatchTasksContext::kCloneNamespace, std::move(save_tasks),
               base::BindOnce(&SessionStorageImpl::OnCommitResult,
                              weak_ptr_factory_.GetWeakPtr()));
         }
@@ -254,7 +257,7 @@ void SessionStorageImpl::CloneNamespace(
       // namespace.
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
   namespaces_.emplace(
       std::piecewise_construct, std::forward_as_tuple(clone_to_namespace_id),
@@ -295,21 +298,15 @@ void SessionStorageImpl::DeleteNamespace(const std::string& namespace_id,
   }
 }
 
-void SessionStorageImpl::Flush(FlushCallback callback) {
+void SessionStorageImpl::Flush() {
   if (connection_state_ != CONNECTION_FINISHED) {
     RunWhenConnected(base::BindOnce(&SessionStorageImpl::Flush,
-                                    weak_ptr_factory_.GetWeakPtr(),
-                                    std::move(callback)));
+                                    weak_ptr_factory_.GetWeakPtr()));
     return;
   }
 
-  base::RepeatingClosure commit_callback = base::BarrierClosure(
-      base::saturated_cast<int>(data_maps_.size()), std::move(callback));
-
   for (const auto& it : data_maps_)
-    it.second->storage_area()->ScheduleImmediateCommit(
-        mojo::WrapCallbackWithDefaultInvokeIfNotRun(
-            base::OnceClosure(commit_callback)));
+    it.second->storage_area()->ScheduleImmediateCommit();
 }
 
 void SessionStorageImpl::GetUsage(GetUsageCallback callback) {
@@ -355,7 +352,7 @@ void SessionStorageImpl::DeleteStorage(const blink::StorageKey& storage_key,
     metadata_.DeleteArea(namespace_id, storage_key, &tasks);
     if (database_) {
       database_->RunBatchDatabaseTasks(
-          std::move(tasks),
+          RunBatchTasksContext::kDeleteStorage, std::move(tasks),
           base::BindOnce(&SessionStorageImpl::OnCommitResultWithCallback,
                          weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
     } else {
@@ -501,7 +498,7 @@ void SessionStorageImpl::ScavengeUnusedNamespaces(
 
   if (database_) {
     database_->RunBatchDatabaseTasks(
-        std::move(save_tasks),
+        RunBatchTasksContext::kScavengeUnusedNamespaces, std::move(save_tasks),
         base::BindOnce(&SessionStorageImpl::OnCommitResult,
                        weak_ptr_factory_.GetWeakPtr()));
   }
@@ -554,7 +551,7 @@ bool SessionStorageImpl::OnMemoryDump(
 }
 
 void SessionStorageImpl::PretendToConnectForTesting() {
-  OnDatabaseOpened(leveldb::Status::OK());
+  OnDatabaseOpened(DbStatus::OK());
 }
 
 void SessionStorageImpl::FlushAreaForTesting(
@@ -583,7 +580,7 @@ SessionStorageImpl::RegisterNewAreaMap(
 
   if (database_) {
     database_->RunBatchDatabaseTasks(
-        std::move(save_tasks),
+        RunBatchTasksContext::kRegisterNewAreaMap, std::move(save_tasks),
         base::BindOnce(&SessionStorageImpl::OnCommitResult,
                        weak_ptr_factory_.GetWeakPtr()));
   }
@@ -604,14 +601,11 @@ void SessionStorageImpl::OnDataMapDestruction(
   data_maps_.erase(map_prefix);
 }
 
-void SessionStorageImpl::OnCommitResult(leveldb::Status status) {
+void SessionStorageImpl::OnCommitResult(DbStatus status) {
   if (connection_state_ == CONNECTION_SHUTDOWN)
     return;
 
   DCHECK_EQ(connection_state_, CONNECTION_FINISHED);
-  UMA_HISTOGRAM_ENUMERATION("SessionStorageContext.CommitResult",
-                            leveldb_env::GetLevelDBStatusUMAValue(status),
-                            leveldb_env::LEVELDB_STATUS_MAX);
   if (status.ok()) {
     commit_error_count_ = 0;
     return;
@@ -635,7 +629,7 @@ void SessionStorageImpl::OnCommitResult(leveldb::Status status) {
 }
 
 void SessionStorageImpl::OnCommitResultWithCallback(base::OnceClosure callback,
-                                                    leveldb::Status status) {
+                                                    DbStatus status) {
   OnCommitResult(status);
   std::move(callback).Run();
 }
@@ -672,6 +666,7 @@ void SessionStorageImpl::RegisterShallowClonedNamespace(
                                            namespace_entry, &save_tasks);
   if (database_) {
     database_->RunBatchDatabaseTasks(
+        RunBatchTasksContext::kRegisterShallowClonedNamespace,
         std::move(save_tasks),
         base::BindOnce(&SessionStorageImpl::OnCommitResult,
                        weak_ptr_factory_.GetWeakPtr()));
@@ -708,8 +703,9 @@ void SessionStorageImpl::DoDatabaseDelete(const std::string& namespace_id) {
   metadata_.DeleteNamespace(namespace_id, &tasks);
   if (database_) {
     database_->RunBatchDatabaseTasks(
-        std::move(tasks), base::BindOnce(&SessionStorageImpl::OnCommitResult,
-                                         weak_ptr_factory_.GetWeakPtr()));
+        RunBatchTasksContext::kDoDatabaseDelete, std::move(tasks),
+        base::BindOnce(&SessionStorageImpl::OnCommitResult,
+                       weak_ptr_factory_.GetWeakPtr()));
   }
 }
 
@@ -727,13 +723,12 @@ void SessionStorageImpl::RunWhenConnected(base::OnceClosure callback) {
       on_database_opened_callbacks_.push_back(std::move(callback));
       return;
     case CONNECTION_SHUTDOWN:
-      NOTREACHED_IN_MIGRATION();
-      return;
+      NOTREACHED();
     case CONNECTION_FINISHED:
       std::move(callback).Run();
       return;
   }
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void SessionStorageImpl::InitiateConnection(bool in_memory_only) {
@@ -777,21 +772,8 @@ SessionStorageImpl::KeyValuePairsAndStatus::KeyValuePairsAndStatus(
 
 SessionStorageImpl::KeyValuePairsAndStatus::~KeyValuePairsAndStatus() = default;
 
-void SessionStorageImpl::OnDatabaseOpened(leveldb::Status status) {
+void SessionStorageImpl::OnDatabaseOpened(DbStatus status) {
   if (!status.ok()) {
-    UMA_HISTOGRAM_ENUMERATION("SessionStorageContext.DatabaseOpenError",
-                              leveldb_env::GetLevelDBStatusUMAValue(status),
-                              leveldb_env::LEVELDB_STATUS_MAX);
-    if (in_memory_) {
-      UMA_HISTOGRAM_ENUMERATION(
-          "SessionStorageContext.DatabaseOpenError.Memory",
-          leveldb_env::GetLevelDBStatusUMAValue(status),
-          leveldb_env::LEVELDB_STATUS_MAX);
-    } else {
-      UMA_HISTOGRAM_ENUMERATION("SessionStorageContext.DatabaseOpenError.Disk",
-                                leveldb_env::GetLevelDBStatusUMAValue(status),
-                                leveldb_env::LEVELDB_STATUS_MAX);
-    }
     LogDatabaseOpenResult(OpenResult::kDatabaseOpenFailed);
     // If we failed to open the database, try to delete and recreate the
     // database, or ultimately fallback to an in-memory database.
@@ -810,18 +792,18 @@ void SessionStorageImpl::OnDatabaseOpened(leveldb::Status status) {
   database_->RunDatabaseTask(
       base::BindOnce([](const DomStorageDatabase& db) {
         ValueAndStatus version;
-        version.status = db.Get(
-            base::make_span(SessionStorageMetadata::kDatabaseVersionBytes),
-            &version.value);
+        version.status =
+            db.Get(base::span(SessionStorageMetadata::kDatabaseVersionBytes),
+                   &version.value);
 
         KeyValuePairsAndStatus namespaces;
         namespaces.status = db.GetPrefixed(
-            base::make_span(SessionStorageMetadata::kNamespacePrefixBytes),
+            base::span(SessionStorageMetadata::kNamespacePrefixBytes),
             &namespaces.key_value_pairs);
 
         ValueAndStatus next_map_id;
         next_map_id.status =
-            db.Get(base::make_span(SessionStorageMetadata::kNextMapIdKeyBytes),
+            db.Get(base::span(SessionStorageMetadata::kNextMapIdKeyBytes),
                    &next_map_id.value);
 
         return std::make_tuple(std::move(version), std::move(namespaces),
@@ -888,10 +870,6 @@ SessionStorageImpl::ParseDatabaseVersion(
   }
 
   // Other read error, Possibly database corruption
-  UMA_HISTOGRAM_ENUMERATION(
-      "SessionStorageContext.ReadVersionError",
-      leveldb_env::GetLevelDBStatusUMAValue(version.status),
-      leveldb_env::LEVELDB_STATUS_MAX);
   return {OpenResult::kVersionReadError,
           "SessionStorageContext.OpenResultAfterReadVersionError"};
 }
@@ -902,10 +880,6 @@ SessionStorageImpl::MetadataParseResult SessionStorageImpl::ParseNamespaces(
   DCHECK_EQ(connection_state_, CONNECTION_IN_PROGRESS);
 
   if (!namespaces.status.ok()) {
-    UMA_HISTOGRAM_ENUMERATION(
-        "SessionStorageContext.ReadNamespacesError",
-        leveldb_env::GetLevelDBStatusUMAValue(namespaces.status),
-        leveldb_env::LEVELDB_STATUS_MAX);
     return {OpenResult::kNamespacesReadError,
             "SessionStorageContext.OpenResultAfterReadNamespacesError"};
   }
@@ -914,10 +888,6 @@ SessionStorageImpl::MetadataParseResult SessionStorageImpl::ParseNamespaces(
       std::move(namespaces.key_value_pairs), &migration_tasks);
 
   if (!parsing_success) {
-    UMA_HISTOGRAM_ENUMERATION(
-        "SessionStorageContext.ReadNamespacesError",
-        leveldb_env::GetLevelDBStatusUMAValue(leveldb::Status::OK()),
-        leveldb_env::LEVELDB_STATUS_MAX);
     return {OpenResult::kNamespacesReadError,
             "SessionStorageContext.OpenResultAfterReadNamespacesError"};
   }
@@ -928,11 +898,11 @@ SessionStorageImpl::MetadataParseResult SessionStorageImpl::ParseNamespaces(
     // initialized. There's no harm in deferring in other situations, so we just
     // always defer here.
     database_->RunBatchDatabaseTasks(
-        std::move(migration_tasks),
+        RunBatchTasksContext::kParseNamespaces, std::move(migration_tasks),
         base::BindOnce(
-            [](base::OnceCallback<void(leveldb::Status)> callback,
+            [](base::OnceCallback<void(DbStatus)> callback,
                scoped_refptr<base::SequencedTaskRunner> callback_task_runner,
-               leveldb::Status status) {
+               DbStatus status) {
               callback_task_runner->PostTask(
                   FROM_HERE, base::BindOnce(std::move(callback), status));
             },
@@ -951,10 +921,6 @@ SessionStorageImpl::MetadataParseResult SessionStorageImpl::ParseNextMapId(
       return {OpenResult::kSuccess, ""};
 
     // Other read error. Possibly database corruption.
-    UMA_HISTOGRAM_ENUMERATION(
-        "SessionStorageContext.ReadNextMapIdError",
-        leveldb_env::GetLevelDBStatusUMAValue(next_map_id.status),
-        leveldb_env::LEVELDB_STATUS_MAX);
     return {OpenResult::kNamespacesReadError,
             "SessionStorageContext.OpenResultAfterReadNextMapIdError"};
   }
@@ -1041,10 +1007,7 @@ void SessionStorageImpl::DeleteAndRecreateDatabase(const char* histogram_name) {
 }
 
 void SessionStorageImpl::OnDBDestroyed(bool recreate_in_memory,
-                                       leveldb::Status status) {
-  UMA_HISTOGRAM_ENUMERATION("SessionStorageContext.DestroyDBResult",
-                            leveldb_env::GetLevelDBStatusUMAValue(status),
-                            leveldb_env::LEVELDB_STATUS_MAX);
+                                       DbStatus status) {
   // We're essentially ignoring the status here. Even if destroying failed we
   // still want to go ahead and try to recreate.
   InitiateConnection(recreate_in_memory);
@@ -1077,6 +1040,10 @@ void SessionStorageImpl::LogDatabaseOpenResult(OpenResult result) {
   if (open_result_histogram_) {
     base::UmaHistogramEnumeration(open_result_histogram_, result);
   }
+}
+
+void SessionStorageImpl::OnReceiverDisconnected() {
+  std::move(destruct_callback_).Run(this);
 }
 
 }  // namespace storage

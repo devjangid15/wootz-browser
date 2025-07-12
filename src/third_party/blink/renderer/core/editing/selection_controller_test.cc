@@ -14,7 +14,6 @@
 #include "third_party/blink/renderer/core/input/event_handler.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 
 namespace blink {
 
@@ -152,7 +151,7 @@ TEST_F(SelectionControllerTest, setCaretAtHitTestResult) {
   SetBodyContent(body_content);
   GetDocument().GetSettings()->SetScriptEnabled(true);
   Element* script = GetDocument().CreateRawElement(html_names::kScriptTag);
-  script->setInnerHTML(
+  script->SetInnerHTMLWithoutTrustedTypes(
       "var sample = document.getElementById('sample');"
       "sample.addEventListener('onselectstart', "
       "  event => elem.parentNode.removeChild(elem));");
@@ -173,7 +172,7 @@ TEST_F(SelectionControllerTest, setCaretAtHitTestResultWithNullPosition) {
       "<div id=sample></div>");
   UpdateAllLifecyclePhasesForTest();
 
-  // Hit "&nbsp;" in before pseudo element of "sample".
+  // Hit "&nbsp;" in before pseudo-element of "sample".
   HitTestLocation location((gfx::Point(10, 10)));
   SetCaretAtHitTestResult(
       GetFrame().GetEventHandler().HitTestResultAtLocation(location));
@@ -186,7 +185,7 @@ TEST_F(SelectionControllerTest,
        SetCaretAtHitTestResultWithDisconnectedPosition) {
   GetDocument().GetSettings()->SetScriptEnabled(true);
   Element* script = GetDocument().CreateRawElement(html_names::kScriptTag);
-  script->setInnerHTML(
+  script->SetInnerHTMLWithoutTrustedTypes(
       "document.designMode = 'on';"
       "const selection = window.getSelection();"
       "const html = document.getElementsByTagName('html')[0];"
@@ -229,7 +228,7 @@ TEST_F(SelectionControllerTest, AdjustSelectionWithTrailingWhitespace) {
   SetBodyContent(
       "<input type=checkbox>"
       "<div style='user-select:none'>abc</div>");
-  Element* const input = GetDocument().QuerySelector(AtomicString("input"));
+  Element* const input = QuerySelector("input");
 
   const SelectionInFlatTree& selection = ExpandWithGranularity(
       SelectionInFlatTree::Builder()

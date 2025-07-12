@@ -7,16 +7,18 @@
 
 #include <memory>
 #include <optional>
+#include <set>
+#include <string>
 #include <tuple>
 #include <vector>
 
+#include "base/features.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/threading/sequence_bound.h"
-#include "base/unguessable_token.h"
 #include "components/services/storage/dom_storage/dom_storage_database.h"
-#include "third_party/leveldatabase/src/include/leveldb/cache.h"
-#include "third_party/leveldatabase/src/include/leveldb/db.h"
+#include "components/services/storage/dom_storage/features.h"
+#include "storage/common/database/db_status.h"
 
 namespace storage {
 
@@ -25,11 +27,26 @@ template <typename ResultType>
 struct DatabaseTaskTraits;
 }  // namespace internal
 
+// Describes the context in which RunBatchDatabaseTasks is called, for
+// debugging.
+// TODO(crbug.com/40245293): Remove this debug enum once the investigation is
+// complete.
+enum class RunBatchTasksContext {
+  kScavengeUnusedNamespaces,
+  kDeleteStorage,
+  kCloneNamespace,
+  kRegisterNewAreaMap,
+  kRegisterShallowClonedNamespace,
+  kDoDatabaseDelete,
+  kParseNamespaces,
+  kTest,
+};
+
 // A wrapper around DomStorageDatabase which simplifies usage by queueing
 // database operations until the database is opened.
 class AsyncDomStorageDatabase {
  public:
-  using StatusCallback = base::OnceCallback<void(leveldb::Status)>;
+  using StatusCallback = base::OnceCallback<void(DbStatus)>;
 
   AsyncDomStorageDatabase(const AsyncDomStorageDatabase&) = delete;
   AsyncDomStorageDatabase& operator=(const AsyncDomStorageDatabase&) = delete;
@@ -50,6 +67,32 @@ class AsyncDomStorageDatabase {
       const std::string& tracking_name,
       scoped_refptr<base::SequencedTaskRunner> blocking_task_runner,
       StatusCallback callback);
+
+  // Represents a batch of changes from a single commit source. There will be
+  // zero to one of these per registered Committer when a commit is initiated.
+  struct Commit {
+    Commit();
+    ~Commit();
+    Commit(Commit&&);
+    Commit(const Commit&) = delete;
+    Commit operator=(Commit&) = delete;
+
+    DomStorageDatabase::Key prefix;
+    bool clear_all_first;
+
+    std::vector<DomStorageDatabase::KeyValuePair> entries_to_add;
+    std::vector<DomStorageDatabase::Key> keys_to_delete;
+    std::optional<DomStorageDatabase::Key> copy_to_prefix;
+    std::vector<base::TimeTicks> timestamps;
+  };
+
+  // An interface that represents a source of commits. Practically speaking,
+  // this is a `StorageAreaImpl`.
+  class Committer {
+   public:
+    virtual std::optional<Commit> CollectCommit() = 0;
+    virtual base::OnceCallback<void(DbStatus)> GetCommitCompleteCallback() = 0;
+  };
 
   base::SequenceBound<DomStorageDatabase>& database() { return database_; }
   const base::SequenceBound<DomStorageDatabase>& database() const {
@@ -88,14 +131,25 @@ class AsyncDomStorageDatabase {
 
   using BatchDatabaseTask =
       base::OnceCallback<void(leveldb::WriteBatch*, const DomStorageDatabase&)>;
-  void RunBatchDatabaseTasks(
-      std::vector<BatchDatabaseTask> tasks,
-      base::OnceCallback<void(leveldb::Status)> callback);
+  void RunBatchDatabaseTasks(RunBatchTasksContext context,
+                             std::vector<BatchDatabaseTask> tasks,
+                             base::OnceCallback<void(DbStatus)> callback);
+
+  // Registers or unregisters `source` such that its commits will be batched
+  // with other registered committers.
+  void AddCommitter(Committer* source);
+  void RemoveCommitter(Committer* source);
+
+  // To be called by a committer when it has data that should be committed
+  // without delay. TODO(crbug.com/340200017): the parameter only exists to
+  // support the legacy behavior of distinct commits per storage area, and
+  // should be removed when kCoalesceStorageAreaCommits is enabled by default.
+  void InitiateCommit(Committer* source);
 
  private:
   void OnDatabaseOpened(StatusCallback callback,
                         base::SequenceBound<DomStorageDatabase> database,
-                        leveldb::Status status);
+                        DbStatus status);
 
   explicit AsyncDomStorageDatabase();
 
@@ -103,6 +157,7 @@ class AsyncDomStorageDatabase {
 
   using BoundDatabaseTask = base::OnceCallback<void(const DomStorageDatabase&)>;
   std::vector<BoundDatabaseTask> tasks_to_run_on_open_;
+  std::set<raw_ptr<Committer>> committers_;
 
   base::WeakPtrFactory<AsyncDomStorageDatabase> weak_ptr_factory_{this};
 };

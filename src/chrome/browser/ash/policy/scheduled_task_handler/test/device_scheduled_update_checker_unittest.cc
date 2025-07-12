@@ -85,10 +85,6 @@ class DeviceScheduledUpdateCheckerForTest
   DeviceScheduledUpdateCheckerForTest& operator=(
       const DeviceScheduledUpdateCheckerForTest&) = delete;
 
-  ~DeviceScheduledUpdateCheckerForTest() override {
-    TestingBrowserProcess::GetGlobal()->ShutdownBrowserPolicyConnector();
-  }
-
   int GetUpdateCheckTimerExpirations() const {
     return update_check_timer_expirations_;
   }
@@ -131,7 +127,7 @@ class DeviceScheduledUpdateCheckerTest : public testing::Test {
         task_environment_.GetMockTickClock());
 
     network_state_test_helper_ = std::make_unique<ash::NetworkStateTestHelper>(
-        true /* use_default_devices_and_services */);
+        /*use_default_devices_and_services=*/true);
 
     auto task_executor = std::make_unique<FakeScheduledTaskExecutor>(
         task_environment_.GetMockClock());

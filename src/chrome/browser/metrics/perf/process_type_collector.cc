@@ -121,8 +121,6 @@ std::map<uint32_t, Process> ProcessTypeCollector::ParseProcessTypes(
       process = Process::UTILITY_PROCESS;
     } else if (type == switches::kZygoteProcess) {
       process = Process::ZYGOTE_PROCESS;
-    } else if (type == switches::kPpapiPluginProcess) {
-      process = Process::PPAPI_PLUGIN_PROCESS;
     }
 
     process_types.emplace(pid, process);
@@ -209,6 +207,8 @@ std::map<uint32_t, Thread> ProcessTypeCollector::ParseThreadTypes(
       thread = Thread::STACK_SAMPLING_THREAD;
     } else if (comm_cmd.starts_with("VideoFrameCompo")) {
       thread = Thread::VIDEO_FRAME_COMPOSITOR_THREAD;
+    } else if (comm_cmd.starts_with("CodecWorker")) {
+      thread = Thread::CODEC_WORKER_THREAD;
     }
 
     thread_types.emplace(tid, thread);

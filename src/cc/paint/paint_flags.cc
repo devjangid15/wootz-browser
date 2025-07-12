@@ -4,6 +4,7 @@
 
 #include "cc/paint/paint_flags.h"
 
+#include <algorithm>
 #include <utility>
 
 #include "base/memory/values_equivalent.h"
@@ -29,7 +30,7 @@ bool AreValuesEqualForTesting(const sk_sp<T>& a, const sk_sp<T>& b) {
 
 namespace cc {
 
-PaintFlags::PaintFlags() {
+CorePaintFlags::CorePaintFlags() {
   // Match SkPaint defaults.
   bitfields_uint_ = 0u;
   bitfields_.cap_type_ = SkPaint::kDefault_Cap;
@@ -45,33 +46,25 @@ PaintFlags::PaintFlags() {
                 "Too many bitfields");
 }
 
+bool CorePaintFlags::operator==(const CorePaintFlags& other) const {
+  return color_ == other.color_ && width_ == other.width_ &&
+         miter_limit_ == other.miter_limit_ &&
+         bitfields_uint_ == other.bitfields_uint_;
+}
+
+PaintFlags::PaintFlags() = default;
+
 PaintFlags::PaintFlags(const PaintFlags& flags) = default;
 
-PaintFlags::PaintFlags(const CorePaintFlags& flags)
-    : color_(flags.color),
-      width_(flags.width),
-      miter_limit_(flags.miter_limit),
-      bitfields_uint_(flags.bitfields_uint) {}
+PaintFlags::PaintFlags(const CorePaintFlags& flags) : CorePaintFlags(flags) {}
 
 PaintFlags::PaintFlags(PaintFlags&& other) = default;
-
-PaintFlags::~PaintFlags() {
-  // TODO(enne): non-default dtor to investigate http://crbug.com/790915
-
-  // Sanity check accessing this object doesn't crash.
-  bitfields_.blend_mode_ = static_cast<uint32_t>(SkBlendMode::kLastMode);
-
-  // Free refcounted objects one by one.
-  path_effect_.reset();
-  shader_.reset();
-  color_filter_.reset();
-  draw_looper_.reset();
-  image_filter_.reset();
-}
 
 PaintFlags& PaintFlags::operator=(const PaintFlags& other) = default;
 
 PaintFlags& PaintFlags::operator=(PaintFlags&& other) = default;
+
+PaintFlags::~PaintFlags() = default;
 
 bool PaintFlags::CanConvertToCorePaintFlags() const {
   return IsValid() && !path_effect_ && !shader_ && !color_filter_ &&
@@ -80,7 +73,7 @@ bool PaintFlags::CanConvertToCorePaintFlags() const {
 
 CorePaintFlags PaintFlags::ToCorePaintFlags() const {
   DCHECK(CanConvertToCorePaintFlags());
-  return {color_, width_, miter_limit_, bitfields_uint_};
+  return CorePaintFlags(*this);
 }
 
 void PaintFlags::setImageFilter(sk_sp<PaintFilter> filter) {
@@ -157,12 +150,12 @@ SkPaint PaintFlags::ToSkPaint() const {
   if (image_filter_) {
     paint.setImageFilter(image_filter_->cached_sk_filter_);
   }
-  paint.setColor(color_);
-  paint.setStrokeWidth(width_);
-  paint.setStrokeMiter(miter_limit_);
+  paint.setColor(getColor4f());
+  paint.setStrokeWidth(getStrokeWidth());
+  paint.setStrokeMiter(getStrokeMiter());
   paint.setBlendMode(getBlendMode());
-  paint.setAntiAlias(bitfields_.antialias_);
-  paint.setDither(bitfields_.dither_);
+  paint.setAntiAlias(isAntiAlias());
+  paint.setDither(isDither());
   paint.setStrokeCap(static_cast<SkPaint::Cap>(getStrokeCap()));
   paint.setStrokeJoin(static_cast<SkPaint::Join>(getStrokeJoin()));
   paint.setStyle(static_cast<SkPaint::Style>(getStyle()));
@@ -171,21 +164,42 @@ SkPaint PaintFlags::ToSkPaint() const {
 
 SkSamplingOptions PaintFlags::FilterQualityToSkSamplingOptions(
     PaintFlags::FilterQuality filter_quality) {
+  return FilterQualityToSkSamplingOptions(filter_quality,
+                                          ScalingOperation::kDefault);
+}
+
+SkSamplingOptions PaintFlags::FilterQualityToSkSamplingOptions(
+    PaintFlags::FilterQuality filter_quality,
+    PaintFlags::ScalingOperation scaling_op) {
   switch (filter_quality) {
     case PaintFlags::FilterQuality::kHigh:
-      return SkSamplingOptions(SkCubicResampler::CatmullRom());
+      switch (scaling_op) {
+        case PaintFlags::ScalingOperation::kDefault:
+          return SkSamplingOptions(SkCubicResampler::CatmullRom());
+        case PaintFlags::ScalingOperation::kUnknown:
+          return SkSamplingOptions(SkFilterMode::kLinear,
+                                   SkMipmapMode::kLinear);
+        case PaintFlags::ScalingOperation::kUpscale:
+          return SkSamplingOptions(SkCubicResampler::Mitchell());
+      }
     case PaintFlags::FilterQuality::kMedium:
-      return SkSamplingOptions(SkFilterMode::kLinear, SkMipmapMode::kNearest);
+      switch (scaling_op) {
+        case PaintFlags::ScalingOperation::kDefault:
+          return SkSamplingOptions(SkFilterMode::kLinear,
+                                   SkMipmapMode::kNearest);
+        case PaintFlags::ScalingOperation::kUnknown:
+        case PaintFlags::ScalingOperation::kUpscale:
+          return SkSamplingOptions(SkFilterMode::kLinear,
+                                   SkMipmapMode::kLinear);
+      }
     case PaintFlags::FilterQuality::kLow:
       return SkSamplingOptions(SkFilterMode::kLinear, SkMipmapMode::kNone);
     case PaintFlags::FilterQuality::kNone:
       return SkSamplingOptions(SkFilterMode::kNearest, SkMipmapMode::kNone);
-    default:
-      NOTREACHED_IN_MIGRATION();
   }
 }
 
-bool PaintFlags::IsValid() const {
+bool CorePaintFlags::IsValid() const {
   return PaintOp::IsValidPaintFlagsSkBlendMode(getBlendMode());
 }
 
@@ -214,9 +228,30 @@ bool PaintFlags::EqualsForTesting(const PaintFlags& other) const {
          AreValuesEqualForTesting(shader_, other.shader_);  // IN-TEST
 }
 
-bool PaintFlags::HasDiscardableImages() const {
-  return (shader_ && shader_->has_discardable_images()) ||
-         (image_filter_ && image_filter_->has_discardable_images());
+bool PaintFlags::HasDiscardableImages(
+    gfx::ContentColorUsage* content_color_usage) const {
+  bool has_discardable_images = false;
+  if (shader_) {
+    has_discardable_images = shader_->HasDiscardableImages(content_color_usage);
+  }
+  if (image_filter_ && image_filter_->has_discardable_images()) {
+    if (content_color_usage) {
+      *content_color_usage =
+          std::max(*content_color_usage, image_filter_->GetContentColorUsage());
+    }
+    has_discardable_images = true;
+  }
+  return has_discardable_images;
+}
+
+float PaintFlags::DynamicRangeLimitMixture::ComputeEffectiveHdrHeadroom(
+    float target_hdr_headroom) const {
+  // It would make more sense to store only `high_mix` and `constrained_mix`,
+  // since `standard_mix` is multiplied by zero.
+  const float high_mix = 1.f - constrained_high_mix - standard_mix;
+  constexpr float kConstrainedMax = 1.f;  // Constrained allows at most 1 stop
+  return constrained_high_mix * std::min(kConstrainedMax, target_hdr_headroom) +
+         high_mix * target_hdr_headroom;
 }
 
 }  // namespace cc

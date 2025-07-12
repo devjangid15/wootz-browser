@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 
+#include "base/compiler_specific.h"
 #include "third_party/boringssl/src/include/openssl/hpke.h"
 
 namespace net {
@@ -41,8 +42,9 @@ bssl::UniquePtr<SSL_ECH_KEYS> MakeTestEchKeys(
   }
   bssl::UniquePtr<uint8_t> scoped_ech_config_list(ech_config_list_raw);
 
-  ech_config_list->assign(ech_config_list_raw,
-                          ech_config_list_raw + ech_config_list_len);
+  ech_config_list->assign(
+      ech_config_list_raw,
+      UNSAFE_TODO(ech_config_list_raw + ech_config_list_len));
   return keys;
 }
 

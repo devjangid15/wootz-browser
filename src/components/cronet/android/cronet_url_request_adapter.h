@@ -18,6 +18,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/time/time.h"
 #include "components/cronet/cronet_url_request.h"
+#include "net/third_party/quiche/src/quiche/quic/core/quic_types.h"
 #include "url/gurl.h"
 
 namespace net {
@@ -43,19 +44,21 @@ class CronetURLRequestAdapter : public CronetURLRequest::Callback {
   // causes connection migration to be disabled for this request if true. If
   // global connection migration flag is not enabled,
   // |jdisable_connection_migration| has no effect.
-  CronetURLRequestAdapter(CronetContextAdapter* context,
-                          JNIEnv* env,
-                          jobject jurl_request,
-                          const GURL& url,
-                          net::RequestPriority priority,
-                          jboolean jdisable_cache,
-                          jboolean jdisable_connection_migration,
-                          jboolean jtraffic_stats_tag_set,
-                          jint jtraffic_stats_tag,
-                          jboolean jtraffic_stats_uid_set,
-                          jint jtraffic_stats_uid,
-                          net::Idempotency idempotency,
-                          jlong network);
+  CronetURLRequestAdapter(
+      CronetContextAdapter* context,
+      JNIEnv* env,
+      jobject jurl_request,
+      const GURL& url,
+      net::RequestPriority priority,
+      jboolean jdisable_cache,
+      jboolean jdisable_connection_migration,
+      jboolean jtraffic_stats_tag_set,
+      jint jtraffic_stats_tag,
+      jboolean jtraffic_stats_uid_set,
+      jint jtraffic_stats_uid,
+      net::Idempotency idempotency,
+      scoped_refptr<net::SharedDictionary> shared_dictionary,
+      jlong network);
 
   CronetURLRequestAdapter(const CronetURLRequestAdapter&) = delete;
   CronetURLRequestAdapter& operator=(const CronetURLRequestAdapter&) = delete;
@@ -66,12 +69,10 @@ class CronetURLRequestAdapter : public CronetURLRequest::Callback {
 
   // Sets the request method GET, POST etc.
   jboolean SetHttpMethod(JNIEnv* env,
-                         const base::android::JavaParamRef<jobject>& jcaller,
                          const base::android::JavaParamRef<jstring>& jmethod);
 
   // Adds a header to the request before it starts.
   jboolean AddRequestHeader(JNIEnv* env,
-                            const base::android::JavaParamRef<jobject>& jcaller,
                             const base::android::JavaParamRef<jstring>& jname,
                             const base::android::JavaParamRef<jstring>& jvalue);
 
@@ -79,20 +80,16 @@ class CronetURLRequestAdapter : public CronetURLRequest::Callback {
   void SetUpload(std::unique_ptr<net::UploadDataStream> upload);
 
   // Starts the request.
-  void Start(JNIEnv* env, const base::android::JavaParamRef<jobject>& jcaller);
+  void Start(JNIEnv* env);
 
   void GetStatus(JNIEnv* env,
-                 const base::android::JavaParamRef<jobject>& jcaller,
                  const base::android::JavaParamRef<jobject>& jstatus_listener);
 
   // Follows redirect.
-  void FollowDeferredRedirect(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& jcaller);
+  void FollowDeferredRedirect(JNIEnv* env);
 
   // Reads more data.
   jboolean ReadData(JNIEnv* env,
-                    const base::android::JavaParamRef<jobject>& jcaller,
                     const base::android::JavaParamRef<jobject>& jbyte_buffer,
                     jint jposition,
                     jint jcapacity);
@@ -101,7 +98,6 @@ class CronetURLRequestAdapter : public CronetURLRequest::Callback {
   // |jsend_on_canceled| indicates if Java onCanceled callback should be
   // issued to indicate when no more callbacks will be issued.
   void Destroy(JNIEnv* env,
-               const base::android::JavaParamRef<jobject>& jcaller,
                jboolean jsend_on_canceled);
 
   // CronetURLRequest::Callback implementations:
@@ -126,6 +122,7 @@ class CronetURLRequestAdapter : public CronetURLRequest::Callback {
   void OnSucceeded(int64_t received_byte_count) override;
   void OnError(int net_error,
                int quic_error,
+               quic::ConnectionCloseSource source,
                const std::string& error_string,
                int64_t received_byte_count) override;
   void OnCanceled() override;

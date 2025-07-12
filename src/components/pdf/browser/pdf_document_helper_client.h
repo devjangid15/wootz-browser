@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_PDF_BROWSER_PDF_DOCUMENT_HELPER_CLIENT_H_
 #define COMPONENTS_PDF_BROWSER_PDF_DOCUMENT_HELPER_CLIENT_H_
 
+#include "services/screen_ai/buildflags/buildflags.h"
+
 namespace content {
 class RenderFrameHost;
 class WebContents;
@@ -24,8 +26,6 @@ class PDFDocumentHelperClient {
       content::RenderFrameHost* render_frame_host,
       int content_restrictions) = 0;
 
-  virtual void OnPDFHasUnsupportedFeature(content::WebContents* contents) = 0;
-
   virtual void OnSaveURL(content::WebContents* contents) = 0;
 
   // Sets whether the PDF plugin can handle file saving internally.
@@ -35,6 +35,11 @@ class PDFDocumentHelperClient {
   // Lets the client observe scroll events. Only used for testing.
   virtual void OnDidScroll(const gfx::SelectionBound& start,
                            const gfx::SelectionBound& end) {}
+
+#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
+  // Notifies that PDF searchifier started processing pages.
+  virtual void OnSearchifyStarted(content::WebContents* contents) = 0;
+#endif
 };
 
 }  // namespace pdf

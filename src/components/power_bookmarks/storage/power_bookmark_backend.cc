@@ -11,7 +11,7 @@
 #include "components/power_bookmarks/storage/power_bookmark_database_impl.h"
 #include "components/power_bookmarks/storage/power_bookmark_sync_bridge.h"
 #include "components/power_bookmarks/storage/power_bookmark_sync_metadata_database.h"
-#include "components/sync/model/client_tag_based_model_type_processor.h"
+#include "components/sync/model/client_tag_based_data_type_processor.h"
 
 namespace power_bookmarks {
 
@@ -45,7 +45,7 @@ void PowerBookmarkBackend::Init(bool use_database) {
     // TODO(crbug.com/40247772): Plumb in syncer::ReportUnrecoverableError as
     // the dump_stack callback.
     auto change_processor =
-        std::make_unique<syncer::ClientTagBasedModelTypeProcessor>(
+        std::make_unique<syncer::ClientTagBasedDataTypeProcessor>(
             syncer::POWER_BOOKMARK, /*dump_stack=*/base::RepeatingClosure());
 
     bridge_ = std::make_unique<PowerBookmarkSyncBridge>(
@@ -54,7 +54,8 @@ void PowerBookmarkBackend::Init(bool use_database) {
       bridge_->Init();
     } else {
       bridge_->ReportError(
-          syncer::ModelError(FROM_HERE, "Database failed initialization."));
+          {FROM_HERE,
+           syncer::ModelError::Type::kPowerBookmarkDatabaseInitFailed});
     }
   } else {
     db_ = std::make_unique<EmptyPowerBookmarkDatabase>();
@@ -63,7 +64,7 @@ void PowerBookmarkBackend::Init(bool use_database) {
   }
 }
 
-base::WeakPtr<syncer::ModelTypeControllerDelegate>
+base::WeakPtr<syncer::DataTypeControllerDelegate>
 PowerBookmarkBackend::GetSyncControllerDelegate() {
   // When the current method is called, the bridge is expected to exist
   // (`use_database` in the Init() method is set iff the PowerBookmarkBackend
@@ -222,8 +223,9 @@ bool PowerBookmarkBackend::CommitAndNotify(Transaction& transaction) {
     return true;
   } else {
     if (bridge_ && bridge_->initialized()) {
-      bridge_->change_processor()->ReportError(syncer::ModelError(
-          FROM_HERE, "PowerBookmark database fails to persist data."));
+      bridge_->change_processor()->ReportError(
+          {FROM_HERE,
+           syncer::ModelError::Type::kPowerBookmarkDatabaseCommitFailed});
     }
     return false;
   }

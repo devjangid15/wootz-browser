@@ -5,7 +5,7 @@
 #include "content/public/common/content_switches.h"
 
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
+#include "content/public/common/buildflags.h"
 #include "media/media_buildflags.h"
 
 namespace switches {
@@ -68,7 +68,7 @@ const char kDisable2dCanvasAntialiasing[]   = "disable-canvas-aa";
 // Disables Canvas2D rendering into a scanout buffer for overlay support.
 const char kDisable2dCanvasImageChromium[] = "disable-2d-canvas-image-chromium";
 
-// Disables client-visible 3D APIs, in particular WebGL and Pepper 3D.
+// Disables client-visible 3D APIs, in particular WebGL.
 // This is controlled by policy and is kept separate from the other
 // enable/disable switches to avoid accidentally regressing the policy
 // support for controlling access to these APIs.
@@ -111,9 +111,6 @@ const char kDisableBackForwardCache[] = "disable-back-forward-cache";
 // Applied after kEnableBlinkFeatures, and after other flags that change these
 // features.
 const char kDisableBlinkFeatures[]          = "disable-blink-features";
-
-// Disables HTML5 DB support.
-const char kDisableDatabases[]              = "disable-databases";
 
 // Disable the per-domain blocking for 3D APIs after GPU reset.
 // This switch is intended only for tests.
@@ -173,11 +170,6 @@ const char kDisableGpuWatchdog[] = "disable-gpu-watchdog";
 // can be used.
 const char kDisableIpcFloodingProtection[] = "disable-ipc-flooding-protection";
 
-// Suppresses hang monitor dialogs in renderer processes.  This may allow slow
-// unload handlers on a page to prevent the tab from closing, but the Task
-// Manager can be used to terminate the offending process in this case.
-const char kDisableHangMonitor[]            = "disable-hang-monitor";
-
 // Disable the RenderThread's HistogramCustomizer.
 const char kDisableHistogramCustomizer[]    = "disable-histogram-customizer";
 
@@ -210,14 +202,11 @@ const char kDisableNewContentRenderingTimeout[] =
 // Disables the Web Notification and the Push APIs.
 const char kDisableNotifications[]          = "disable-notifications";
 
-// Disable Pepper3D.
-const char kDisablePepper3d[]               = "disable-pepper-3d";
-
-// Disables the Permissions API.
-const char kDisablePermissionsAPI[]         = "disable-permissions-api";
-
-// Disables compositor-accelerated touch-screen pinch gestures.
-const char kDisablePinch[]                  = "disable-pinch";
+// Disables the activation of browser and web accessibility via interactions
+// with the platform's accessibility integration (i.e., a screenreader will not
+// be able to function with the browser).
+const char kDisablePlatformAccessibilityIntegration[] =
+    "disable-platform-accessibility-integration";
 
 // Disables the Presentation API.
 const char kDisablePresentationAPI[]        = "disable-presentation-api";
@@ -314,8 +303,9 @@ const char kEnableCaretBrowsing[] = "enable-caret-browsing";
 //
 // At present this turns on:
 //   net::features::kSameSiteDefaultChecksMethodRigorously
-//   net::features::kSchemefulSameSite
 //   net::features::kCookieSameSiteConsidersRedirectChain
+//   net::features::kEnablePortBoundCookies
+//   net::features::kEnableSchemeBoundCookies
 const char kEnableExperimentalCookieFeatures[] =
     "enable-experimental-cookie-features";
 
@@ -378,6 +368,10 @@ const char kEnablePrivacySandboxAdsApis[] = "enable-privacy-sandbox-ads-apis";
 // Set options to cache V8 data. (none, code, or default)
 const char kV8CacheOptions[] = "v8-cache-options";
 
+// Disallows overriding of v8 feature flags.
+const char kDisallowV8FeatureFlagOverrides[] =
+    "disallow-v8-feature-flag-overrides";
+
 // If true the ServiceProcessLauncher is used to launch services. This allows
 // for service binaries to be loaded rather than using the utility process. This
 // is only useful for tests.
@@ -423,13 +417,6 @@ const char kEnableViewport[]                = "enable-viewport";
 
 // Enable the Vtune profiler support.
 const char kEnableVtune[]                   = "enable-vtune-support";
-
-// Enable the WebAuthn Mojo Testing API. This is a way to interact with the
-// virtual authenticator environment through a mojo interface and is supported
-// only to run web-platform-tests on content shell.
-// Removal of this deprecated API is blocked on crbug.com/937369.
-const char kEnableWebAuthDeprecatedMojoTestingApi[] =
-    "enable-web-auth-deprecated-mojo-testing-api";
 
 // Enables WebGL developer extensions which are not generally exposed
 // to the web platform.
@@ -498,6 +485,14 @@ const char kJavaScriptHarmony[]             = "javascript-harmony";
 // Flag to launch tests in the browser process.
 const char kLaunchAsBrowser[] = "as-browser";
 
+#if BUILDFLAG(LOAD_WEBUI_FROM_DISK)
+// Flag used to load WebUI files directly from disk instead of pak files. Meant
+// to be used during local development only (requires a local checkout and
+// build), and only works if used along with the GN load_webui_from_disk=true GN
+// flag.
+const char kLoadWebUIfromDisk[] = "load-webui-from-disk";
+#endif  // BUILDFLAG(LOAD_WEBUI_FROM_DISK)
+
 // Logs GPU control list decisions when enforcing blocklist rules.
 const char kLogGpuControlListDecisions[]    = "log-gpu-control-list-decisions";
 
@@ -529,10 +524,6 @@ const char kMessageLoopTypeUi[] = "message-loop-type-ui";
 const char kMockCertVerifierDefaultResultForTesting[] =
     "mock-cert-verifier-default-result-for-testing";
 
-// Initializes Mojo Core from a shared library at the specified path, rather
-// than using the version of Mojo Core embedded within the Content executable.
-const char kMojoCoreLibraryPath[] = "mojo-core-library-path";
-
 // Use a Mojo-based LocalStorage implementation.
 const char kMojoLocalStorage[]              = "mojo-local-storage";
 
@@ -554,21 +545,6 @@ const char kOverrideLanguageDetection[] = "override-language-detection";
 
 // Renderer process that runs the non-PPAPI PDF plugin.
 const char kPdfRenderer[] = "pdf-renderer";
-
-// Runs PPAPI (Pepper) plugins in-process.
-const char kPpapiInProcess[]                = "ppapi-in-process";
-
-// Specifies a command that should be used to launch the ppapi plugin process.
-// Useful for running the plugin process through purify or quantify.  Ex:
-//   --ppapi-plugin-launcher="path\to\purify /Run=yes"
-const char kPpapiPluginLauncher[]           = "ppapi-plugin-launcher";
-
-// Argument to the process type that indicates a PPAPI plugin process type.
-const char kPpapiPluginProcess[]            = "ppapi";
-
-// Causes the PPAPI sub process to display a dialog on launch. Be sure to use
-// --no-sandbox as well or the sandbox won't allow the dialog to display.
-const char kPpapiStartupDialog[]            = "ppapi-startup-dialog";
 
 // Causes the Private Aggregation API to run without reporting delays.
 const char kPrivateAggregationDeveloperMode[] =
@@ -604,14 +580,6 @@ const char kProcessType[]                   = "type";
 const char kProtectedAudiencesConsentedDebugToken[] =
     "protected-audiences-consented-debug-token";
 
-// Uses a specified proxy server, overrides system settings. This switch only
-// affects HTTP and HTTPS requests. ARC-apps use only HTTP proxy server with the
-// highest priority.
-// TODO(yzshen): Move this switch back to chrome/common/chrome_switches.{h,cc},
-// once the network service is able to access the corresponding setting via the
-// pref service.
-const char kProxyServer[] = "proxy-server";
-
 // Enables or disables pull-to-refresh gesture in response to vertical
 // overscroll.
 // Set the value to '0' to disable the feature, set to '1' to enable it for both
@@ -619,14 +587,13 @@ const char kProxyServer[] = "proxy-server";
 // Defaults to disabled.
 const char kPullToRefresh[] = "pull-to-refresh";
 
-// Specifies the minimum amount of time, in seconds, that must pass before
-// consecutive quota change events can be fired. Set the value to '0' to disable
-// the debounce mechanimsm.
-const char kQuotaChangeEventInterval[] = "quota-change-event-interval";
-
-// Reduce the accept-language http header, and only send one language in the
-// request header: https://github.com/Tanych/accept-language.
+// Reduce the accept-language for HTTP header and JS navigator.languages, and
+// only most preferred language: https://github.com/Tanych/accept-language.
 const char kReduceAcceptLanguage[] = "reduce-accept-language";
+
+// Reduce the accept-language for HTTP header, and only send most preferred
+// language in the request header: https://github.com/Tanych/accept-language.
+const char kReduceAcceptLanguageHTTP[] = "reduce-accept-language-http";
 
 // Reduce the minor version number in the User-Agent string. This flag
 // implements phase 4 of User-Agent reduction:
@@ -637,9 +604,6 @@ const char kReduceUserAgentMinorVersion[] = "reduce-user-agent-minor-version";
 // implements phase 5 of User-Agent reduction:
 // https://blog.chromium.org/2021/09/user-agent-reduction-origin-trial-and-dates.html.
 const char kReduceUserAgentPlatformOsCpu[] = "reduce-user-agent-platform-oscpu";
-
-// Register Pepper plugins (see pepper_plugin_list.cc for its format).
-const char kRegisterPepperPlugins[]         = "register-pepper-plugins";
 
 // Enables remote debug over stdio pipes [in=3, out=4] or over the remote pipes
 // specified in the 'remote-debugging-io-pipes' switch.
@@ -756,11 +720,11 @@ const char kSkiaFontCacheLimitMb[] = "skia-font-cache-limit-mb";
 // exceeds this limit.
 const char kSkiaResourceCacheLimitMb[] = "skia-resource-cache-limit-mb";
 
+// Allows web tests to specify the target device scale for the test cases.
+const char kTargetDeviceScaleForTesting[] = "target-device-scale-for-testing";
+
 // Type of the current test harness ("browser" or "ui" or "gpu").
 const char kTestType[]                      = "test-type";
-
-// The time zone to use for testing. Passed to renderers and plugins on startup.
-const char kTimeZoneForTesting[] = "time-zone-for-testing";
 
 // Enable support for touch event feature detection.
 const char kTouchEventFeatureDetection[] = "touch-events";
@@ -809,9 +773,6 @@ const char kVideoImageTextureTarget[] = "video-image-texture-target";
 const char kUseContextSnapshotSwitch[] = "use-context-snapshot";
 #endif
 
-// Set when Chromium should use a mobile user agent.
-const char kUseMobileUserAgent[] = "use-mobile-user-agent";
-
 // Use the MockCertVerifier. This only works in test code.
 const char kUseMockCertVerifierForTesting[] =
     "use-mock-cert-verifier-for-testing";
@@ -827,12 +788,9 @@ const char kUtilityProcess[]                = "utility";
 const char kUtilityStartupDialog[] = "utility-startup-dialog";
 
 // This switch indicates the type of a utility process. It does not affect the
-// services offered by the process, but is added to the command line for
-// debugging and profiling purposes.
+// services offered by the process, but is added to the command line to make
+// it easier to identify the purpose of the utility process.
 const char kUtilitySubType[] = "utility-sub-type";
-
-// In debug builds, asserts that the stream of input events is valid.
-const char kValidateInputEventStream[] = "validate-input-event-stream";
 
 // Causes tests to attempt to verify pixel output.
 const char kVerifyPixels[] = "browser-ui-tests-verify-pixels";
@@ -862,6 +820,9 @@ const char kWebglAntialiasingMode[] = "webgl-antialiasing-mode";
 // Set a default sample count for webgl if msaa is enabled.
 const char kWebglMSAASampleCount[] = "webgl-msaa-sample-count";
 
+// Allows web tests to specify additional web settings for the test cases.
+const char kWebSettingsForTesting[] = "web-settings-for-testing";
+
 // The prefix used when starting the zygote process. (i.e. 'gdb --args')
 const char kZygoteCmdPrefix[] = "zygote-cmd-prefix";
 
@@ -884,18 +845,6 @@ const char kWebOtpBackendAuto[] = "web-otp-backend-auto";
 // Disables encryption of RTP Media for WebRTC. When Chrome embeds Content, it
 // ignores this switch on its stable and beta channels.
 const char kDisableWebRtcEncryption[]      = "disable-webrtc-encryption";
-
-// Enables negotiation of encrypted header extensions from RFC 6904 for SRTP
-// in WebRTC.
-// See https://tools.ietf.org/html/rfc6904 for further information.
-// TODO(crbug.com/40623740): Remove this.
-const char kEnableWebRtcSrtpEncryptedHeaders[] =
-    "enable-webrtc-srtp-encrypted-headers";
-
-// Enforce IP Permission check. TODO(guoweis): Remove this once the feature is
-// not under finch and becomes the default.
-const char kEnforceWebRtcIPPermissionCheck[] =
-    "enforce-webrtc-ip-permission-check";
 
 // Override WebRTC IP handling policy to mimic the behavior when WebRTC IP
 // handling policy is specified in Preferences.
@@ -988,17 +937,11 @@ const char kPreventResizingContentsForTesting[] =
     "prevent-resizing-contents-for-testing";
 #endif
 
-// TODO(crbug.com/40118868): Revisit the macro expression once build flag switch
-// of lacros-chrome is complete.
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_LINUX)
 // Allows sending text-to-speech requests to speech-dispatcher, a common
 // Linux speech service. Because it's buggy, the user must explicitly
 // enable it so that visiting a random webpage can't cause instability.
 const char kEnableSpeechDispatcher[] = "enable-speech-dispatcher";
-
-// For lacros, we do not use environment variable to pass values. Instead we
-// use a command line flag to pass the path to the device.
-const char kLLVMProfileFile[] = "llvm-profile-file";
 #endif
 
 #if BUILDFLAG(IS_WIN)
@@ -1011,15 +954,6 @@ const char kDisableLegacyIntermediateWindow[] = "disable-legacy-window";
 // DirectWrite FontCache is shared by browser to renderers using shared memory.
 // This switch allows us to pass the shared memory handle to the renderer.
 const char kFontCacheSharedHandle[] = "font-cache-shared-handle";
-
-// The boolean value (0/1) of FontRenderParams::antialiasing to be passed to
-// Ppapi processes.
-const char kPpapiAntialiasedTextEnabled[] = "ppapi-antialiased-text-enabled";
-
-// The enum value of FontRenderParams::subpixel_rendering to be passed to Ppapi
-// processes.
-const char kPpapiSubpixelRenderingSetting[] =
-    "ppapi-subpixel-rendering-setting";
 
 // Raise the timer interrupt frequency in all Chrome processes, for experimental
 // purposes. This feature is needed because as of Windows 10 2004 the scheduling

@@ -2,9 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <algorithm>
+
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
-#include "base/ranges/algorithm.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_run_loop_timeout.h"
 #include "base/test/task_environment.h"
@@ -21,13 +22,13 @@
 #include "chrome/browser/profiles/profile_test_util.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/test/base/in_process_browser_test.h"
-#include "components/optimization_guide/core/model_store_metadata_entry.h"
-#include "components/optimization_guide/core/model_util.h"
+#include "components/optimization_guide/core/delivery/model_store_metadata_entry.h"
+#include "components/optimization_guide/core/delivery/model_util.h"
+#include "components/optimization_guide/core/delivery/prediction_manager.h"
+#include "components/optimization_guide/core/delivery/prediction_model_fetch_timer.h"
 #include "components/optimization_guide/core/optimization_guide_constants.h"
 #include "components/optimization_guide/core/optimization_guide_features.h"
 #include "components/optimization_guide/core/optimization_guide_switches.h"
-#include "components/optimization_guide/core/prediction_manager.h"
-#include "components/optimization_guide/core/prediction_model_fetch_timer.h"
 #include "components/optimization_guide/proto/models.pb.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
@@ -36,10 +37,10 @@
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "ash/constants/ash_switches.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 namespace optimization_guide {
 
@@ -111,7 +112,7 @@ class PredictionModelStoreBrowserTestBase : public InProcessBrowserTest {
   }
 
   void SetUpCommandLine(base::CommandLine* cmd) override {
-    cmd->AppendSwitch(switches::kDisableCheckingUserPermissionsForTesting);
+    cmd->AppendSwitch(switches::kGoogleApiKeyConfigurationCheckOverride);
     cmd->AppendSwitchASCII(
         switches::kOptimizationGuideServiceGetModelsURL,
         models_server_
@@ -119,7 +120,7 @@ class PredictionModelStoreBrowserTestBase : public InProcessBrowserTest {
                      "/")
             .spec());
     cmd->AppendSwitchASCII("force-variation-ids", "4");
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     cmd->AppendSwitch(ash::switches::kIgnoreUserProfileMappingForTests);
 #endif
   }
@@ -204,7 +205,7 @@ class PredictionModelStoreBrowserTestBase : public InProcessBrowserTest {
     EXPECT_EQ(request.method, net::test_server::METHOD_POST);
     EXPECT_TRUE(get_models_request.ParseFromString(request.content));
     response->set_code(net::HTTP_OK);
-    if (!base::ranges::any_of(
+    if (!std::ranges::any_of(
             get_models_request.requested_models(),
             [](const proto::ModelInfo& model_info) {
               return model_info.optimization_target() ==

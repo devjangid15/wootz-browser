@@ -34,7 +34,6 @@
 #include <string_view>
 
 #include "base/task/single_thread_task_runner.h"
-#include "base/test/metrics/histogram_tester.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/loader/referrer_utils.h"
@@ -72,7 +71,6 @@
 #include "third_party/blink/renderer/platform/scheduler/test/fake_frame_scheduler.h"
 #include "third_party/blink/renderer/platform/scheduler/test/fake_task_runner.h"
 #include "third_party/blink/renderer/platform/testing/mock_context_lifecycle_notifier.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/scoped_mocked_url.h"
 #include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/testing/testing_platform_support_with_mock_scheduler.h"
@@ -144,7 +142,8 @@ TEST_F(ImageResourceTest, DimensionsDecodableFromPartialTestImage) {
   EXPECT_EQ(
       Image::kSizeAvailable,
       image->SetData(SharedBuffer::Create(
-                         kJpegImage, kJpegImageSubrangeWithDimensionsLength),
+                         base::span(kJpegImage)
+                             .first(kJpegImageSubrangeWithDimensionsLength)),
                      true));
   EXPECT_TRUE(IsA<BitmapImage>(image.get()));
   EXPECT_EQ(1, image->width());
@@ -822,7 +821,8 @@ TEST_F(ImageResourceTest, CancelOnDecodeError) {
 
   EXPECT_EQ(0, observer->ImageChangedCount());
 
-  image_resource->Loader()->DidReceiveData("notactuallyanimage", 18);
+  image_resource->Loader()->DidReceiveDataForTesting(
+      base::span_from_cstring("notactuallyanimage"));
 
   EXPECT_EQ(ResourceStatus::kDecodeError, image_resource->GetStatus());
   EXPECT_TRUE(observer->ImageNotifyFinishedCalled());
@@ -894,9 +894,9 @@ TEST_F(ImageResourceTest, PartialContentWithoutDimensions) {
       WrappedResourceResponse(partial_response),
       /*body=*/mojo::ScopedDataPipeConsumerHandle(),
       /*cached_metadata=*/std::nullopt);
-  image_resource->Loader()->DidReceiveData(
-      reinterpret_cast<const char*>(kJpegImage),
-      kJpegImageSubrangeWithoutDimensionsLength);
+  image_resource->Loader()->DidReceiveDataForTesting(
+      base::as_chars(base::span(kJpegImage))
+          .first(kJpegImageSubrangeWithoutDimensionsLength));
 
   EXPECT_EQ(ResourceStatus::kPending, image_resource->GetStatus());
   EXPECT_FALSE(observer->ImageNotifyFinishedCalled());
@@ -1173,69 +1173,6 @@ TEST_F(ImageResourceCounterTest, InstanceCounters_UserAgent) {
   // Check the instance counters have been updated.
   EXPECT_EQ(++current_count, GetResourceCount());
   EXPECT_EQ(++current_ua_count, GetUACSSResourceCount());
-}
-
-TEST_F(ImageResourceCounterTest, RevalidationPolicyMetrics) {
-  base::HistogramTester histogram_tester;
-  auto* fetcher = CreateFetcher();
-
-  KURL test_url("http://127.0.0.1:8000/img.png");
-  ScopedMockedURLLoad url_load(test_url, GetTestFilePath());
-
-  // Test image preloads are immediately loaded.
-  FetchParameters fetch_params =
-      FetchParameters::CreateForTest(ResourceRequest(test_url));
-  fetch_params.SetLinkPreload(true);
-
-  Resource* resource = ImageResource::Fetch(fetch_params, fetcher);
-  ASSERT_TRUE(resource);
-  EXPECT_TRUE(MemoryCache::Get()->Contains(resource));
-
-  Resource* new_resource = ImageResource::Fetch(fetch_params, fetcher);
-  EXPECT_EQ(resource, new_resource);
-
-  // Test histograms.
-  histogram_tester.ExpectTotalCount(
-      "Blink.MemoryCache.RevalidationPolicy.Preload.Image", 2);
-  histogram_tester.ExpectBucketCount(
-      "Blink.MemoryCache.RevalidationPolicy.Preload.Image",
-      static_cast<int>(ResourceFetcher::RevalidationPolicyForMetrics::kLoad),
-      1);
-  histogram_tester.ExpectBucketCount(
-      "Blink.MemoryCache.RevalidationPolicy.Preload.Image",
-      static_cast<int>(ResourceFetcher::RevalidationPolicyForMetrics::kUse), 1);
-
-  KURL test_url_deferred("http://127.0.0.1:8000/img_deferred.ttf");
-  ScopedMockedURLLoad url_load_deferred(test_url_deferred, GetTestFilePath());
-
-  // Test deferred image loads are correctly counted.
-  FetchParameters fetch_params_deferred =
-      FetchParameters::CreateForTest(ResourceRequest(test_url_deferred));
-  fetch_params_deferred.SetLazyImageDeferred();
-  resource = ImageResource::Fetch(fetch_params_deferred, fetcher);
-  ASSERT_TRUE(resource);
-  histogram_tester.ExpectTotalCount(
-      "Blink.MemoryCache.RevalidationPolicy.Image", 1);
-  histogram_tester.ExpectBucketCount(
-      "Blink.MemoryCache.RevalidationPolicy.Image",
-      static_cast<int>(ResourceFetcher::RevalidationPolicyForMetrics::kDefer),
-      1);
-  fetcher->StartLoad(resource);
-  histogram_tester.ExpectTotalCount(
-      "Blink.MemoryCache.RevalidationPolicy.Image", 2);
-  histogram_tester.ExpectBucketCount(
-      "Blink.MemoryCache.RevalidationPolicy.Image",
-      static_cast<int>(ResourceFetcher::RevalidationPolicyForMetrics::
-                           kPreviouslyDeferredLoad),
-      1);
-  // Load the same deferred image again. Already-loaded resources shall be
-  // counted as kUse.
-  resource = ImageResource::Fetch(fetch_params_deferred, fetcher);
-  histogram_tester.ExpectTotalCount(
-      "Blink.MemoryCache.RevalidationPolicy.Image", 3);
-  histogram_tester.ExpectBucketCount(
-      "Blink.MemoryCache.RevalidationPolicy.Image",
-      static_cast<int>(ResourceFetcher::RevalidationPolicyForMetrics::kUse), 1);
 }
 
 }  // namespace blink

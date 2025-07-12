@@ -179,6 +179,17 @@ class BookmarkCodecTest : public testing::Test {
         &max_id, sync_metadata_str);
     model->set_next_node_id(max_id);
 
+    // Because the model is created by `TestBookmarkClient::CreateModel()`, the
+    // permanent folder visibility is initially calculated (in
+    // `BookmarkModel::DoneLoading()`) before the child bookmarks are decoded.
+    //
+    // Although this test suite don't care about folder visibility, it
+    // interacts with the BookmarkModel which CHECKs visibility invariants.
+    //
+    // TODO(crbug.com/417656239): see if it's possible to avoid the need for
+    // this and remove the RefreshPermanentFolderVisibilityForTest() method.
+    model->RefreshPermanentFolderVisibility(/*notify_observers=*/false);
+
     return result;
   }
 
@@ -343,7 +354,7 @@ TEST_F(BookmarkCodecTest, ChecksumManualEditIDsTest) {
 
   ExpectIDsUnique(decoded_model.get());
 
-  // add a few extra nodes to bookmark model and make sure IDs are still uniuqe.
+  // Add a few extra nodes to bookmark model and make sure IDs are still unique.
   const BookmarkNode* bb_node = decoded_model->bookmark_bar_node();
   decoded_model->AddURL(bb_node, 0, u"new url1", GURL("http://newurl1.com"));
   decoded_model->AddURL(bb_node, 0, u"new url2", GURL("http://newurl2.com"));
@@ -476,7 +487,7 @@ TEST_F(BookmarkCodecTest, DecodeModel) {
 
     EXPECT_EQ(9, actual_folder_c1->children()[0]->id());
     EXPECT_FALSE(actual_folder_c1->children()[0]->is_folder());
-    EXPECT_EQ(GURL("wootzapp://settings/"),
+    EXPECT_EQ(GURL("chrome://settings/"),
               actual_folder_c1->children()[0]->url());
     EXPECT_EQ(u"Settings", actual_folder_c1->children()[0]->GetTitle());
     EXPECT_EQ(

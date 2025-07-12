@@ -6,14 +6,23 @@
 
 #include <memory>
 
+#include "base/check_deref.h"
+#include "base/functional/callback_helpers.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
+#include "base/observer_list_internal.h"
+#include "base/strings/string_util.h"
+#include "base/task/sequenced_task_runner.h"
+#include "chrome/browser/ui/actions/chrome_action_id.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/page_action/page_action_icon_type.h"
+#include "chrome/browser/ui/tabs/public/tab_features.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/toolbar_button_provider.h"
+#include "chrome/browser/ui/views/page_action/page_action_controller.h"
 #include "chrome/browser/ui/views/page_action/page_action_icon_view.h"
-#include "chrome/browser/ui/views/web_apps/web_app_install_dialog_coordinator.h"
+#include "chrome/browser/ui/views/page_action/page_action_view.h"
 #include "chrome/browser/ui/web_applications/web_app_dialogs.h"
 #include "chrome/browser/web_applications/web_app_helpers.h"
 #include "chrome/browser/web_applications/web_app_install_info.h"
@@ -24,9 +33,12 @@
 #include "components/webapps/browser/installable/ml_install_operation_tracker.h"
 #include "content/public/browser/page.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/browser/web_contents_observer.h"
+#include "ui/base/interaction/element_tracker.h"
+#include "ui/views/controls/button/button.h"
 #include "ui/views/controls/textfield/textfield.h"
+#include "ui/views/interaction/element_tracker_views.h"
 #include "ui/views/view_utils.h"
+#include "ui/views/widget/widget.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
 // TODO(crbug.com/40147906): Enable gn check once it learns about conditional
@@ -47,7 +59,54 @@ int64_t ToLong(web_app::WebAppInstallStatus web_app_install_status) {
 }
 #endif
 
+// Creates a scoped highlight on the corresponding page action icon, if any.
+// Returns nullopt if not found.
+std::optional<std::variant<views::Button::ScopedAnchorHighlight,
+                           page_actions::ScopedPageActionActivity>>
+NewPageActionHighlight(content::WebContents& web_contents) {
+  tabs::TabInterface* tab =
+      tabs::TabInterface::MaybeGetFromContents(&web_contents);
+  if (!tab) {
+    return std::nullopt;
+  }
+  if (IsPageActionMigrated(PageActionIconType::kPwaInstall)) {
+    tabs::TabFeatures* tab_features = tab->GetTabFeatures();
+    CHECK(tab_features);
+
+    return tab_features->page_action_controller()->AddActivity(
+        kActionInstallPwa);
+  }
+
+  // TODO(crbug.com/425953501): We shouldn't be using this. Once
+  // `ToolbarButtonProvider` is migrated to `BrowserWindowInterface`, we can
+  // use that directly.
+  Browser* browser =
+      tab->GetBrowserWindowInterface()->GetBrowserForMigrationOnly();
+
+  BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser);
+  if (!browser_view) {
+    return std::nullopt;
+  }
+
+  ToolbarButtonProvider* toolbar_button_provider =
+      browser_view->toolbar_button_provider();
+  if (!toolbar_button_provider) {
+    return std::nullopt;
+  }
+
+  views::Button* install_icon = toolbar_button_provider->GetPageActionIconView(
+      PageActionIconType::kPwaInstall);
+
+  if (install_icon) {
+    // TODO(crbug.com/40841129): move this to dialog->SetHighlightedButton.
+    return install_icon->AddAnchorHighlight();
+  }
+
+  return std::nullopt;
+}
 }  // namespace
+
+constexpr int kMinBoundsForInstallDialog = 50;
 
 std::u16string NormalizeSuggestedAppTitle(const std::u16string& title) {
   std::u16string normalized = title;
@@ -60,8 +119,21 @@ std::u16string NormalizeSuggestedAppTitle(const std::u16string& title) {
   return normalized;
 }
 
+bool IsWidgetCurrentSizeSmallerThanPreferredSize(views::Widget* widget) {
+  const gfx::Size& current_size = widget->GetSize();
+  const gfx::Size& preferred_size =
+      widget->GetContentsView()->GetPreferredSize();
+  int min_width = preferred_size.width() - kMinBoundsForInstallDialog;
+  int min_height = preferred_size.height() - kMinBoundsForInstallDialog;
+  return current_size.width() < min_width || current_size.height() < min_height;
+}
+
 DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(WebAppInstallDialogDelegate,
                                       kDiyAppsDialogOkButtonId);
+DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(WebAppInstallDialogDelegate,
+                                      kPwaInstallDialogInstallButton);
+DEFINE_CLASS_CUSTOM_ELEMENT_EVENT_TYPE(WebAppInstallDialogDelegate,
+                                       kInstalledPWAEventId);
 
 WebAppInstallDialogDelegate::WebAppInstallDialogDelegate(
     content::WebContents* web_contents,
@@ -72,38 +144,24 @@ WebAppInstallDialogDelegate::WebAppInstallDialogDelegate(
     PrefService* prefs,
     feature_engagement::Tracker* tracker,
     InstallDialogType dialog_type)
-    : content::WebContentsObserver(web_contents),
-      web_contents_(web_contents),
+    : WebAppModalDialogDelegate(web_contents),
       install_info_(std::move(web_app_info)),
       install_tracker_(std::move(install_tracker)),
       callback_(std::move(callback)),
       iph_state_(std::move(iph_state)),
       prefs_(prefs),
       tracker_(tracker),
-      dialog_type_(dialog_type) {
+      dialog_type_(dialog_type),
+      page_action_highlight_(
+          NewPageActionHighlight(CHECK_DEREF(web_contents))) {
   CHECK(install_info_);
-  CHECK(install_info_->manifest_id.is_valid());
   CHECK(install_tracker_);
   CHECK(prefs_);
 }
 
 WebAppInstallDialogDelegate::~WebAppInstallDialogDelegate() {
-  // TODO(crbug.com/40841129): move this to dialog->SetHighlightedButton.
-  Browser* browser = chrome::FindBrowserWithTab(web_contents_);
-  if (!browser) {
+  if (!web_contents()) {
     return;
-  }
-
-  BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser);
-
-  if (browser_view && browser_view->toolbar_button_provider()) {
-    PageActionIconView* install_icon =
-        browser_view->toolbar_button_provider()->GetPageActionIconView(
-            PageActionIconType::kPwaInstall);
-    if (install_icon) {
-      // Dehighlight the install icon when this dialog is closed.
-      install_icon->SetHighlighted(false);
-    }
   }
 }
 
@@ -111,14 +169,14 @@ void WebAppInstallDialogDelegate::OnAccept() {
   MeasureAcceptUserActionsForInstallDialog();
   if (iph_state_ == PwaInProductHelpState::kShown) {
     webapps::AppId app_id =
-        GenerateAppIdFromManifestId(install_info_->manifest_id);
+        GenerateAppIdFromManifestId(install_info_->manifest_id());
     WebAppPrefGuardrails::GetForDesktopInstallIph(prefs_).RecordAccept(app_id);
     tracker_->NotifyEvent(feature_engagement::events::kDesktopPwaInstalled);
   }
 
 #if BUILDFLAG(IS_CHROMEOS)
   const webapps::AppId app_id =
-      web_app::GenerateAppIdFromManifestId(install_info_->manifest_id);
+      web_app::GenerateAppIdFromManifestId(install_info_->manifest_id());
   metrics::structured::StructuredMetricsClient::Record(
       cros_events::AppDiscovery_Browser_AppInstallDialogResult()
           .SetWebAppInstallStatus(
@@ -135,21 +193,66 @@ void WebAppInstallDialogDelegate::OnAccept() {
         web_app::mojom::UserDisplayMode::kStandalone;
   }
 
+  // The password manager PWA installation tutorial requires the
+  // `kInstalledPWAEventId` event to be fired from the detailed install dialog.
+  // See `kPasswordManagerTutorialMetricPrefix` in
+  // `MaybeRegisterChromeTutorials()` for more information.
+  if (dialog_type_ == InstallDialogType::kDetailed) {
+    auto* element_tracker = ui::ElementTracker::GetElementTracker();
+    auto* element_framework = ui::ElementTracker::GetFrameworkDelegate();
+    CHECK(element_tracker);
+    auto* ok_button =
+        element_tracker->GetElementInAnyContext(kPwaInstallDialogInstallButton);
+    if (ok_button && element_framework) {
+      element_framework->NotifyCustomEvent(ok_button, kInstalledPWAEventId);
+    }
+  }
+
   CHECK(callback_);
   CHECK(install_tracker_);
   install_tracker_->ReportResult(webapps::MlInstallUserResponse::kAccepted);
+  received_user_response_ = true;
+  base::UmaHistogramEnumeration(
+      "WebApp.InstallConfirmation.CloseReason",
+      views::Widget::ClosedReason::kAcceptButtonClicked);
   std::move(callback_).Run(true, std::move(install_info_));
 }
 
 void WebAppInstallDialogDelegate::OnCancel() {
   CHECK(install_tracker_);
   install_tracker_->ReportResult(webapps::MlInstallUserResponse::kCancelled);
+  received_user_response_ = true;
+  base::UmaHistogramEnumeration(
+      "WebApp.InstallConfirmation.CloseReason",
+      views::Widget::ClosedReason::kCancelButtonClicked);
   MeasureIphOnDialogClose();
 }
 
 void WebAppInstallDialogDelegate::OnClose() {
   CHECK(install_tracker_);
   install_tracker_->ReportResult(webapps::MlInstallUserResponse::kIgnored);
+  received_user_response_ = true;
+
+  // This could be hit by triggering the Esc key as well, unfortunately there is
+  // no way to listen to that without observing the low level widget.
+  base::UmaHistogramEnumeration(
+      "WebApp.InstallConfirmation.CloseReason",
+      views::Widget::ClosedReason::kCloseButtonClicked);
+  MeasureIphOnDialogClose();
+}
+
+void WebAppInstallDialogDelegate::OnDestroyed() {
+  // Only performs histogram measurement and other actions if the dialog was
+  // destroyed without user action, like a change in visibility or navigation to
+  // a different tab or destruction of the native widget that contains the
+  // dialog this delegate is assigned to.
+  if (received_user_response_) {
+    return;
+  }
+
+  install_tracker_->ReportResult(webapps::MlInstallUserResponse::kIgnored);
+  base::UmaHistogramEnumeration("WebApp.InstallConfirmation.CloseReason",
+                                views::Widget::ClosedReason::kUnspecified);
   MeasureIphOnDialogClose();
 }
 
@@ -163,27 +266,24 @@ void WebAppInstallDialogDelegate::OnTextFieldChangedMaybeUpdateButton(
                                    /*enabled=*/!text_field_contents.empty());
 }
 
-void WebAppInstallDialogDelegate::OnVisibilityChanged(
-    content::Visibility visibility) {
-  if (visibility == content::Visibility::HIDDEN) {
-    CloseDialogAsIgnored();
+void WebAppInstallDialogDelegate::OnWidgetBoundsChanged(
+    views::Widget* widget,
+    const gfx::Rect& new_bounds) {
+  if (IsWidgetCurrentSizeSmallerThanPreferredSize(widget)) {
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE,
+        base::BindOnce(&WebAppInstallDialogDelegate::CloseDialogAsIgnored,
+                       weak_ptr_factory_.GetWeakPtr()));
   }
-}
-
-void WebAppInstallDialogDelegate::WebContentsDestroyed() {
-  CloseDialogAsIgnored();
-}
-
-void WebAppInstallDialogDelegate::PrimaryPageChanged(content::Page& page) {
-  CloseDialogAsIgnored();
 }
 
 void WebAppInstallDialogDelegate::CloseDialogAsIgnored() {
+  if (!dialog_model() || !dialog_model()->host()) {
+    return;
+  }
   CHECK(install_tracker_);
   install_tracker_->ReportResult(webapps::MlInstallUserResponse::kIgnored);
-  if (dialog_model() && dialog_model()->host()) {
-    dialog_model()->host()->Close();
-  }
+  dialog_model()->host()->Close();
 }
 
 void WebAppInstallDialogDelegate::MeasureIphOnDialogClose() {
@@ -193,7 +293,7 @@ void WebAppInstallDialogDelegate::MeasureIphOnDialogClose() {
   MeasureCancelUserActionsForInstallDialog();
   if (iph_state_ == PwaInProductHelpState::kShown && install_info_) {
     webapps::AppId app_id =
-        GenerateAppIdFromManifestId(install_info_->manifest_id);
+        GenerateAppIdFromManifestId(install_info_->manifest_id());
     WebAppPrefGuardrails::GetForDesktopInstallIph(prefs_).RecordIgnore(
         app_id, base::Time::Now());
   }
@@ -202,7 +302,7 @@ void WebAppInstallDialogDelegate::MeasureIphOnDialogClose() {
   if (install_info_) {
 #if BUILDFLAG(IS_CHROMEOS)
     const webapps::AppId app_id =
-        web_app::GenerateAppIdFromManifestId(install_info_->manifest_id);
+        web_app::GenerateAppIdFromManifestId(install_info_->manifest_id());
     metrics::structured::StructuredMetricsClient::Record(
         cros_events::AppDiscovery_Browser_AppInstallDialogResult()
             .SetWebAppInstallStatus(

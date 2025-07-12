@@ -16,6 +16,7 @@ static_library("common") {
     "//base",
     "//components/visitedlink/core",
     "//content/public/common",
+    "//crypto",
     "//ipc",
     "//url",
   ]
@@ -24,5 +25,8 @@ static_library("common") {
 mojom("interfaces") {
   sources = [ "visitedlink.mojom" ]
 
-  public_deps = [ "//mojo/public/mojom/base" ]
+  public_deps = [
+    "//mojo/public/mojom/base",
+    "//url/mojom:url_mojom_origin",
+  ]
 }

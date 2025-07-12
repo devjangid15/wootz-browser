@@ -13,6 +13,7 @@
 #include "base/types/optional_ref.h"
 #include "components/variations/entropy_provider.h"
 #include "components/variations/processed_study.h"
+#include "components/variations/proto/layer.pb.h"
 #include "components/variations/proto/variations_seed.pb.h"
 
 namespace variations {
@@ -29,7 +30,8 @@ enum class InvalidLayerReason {
   kUnknownFields = 6,
   LayerIDNotUnique = 7,
   kLimitedLayerDropped = 8,
-  kMaxValue = kLimitedLayerDropped,
+  kDuplicatedLayerMemberID = 9,
+  kMaxValue = kDuplicatedLayerMemberID,
 };
 
 // A view over the layers defined within a variations seed.
@@ -40,7 +42,7 @@ enum class InvalidLayerReason {
 // with studies that require a different member to be active.
 class COMPONENT_EXPORT(VARIATIONS) VariationsLayers {
  public:
-  // Instantiates a `VariationsLayers` object with the given `seed`, and
+  // Instantiates a `VariationsLayers` object with `seed` and
   // `entropy_providers`.
   VariationsLayers(const VariationsSeed& seed,
                    const EntropyProviders& entropy_providers);
@@ -60,15 +62,23 @@ class COMPONENT_EXPORT(VARIATIONS) VariationsLayers {
   // True iff a high entropy provider can be used to randomize the study.
   static bool AllowsHighEntropy(const Study& study);
 
-  // Returns whether the layer that's associated with the `layer_id` is active.
-  // If not, for the same `layer_id`, IsLayerMemberActive() and
+  // Checks whether the layer member reference object is referencing the given
+  // `layer_member_id`.
+  static bool IsReferencingLayerMemberId(
+      const LayerMemberReference& layer_member_reference,
+      uint32_t layer_member_id);
+
+  // Checks if the client's slot for that layer is associated with a layer
+  // member. Returns whether the layer that's associated with the `layer_id` is
+  // active. If not, for the same `layer_id`, IsLayerMemberActive() and
   // ActiveLayerMemberDependsOnHighEntropy() will always be false, and
   // GetRemainderEntropy() will return an entropy provider that always
   // randomizes to a fixed value (revealing no entropy).
   bool IsLayerActive(uint32_t layer_id) const;
 
-  // Returns whether the given layer has the given member active.
-  bool IsLayerMemberActive(uint32_t layer_id, uint32_t member_id) const;
+  // Returns whether any of the layer members referenced are active.
+  bool IsLayerMemberActive(
+      const LayerMemberReference& layer_member_reference) const;
 
   // Returns true if the layer has an active member and is configured to use
   // DEFAULT entropy, which means that any study conditioned on it would leak
@@ -84,6 +94,10 @@ class COMPONENT_EXPORT(VARIATIONS) VariationsLayers {
   SelectEntropyProviderForStudy(
       const ProcessedStudy& processed_study,
       const EntropyProviders& entropy_providers) const;
+
+  // Returns true if there is a limited-entropy-mode layer among the layers in
+  // the VariationsSeed passed to this object's ctor.
+  bool seed_has_limited_layer() const { return seed_has_limited_layer_; }
 
  private:
   struct LayerInfo {
@@ -115,8 +129,9 @@ class COMPONENT_EXPORT(VARIATIONS) VariationsLayers {
   // the layer is not active.
   std::optional<Layer::EntropyMode> GetEntropyMode(uint32_t layer_id) const;
 
-  NormalizedMurmurHashEntropyProvider nil_entropy;
+  NormalizedMurmurHashEntropyProvider nil_entropy_;
   std::map<uint32_t, LayerInfo> active_member_for_layer_;
+  bool seed_has_limited_layer_ = false;
 };
 
 }  // namespace variations

@@ -8,12 +8,14 @@ import android.graphics.Rect;
 
 import org.chromium.base.supplier.DestroyableObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
+import org.chromium.build.annotations.NullMarked;
 
 /**
  * An implementation of {@link DestroyableObservableSupplier} that monitors changes to browser
  * controls and updates a Rect indicating top/bottom margins for Views that should be inset by the
  * browser control(s) height(s).
  */
+@NullMarked
 public class BrowserControlsMarginSupplier extends ObservableSupplierImpl<Rect>
         implements BrowserControlsStateProvider.Observer, DestroyableObservableSupplier<Rect> {
     private final BrowserControlsStateProvider mBrowserControlsStateProvider;
@@ -34,9 +36,12 @@ public class BrowserControlsMarginSupplier extends ObservableSupplierImpl<Rect>
     public void onControlsOffsetChanged(
             int topOffset,
             int topControlsMinHeightOffset,
+            boolean topControlsMinHeightChanged,
             int bottomOffset,
             int bottomControlsMinHeightOffset,
-            boolean needsAnimate) {
+            boolean bottomControlsMinHeightChanged,
+            boolean requestNewFrame,
+            boolean isVisibilityForced) {
         updateMargins();
     }
 
@@ -58,10 +63,6 @@ public class BrowserControlsMarginSupplier extends ObservableSupplierImpl<Rect>
         int bottomMargin =
                 mBrowserControlsStateProvider.getBottomControlsHeight()
                         - mBrowserControlsStateProvider.getBottomControlOffset();
-        if (true) {
-            bottomMargin += topMargin;
-            topMargin = 0;
-        }
         super.set(new Rect(0, topMargin, 0, bottomMargin));
     }
 }

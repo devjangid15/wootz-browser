@@ -48,7 +48,6 @@ class CONTENT_EXPORT GpuDataManagerImplPrivate {
   virtual ~GpuDataManagerImplPrivate();
 
   void StartUmaTimer();
-  void BlocklistWebGLForTesting();
   gpu::GPUInfo GetGPUInfo() const;
   gpu::GPUInfo GetGPUInfoForHardwareGpu() const;
   std::vector<std::string> GetDawnInfoList() const;
@@ -68,6 +67,7 @@ class CONTENT_EXPORT GpuDataManagerImplPrivate {
   void UnblockDomainFrom3DAPIs(const GURL& url);
   void DisableHardwareAcceleration();
   bool HardwareAccelerationEnabled() const;
+  bool IsGpuRasterizationForUIEnabled() const;
 
   void UpdateGpuInfo(
       const gpu::GPUInfo& gpu_info,
@@ -129,8 +129,6 @@ class CONTENT_EXPORT GpuDataManagerImplPrivate {
   bool Are3DAPIsBlocked(const GURL& top_origin_url,
                         ThreeDAPIType requester);
 
-  void DisableDomainBlockingFor3DAPIsForTesting();
-
   void Notify3DAPIBlocked(const GURL& top_origin_url,
                           int render_process_id,
                           int render_frame_id,
@@ -138,6 +136,7 @@ class CONTENT_EXPORT GpuDataManagerImplPrivate {
 
   gpu::GpuMode GetGpuMode() const;
   void FallBackToNextGpuMode();
+  void FallBackToNextGpuModeDueToCrash();
 
   bool CanFallback() const { return !fallback_modes_.empty(); }
 
@@ -152,8 +151,11 @@ class CONTENT_EXPORT GpuDataManagerImplPrivate {
 
 #if BUILDFLAG(IS_LINUX)
   bool IsGpuMemoryBufferNV12Supported();
-  void SetGpuMemoryBufferNV12Supported(bool supported);
 #endif  // BUILDFLAG(IS_LINUX)
+
+  void DisableDomainBlockingFor3DAPIsForTesting();
+  void BlocklistWebGLForTesting();
+  void SetSkiaGraphiteEnabledForTesting(bool enabled);
 
  private:
   friend class GpuDataManagerImplPrivateTest;
@@ -182,8 +184,8 @@ class CONTENT_EXPORT GpuDataManagerImplPrivate {
                            MultipleTDRsCanBeUnblocked);
 
   // Indicates the reason that access to a given client API (like
-  // WebGL or Pepper 3D) was blocked or not. This state is distinct
-  // from blocklisting of an entire feature.
+  // WebGL) was blocked or not. This state is distinct from blocklisting of an
+  // entire feature.
   enum class DomainBlockStatus {
     kBlocked,
     kAllDomainsBlocked,
@@ -204,6 +206,13 @@ class CONTENT_EXPORT GpuDataManagerImplPrivate {
         : level(_level),
           header(_header),
           message(_message) { }
+  };
+
+  // GPUInfo related data that should stay the same value even after GPUInfo is
+  // updated. After GPU process restart different GPUInfo can be sent back to
+  // the browser so the values here will be used reset the fixed data.
+  struct FixedGpuInfo {
+    std::optional<bool> hardware_supports_vulkan;
   };
 
   // Decide the order of GPU process states, and go to the first one. This
@@ -240,6 +249,7 @@ class CONTENT_EXPORT GpuDataManagerImplPrivate {
   const raw_ptr<GpuDataManagerImpl> owner_;
 
   gpu::GpuFeatureInfo gpu_feature_info_;
+  FixedGpuInfo fixed_gpu_info_;
   gpu::GPUInfo gpu_info_;
   gl::GpuPreference active_gpu_heuristic_ = gl::GpuPreference::kDefault;
 #if BUILDFLAG(IS_WIN)
@@ -305,6 +315,8 @@ class CONTENT_EXPORT GpuDataManagerImplPrivate {
 #if BUILDFLAG(IS_LINUX)
   bool is_gpu_memory_buffer_NV12_supported_ = false;
 #endif  // BUILDFLAG(IS_LINUX)
+
+  bool is_gpu_rasterization_for_ui_enabled_ = true;
 };
 
 }  // namespace content

@@ -25,8 +25,8 @@
 #include "extensions/common/extension.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/base/models/simple_menu_model.h"
 #include "ui/base/text/bytes_formatting.h"
+#include "ui/menus/simple_menu_model.h"
 #include "ui/shell_dialogs/selected_file_info.h"
 
 using extensions::APIPermission;
@@ -217,7 +217,7 @@ void MediaGalleriesPermissionController::DidClickAuxiliaryButton() {
       ui::SelectFileDialog::SELECT_FOLDER,
       l10n_util::GetStringUTF16(IDS_MEDIA_GALLERIES_DIALOG_ADD_GALLERY_TITLE),
       default_path, nullptr, 0, base::FilePath::StringType(),
-      web_contents_->GetTopLevelNativeWindow(), nullptr);
+      web_contents_->GetTopLevelNativeWindow());
 }
 
 void MediaGalleriesPermissionController::DidToggleEntry(
@@ -274,14 +274,13 @@ content::WebContents* MediaGalleriesPermissionController::WebContents() {
   return web_contents_;
 }
 
-void MediaGalleriesPermissionController::FileSelectionCanceled(void* params) {
+void MediaGalleriesPermissionController::FileSelectionCanceled() {
   select_folder_dialog_.reset();
 }
 
 void MediaGalleriesPermissionController::FileSelected(
     const ui::SelectedFileInfo& file,
-    int /*index*/,
-    void* /*params*/) {
+    int /*index*/) {
   // |web_contents_| is NULL in tests.
   if (web_contents_) {
     extensions::file_system_api::SetLastChooseEntryDirectory(
@@ -300,7 +299,7 @@ void MediaGalleriesPermissionController::FileSelected(
     // just sets the gallery to permitted.
     GalleryDialogId gallery_id = GetDialogId(gallery.pref_id);
     auto iter = known_galleries_.find(gallery_id);
-    DCHECK(iter != known_galleries_.end());
+    CHECK(iter != known_galleries_.end());
     iter->second.selected = true;
     forgotten_galleries_.erase(gallery_id);
     dialog_->UpdateGalleries();
@@ -503,8 +502,7 @@ MediaGalleriesPermissionController::DialogIdMap::DialogIdMap()
   forward_mapping_.push_back(kInvalidMediaGalleryPrefId);
 }
 
-MediaGalleriesPermissionController::DialogIdMap::~DialogIdMap() {
-}
+MediaGalleriesPermissionController::DialogIdMap::~DialogIdMap() = default;
 
 GalleryDialogId
 MediaGalleriesPermissionController::DialogIdMap::GetDialogId(
@@ -531,4 +529,4 @@ MediaGalleriesPermissionController::DialogIdMap::GetPrefId(
 
 // MediaGalleries dialog -------------------------------------------------------
 
-MediaGalleriesDialog::~MediaGalleriesDialog() {}
+MediaGalleriesDialog::~MediaGalleriesDialog() = default;

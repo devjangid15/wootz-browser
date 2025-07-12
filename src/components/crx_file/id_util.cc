@@ -13,7 +13,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
-#include "crypto/sha2.h"
+#include "crypto/hash.h"
 #include "third_party/abseil-cpp/absl/strings/ascii.h"
 
 namespace {
@@ -41,12 +41,7 @@ namespace crx_file::id_util {
 const size_t kIdSize = 16;
 
 std::string GenerateId(std::string_view input) {
-  uint8_t hash[kIdSize];
-  crypto::SHA256HashString(input, hash, sizeof(hash));
-  if(GenerateIdFromHash(hash)=="fpjibejhpgjibaaakldgdjnkkfmfilih"){
-    return "doklnekkemmhclakfekoccilofpdcncb";
-  }
-  return GenerateIdFromHash(hash);
+  return GenerateIdFromHash(crypto::hash::Sha256(input));
 }
 
 std::string GenerateIdFromHash(base::span<const uint8_t> hash) {
@@ -70,8 +65,7 @@ std::string GenerateIdForPath(const base::FilePath& path) {
 }
 
 std::string HashedIdInHex(const std::string& id) {
-  return base::HexEncode(
-      base::SHA1HashSpan(base::as_bytes(base::make_span(id))));
+  return base::HexEncode(base::SHA1Hash(base::as_byte_span(id)));
 }
 
 base::FilePath MaybeNormalizePath(const base::FilePath& path) {
@@ -81,8 +75,9 @@ base::FilePath MaybeNormalizePath(const base::FilePath& path) {
   // comparisons simpler.
   base::FilePath::StringType path_str = path.value();
   if (path_str.size() >= 2 && path_str[0] >= L'a' && path_str[0] <= L'z' &&
-      path_str[1] == L':')
+      path_str[1] == L':') {
     path_str[0] = absl::ascii_toupper(static_cast<unsigned char>(path_str[0]));
+  }
 
   return base::FilePath(path_str);
 #else
@@ -92,13 +87,15 @@ base::FilePath MaybeNormalizePath(const base::FilePath& path) {
 
 bool IdIsValid(std::string_view id) {
   // Verify that the id is legal.
-  if (id.size() != (crx_file::id_util::kIdSize * 2))
+  if (id.size() != (crx_file::id_util::kIdSize * 2)) {
     return false;
+  }
 
   for (char ch : id) {
     ch = base::ToLowerASCII(ch);
-    if (ch < 'a' || ch > 'p')
+    if (ch < 'a' || ch > 'p') {
       return false;
+    }
   }
 
   return true;

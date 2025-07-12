@@ -4,8 +4,8 @@
 
 package org.chromium.chrome.browser.keyboard_accessory.bar_component;
 
-import static org.chromium.chrome.browser.keyboard_accessory.bar_component.KeyboardAccessoryIPHUtils.hasShownAnyAutofillIphBefore;
-import static org.chromium.chrome.browser.keyboard_accessory.bar_component.KeyboardAccessoryIPHUtils.showHelpBubble;
+import static org.chromium.chrome.browser.keyboard_accessory.bar_component.KeyboardAccessoryIphUtils.hasShownAnyAutofillIphBefore;
+import static org.chromium.chrome.browser.keyboard_accessory.bar_component.KeyboardAccessoryIphUtils.showHelpBubble;
 import static org.chromium.chrome.browser.keyboard_accessory.bar_component.KeyboardAccessoryProperties.ANIMATION_LISTENER;
 import static org.chromium.chrome.browser.keyboard_accessory.bar_component.KeyboardAccessoryProperties.BAR_ITEMS;
 import static org.chromium.chrome.browser.keyboard_accessory.bar_component.KeyboardAccessoryProperties.BOTTOM_OFFSET_PX;
@@ -26,6 +26,7 @@ import android.view.ViewGroup;
 import android.widget.TextView;
 
 import androidx.annotation.LayoutRes;
+import androidx.annotation.StyleRes;
 import androidx.recyclerview.widget.RecyclerView;
 
 import org.chromium.base.TraceEvent;
@@ -40,6 +41,7 @@ import org.chromium.components.autofill.AutofillSuggestion;
 import org.chromium.components.autofill.SuggestionType;
 import org.chromium.components.browser_ui.widget.chips.ChipView;
 import org.chromium.components.feature_engagement.FeatureConstants;
+import org.chromium.components.feature_engagement.Tracker;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.widget.RectProvider;
@@ -51,6 +53,9 @@ import java.util.function.Function;
  * the view accordingly.
  */
 class KeyboardAccessoryViewBinder {
+    private static final float GRAYED_OUT_OPACITY_ALPHA = 0.38f;
+    private static final float COMPLETE_OPACITY_ALPHA = 1.0f;
+
     static BarItemViewHolder create(
             KeyboardAccessoryView keyboarAccessory,
             UiConfiguration uiConfiguration,
@@ -58,8 +63,13 @@ class KeyboardAccessoryViewBinder {
             @BarItem.Type int viewType) {
         switch (viewType) {
             case BarItem.Type.SUGGESTION:
+            case BarItem.Type.LOYALTY_CARD_SUGGESTION:
+            case BarItem.Type.HOME_AND_WORK_SUGGESTION:
                 return new BarItemChipViewHolder(
-                        parent, keyboarAccessory, uiConfiguration.suggestionDrawableFunction);
+                        parent,
+                        keyboarAccessory,
+                        uiConfiguration.suggestionDrawableFunction,
+                        viewType);
             case BarItem.Type.TAB_LAYOUT:
                 return new SheetOpenerViewHolder(parent);
             case BarItem.Type.ACTION_BUTTON:
@@ -79,8 +89,13 @@ class KeyboardAccessoryViewBinder {
 
     abstract static class BarItemViewHolder<T extends BarItem, V extends View>
             extends RecyclerView.ViewHolder {
+
         BarItemViewHolder(ViewGroup parent, @LayoutRes int layout) {
-            super(LayoutInflater.from(parent.getContext()).inflate(layout, parent, false));
+            this(LayoutInflater.from(parent.getContext()).inflate(layout, parent, false));
+        }
+
+        BarItemViewHolder(View barItem) {
+            super(barItem);
         }
 
         @SuppressWarnings("unchecked")
@@ -111,8 +126,14 @@ class KeyboardAccessoryViewBinder {
         BarItemChipViewHolder(
                 ViewGroup parent,
                 KeyboardAccessoryView keyboardAccessory,
-                Function<AutofillSuggestion, Drawable> suggestionDrawableFunction) {
-            super(parent, selectLayoutForScale(parent.getContext()));
+                Function<AutofillSuggestion, Drawable> suggestionDrawableFunction,
+                @BarItem.Type int barItemType) {
+            super(
+                    new ChipView(
+                            parent.getContext(),
+                            null,
+                            0,
+                            selectStyleForSuggestion(parent.getContext(), barItemType)));
             mRootViewForIPH = parent.getRootView();
             mKeyboardAccessory = keyboardAccessory;
             mSuggestionDrawableFunction = suggestionDrawableFunction;
@@ -121,51 +142,23 @@ class KeyboardAccessoryViewBinder {
         @Override
         protected void bind(AutofillBarItem item, ChipView chipView) {
             TraceEvent.begin("BarItemChipViewHolder#bind");
-            int iconId = item.getSuggestion().getIconId();
-            boolean isIPHShown = false;
-            if (item.getFeatureForIPH() != null) {
-                if (item.getFeatureForIPH()
-                        .equals(FeatureConstants.KEYBOARD_ACCESSORY_PAYMENT_OFFER_FEATURE)) {
-                    if (iconId != 0) {
-                        isIPHShown =
-                                showHelpBubble(
-                                        mKeyboardAccessory.getFeatureEngagementTracker(),
-                                        item.getFeatureForIPH(),
-                                        chipView.getStartIconViewRect(),
-                                        chipView.getContext(),
-                                        mRootViewForIPH,
-                                        item.getSuggestion().getItemTag());
-                    } else {
-                        isIPHShown =
-                                showHelpBubble(
-                                        mKeyboardAccessory.getFeatureEngagementTracker(),
-                                        item.getFeatureForIPH(),
-                                        chipView,
-                                        mRootViewForIPH,
-                                        item.getSuggestion().getItemTag());
-                    }
-                } else {
-                    isIPHShown =
-                            showHelpBubble(
-                                    mKeyboardAccessory.getFeatureEngagementTracker(),
-                                    item.getFeatureForIPH(),
-                                    chipView,
-                                    mRootViewForIPH,
-                                    null);
-                }
-            }
-            mKeyboardAccessory.setAllowClicksWhileObscured(isIPHShown);
+            boolean iphShown =
+                    maybeShowIph(
+                            item,
+                            chipView,
+                            mRootViewForIPH,
+                            mKeyboardAccessory.getFeatureEngagementTracker());
+            mKeyboardAccessory.setAllowClicksWhileObscured(iphShown);
 
-            // Credit card chips never occupy the entire width of the window to allow for other
-            // cards (if they exist) to be seen. Their max width is set to 85% of the window width.
-            // The chip size is limited by truncating the card label.
+            // Credit card or IBAN chips never occupy the entire width of the window to allow for
+            // other cards or IBANs (if they exist) to be seen. Their max width is set to 85% of
+            // the window width.
+            // The chip size is limited by truncating the card/IBAN label.
             // TODO (crbug.com/1376691): Check if it's alright to instead show a fixed portion of
             // the following chip. This might give a more consistent user experience and allow wider
             // windows to show more information in a chip before truncating.
-            if (ChromeFeatureList.isEnabled(ChromeFeatureList.AUTOFILL_ENABLE_VIRTUAL_CARD_METADATA)
-                    && ChromeFeatureList.isEnabled(
-                            ChromeFeatureList.AUTOFILL_ENABLE_CARD_PRODUCT_NAME)
-                    && containsCreditCardInfo(item.getSuggestion())) {
+            if (containsIbanInfo(item.getSuggestion())
+                    || containsCreditCardInfo(item.getSuggestion())) {
                 int windowWidth =
                         chipView.getContext().getResources().getDisplayMetrics().widthPixels;
                 chipView.setMaxWidth((int) (windowWidth * 0.85));
@@ -180,17 +173,7 @@ class KeyboardAccessoryViewBinder {
             chipView.getPrimaryTextView().setEllipsize(null);
 
             chipView.getPrimaryTextView().setText(item.getSuggestion().getLabel());
-            if (item.getSuggestion().getItemTag() != null
-                    && !item.getSuggestion().getItemTag().isEmpty()) {
-                chipView.getPrimaryTextView()
-                        .setContentDescription(
-                                item.getSuggestion().getLabel()
-                                        + " "
-                                        + item.getSuggestion().getItemTag());
-            } else {
-                chipView.getPrimaryTextView()
-                        .setContentDescription(item.getSuggestion().getLabel());
-            }
+            chipView.getPrimaryTextView().setContentDescription(item.getSuggestion().getLabel());
             chipView.getSecondaryTextView().setText(item.getSuggestion().getSublabel());
             chipView.getSecondaryTextView()
                     .setVisibility(
@@ -201,7 +184,7 @@ class KeyboardAccessoryViewBinder {
             assert action != null : "Tried to bind item without action. Chose a wrong ViewHolder?";
             chipView.setOnClickListener(
                     view -> {
-                        item.maybeEmitEventForIPH(mKeyboardAccessory.getFeatureEngagementTracker());
+                        item.maybeEmitEventForIph(mKeyboardAccessory.getFeatureEngagementTracker());
                         action.getCallback().onResult(action);
                     });
             if (action.getLongPressCallback() != null) {
@@ -211,20 +194,58 @@ class KeyboardAccessoryViewBinder {
                             return true; // Click event consumed!
                         });
             }
-            chipView.setIcon(
-                    mSuggestionDrawableFunction.apply(item.getSuggestion()),
-                    /* tintWithTextColor= */ false);
+
+            float iconAlpha;
+            if (item.getSuggestion().applyDeactivatedStyle()) {
+                // Disabling chipview if deactivated style is set.
+                chipView.setEnabled(false);
+                iconAlpha = GRAYED_OUT_OPACITY_ALPHA;
+                // Restoring the chipview border post disabling it to meet the
+                // required UI.
+                chipView.setBorder(
+                        chipView.getResources().getDimensionPixelSize(R.dimen.chip_border_width),
+                        chipView.getContext().getColor(R.color.black_alpha_12));
+            } else {
+                chipView.setEnabled(true);
+                iconAlpha = COMPLETE_OPACITY_ALPHA;
+            }
+            Drawable iconDrawable = mSuggestionDrawableFunction.apply(item.getSuggestion());
+            if (iconDrawable != null) {
+                iconDrawable.setAlpha((int) (255 * iconAlpha));
+            }
+            chipView.setIcon(iconDrawable, /* tintWithTextColor= */ false);
+
             TraceEvent.end("BarItemChipViewHolder#bind");
         }
 
-        @LayoutRes
-        private static int selectLayoutForScale(Context context) {
-            if (!ChromeFeatureList.isEnabled(ChromeFeatureList.ANDROID_ELEGANT_TEXT_HEIGHT)) {
-                return R.layout.keyboard_accessory_suggestion;
+        @StyleRes
+        private static int selectStyleForSuggestion(
+                Context context, @BarItem.Type int barItemType) {
+            final boolean useLargeChips =
+                    ChromeFeatureList.isEnabled(ChromeFeatureList.ANDROID_ELEGANT_TEXT_HEIGHT)
+                            && context.getResources().getConfiguration().fontScale
+                                    >= LARGE_FONT_THRESHOLD;
+            switch (barItemType) {
+                case BarItem.Type.LOYALTY_CARD_SUGGESTION:
+                    // Loyalty cards suggestions have round icons.
+                    return useLargeChips
+                            ? R.style.KeyboardAccessoryLoyaltyCardLargeChip
+                            : R.style.KeyboardAccessoryLoyaltyCardChip;
+                case BarItem.Type.HOME_AND_WORK_SUGGESTION:
+                    return useLargeChips
+                            ? R.style.KeyboardAccessoryHomeAndWorkLargeChip
+                            : R.style.KeyboardAccessoryHomeAndWorkChip;
+                case BarItem.Type.SUGGESTION:
+                    return useLargeChips
+                            ? R.style.KeyboardAccessoryLargeChip
+                            : R.style.KeyboardAccessoryChip;
+                case BarItem.Type.ACTION_CHIP:
+                case BarItem.Type.TAB_LAYOUT:
+                case BarItem.Type.ACTION_BUTTON:
+                default:
+                    assert false : "Only suggestion chips have custom styles";
+                    return 0;
             }
-            return context.getResources().getConfiguration().fontScale >= LARGE_FONT_THRESHOLD
-                    ? R.layout.keyboard_accessory_suggestion_large
-                    : R.layout.keyboard_accessory_suggestion;
         }
     }
 
@@ -244,7 +265,7 @@ class KeyboardAccessoryViewBinder {
 
     static class BarItemActionChipViewHolder extends BarItemViewHolder<BarItem, ChipView> {
         BarItemActionChipViewHolder(ViewGroup parent) {
-            super(parent, R.layout.keyboard_accessory_suggestion);
+            super(new ChipView(parent.getContext(), null, 0, R.style.KeyboardAccessoryChip));
         }
 
         @Override
@@ -308,14 +329,14 @@ class KeyboardAccessoryViewBinder {
             if (model.get(SHOW_SWIPING_IPH)
                     && swipingIphRectProvider != null
                     && hasShownAnyAutofillIphBefore(view.getFeatureEngagementTracker())) {
-                boolean isIPHShown =
+                boolean isIphShown =
                         showHelpBubble(
                                 view.getFeatureEngagementTracker(),
                                 FeatureConstants.KEYBOARD_ACCESSORY_BAR_SWIPING_FEATURE,
                                 swipingIphRectProvider,
                                 view.getContext(),
                                 view.mBarItemsView);
-                view.setAllowClicksWhileObscured(isIPHShown);
+                view.setAllowClicksWhileObscured(isIphShown);
             }
         } else if (propertyKey == HAS_SUGGESTIONS) {
             view.setAccessibilityMessage(model.get(HAS_SUGGESTIONS));
@@ -329,5 +350,56 @@ class KeyboardAccessoryViewBinder {
     private static boolean containsCreditCardInfo(AutofillSuggestion suggestion) {
         return suggestion.getSuggestionType() == SuggestionType.CREDIT_CARD_ENTRY
                 || suggestion.getSuggestionType() == SuggestionType.VIRTUAL_CREDIT_CARD_ENTRY;
+    }
+
+    private static boolean containsIbanInfo(AutofillSuggestion suggestion) {
+        return suggestion.getSuggestionType() == SuggestionType.IBAN_ENTRY;
+    }
+
+    /**
+     * Determines whether an IPH bubble should be shown, and displays the IPH if eligible.
+     *
+     * @param item The {@link AutofillBarItem} that is associated with IPH.
+     * @param chipView The {@link ChipView} that the IPH is anchored to.
+     * @param rootViewForIph The root {@link View} for IPH.
+     * @param featureEngagementTracker The {@link Tracker} associated with the current session.
+     * @return True if IPH is triggered, and false if no IPH should be triggered.
+     */
+    // TODO (crbug.com/408984579): consider moving this logic out of this class.
+    private static boolean maybeShowIph(
+            AutofillBarItem item,
+            ChipView chipView,
+            View rootViewForIph,
+            Tracker featureEngagementTracker) {
+        String iphFeature = item.getFeatureForIph();
+        if (iphFeature == null) return false;
+
+        if (iphFeature.equals(FeatureConstants.KEYBOARD_ACCESSORY_PAYMENT_OFFER_FEATURE)
+                || iphFeature.equals(
+                        FeatureConstants.KEYBOARD_ACCESSORY_HOME_WORK_PROFILE_SUGGESTION_FEATURE)) {
+            if (item.getSuggestion().getIconId() != 0) {
+                return showHelpBubble(
+                        featureEngagementTracker,
+                        iphFeature,
+                        chipView.getStartIconViewRect(),
+                        chipView.getContext(),
+                        rootViewForIph);
+            } else {
+                return showHelpBubble(
+                        featureEngagementTracker, iphFeature, chipView, rootViewForIph, null);
+            }
+        }
+
+        if (iphFeature.equals(
+                FeatureConstants.KEYBOARD_ACCESSORY_PAYMENT_CARD_INFO_RETRIEVAL_FEATURE)) {
+            return showHelpBubble(
+                    featureEngagementTracker,
+                    iphFeature,
+                    chipView,
+                    rootViewForIph,
+                    item.getSuggestion().getIphDescriptionText());
+        }
+
+        return showHelpBubble(featureEngagementTracker, iphFeature, chipView, rootViewForIph, null);
     }
 }

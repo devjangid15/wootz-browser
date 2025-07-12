@@ -9,6 +9,7 @@ More details can be found in design doc: go/gn-args-in-starlark-dd
 
 load("@stdlib//internal/graph.star", "graph")
 load("@stdlib//internal/luci/common.star", "keys")
+load("//project.star", "settings")
 load("./chrome_settings.star", "per_builder_outputs_config")
 load("./nodes.star", "nodes")
 
@@ -94,6 +95,11 @@ def _get_gn_args_resolver():
         gn_args = gn_config_node.props.builder_defaults | config.get("gn_args", {})
         if gn_args:
             config["gn_args"] = gn_args
+
+            if "target_os" not in gn_args:
+                fail("target_os is required for gn_args: {}".format(gn_config_node.key.id))
+            if "target_cpu" not in gn_args:
+                fail("target_cpu is required for gn_arg: {}".format(gn_config_node.key.id))
 
         return config
 
@@ -196,8 +202,12 @@ def register_gn_args(builder_group, bucket, builder, gn_args, use_siso):
     """
 
     defaults = {}
-    if use_siso:
-        defaults["use_siso"] = True
+
+    # TODO: jwata - Re-enable this logic for Chrome after the GN args config migration.
+    if not settings.project.startswith("chrome"):
+        if use_siso:
+            defaults["use_siso"] = True
+            defaults["use_reclient"] = False
 
     # Function for formating GN config for GN config node creation.
     def format_gn_config(config):

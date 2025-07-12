@@ -49,12 +49,16 @@ class CONTENT_EXPORT PreloadingDecider
   //  Receives and processes ML model score for 'url' target link.
   void OnPreloadingHeuristicsModelDone(const GURL& url, float score);
 
+  // Receives and processes 'url' selected by viewport heuristic.
+  void OnViewportHeuristicTriggered(const GURL& url);
+
   // Sets the new preloading decider observer for testing and returns the old
   // one.
   PreloadingDeciderObserverForTesting* SetObserverForTesting(
       PreloadingDeciderObserverForTesting* observer);
 
-  // Returns the prerenderer for testing.
+  // Returns subcomponents for testing.
+  Prefetcher& GetPrefetcherForTesting() { return prefetcher_; }
   Prerenderer& GetPrerendererForTesting();
 
   // Sets the new prerenderer for testing and returns the old one.
@@ -95,9 +99,22 @@ class CONTENT_EXPORT PreloadingDecider
                            PreloadingConfidence confidence,
                            bool fallback_to_preconnect);
 
-  // Prefetches the |url| if it is safe and eligible to be prefetched. Returns
-  // false if no suitable (given |enacting_predictor|) on-standby candidate is
-  // found for the given |url|, or the Prefetcher does not accept the candidate.
+  // TODO(crbug.com/381687257): 1. Inline the logic in
+  // `GetMatchedPreloadingCandidate` to reduce redundant code. 2. Support NVS
+  // matching logic.
+  // Returns a vector of std::optional<string> of candidates which will be
+  // enacted by the given parameter. This function is used for non-immediate
+  // candidates only.
+  std::vector<std::optional<std::string>>
+  GetMergedSpeculationTagsFromSuitableCandidates(
+      const PreloadingDecider::SpeculationCandidateKey& lookup_key,
+      const PreloadingPredictor& enacting_predictor,
+      PreloadingConfidence confidence);
+
+  // Prefetches the |url| if it is safe and eligible to be prefetched.
+  // Returns false if no suitable (given |enacting_predictor|) on-standby
+  // candidate is found for the given |url|, or the Prefetcher does not
+  // accept the candidate.
   bool MaybePrefetch(const GURL& url,
                      const PreloadingPredictor& enacting_predictor,
                      PreloadingConfidence confidence);
@@ -142,18 +159,32 @@ class CONTENT_EXPORT PreloadingDecider
   void RemoveStandbyCandidate(const SpeculationCandidateKey key);
   void ClearStandbyCandidates();
 
+  // Helper functions to select a prerender/prefetch candidate to be
+  // triggered.
+  std::optional<
+      std::pair<SpeculationCandidateKey, blink::mojom::SpeculationCandidatePtr>>
+  GetMatchedPreloadingCandidate(const SpeculationCandidateKey& lookup_key,
+                                const PreloadingPredictor& enacting_predictor,
+                                PreloadingConfidence confidence) const;
+  std::optional<
+      std::pair<SpeculationCandidateKey, blink::mojom::SpeculationCandidatePtr>>
+  GetMatchedPreloadingCandidateByNoVarySearchHint(
+      const SpeculationCandidateKey& lookup_key,
+      const PreloadingPredictor& enacting_predictor,
+      PreloadingConfidence confidence) const;
+
   // |on_standby_candidates_| stores preloading candidates for each target URL,
-  // action pairs that are safe to perform but are not marked as |kEager| and
-  // should be performed when we are confident enough that the user will most
-  // likely navigate to the target URL.
+  // action pairs that are safe to perform but are not marked as |kImmediate|
+  // and should be performed when we are confident enough that the user will
+  // most likely navigate to the target URL.
   std::map<SpeculationCandidateKey,
            std::vector<blink::mojom::SpeculationCandidatePtr>>
       on_standby_candidates_;
 
   // |nvs_hint_on_standby_candidates_| stores for a URL without query and
   // fragment, action pairs that are safe to perform but are not marked as
-  // |kEager| and should be performed when we are confident enough that the user
-  // will most likely navigate to a URL that matches based on the presence
+  // |kImmediate| and should be performed when we are confident enough that the
+  // user will most likely navigate to a URL that matches based on the presence
   // of No-Vary-Search hint the candidate's URL.
   // This map needs to be kept in sync with the |on_standby_candidates_| map.
   std::map<SpeculationCandidateKey, std::set<SpeculationCandidateKey>>

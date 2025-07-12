@@ -5,9 +5,11 @@
 import 'chrome://history/history.js';
 
 import type {HistoryAppElement} from 'chrome://history/history.js';
-import {BrowserServiceImpl, CrRouter} from 'chrome://history/history.js';
-import {assertEquals, assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
+import {BrowserServiceImpl, CrRouter, HistoryEmbeddingsBrowserProxyImpl, HistoryEmbeddingsPageHandlerRemote} from 'chrome://history/history.js';
+import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
+import {assertDeepEquals, assertEquals, assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import {flushTasks} from 'chrome://webui-test/polymer_test_util.js';
+import {TestMock} from 'chrome://webui-test/test_mock.js';
 import {eventToPromise} from 'chrome://webui-test/test_util.js';
 
 import {TestBrowserService} from './test_browser_service.js';
@@ -15,11 +17,35 @@ import {TestBrowserService} from './test_browser_service.js';
 suite('HistoryAppTest', function() {
   let element: HistoryAppElement;
   let browserService: TestBrowserService;
+  let embeddingsHandler: TestMock<HistoryEmbeddingsPageHandlerRemote>&
+      HistoryEmbeddingsPageHandlerRemote;
+
+  // Force cr-history-embeddings to be in the DOM for testing.
+  async function forceHistoryEmbeddingsElement() {
+    loadTimeData.overrideValues({historyEmbeddingsSearchMinimumWordCount: 0});
+    element.dispatchEvent(new CustomEvent(
+        'change-query',
+        {bubbles: true, composed: true, detail: {search: 'some fake input'}}));
+    return flushTasks();
+  }
 
   setup(() => {
     document.body.innerHTML = window.trustedTypes!.emptyHTML;
+
+    loadTimeData.overrideValues({
+      historyEmbeddingsSearchMinimumWordCount: 2,
+      enableHistoryEmbeddings: true,
+      maybeShowEmbeddingsIph: false,
+    });
+
     browserService = new TestBrowserService();
     BrowserServiceImpl.setInstance(browserService);
+    embeddingsHandler = TestMock.fromClass(HistoryEmbeddingsPageHandlerRemote);
+    HistoryEmbeddingsBrowserProxyImpl.setInstance(
+        new HistoryEmbeddingsBrowserProxyImpl(embeddingsHandler));
+    embeddingsHandler.setResultFor(
+        'search', Promise.resolve({result: {items: []}}));
+
     // Some of the tests below assume the query state is fully reset to empty
     // between tests.
     window.history.replaceState({}, '', '/');
@@ -30,19 +56,21 @@ suite('HistoryAppTest', function() {
   });
 
   test('SetsScrollTarget', async () => {
-    assertEquals(element.$.tabsScrollContainer, element.scrollTarget);
+    assertEquals(
+        element.$.tabsScrollContainer, element.getScrollTargetForTesting());
 
     // 'By group' view shares the same scroll container as default history view.
     element.$.router.selectedPage = 'grouped';
     await flushTasks();
-    assertEquals(element.$.tabsScrollContainer, element.scrollTarget);
+    assertEquals(
+        element.$.tabsScrollContainer, element.getScrollTargetForTesting());
 
     // Switching to synced tabs should change scroll target to it.
     element.$.router.selectedPage = 'syncedTabs';
     await flushTasks();
     assertEquals(
-        element.shadowRoot!.querySelector('history-synced-device-manager'),
-        element.scrollTarget);
+        element.shadowRoot!.querySelector('#syncedDevicesScroll'),
+        element.getScrollTargetForTesting());
   });
 
   test('ShowsHistoryEmbeddings', async () => {
@@ -139,7 +167,8 @@ suite('HistoryAppTest', function() {
         lastUrlVisitTimestamp: 1000,
       },
     }));
-    const removeVisitsArg = await browserService.whenCalled('removeVisits');
+    const removeVisitsArg =
+        await browserService.handler.whenCalled('removeVisits');
     assertEquals(1, removeVisitsArg.length);
     assertEquals('http://google.com', removeVisitsArg[0].url);
     assertEquals(1, removeVisitsArg[0].timestamps.length);
@@ -213,5 +242,132 @@ suite('HistoryAppTest', function() {
     }));
     await flushTasks();
     assertEquals(undefined, historyEmbeddings.timeRangeStart);
+  });
+
+  test('UsesMinWordCount', async () => {
+    loadTimeData.overrideValues({historyEmbeddingsSearchMinimumWordCount: 4});
+    element.dispatchEvent(new CustomEvent('change-query', {
+      bubbles: true,
+      composed: true,
+      detail: {search: 'two words'},
+    }));
+    await flushTasks();
+
+    let historyEmbeddings =
+        element.shadowRoot!.querySelector('cr-history-embeddings');
+    assertFalse(!!historyEmbeddings);
+
+    element.dispatchEvent(new CustomEvent('change-query', {
+      bubbles: true,
+      composed: true,
+      detail: {search: 'at least four words'},
+    }));
+    await flushTasks();
+    historyEmbeddings =
+        element.shadowRoot!.querySelector('cr-history-embeddings');
+    assertTrue(!!historyEmbeddings);
+  });
+
+  test('CountsCharacters', async () => {
+    await forceHistoryEmbeddingsElement();
+
+    function dispatchNativeInput(
+        inputEvent: Partial<InputEvent>, inputValue: string) {
+      element.$.toolbar.dispatchEvent(new CustomEvent(
+          'search-term-native-before-input', {detail: {e: inputEvent}}));
+      element.$.toolbar.dispatchEvent(
+          new CustomEvent('search-term-native-input', {
+            detail: {e: inputEvent, inputValue},
+            composed: true,
+            bubbles: true,
+          }));
+    }
+
+    function getCount() {
+      const historyEmbeddingsElement =
+          element.shadowRoot!.querySelector('cr-history-embeddings')!;
+      return historyEmbeddingsElement.numCharsForQuery;
+    }
+
+    dispatchNativeInput({data: 'a'}, 'a');
+    assertEquals(1, getCount(), 'counts normal characters');
+    dispatchNativeInput({data: 'b'}, 'ab');
+    dispatchNativeInput({data: 'c'}, 'abc');
+    assertEquals(3, getCount(), 'counts additional characters');
+
+    dispatchNativeInput({data: 'pasted text'}, 'pasted text');
+    assertEquals(1, getCount(), 'insert that replaces all text counts as 1');
+
+    dispatchNativeInput({data: 'more text'}, 'pasted text more text');
+    assertEquals(
+        2, getCount(), 'insert that adds to existing input increments count');
+
+    dispatchNativeInput({data: null}, 'pasted text more tex');
+    assertEquals(3, getCount(), 'deletion increments');
+
+    dispatchNativeInput({data: null}, '');
+    assertEquals(0, getCount(), 'deletion of entire input resets counter');
+
+    element.$.toolbar.dispatchEvent(new CustomEvent('search-term-cleared'));
+    assertEquals(0, getCount(), 'resets on clear');
+  });
+
+  test('RegistersAndMaybeShowsPromo', async () => {
+    assertEquals(
+        0, embeddingsHandler.getCallCount('maybeShowFeaturePromo'),
+        'promo is disabled in setup');
+
+    // Recreate the app with the promo enabled.
+    loadTimeData.overrideValues({maybeShowEmbeddingsIph: true});
+    element = document.createElement('history-app');
+    document.body.appendChild(element);
+    await flushTasks();
+    assertDeepEquals(
+        element.getSortedAnchorStatusesForTesting(),
+        [
+          ['kHistorySearchInputElementId', true],
+        ],
+    );
+    await embeddingsHandler.whenCalled('maybeShowFeaturePromo');
+    assertEquals(
+        1, embeddingsHandler.getCallCount('maybeShowFeaturePromo'),
+        'promo is disabled in setup');
+  });
+
+  test('PassesDisclaimerLinkClicksToEmbeddings', async () => {
+    await forceHistoryEmbeddingsElement();
+    const historyEmbeddingsElement =
+        element.shadowRoot!.querySelector('cr-history-embeddings');
+    assertTrue(!!historyEmbeddingsElement);
+    assertFalse(historyEmbeddingsElement.forceSuppressLogging);
+    element.$.historyEmbeddingsDisclaimerLink.click();
+    assertTrue(historyEmbeddingsElement.forceSuppressLogging);
+  });
+
+  test('PassesDisclaimerLinkAuxClicksToEmbeddings', async () => {
+    await forceHistoryEmbeddingsElement();
+    const historyEmbeddingsElement =
+        element.shadowRoot!.querySelector('cr-history-embeddings');
+    assertTrue(!!historyEmbeddingsElement);
+    assertFalse(historyEmbeddingsElement.forceSuppressLogging);
+    element.$.historyEmbeddingsDisclaimerLink.dispatchEvent(
+        new MouseEvent('auxclick'));
+    assertTrue(historyEmbeddingsElement.forceSuppressLogging);
+  });
+
+  test('SetsDateTimeFormatForEmbeddings', async () => {
+    await forceHistoryEmbeddingsElement();
+    const historyEmbeddingsElement =
+        element.shadowRoot!.querySelector('cr-history-embeddings');
+    assertTrue(!!historyEmbeddingsElement);
+    assertFalse(historyEmbeddingsElement.showRelativeTimes);
+
+    element.$.router.selectedPage = 'grouped';
+    await flushTasks();
+    assertTrue(historyEmbeddingsElement.showRelativeTimes);
+
+    element.$.router.selectedPage = 'history';
+    await flushTasks();
+    assertFalse(historyEmbeddingsElement.showRelativeTimes);
   });
 });

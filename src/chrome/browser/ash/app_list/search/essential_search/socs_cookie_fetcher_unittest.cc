@@ -7,6 +7,7 @@
 #include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ref.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/task_environment.h"
 #include "chrome/browser/signin/chrome_signin_client_factory.h"
@@ -118,16 +119,15 @@ void SocsCookieFetcherTest::SetUp() {
   profile_manager_ = std::make_unique<TestingProfileManager>(
       TestingBrowserProcess::GetGlobal());
   ASSERT_TRUE(profile_manager_->SetUp());
-  TestingProfile::TestingFactories factories =
+  profile_ = profile_manager_->CreateTestingProfile(
+      kEmail, /*prefs=*/{}, kEmail16,
+      /*avatar_id=*/0,
       IdentityTestEnvironmentProfileAdaptor::
-          GetIdentityTestEnvironmentFactories();
-  factories.push_back(
-      {ChromeSigninClientFactory::GetInstance(),
-       base::BindRepeating(&BuildChromeSigninClientWithURLLoader,
-                           &url_loader_factory_)});
-  profile_ =
-      profile_manager_->CreateTestingProfile(kEmail, /*prefs=*/{}, kEmail16,
-                                             /*avatar_id=*/0, factories);
+          GetIdentityTestEnvironmentFactoriesWithAppendedFactories(
+              {TestingProfile::TestingFactory{
+                  ChromeSigninClientFactory::GetInstance(),
+                  base::BindRepeating(&BuildChromeSigninClientWithURLLoader,
+                                      &url_loader_factory_)}}));
 
   identity_test_env_adaptor_ =
       std::make_unique<IdentityTestEnvironmentProfileAdaptor>(profile_.get());

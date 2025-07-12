@@ -9,7 +9,6 @@ import static org.chromium.android_webview.test.AwActivityTestRule.CHECK_INTERVA
 import android.app.Activity;
 import android.content.Context;
 import android.content.ContextWrapper;
-import android.os.Build;
 import android.os.ResultReceiver;
 import android.util.Pair;
 import android.view.Window;
@@ -25,24 +24,24 @@ import org.junit.After;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.junit.runners.Parameterized.UseParametersRunnerFactory;
 
 import org.chromium.android_webview.AwContents;
-import org.chromium.android_webview.gfx.AwGLFunctor;
+import org.chromium.android_webview.gfx.AwDrawFnImpl;
 import org.chromium.android_webview.test.AwActivityTestRule.TestDependencyFactory;
 import org.chromium.base.BaseFeatures;
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Criteria;
 import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.CriteriaNotSatisfiedException;
+import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.DoNotBatch;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.Features;
 import org.chromium.content_public.browser.ImeAdapter;
 import org.chromium.content_public.browser.WebContentsAccessibility;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.content_public.common.ContentUrlConstants;
 import org.chromium.ui.accessibility.AccessibilityState;
 
@@ -61,7 +60,6 @@ import java.util.concurrent.Callable;
 @DoNotBatch(reason = "GC tests require full restarts")
 public class AwContentsGarbageCollectionTest extends AwParameterizedTest {
     @Rule public AwActivityTestRule mActivityTestRule;
-    @Rule public TestRule mProcessor = new Features.InstrumentationProcessor();
 
     public AwContentsGarbageCollectionTest(AwSettingsMutation param) {
         mActivityTestRule =
@@ -167,7 +165,7 @@ public class AwContentsGarbageCollectionTest extends AwParameterizedTest {
                     // Instead, we simply emulate Android's behavior by keeping strong references.
                     // See crbug.com/595613 for details.
                     ResultReceiver resultReceiver =
-                            TestThreadUtils.runOnUiThreadBlocking(
+                            ThreadUtils.runOnUiThreadBlocking(
                                     () ->
                                             ImeAdapter.fromWebContents(
                                                             containerView.getWebContents())
@@ -190,7 +188,7 @@ public class AwContentsGarbageCollectionTest extends AwParameterizedTest {
                     mActivityTestRule.loadUrlAsync(
                             containerView.getAwContents(),
                             ContentUrlConstants.ABOUT_BLANK_DISPLAY_URL);
-                    TestThreadUtils.runOnUiThreadBlocking(
+                    ThreadUtils.runOnUiThreadBlocking(
                             () -> {
                                 // Enable a11y for testing.
                                 AccessibilityState.setIsAnyAccessibilityServiceEnabledForTesting(
@@ -297,6 +295,7 @@ public class AwContentsGarbageCollectionTest extends AwParameterizedTest {
     @DisableHardwareAcceleration
     @SmallTest
     @Feature({"AndroidWebView"})
+    @SuppressWarnings("UnusedMethod")
     public void testGcAfterUsingJavascriptObject() throws Throwable {
         runAwContentsGcTest(
                 () -> {
@@ -316,8 +315,8 @@ public class AwContentsGarbageCollectionTest extends AwParameterizedTest {
                             return mAwContents;
                         }
 
-                        private int mValue;
-                        private AwContents mAwContents;
+                        private final int mValue;
+                        private final AwContents mAwContents;
                     }
                     String html = "<html>Hello World</html>";
                     TestAwContentsClient contentsClient = new TestAwContentsClient();
@@ -347,6 +346,7 @@ public class AwContentsGarbageCollectionTest extends AwParameterizedTest {
     @Test
     @DisableHardwareAcceleration
     @LargeTest
+    @DisabledTest(message = "crbug.com/353484967")
     public void testActivityDoesNotLeak() throws Throwable {
         // Test that Activity should not leak if view is still attached after activity is destroyed.
         ReferenceQueue<Activity> referenceQueue = new ReferenceQueue<>();
@@ -362,8 +362,7 @@ public class AwContentsGarbageCollectionTest extends AwParameterizedTest {
                     containerView.getAwContents(), ContentUrlConstants.ABOUT_BLANK_DISPLAY_URL);
 
             mActivityTestRule.recreateActivity();
-            boolean destroyed =
-                    TestThreadUtils.runOnUiThreadBlockingNoException(() -> activity.isDestroyed());
+            boolean destroyed = ThreadUtils.runOnUiThreadBlocking(() -> activity.isDestroyed());
             Assert.assertTrue(destroyed);
         }
 
@@ -392,7 +391,7 @@ public class AwContentsGarbageCollectionTest extends AwParameterizedTest {
             removeAllViews();
 
             // This clears a reference that InputMethodManager holds onto focused view.
-            TestThreadUtils.runOnUiThreadBlocking(
+            ThreadUtils.runOnUiThreadBlocking(
                     () -> {
                         Window window = mActivityTestRule.getActivity().getWindow();
                         window.addFlags(WindowManager.LayoutParams.FLAG_LOCAL_FOCUS_MODE);
@@ -402,9 +401,7 @@ public class AwContentsGarbageCollectionTest extends AwParameterizedTest {
 
             gcAndCheckAllAwContentsDestroyed();
         } finally {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                Reference.reachabilityFence(heldObject);
-            }
+            Reference.reachabilityFence(heldObject);
         }
     }
 
@@ -421,11 +418,11 @@ public class AwContentsGarbageCollectionTest extends AwParameterizedTest {
                     Pair<Integer, Integer> nativeCounts = null;
                     try {
                         nativeCounts =
-                                TestThreadUtils.runOnUiThreadBlocking(
+                                ThreadUtils.runOnUiThreadBlocking(
                                         () -> {
                                             return Pair.create(
                                                     AwContents.getNativeInstanceCount(),
-                                                    AwGLFunctor.getNativeInstanceCount());
+                                                    AwDrawFnImpl.getReferenceInstanceCount());
                                         });
                     } catch (Exception e) {
                         throw new CriteriaNotSatisfiedException(e);
@@ -433,7 +430,7 @@ public class AwContentsGarbageCollectionTest extends AwParameterizedTest {
                     Criteria.checkThat(
                             "AwContents count", (int) nativeCounts.first, Matchers.is(0));
                     Criteria.checkThat(
-                            "AwGLFunctor count", (int) nativeCounts.second, Matchers.is(0));
+                            "DrawFunctor count", (int) nativeCounts.second, Matchers.is(0));
                 };
 
         // Depending on a single gc call can make this test flaky. It's possible
@@ -446,7 +443,7 @@ public class AwContentsGarbageCollectionTest extends AwParameterizedTest {
                 CriteriaHelper.pollInstrumentationThread(
                         criteria, timeoutBetweenGcMs, CHECK_INTERVAL);
                 break;
-            } catch (AssertionError e) {
+            } catch (CriteriaHelper.TimeoutException e) {
                 Runtime.getRuntime().gc();
             }
         }

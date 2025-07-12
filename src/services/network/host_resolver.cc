@@ -142,10 +142,7 @@ void HostResolver::MdnsListen(
     net::DnsQueryType query_type,
     mojo::PendingRemote<mojom::MdnsListenClient> response_client,
     MdnsListenCallback callback) {
-#if !BUILDFLAG(ENABLE_MDNS)
-  NOTREACHED_IN_MIGRATION();
-#endif  // !BUILDFLAG(ENABLE_MDNS)
-
+#if BUILDFLAG(ENABLE_MDNS)
   auto listener = std::make_unique<HostResolverMdnsListener>(internal_resolver_,
                                                              host, query_type);
   int rv =
@@ -158,6 +155,9 @@ void HostResolver::MdnsListen(
   }
 
   std::move(callback).Run(rv);
+#else
+  NOTREACHED();
+#endif  // BUILDFLAG(ENABLE_MDNS)
 }
 
 size_t HostResolver::GetNumOutstandingRequestsForTesting() const {
@@ -180,13 +180,13 @@ void HostResolver::OnResolveHostComplete(ResolveHostRequest* request,
   DCHECK_NE(net::ERR_IO_PENDING, error);
 
   auto found_request = requests_.find(request);
-  DCHECK(found_request != requests_.end());
+  CHECK(found_request != requests_.end());
   requests_.erase(found_request);
 }
 
 void HostResolver::OnMdnsListenerCancelled(HostResolverMdnsListener* listener) {
   auto found_listener = listeners_.find(listener);
-  DCHECK(found_listener != listeners_.end());
+  CHECK(found_listener != listeners_.end());
   listeners_.erase(found_listener);
 }
 

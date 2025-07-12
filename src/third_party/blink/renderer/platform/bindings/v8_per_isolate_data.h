@@ -26,12 +26,13 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_BINDINGS_V8_PER_ISOLATE_DATA_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_BINDINGS_V8_PER_ISOLATE_DATA_H_
 
+#include <array>
 #include <memory>
 
+#include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "gin/public/gin_embedders.h"
 #include "gin/public/isolate_holder.h"
-#include "third_party/blink/renderer/platform/bindings/active_script_wrappable_manager.h"
 #include "third_party/blink/renderer/platform/bindings/dom_wrapper_world.h"
 #include "third_party/blink/renderer/platform/bindings/runtime_call_stats.h"
 #include "third_party/blink/renderer/platform/bindings/script_regexp.h"
@@ -56,6 +57,7 @@ class TaskAttributionTracker;
 
 namespace blink {
 
+class DictionaryConversionContext;
 class DOMWrapperWorld;
 class ScriptState;
 class StringCache;
@@ -103,9 +105,11 @@ class PLATFORM_EXPORT V8PerIsolateData final {
 
   static v8::Isolate* Initialize(scoped_refptr<base::SingleThreadTaskRunner>,
                                  scoped_refptr<base::SingleThreadTaskRunner>,
+                                 scoped_refptr<base::SingleThreadTaskRunner>,
                                  V8ContextSnapshotMode,
                                  v8::CreateHistogramCallback,
-                                 v8::AddHistogramSampleCallback);
+                                 v8::AddHistogramSampleCallback,
+                                 std::unique_ptr<v8::CppHeap>);
 
   static V8PerIsolateData* From(v8::Isolate* isolate) {
     DCHECK(isolate);
@@ -189,23 +193,6 @@ class PLATFORM_EXPORT V8PerIsolateData final {
   void SetPasswordRegexp(ScriptRegexp*);
   ScriptRegexp* GetPasswordRegexp();
 
-  ActiveScriptWrappableManager* GetActiveScriptWrappableManager() const {
-    return active_script_wrappable_manager_;
-  }
-
-  void SetActiveScriptWrappableManager(ActiveScriptWrappableManager* manager) {
-    DCHECK(manager);
-    active_script_wrappable_manager_ = manager;
-  }
-
-  void SetGCCallbacks(v8::Isolate* isolate,
-                      v8::Isolate::GCCallback prologue_callback,
-                      v8::Isolate::GCCallback epilogue_callback);
-
-  void EnterGC() { gc_callback_depth_++; }
-
-  void LeaveGC() { gc_callback_depth_--; }
-
   // Set the factory function used to initialize task attribution for the
   // isolate upon creating main thread `V8PerIsolateData`. This should be set
   // once per process before creating any isolates.
@@ -238,19 +225,38 @@ class PLATFORM_EXPORT V8PerIsolateData final {
   };
 
   UserData* GetUserData(UserData::Key key) const {
-    return user_data_[static_cast<size_t>(key)];
+    // SAFETY: user_data_ size based upon UserData::Key::kNumberOfKeys.
+    return UNSAFE_BUFFERS(user_data_[static_cast<size_t>(key)]);
   }
 
   void SetUserData(UserData::Key key, UserData* data) {
-    user_data_[static_cast<size_t>(key)] = data;
+    // SAFETY: user_data_ size based upon UserData::Key::kNumberOfKeys.
+    UNSAFE_BUFFERS(user_data_[static_cast<size_t>(key)]) = data;
+  }
+
+  void SetTopOfDictionaryStack(DictionaryConversionContext* top) {
+    top_of_dictionary_stack_ = top;
+  }
+  DictionaryConversionContext* TopOfDictionaryStack() const {
+    return top_of_dictionary_stack_;
+  }
+
+  void SetOmitExceptionContextInformation(bool omit) {
+    CHECK_NE(omit_exception_context_information_, omit);
+    omit_exception_context_information_ = omit;
+  }
+  bool OmitExceptionContextInformation() const {
+    return omit_exception_context_information_;
   }
 
  private:
   V8PerIsolateData(scoped_refptr<base::SingleThreadTaskRunner>,
                    scoped_refptr<base::SingleThreadTaskRunner>,
+                   scoped_refptr<base::SingleThreadTaskRunner>,
                    V8ContextSnapshotMode,
                    v8::CreateHistogramCallback,
-                   v8::AddHistogramSampleCallback);
+                   v8::AddHistogramSampleCallback,
+                   std::unique_ptr<v8::CppHeap>);
   ~V8PerIsolateData();
 
   // A really simple hash function, which makes lookups faster. The set of
@@ -274,6 +280,14 @@ class PLATFORM_EXPORT V8PerIsolateData final {
       const V8TemplateMap& map);
 
   V8ContextSnapshotMode v8_context_snapshot_mode_;
+
+  // The thread_debugger_ has to be destructed after the IsolateHolder, and
+  // therefore has to be defined before the IsolateHolder. The reason is that
+  // when the IsolateHolder gets destructed, all objects allocated on the
+  // CppHeap get deallocated. AsyncTaskContext objects are allocated on the
+  // CppHeap, and these objects load the ThreadDebugger from the
+  // V8PerIsolateData in its destructor.
+  std::unique_ptr<ThreadDebugger> thread_debugger_;
 
   // This isolate_holder_ must be initialized before initializing some other
   // members below.
@@ -305,22 +319,19 @@ class PLATFORM_EXPORT V8PerIsolateData final {
 
   bool is_handling_recursion_level_error_ = false;
 
-  std::unique_ptr<ThreadDebugger> thread_debugger_;
   Persistent<ScriptRegexp> password_regexp_;
-  Persistent<UserData>
-      user_data_[static_cast<size_t>(UserData::Key::kNumberOfKeys)];
-
-  Persistent<ActiveScriptWrappableManager> active_script_wrappable_manager_;
+  std::array<Persistent<UserData>,
+             static_cast<size_t>(UserData::Key::kNumberOfKeys)>
+      user_data_;
 
   RuntimeCallStats runtime_call_stats_;
-
-  v8::Isolate::GCCallback prologue_callback_;
-  v8::Isolate::GCCallback epilogue_callback_;
-  size_t gc_callback_depth_ = 0;
 
   Persistent<DOMWrapperWorld> main_world_;
 
   std::unique_ptr<scheduler::TaskAttributionTracker> task_attribution_tracker_;
+
+  raw_ptr<DictionaryConversionContext> top_of_dictionary_stack_ = nullptr;
+  bool omit_exception_context_information_ = false;
 };
 
 // Creates a histogram for V8. The returned value is a base::Histogram, but

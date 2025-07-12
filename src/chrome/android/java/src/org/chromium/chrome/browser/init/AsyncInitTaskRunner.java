@@ -6,12 +6,11 @@ package org.chromium.chrome.browser.init;
 
 import androidx.annotation.VisibleForTesting;
 
-import org.chromium.base.BuildInfo;
 import org.chromium.base.Callback;
 import org.chromium.base.ContextUtils;
+import org.chromium.base.DeviceInfo;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.library_loader.LibraryLoader;
-import org.chromium.base.library_loader.LibraryPrefetcher;
 import org.chromium.base.library_loader.ProcessInitException;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
@@ -40,11 +39,6 @@ public abstract class AsyncInitTaskRunner {
     @VisibleForTesting
     boolean shouldFetchVariationsSeedDuringFirstRun() {
         return VersionInfo.isOfficialBuild();
-    }
-
-    @VisibleForTesting
-    void prefetchLibrary() {
-        LibraryPrefetcher.asyncPrefetchLibrariesToMemory();
     }
 
     private class FetchSeedTask implements Runnable {
@@ -78,9 +72,10 @@ public abstract class AsyncInitTaskRunner {
             if (VersionInfo.isDevBuild()) {
                 return "dev";
             }
-            // TODO(crbug.com/40936710): Remove this if block after automotive beta ends.
-            if (VersionInfo.isBetaBuild() && BuildInfo.getInstance().isAutomotive) {
-                return "stable";
+            // TODO(crbug.com/389565104): Remove this if block when ready to move desktop to stable
+            // builds.
+            if (VersionInfo.isStableBuild() && DeviceInfo.isDesktop()) {
+                return "dev";
             }
             if (VersionInfo.isBetaBuild()) {
                 return "beta";
@@ -110,7 +105,7 @@ public abstract class AsyncInitTaskRunner {
             ChromeActivitySessionTracker sessionTracker =
                     ChromeActivitySessionTracker.getInstance();
             sessionTracker.getVariationsRestrictModeValue(
-                    new Callback<String>() {
+                    new Callback<>() {
                         @Override
                         public void onResult(String restrictMode) {
                             mFetchSeedTask = new FetchSeedTask(restrictMode);
@@ -148,17 +143,6 @@ public abstract class AsyncInitTaskRunner {
         try {
             LibraryLoader.getInstance().getMediator().ensureInitializedInMainProcess();
             LibraryLoader.getInstance().ensureInitialized();
-            // The prefetch is done after the library load for two reasons:
-            // - It is easier to know the library location after it has
-            // been loaded.
-            // - Testing has shown that this gives the best compromise,
-            // by avoiding performance regression on any tested
-            // device, and providing performance improvement on
-            // some. Doing it earlier delays UI inflation and more
-            // generally startup on some devices, most likely by
-            // competing for IO.
-            // For experimental results, see http://crbug.com/460438.
-            prefetchLibrary();
         } catch (ProcessInitException e) {
             return e;
         }
@@ -181,7 +165,7 @@ public abstract class AsyncInitTaskRunner {
                 // All tasks succeeded: Finish tasks, call onSuccess(), and reach terminal state.
                 if (mAllocateChildConnection) {
                     ChildProcessLauncherHelper.warmUpOnAnyThread(
-                            ContextUtils.getApplicationContext(), true);
+                            ContextUtils.getApplicationContext());
                 }
                 onSuccess();
                 mNumPendingSuccesses = -1;

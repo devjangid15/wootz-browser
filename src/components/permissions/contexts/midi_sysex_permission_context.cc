@@ -8,17 +8,17 @@
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "content/public/browser/child_process_security_policy.h"
-#include "third_party/blink/public/mojom/permissions_policy/permissions_policy_feature.mojom.h"
+#include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom.h"
 #include "url/gurl.h"
 
 namespace permissions {
 
 MidiSysexPermissionContext::MidiSysexPermissionContext(
     content::BrowserContext* browser_context)
-    : PermissionContextBase(
+    : ContentSettingPermissionContextBase(
           browser_context,
           ContentSettingsType::MIDI_SYSEX,
-          blink::mojom::PermissionsPolicyFeature::kMidiFeature) {}
+          network::mojom::PermissionsPolicyFeature::kMidiFeature) {}
 
 MidiSysexPermissionContext::~MidiSysexPermissionContext() = default;
 

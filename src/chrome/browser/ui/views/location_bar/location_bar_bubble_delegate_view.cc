@@ -7,6 +7,7 @@
 #include "build/build_config.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
 #include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
@@ -60,7 +61,8 @@ LocationBarBubbleDelegateView::WebContentMouseHandler::WebContentMouseHandler(
   DCHECK(web_contents_);
   event_monitor_ = views::EventMonitor::CreateWindowMonitor(
       this, web_contents_->GetTopLevelNativeWindow(),
-      {ui::ET_MOUSE_PRESSED, ui::ET_KEY_PRESSED, ui::ET_TOUCH_PRESSED});
+      {ui::EventType::kMousePressed, ui::EventType::kKeyPressed,
+       ui::EventType::kTouchPressed});
 }
 
 LocationBarBubbleDelegateView::WebContentMouseHandler::
@@ -90,9 +92,11 @@ LocationBarBubbleDelegateView::LocationBarBubbleDelegateView(
     Browser* browser = chrome::FindBrowserWithTab(web_contents);
     // |browser| can be null in tests.
     if (browser) {
-      fullscreen_observation_.Observe(
-          browser->exclusive_access_manager()->fullscreen_controller());
-      fullscreen_controller_ = browser->exclusive_access_manager()
+      fullscreen_observation_.Observe(browser->GetFeatures()
+                                          .exclusive_access_manager()
+                                          ->fullscreen_controller());
+      fullscreen_controller_ = browser->GetFeatures()
+                                   .exclusive_access_manager()
                                    ->fullscreen_controller()
                                    ->GetWeakPtr();
     }
@@ -148,8 +152,9 @@ void LocationBarBubbleDelegateView::OnFullscreenStateChanged() {
 
 void LocationBarBubbleDelegateView::OnVisibilityChanged(
     content::Visibility visibility) {
-  if (visibility == content::Visibility::HIDDEN)
+  if (visibility == content::Visibility::HIDDEN) {
     CloseBubble();
+  }
 }
 
 void LocationBarBubbleDelegateView::WebContentsDestroyed() {
@@ -181,8 +186,9 @@ gfx::Rect LocationBarBubbleDelegateView::GetAnchorBoundsInScreen() const {
 
 void LocationBarBubbleDelegateView::AdjustForFullscreen(
     const gfx::Rect& screen_bounds) {
-  if (GetAnchorView())
+  if (GetAnchorView()) {
     return;
+  }
 
   const int kBubblePaddingFromScreenEdge = 20;
   int horizontal_offset = width() / 2 + kBubblePaddingFromScreenEdge;
@@ -193,7 +199,9 @@ void LocationBarBubbleDelegateView::AdjustForFullscreen(
 }
 
 void LocationBarBubbleDelegateView::CloseBubble() {
-  GetWidget()->Close();
+  if (auto* const widget = GetWidget()) {
+    widget->Close();
+  }
 }
 
 void LocationBarBubbleDelegateView::SetCloseOnMainFrameOriginNavigation(

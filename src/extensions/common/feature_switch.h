@@ -28,7 +28,6 @@ namespace extensions {
 // 4. Otherwise, the default value is used.
 class FeatureSwitch {
  public:
-  static FeatureSwitch* force_dev_mode_highlighting();
   static FeatureSwitch* prompt_for_external_extensions();
   static FeatureSwitch* embedded_extension_options();
   static FeatureSwitch* trace_app_source();
@@ -58,7 +57,7 @@ class FeatureSwitch {
     FeatureSwitch::OverrideValue previous_value_;
   };
 
-  // |switch_name| can be null, in which case the feature is controlled solely
+  // `switch_name` can be null, in which case the feature is controlled solely
   // by the default and override values.
   FeatureSwitch(const char* switch_name,
                 DefaultValue default_value);

@@ -6,7 +6,6 @@ package org.chromium.chrome.browser.touch_to_fill;
 
 import static org.chromium.chrome.browser.touch_to_fill.TouchToFillProperties.CredentialProperties.CREDENTIAL;
 import static org.chromium.chrome.browser.touch_to_fill.TouchToFillProperties.CredentialProperties.FAVICON_OR_FALLBACK;
-import static org.chromium.chrome.browser.touch_to_fill.TouchToFillProperties.CredentialProperties.FORMATTED_ORIGIN;
 import static org.chromium.chrome.browser.touch_to_fill.TouchToFillProperties.CredentialProperties.ITEM_COLLECTION_INFO;
 import static org.chromium.chrome.browser.touch_to_fill.TouchToFillProperties.CredentialProperties.ON_CLICK_LISTENER;
 import static org.chromium.chrome.browser.touch_to_fill.TouchToFillProperties.CredentialProperties.SHOW_SUBMIT_BUTTON;
@@ -27,7 +26,9 @@ import static org.chromium.chrome.browser.touch_to_fill.TouchToFillProperties.We
 import static org.chromium.chrome.browser.touch_to_fill.TouchToFillProperties.WebAuthnCredentialProperties.WEBAUTHN_FAVICON_OR_FALLBACK;
 import static org.chromium.chrome.browser.touch_to_fill.TouchToFillProperties.WebAuthnCredentialProperties.WEBAUTHN_ITEM_COLLECTION_INFO;
 
+import android.content.Context;
 import android.text.Html;
+import android.text.TextUtils;
 import android.text.method.PasswordTransformationMethod;
 import android.view.View;
 import android.view.ViewGroup;
@@ -36,6 +37,7 @@ import android.widget.TextView;
 
 import androidx.appcompat.content.res.AppCompatResources;
 
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.touch_to_fill.TouchToFillProperties.FaviconOrFallback;
 import org.chromium.chrome.browser.touch_to_fill.TouchToFillProperties.ItemType;
 import org.chromium.chrome.browser.touch_to_fill.TouchToFillProperties.MorePasskeysProperties;
@@ -44,8 +46,6 @@ import org.chromium.chrome.browser.touch_to_fill.data.Credential;
 import org.chromium.chrome.browser.touch_to_fill.data.WebauthnCredential;
 import org.chromium.chrome.browser.ui.favicon.FaviconUtils;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
-import org.chromium.components.webauthn.CredManSupport;
-import org.chromium.components.webauthn.cred_man.CredManSupportProvider;
 import org.chromium.ui.modelutil.MVCListAdapter;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
@@ -70,7 +70,10 @@ class TouchToFillViewBinder {
             view.setDismissHandler(model.get(DISMISS_HANDLER));
         } else if (propertyKey == VISIBLE) {
             boolean visibilityChangeSuccessful = view.setVisible(model.get(VISIBLE));
-            if (!visibilityChangeSuccessful && model.get(VISIBLE)) {
+            if (!visibilityChangeSuccessful
+                    && model.get(VISIBLE)
+                    && !ChromeFeatureList.isEnabled(
+                            ChromeFeatureList.PASSWORD_FORM_GROUPED_AFFILIATIONS)) {
                 assert (model.get(DISMISS_HANDLER) != null);
                 model.get(DISMISS_HANDLER).onResult(BottomSheetController.StateChangeReason.NONE);
             }
@@ -155,6 +158,9 @@ class TouchToFillViewBinder {
             PropertyModel model, View view, PropertyKey propertyKey) {
         Credential credential = model.get(CREDENTIAL);
         if (propertyKey == FAVICON_OR_FALLBACK) {
+            assert !credential.isBackupCredential()
+                    : "Recovery credentials should not have "
+                            + "favicons, but should instead display the history icon.";
             ImageView imageView = view.findViewById(R.id.favicon);
             FaviconOrFallback data = model.get(FAVICON_OR_FALLBACK);
             imageView.setImageDrawable(
@@ -168,14 +174,23 @@ class TouchToFillViewBinder {
         } else if (propertyKey == ON_CLICK_LISTENER) {
             view.setOnClickListener(
                     clickedView -> model.get(ON_CLICK_LISTENER).onResult(credential));
-        } else if (propertyKey == FORMATTED_ORIGIN) {
-            TextView pslOriginText = view.findViewById(R.id.credential_origin);
-            pslOriginText.setText(model.get(FORMATTED_ORIGIN));
-            pslOriginText.setVisibility(credential.isExactMatch() ? View.GONE : View.VISIBLE);
         } else if (propertyKey == CREDENTIAL || propertyKey == ITEM_COLLECTION_INFO) {
             TextView pslOriginText = view.findViewById(R.id.credential_origin);
             pslOriginText.setText(credential.getDisplayName());
-            pslOriginText.setVisibility(credential.isExactMatch() ? View.GONE : View.VISIBLE);
+            pslOriginText.setVisibility(
+                    credential.isExactMatch() || credential.isBackupCredential()
+                            ? View.GONE
+                            : View.VISIBLE);
+
+            TextView recoveryLabel = view.findViewById(R.id.recovery_password_label);
+            recoveryLabel.setText(
+                    view.getContext().getString(R.string.touch_to_fill_recovery_password_label));
+            recoveryLabel.setVisibility(credential.isBackupCredential() ? View.VISIBLE : View.GONE);
+
+            if (credential.isBackupCredential()) {
+                ImageView imageView = view.findViewById(R.id.favicon);
+                imageView.setImageResource(R.drawable.ic_history_24dp);
+            }
 
             TextView usernameText = view.findViewById(R.id.username);
             usernameText.setText(credential.getFormattedUsername());
@@ -184,28 +199,49 @@ class TouchToFillViewBinder {
             passwordText.setText(credential.getPassword());
             passwordText.setTransformationMethod(new PasswordTransformationMethod());
 
-            String label =
-                    view.getContext()
-                            .getString(
-                                    R.string
-                                            .touch_to_fill_password_credential_accessibility_description,
-                                    credential.getFormattedUsername());
-            FillableItemCollectionInfo collectionInfo = model.get(ITEM_COLLECTION_INFO);
-            String contentDescription =
-                    collectionInfo == null
-                            ? label
-                            : view.getContext()
-                                    .getString(
-                                            R.string.touch_to_fill_a11y_item_collection_info,
-                                            label,
-                                            collectionInfo.getPosition(),
-                                            collectionInfo.getTotal());
-            view.setContentDescription(contentDescription);
+            view.setContentDescription(
+                    createContentDescription(
+                            credential, model.get(ITEM_COLLECTION_INFO), view.getContext()));
         } else if (propertyKey == SHOW_SUBMIT_BUTTON) {
             // Whether Touch To Fill should auto-submit a form doesn't affect the credentials list.
         } else {
             assert false : "Unhandled update to property:" + propertyKey;
         }
+    }
+
+    private static String createContentDescription(
+            Credential credential, FillableItemCollectionInfo collectionInfo, Context context) {
+        String label = createLabelForContentDescription(credential, context);
+
+        String contentDescription =
+                collectionInfo == null
+                        ? label
+                        : context.getString(
+                                R.string.touch_to_fill_a11y_item_collection_info,
+                                label,
+                                collectionInfo.getPosition(),
+                                collectionInfo.getTotal());
+        return contentDescription;
+    }
+
+    private static String createLabelForContentDescription(Credential credential, Context context) {
+        if (TextUtils.isEmpty(credential.getDisplayName())) {
+            int stringId =
+                    credential.isBackupCredential()
+                            ? R.string
+                                    .touch_to_fill_recovery_password_credential_accessibility_description
+                            : R.string.touch_to_fill_password_credential_accessibility_description;
+            return context.getString(stringId, credential.getFormattedUsername());
+        }
+
+        int stringId =
+                credential.isBackupCredential()
+                        ? R.string
+                                .touch_to_fill_recovery_password_credential_accessibility_description_with_url
+                        : R.string
+                                .touch_to_fill_password_credential_accessibility_description_with_url;
+        return context.getString(
+                stringId, credential.getFormattedUsername(), credential.getDisplayName());
     }
 
     /**
@@ -239,7 +275,7 @@ class TouchToFillViewBinder {
             usernameText.setText(credential.getUsername());
             TextView descriptionText = view.findViewById(R.id.password_or_context);
 
-            descriptionText.setText(getPasskeyDescriptionTextId());
+            descriptionText.setText(R.string.touch_to_fill_sheet_passkey_credential_context);
 
             String label =
                     view.getContext()
@@ -323,7 +359,6 @@ class TouchToFillViewBinder {
                                             ? R.string.touch_to_fill_signin
                                             : R.string.touch_to_fill_continue));
         } else if (propertyKey == FAVICON_OR_FALLBACK
-                || propertyKey == FORMATTED_ORIGIN
                 || propertyKey == CREDENTIAL
                 || propertyKey == WEBAUTHN_CREDENTIAL
                 || propertyKey == WEBAUTHN_FAVICON_OR_FALLBACK
@@ -392,12 +427,6 @@ class TouchToFillViewBinder {
         } else {
             assert false : "Unhandled update to property:" + key;
         }
-    }
-
-    private static int getPasskeyDescriptionTextId() {
-        return CredManSupportProvider.getCredManSupport() == CredManSupport.PARALLEL_WITH_FIDO_2
-                ? R.string.touch_to_fill_sheet_passkey_credential_context
-                : R.string.touch_to_fill_sheet_webauthn_credential_context;
     }
 
     private TouchToFillViewBinder() {}

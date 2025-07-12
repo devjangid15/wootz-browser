@@ -17,7 +17,6 @@
 
 #include "base/apple/scoped_mach_port.h"
 #include "base/check_op.h"
-#include "base/debug/stack_trace.h"
 #include "base/feature_list.h"
 #include "base/mac/mac_util.h"
 #include "base/no_destructor.h"
@@ -101,25 +100,11 @@ std::string SysInfo::OperatingSystemArchitecture() {
 }
 
 // static
-uint64_t SysInfo::AmountOfPhysicalMemoryImpl() {
-  struct host_basic_info hostinfo;
-  mach_msg_type_number_t count = HOST_BASIC_INFO_COUNT;
-  base::apple::ScopedMachSendRight host(mach_host_self());
-  int result = host_info(host.get(), HOST_BASIC_INFO,
-                         reinterpret_cast<host_info_t>(&hostinfo), &count);
-  if (result != KERN_SUCCESS) {
-    NOTREACHED_IN_MIGRATION();
-    return 0;
-  }
-  DCHECK_EQ(HOST_BASIC_INFO_COUNT, count);
-  return hostinfo.max_mem;
-}
-
-// static
 uint64_t SysInfo::AmountOfAvailablePhysicalMemoryImpl() {
   SystemMemoryInfoKB info;
-  if (!GetSystemMemoryInfo(&info))
+  if (!GetSystemMemoryInfo(&info)) {
     return 0;
+  }
   // We should add inactive file-backed memory also but there is no such
   // information from Mac OS unfortunately.
   return checked_cast<uint64_t>(info.free + info.speculative) * 1024;
@@ -132,16 +117,10 @@ std::string SysInfo::CPUModelName() {
 
 // static
 std::string SysInfo::HardwareModelName() {
-  // The old "hw.machine" and "hw.model" sysctls are discouraged in favor of the
-  // new "hw.product" and "hw.target". See
-  // https://github.com/apple-oss-distributions/xnu/blob/aca3beaa3dfbd42498b42c5e5ce20a938e6554e5/bsd/sys/sysctl.h#L1168-L1169
-  // and
-  // https://github.com/apple-oss-distributions/xnu/blob/aca3beaa3dfbd42498b42c5e5ce20a938e6554e5/bsd/kern/kern_mib.c#L534-L536
-  if (base::mac::MacOSMajorVersion() < 11) {
-    return StringSysctl({CTL_HW, HW_MODEL}).value_or(std::string{});
-  } else {
-    return StringSysctl({CTL_HW, HW_PRODUCT}).value_or(std::string{});
-  }
+  // Note that there is lots of code out there that uses "hw.model", but that is
+  // deprecated in favor of "hw.product" as used here. See the sysctl.h file for
+  // more info.
+  return StringSysctl({CTL_HW, HW_PRODUCT}).value_or(std::string{});
 }
 
 // static

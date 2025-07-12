@@ -199,13 +199,13 @@ public class DownloadForegroundServiceManager extends DownloadContinuityManager 
         int notificationId = update.mNotificationId;
         Notification notification = update.mNotification;
 
-        // On O+, we must call startForeground or Android will crash. If the last update
+        // We must call startForeground or Android will crash. If the last update
         // is DownloadStatus.CANCELLED, then create an empty notification. See crbug.com/1121096.
         // Notices the empty notification will be cancelled immediately in
         // DownloadNotificationService afterward.
-        if (VERSION.SDK_INT >= VERSION_CODES.O && notification == null && !mStartForegroundCalled) {
+        if (notification == null && !mStartForegroundCalled) {
             assert update.mDownloadStatus == DownloadStatus.CANCELLED;
-            notification = createEmptyNotification(notificationId, update.mContext);
+            notification = createEmptyNotification(notificationId);
         }
 
         if (mBoundService != null
@@ -235,7 +235,7 @@ public class DownloadForegroundServiceManager extends DownloadContinuityManager 
     }
 
     // Creates an empty notification to feed to startForeground().
-    private Notification createEmptyNotification(int notificationId, Context context) {
+    private Notification createEmptyNotification(int notificationId) {
         NotificationWrapperBuilder builder =
                 NotificationWrapperBuilderFactory.createNotificationWrapperBuilder(
                         ChromeChannelDefinitions.ChannelId.DOWNLOADS,

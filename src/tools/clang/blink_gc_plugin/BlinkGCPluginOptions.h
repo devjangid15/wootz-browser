@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+#include "clang/Basic/SourceLocation.h"
+
 struct BlinkGCPluginOptions {
   bool dump_graph = false;
 
@@ -45,13 +47,11 @@ struct BlinkGCPluginOptions {
   // needed for disabling the check for Pdfium builds.
   bool enable_off_heap_collections_of_gced_check = true;
 
-  // Enables checks for raw pointers, refs and unique_ptr of traceable types.
-  bool enable_ptrs_to_traceable_check = false;
-
   std::set<std::string> ignored_classes;
   std::set<std::string> checked_namespaces;
   std::vector<std::string> checked_directories;
   std::vector<std::string> ignored_directories;
+  std::vector<clang::FileID> ignored_files;
 };
 
 #endif  // TOOLS_BLINK_GC_PLUGIN_BLINK_GC_PLUGIN_OPTIONS_H_

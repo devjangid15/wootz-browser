@@ -7,6 +7,7 @@
 
 #include <optional>
 #include <set>
+#include <tuple>
 
 #include "ash/ash_export.h"
 #include "base/time/time.h"
@@ -99,10 +100,6 @@ constexpr int kUpNextBetweenChildSpacing = 8;
 // next view, we need to forcibly overlap the views slightly for the distance
 // between the bottom and top of the 'nub'.
 constexpr int kUpNextOverlapInPx = 12;
-
-// Returns true if CalendarView is for GlanceablesV2 based on whether the
-// features are enabled.
-bool IsForGlanceablesV2();
 
 // Returns true if the Multi-Calendar Support feature is enabled.
 bool IsMultiCalendarEnabled();

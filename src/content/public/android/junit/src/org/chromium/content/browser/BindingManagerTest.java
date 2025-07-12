@@ -24,7 +24,6 @@ import org.robolectric.annotation.Config;
 import org.robolectric.annotation.LooperMode;
 import org.robolectric.shadows.ShadowLooper;
 
-import org.chromium.base.FeatureList;
 import org.chromium.base.process_launcher.ChildProcessConnection;
 import org.chromium.base.process_launcher.TestChildProcessConnection;
 import org.chromium.base.test.BaseRobolectricTestRunner;
@@ -52,7 +51,7 @@ public class BindingManagerTest {
         TestChildProcessConnection connection =
                 new TestChildProcessConnection(
                         new ComponentName("org.chromium.test", "TestService"),
-                        /* bindToCallerCheck= */ false,
+                        /* bindToCaller= */ false,
                         /* bindAsExternalService= */ false,
                         /* serviceBundle= */ null);
         connection.setPid(pid);
@@ -87,40 +86,35 @@ public class BindingManagerTest {
     @After
     public void tearDown() {
         LauncherThread.setLauncherThreadAsLauncherThread();
-        FeatureList.setTestValues(null);
     }
 
     private void setupBindingType(boolean useNotPerceptibleBinding) {
         boolean isQOrHigher = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q;
-        BindingManager.setUseNotPerceptibleBindingForTesting(
+        ChildProcessConnection.setSupportNotPerceptibleBindingForTesting(
                 useNotPerceptibleBinding && isQOrHigher);
         if (useNotPerceptibleBinding) {
-            Assert.assertEquals(isQOrHigher, BindingManager.useNotPerceptibleBinding());
+            Assert.assertEquals(isQOrHigher, ChildProcessConnection.supportNotPerceptibleBinding());
             return;
         }
-        Assert.assertFalse(BindingManager.useNotPerceptibleBinding());
+        Assert.assertFalse(ChildProcessConnection.supportNotPerceptibleBinding());
     }
 
     private void checkConnections(
-            ChildProcessConnection[] connections,
-            boolean useNotPerceptibleBinding,
-            boolean isConnected) {
+            ChildProcessConnection[] connections, boolean isConnected) {
         boolean[] connected = new boolean[connections.length];
         Arrays.fill(connected, isConnected);
-        checkConnections(connections, useNotPerceptibleBinding, connected);
+        checkConnections(connections, connected);
     }
 
     private void checkConnections(
-            ChildProcessConnection[] connections,
-            boolean useNotPerceptibleBinding,
-            boolean[] connected) {
+            ChildProcessConnection[] connections, boolean[] connected) {
         assert connections.length == connected.length;
         for (int i = 0; i < connections.length; i++) {
             Assert.assertEquals(
-                    !useNotPerceptibleBinding && connected[i],
+                    !ChildProcessConnection.supportNotPerceptibleBinding() && connected[i],
                     connections[i].isVisibleBindingBound());
             Assert.assertEquals(
-                    useNotPerceptibleBinding && connected[i],
+                    ChildProcessConnection.supportNotPerceptibleBinding() && connected[i],
                     connections[i].isNotPerceptibleBindingBound());
         }
     }
@@ -165,36 +159,30 @@ public class BindingManagerTest {
 
         // Verify that each connection has a moderate binding after binding and releasing a strong
         // binding.
-        checkConnections(
-                connections, BindingManager.useNotPerceptibleBinding(), /* isConnected= */ true);
+        checkConnections(connections, /* isConnected= */ true);
 
         ShadowLooper.runUiThreadTasksIncludingDelayedTasks();
 
         // Verify that leaving the application for a short time doesn't clear the moderate bindings.
         manager.onSentToBackground();
-        checkConnections(
-                connections, BindingManager.useNotPerceptibleBinding(), /* isConnected= */ true);
+        checkConnections(connections, /* isConnected= */ true);
 
         manager.onBroughtToForeground();
         ShadowLooper.runUiThreadTasksIncludingDelayedTasks();
-        checkConnections(
-                connections, BindingManager.useNotPerceptibleBinding(), /* isConnected= */ true);
+        checkConnections(connections, /* isConnected= */ true);
 
         // Call onSentToBackground() and verify that all the moderate bindings drop after some
         // delay.
         manager.onSentToBackground();
-        checkConnections(
-                connections, BindingManager.useNotPerceptibleBinding(), /* isConnected= */ true);
+        checkConnections(connections, /* isConnected= */ true);
 
         ShadowLooper.runUiThreadTasksIncludingDelayedTasks();
-        checkConnections(
-                connections, BindingManager.useNotPerceptibleBinding(), /* isConnected= */ false);
+        checkConnections(connections, /* isConnected= */ false);
 
         // Call onBroughtToForeground() and verify that the previous moderate bindings aren't
         // recovered.
         manager.onBroughtToForeground();
-        checkConnections(
-                connections, BindingManager.useNotPerceptibleBinding(), /* isConnected= */ false);
+        checkConnections(connections, /* isConnected= */ false);
     }
 
     /** Verifies that onLowMemory() drops all the moderate bindings. */
@@ -234,13 +222,11 @@ public class BindingManagerTest {
             connections[i] = createTestChildProcessConnection(/* pid= */ i + 1, manager, mIterable);
         }
 
-        checkConnections(
-                connections, BindingManager.useNotPerceptibleBinding(), /* isConnected= */ true);
+        checkConnections(connections, /* isConnected= */ true);
 
         // Call onLowMemory() and verify that all the moderate bindings drop.
         app.onLowMemory();
-        checkConnections(
-                connections, BindingManager.useNotPerceptibleBinding(), /* isConnected= */ false);
+        checkConnections(connections, /* isConnected= */ false);
     }
 
     /** Verifies that onTrimMemory() drops moderate bindings properly. */
@@ -298,18 +284,14 @@ public class BindingManagerTest {
                 mIterable.add(connection);
             }
 
-            checkConnections(
-                    connections,
-                    BindingManager.useNotPerceptibleBinding(),
-                    /* isConnected= */ true);
+            checkConnections(connections, /* isConnected= */ true);
 
             app.onTrimMemory(pair.first);
             // Verify that some of the moderate bindings have been dropped.
             for (int i = 0; i < connections.length; i++) {
                 Assert.assertEquals(
-                        message,
-                        i >= pair.second,
-                        BindingManager.useNotPerceptibleBinding()
+                        message, i >= pair.second,
+                        ChildProcessConnection.supportNotPerceptibleBinding()
                                 ? connections[i].isNotPerceptibleBindingBound()
                                 : connections[i].isVisibleBindingBound());
             }
@@ -351,18 +333,15 @@ public class BindingManagerTest {
     private void doTestBindingTillBackgroundedSentToBackground(BindingManager manager) {
         ChildProcessConnection[] connection = new ChildProcessConnection[1];
         connection[0] = createTestChildProcessConnection(0, manager, mIterable);
-        checkConnections(
-                connection, BindingManager.useNotPerceptibleBinding(), /* isConnected= */ true);
+        checkConnections(connection, /* isConnected= */ true);
 
         manager.onSentToBackground();
         ShadowLooper.runUiThreadTasksIncludingDelayedTasks();
-        checkConnections(
-                connection, BindingManager.useNotPerceptibleBinding(), /* isConnected= */ false);
+        checkConnections(connection, /* isConnected= */ false);
 
         // Bringing Chrome to the foreground should not re-add the moderate bindings.
         manager.onBroughtToForeground();
-        checkConnections(
-                connection, BindingManager.useNotPerceptibleBinding(), /* isConnected= */ false);
+        checkConnections(connection, /* isConnected= */ false);
     }
 
     @Test
@@ -400,44 +379,28 @@ public class BindingManagerTest {
         }
 
         // Make sure binding is added for all connections.
-        checkConnections(
-                connections, BindingManager.useNotPerceptibleBinding(), /* isConnected= */ true);
+        checkConnections(connections, /* isConnected= */ true);
 
         manager.rankingChanged();
-        checkConnections(
-                connections,
-                BindingManager.useNotPerceptibleBinding(),
-                new boolean[] {false, true, true});
+        checkConnections(connections, new boolean[] {false, true, true});
 
         // Move middle connection to be the first (ie lowest ranked).
         mIterable.set(0, connections[1]);
         mIterable.set(1, connections[0]);
         manager.rankingChanged();
-        checkConnections(
-                connections,
-                BindingManager.useNotPerceptibleBinding(),
-                new boolean[] {true, false, true});
+        checkConnections(connections, new boolean[] {true, false, true});
 
         // Swap back.
         mIterable.set(0, connections[0]);
         mIterable.set(1, connections[1]);
         manager.rankingChanged();
-        checkConnections(
-                connections,
-                BindingManager.useNotPerceptibleBinding(),
-                new boolean[] {false, true, true});
+        checkConnections(connections, new boolean[] {false, true, true});
 
         manager.removeConnection(connections[1]);
-        checkConnections(
-                connections,
-                BindingManager.useNotPerceptibleBinding(),
-                new boolean[] {false, false, true});
+        checkConnections(connections, new boolean[] {false, false, true});
 
         manager.removeConnection(connections[0]);
-        checkConnections(
-                connections,
-                BindingManager.useNotPerceptibleBinding(),
-                new boolean[] {false, false, true});
+        checkConnections(connections, new boolean[] {false, false, true});
     }
 
     @Test
@@ -475,15 +438,9 @@ public class BindingManagerTest {
         }
 
         if (!limited) {
-            checkConnections(
-                    connections,
-                    BindingManager.useNotPerceptibleBinding(),
-                    /* isConnected= */ true);
+            checkConnections(connections, /* isConnected= */ true);
         } else {
-            checkConnections(
-                    connections,
-                    BindingManager.useNotPerceptibleBinding(),
-                    new boolean[] {false, true, true, true, true, true});
+            checkConnections(connections, new boolean[] {false, true, true, true, true, true});
         }
     }
 
@@ -531,15 +488,9 @@ public class BindingManagerTest {
         }
 
         if (!limited) {
-            checkConnections(
-                    connections,
-                    BindingManager.useNotPerceptibleBinding(),
-                    /* isConnected= */ true);
+            checkConnections(connections, /* isConnected= */ true);
         } else {
-            checkConnections(
-                    connections,
-                    BindingManager.useNotPerceptibleBinding(),
-                    new boolean[] {true, true, true, true, true, false});
+            checkConnections(connections, new boolean[] {true, true, true, true, true, false});
         }
     }
 }

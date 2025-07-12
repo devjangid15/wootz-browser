@@ -20,8 +20,6 @@
 #include "base/values.h"
 #include "components/safe_browsing/android/real_time_url_checks_allowlist.h"
 
-using component_updater::ComponentUpdateService;
-
 namespace {
 
 const base::FilePath::CharType kRealTimeUrlChecksAllowlistPbFileName[] =
@@ -109,9 +107,8 @@ RealTimeUrlChecksAllowlistComponentInstallerPolicy::GetRelativeInstallDir()
 
 void RealTimeUrlChecksAllowlistComponentInstallerPolicy::GetHash(
     std::vector<uint8_t>* hash) const {
-  hash->assign(kRealTimeUrlChecksAllowlistPublicKeySHA256,
-               kRealTimeUrlChecksAllowlistPublicKeySHA256 +
-                   std::size(kRealTimeUrlChecksAllowlistPublicKeySHA256));
+  hash->assign(std::begin(kRealTimeUrlChecksAllowlistPublicKeySHA256),
+               std::end(kRealTimeUrlChecksAllowlistPublicKeySHA256));
 }
 
 std::string RealTimeUrlChecksAllowlistComponentInstallerPolicy::GetName()

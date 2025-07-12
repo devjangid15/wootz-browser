@@ -12,7 +12,6 @@
 #include <memory>
 #include <optional>
 #include <set>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -203,10 +202,11 @@ class VIZ_SERVICE_EXPORT Surface final {
   // Returns the most recent frame or frame metadata that is eligible to be
   // rendered. You must check whether HasActiveFrame() returns true before
   // calling these methods.
-  // Note that we prefer to call GetActiveFrameMetadata if the only thing that
-  // is required from the frame is the metadata.
+  // Note that we prefer to call GetActiveFrameMetadata or
+  // GetFrameIntervalInputs if the only thing that is required from the frame.
   const CompositorFrame& GetActiveFrame() const;
   const CompositorFrameMetadata& GetActiveFrameMetadata() const;
+  const FrameIntervalInputs& GetFrameIntervalInputs() const;
 
   // ViewTransition needs to interpolate a new CompositorFrame from the active
   // one of this Surface. The interpolated new frame replaces the currently
@@ -246,7 +246,7 @@ class VIZ_SERVICE_EXPORT Surface final {
   // capture. We don't want to constantly switch between overlay and non-overlay
   // during video playback.
   bool IsVideoCaptureOnFromClient();
-  base::flat_set<base::PlatformThreadId> GetThreadIds();
+  std::vector<Thread> GetThreads();
 
   const base::flat_set<SurfaceId>& active_referenced_surfaces() const {
     return active_referenced_surfaces_;
@@ -334,6 +334,8 @@ class VIZ_SERVICE_EXPORT Surface final {
     return pending_copy_surface_id_;
   }
 
+  void ClearNonRootCopyRequests();
+
  private:
   struct FrameData {
     FrameData(CompositorFrame&& frame, uint64_t frame_index);
@@ -395,7 +397,7 @@ class VIZ_SERVICE_EXPORT Surface final {
   void UpdateActivationDependencies(const CompositorFrame& current_frame);
 
   void UnrefFrameResourcesAndRunCallbacks(std::optional<FrameData> frame_data);
-  void ClearCopyRequests();
+  void ClearCopyRequests(bool keep_root = false);
 
   void TakePendingLatencyInfo(std::vector<ui::LatencyInfo>* latency_info);
   static void TakeLatencyInfoFromFrame(

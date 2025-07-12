@@ -8,6 +8,7 @@
 
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/platform/web_test_support.h"
+#include "ui/color/color_provider.h"
 
 namespace blink {
 
@@ -18,6 +19,14 @@ scoped_refptr<LayoutTheme> LayoutThemeWin::Create() {
 LayoutTheme& LayoutTheme::NativeTheme() {
   DEFINE_STATIC_REF(LayoutTheme, layout_theme, (LayoutThemeWin::Create()));
   return *layout_theme;
+}
+
+Color LayoutThemeWin::SystemHighlightFromColorProvider(
+    mojom::blink::ColorScheme color_scheme,
+    const ui::ColorProvider* color_provider) const {
+  SkColor system_highlight_color =
+      color_provider->GetColor(ui::kColorCssSystemHighlight);
+  return Color::FromSkColor(system_highlight_color);
 }
 
 }  // namespace blink

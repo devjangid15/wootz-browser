@@ -8,7 +8,7 @@
 #include "chrome/browser/ui/extensions/extensions_container.h"
 #include "chrome/browser/ui/toolbar/toolbar_action_view_controller.h"
 #include "chrome/browser/ui/views/chrome_widget_sublevel.h"
-#include "chrome/browser/ui/views/extensions/extensions_dialogs_utils.h"
+#include "chrome/browser/ui/views/extensions/extension_view_utils.h"
 #include "chrome/grit/generated_resources.h"
 #include "ui/base/models/dialog_model.h"
 #include "ui/base/models/dialog_model_field.h"
@@ -50,7 +50,7 @@ void ExtensionsRequestAccessHoverCardCoordinator::ShowBubble(
     dialog_builder.AddParagraph(ui::DialogModelLabel::CreateWithReplacement(
         IDS_EXTENSIONS_REQUEST_ACCESS_BUTTON_TOOLTIP_MULTIPLE_EXTENSIONS,
         ui::DialogModelLabel::CreateEmphasizedText(url)));
-    for (auto extension_id : extension_ids) {
+    for (const auto& extension_id : extension_ids) {
       ToolbarActionViewController* action =
           extensions_container->GetActionForId(extension_id);
       dialog_builder.AddMenuItem(

@@ -73,23 +73,22 @@ bool IsPDFPluginEnabled(content::NavigationHandle* navigation_handle,
 }  // namespace
 
 PDFIFrameNavigationThrottle::PDFIFrameNavigationThrottle(
-    content::NavigationHandle* navigation_handle)
-    : content::NavigationThrottle(navigation_handle) {}
+    content::NavigationThrottleRegistry& registry)
+    : content::NavigationThrottle(registry) {}
 
-PDFIFrameNavigationThrottle::~PDFIFrameNavigationThrottle() {}
+PDFIFrameNavigationThrottle::~PDFIFrameNavigationThrottle() = default;
 
 const char* PDFIFrameNavigationThrottle::GetNameForLogging() {
   return "PDFIFrameNavigationThrottle";
 }
 
 // static
-std::unique_ptr<content::NavigationThrottle>
-PDFIFrameNavigationThrottle::MaybeCreateThrottleFor(
-    content::NavigationHandle* handle) {
-  if (handle->IsInMainFrame())
-    return nullptr;
+void PDFIFrameNavigationThrottle::MaybeCreateAndAdd(
+    content::NavigationThrottleRegistry& registry) {
+  if (registry.GetNavigationHandle().IsInMainFrame())
+    return;
 
-  return std::make_unique<PDFIFrameNavigationThrottle>(handle);
+  registry.AddThrottle(std::make_unique<PDFIFrameNavigationThrottle>(registry));
 }
 
 content::NavigationThrottle::ThrottleCheckResult
@@ -112,8 +111,6 @@ PDFIFrameNavigationThrottle::WillProcessResponse() {
           navigation_handle()->GetURL(), response_headers, mime_type)) {
     return content::NavigationThrottle::PROCEED;
   }
-
-  ReportPDFLoadStatus(PDFLoadStatus::kLoadedIframePdfWithNoPdfViewer);
 
 #if BUILDFLAG(ENABLE_PLUGINS)
   bool is_stale = false;
@@ -165,6 +162,8 @@ void PDFIFrameNavigationThrottle::LoadPlaceholderHTML() {
   content::WebContents* web_contents = navigation_handle()->GetWebContents();
   if (!web_contents)
     return;
+
+  ReportPDFLoadStatus(PDFLoadStatus::kLoadedIframePdfWithNoPdfViewer);
 
   PdfWebContentsLifetimeHelper::CreateForWebContents(web_contents);
   PdfWebContentsLifetimeHelper* helper =

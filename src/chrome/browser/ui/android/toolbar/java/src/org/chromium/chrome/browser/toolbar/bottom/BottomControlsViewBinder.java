@@ -6,16 +6,17 @@ package org.chromium.chrome.browser.toolbar.bottom;
 
 import android.view.View;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.toolbar.R;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.resources.dynamics.DynamicResourceReadyOnceCallback;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 
+@NullMarked
 class BottomControlsViewBinder {
     /**
-     * A wrapper class that holds a {@link ScrollingBottomViewResourceFrameLayout}
-     * and a composited layer to be used with the {@link BottomControlsViewBinder}.
+     * A wrapper class that holds a {@link ScrollingBottomViewResourceFrameLayout} and a composited
+     * layer to be used with the {@link BottomControlsViewBinder}.
      */
     static class ViewHolder {
         /** A handle to the Android View based version of the bottom controls. */
@@ -54,8 +55,6 @@ class BottomControlsViewBinder {
             view.sceneLayer.setYOffset(model.get(BottomControlsProperties.Y_OFFSET));
         } else if (BottomControlsProperties.ANDROID_VIEW_TRANSLATE_Y == propertyKey) {
             view.root.setTranslationY(model.get(BottomControlsProperties.ANDROID_VIEW_TRANSLATE_Y));
-        } else if (BottomControlsProperties.TOPCONTROLSMINHEIGHT_OFFSET == propertyKey) {
-            view.sceneLayer.setTopControlsMinHeightOffset(model.get(BottomControlsProperties.TOPCONTROLSMINHEIGHT_OFFSET));
         } else if (BottomControlsProperties.ANDROID_VIEW_VISIBLE == propertyKey
                 || BottomControlsProperties.COMPOSITED_VIEW_VISIBLE == propertyKey) {
             final boolean showAndroidView =
@@ -72,6 +71,8 @@ class BottomControlsViewBinder {
                     model.get(BottomControlsProperties.IS_OBSCURED)
                             ? View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
                             : View.IMPORTANT_FOR_ACCESSIBILITY_AUTO);
+        } else if (BottomControlsProperties.OFFSET_TAG == propertyKey) {
+            view.sceneLayer.setOffsetTag(model.get(BottomControlsProperties.OFFSET_TAG));
         } else {
             assert false : "Unhandled property detected in BottomControlsViewBinder!";
         }

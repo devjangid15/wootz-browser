@@ -7,7 +7,6 @@
 
 #include "base/threading/thread_checker.h"
 #include "gpu/command_buffer/service/texture_owner.h"
-#include "gpu/gpu_export.h"
 #include "ui/gl/android/surface_texture.h"
 
 namespace base {
@@ -34,7 +33,7 @@ class GPU_GLES2_EXPORT SurfaceTextureGLOwner : public TextureOwner {
   void SetFrameAvailableCallback(
       const base::RepeatingClosure& frame_available_cb) override;
   gl::ScopedJavaSurface CreateJavaSurface() const override;
-  void UpdateTexImage() override;
+  bool UpdateTexImage(bool discard) override;
   void ReleaseBackBuffers() override;
   std::unique_ptr<base::android::ScopedHardwareBufferFenceSync>
   GetAHardwareBuffer() override;

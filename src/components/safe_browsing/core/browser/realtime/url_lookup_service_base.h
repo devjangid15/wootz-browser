@@ -18,8 +18,11 @@
 #include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
+#include "components/enterprise/common/proto/connectors.pb.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/safe_browsing/core/browser/db/v4_protocol_manager_util.h"
+#include "components/safe_browsing/core/browser/referring_app_info.h"
+#include "components/safe_browsing/core/browser/safe_browsing_token_fetcher.h"
 #include "components/safe_browsing/core/browser/utils/backoff_operator.h"
 #include "components/safe_browsing/core/common/proto/csd.pb.h"
 #include "components/safe_browsing/core/common/proto/realtimeapi.pb.h"
@@ -65,12 +68,12 @@ class RealTimeUrlLookupServiceBase : public KeyedService {
     // Adds the new ping to the set of URT lookup pings. Returns a token that
     // can be used in |AddToURTLookupResponses| to correlate a ping and
     // response.
-    virtual int AddToURTLookupPings(const RTLookupRequest request,
-                                    const std::string oauth_token) = 0;
+    virtual int AddToURTLookupPings(const RTLookupRequest& request,
+                                    const std::string& oauth_token) = 0;
 
     // Adds the new response to the set of URT lookup pings.
     virtual void AddToURTLookupResponses(int webui_token,
-                                         const RTLookupResponse response) = 0;
+                                         const RTLookupResponse& response) = 0;
   };
 
   explicit RealTimeUrlLookupServiceBase(
@@ -79,6 +82,7 @@ class RealTimeUrlLookupServiceBase : public KeyedService {
       base::RepeatingCallback<ChromeUserPopulation()>
           get_user_population_callback,
       ReferrerChainProvider* referrer_chain_provider,
+      std::unique_ptr<SafeBrowsingTokenFetcher> token_fetcher,
       PrefService* pref_service,
       WebUIDelegate* webui_delegate);
 
@@ -87,9 +91,6 @@ class RealTimeUrlLookupServiceBase : public KeyedService {
       delete;
 
   ~RealTimeUrlLookupServiceBase() override;
-
-  // Returns true if |url|'s scheme can be checked.
-  static bool CanCheckUrl(const GURL& url);
 
   // Returns the SBThreatType for a combination of
   // RTLookupResponse::ThreatInfo::ThreatType and
@@ -110,14 +111,28 @@ class RealTimeUrlLookupServiceBase : public KeyedService {
       const GURL& url,
       RTLookupResponseCallback response_callback,
       scoped_refptr<base::SequencedTaskRunner> callback_task_runner,
-      SessionID tab_id);
+      SessionID tab_id,
+      std::optional<internal::ReferringAppInfo> referring_app_info);
+
+  // Start the full URL lookup for |url| and call |response_callback|
+  // on |callback_task_runner| when response is received. |use_cache| may be
+  // set to `false` to skip the URL verdict cache check.
+  // This function is overridden in unit tests.
+  virtual void StartMaybeCachedLookup(
+      const GURL& url,
+      RTLookupResponseCallback response_callback,
+      scoped_refptr<base::SequencedTaskRunner> callback_task_runner,
+      SessionID tab_id,
+      std::optional<internal::ReferringAppInfo> referring_app_info,
+      bool use_cache);
 
   // Similar to the function StartLookup above,
   // but to send Protego sampled request specifically.
   virtual void SendSampledRequest(
       const GURL& url,
       scoped_refptr<base::SequencedTaskRunner> callback_task_runner,
-      SessionID tab_id);
+      SessionID tab_id,
+      std::optional<internal::ReferringAppInfo> referring_app_info);
 
   // Helper function to return a weak pointer.
   base::WeakPtr<RealTimeUrlLookupServiceBase> GetWeakPtr();
@@ -143,6 +158,29 @@ class RealTimeUrlLookupServiceBase : public KeyedService {
   // Checks if a sample ping can be sent to Safe Browsing.
   virtual bool CanSendRTSampleRequest() const = 0;
 
+  // Returns an email address to be attached to lookup requests, or an empty
+  // string if none is available.
+  virtual std::string GetUserEmail() const = 0;
+
+  // Returns DM Token for the managed browser.
+  virtual std::string GetBrowserDMTokenString() const = 0;
+
+  // Returns DM Token for the managed profile.
+  virtual std::string GetProfileDMTokenString() const = 0;
+
+  // Returns the client metadata (browser, profile) information. May be
+  // nullptr if ClientMetadata is unavailable.
+  virtual std::unique_ptr<enterprise_connectors::ClientMetadata>
+  GetClientMetadata() const = 0;
+
+  // Returns the content area email address. This is the email address used for
+  // active Gaia filtering.
+  virtual std::string GetContentAreaAccountEmail(const GURL& tab_url) const = 0;
+
+  // Returns true if `url`'s scheme can be checked, or if it should be checked
+  // anyway because of "EnterpriseRealTimeUrlCheckMode".
+  virtual bool CanCheckUrl(const GURL& url) = 0;
+
   // KeyedService:
   // Called before the actual deletion of the object.
   void Shutdown() override;
@@ -166,13 +204,15 @@ class RealTimeUrlLookupServiceBase : public KeyedService {
       RTLookupResponseCallback response_callback,
       scoped_refptr<base::SequencedTaskRunner> callback_task_runner,
       bool is_sampled_report,
-      SessionID tab_id);
+      SessionID tab_id,
+      std::optional<internal::ReferringAppInfo> referring_app_info);
+
+  bool shutting_down() const { return shutting_down_; }
 
  private:
   class PendingRTLookupRequestData {
    public:
-    explicit PendingRTLookupRequestData(
-        std::unique_ptr<network::SimpleURLLoader> loader);
+    PendingRTLookupRequestData();
     PendingRTLookupRequestData(const PendingRTLookupRequestData&) = delete;
     PendingRTLookupRequestData(PendingRTLookupRequestData&&);
     PendingRTLookupRequestData& operator=(const PendingRTLookupRequestData&) =
@@ -182,6 +222,8 @@ class RealTimeUrlLookupServiceBase : public KeyedService {
 
     // Adds the callback to the internal list if it is not null.
     void AddCallback(RTLookupResponseCallback callback);
+
+    void SetLoader(std::unique_ptr<network::SimpleURLLoader> loader);
 
     network::SimpleURLLoader* loader() { return loader_.get(); }
     bool has_callbacks() { return !callbacks_.empty(); }
@@ -224,15 +266,22 @@ class RealTimeUrlLookupServiceBase : public KeyedService {
 
   // Gets access token, called if |CanPerformFullURLLookupWithToken| returns
   // true.
-  virtual void GetAccessToken(
+  void GetAccessToken(
       const GURL& url,
       RTLookupResponseCallback response_callback,
       scoped_refptr<base::SequencedTaskRunner> callback_task_runner,
-      SessionID tab_id) = 0;
+      SessionID tab_id,
+      std::optional<internal::ReferringAppInfo> referring_app_info);
 
-  // Called when the response from the server is unauthorized, so child classes
-  // can add extra handling when this happens.
-  virtual void OnResponseUnauthorized(const std::string& invalid_access_token);
+  // Called when the access token is obtained from |token_fetcher_|.
+  void OnGetAccessToken(
+      const GURL& url,
+      RTLookupResponseCallback response_callback,
+      scoped_refptr<base::SequencedTaskRunner> callback_task_runner,
+      base::TimeTicks get_token_start_time,
+      SessionID tab_id,
+      std::optional<internal::ReferringAppInfo> referring_app_info,
+      const std::string& access_token);
 
   // Gets a dm token string to be set in a request proto.
   virtual std::optional<std::string> GetDMTokenString() const = 0;
@@ -269,6 +318,13 @@ class RealTimeUrlLookupServiceBase : public KeyedService {
                                                    bool was_first_request,
                                                    bool sent_with_token) {}
 
+  // Fills in the ReferringAppInfo field pertaining to a referring WebAPK, if
+  // appropriate. The safe_browsing::ReferringAppInfo message should already
+  // have been added to the RTLookupRequest.
+  virtual void MaybeFillReferringWebApk(
+      const internal::ReferringAppInfo& referring_app_info,
+      RTLookupRequest& request) {}
+
   // Get a resource request with URL, load_flags and method set.
   std::unique_ptr<network::ResourceRequest> GetResourceRequest();
 
@@ -277,7 +333,6 @@ class RealTimeUrlLookupServiceBase : public KeyedService {
       std::unique_ptr<network::ResourceRequest> resource_request,
       const std::string& req_data,
       std::optional<std::string> access_token_string,
-      RTLookupResponseCallback response_callback,
       scoped_refptr<base::SequencedTaskRunner> callback_task_runner,
       ChromeUserPopulation::UserPopulation user_population,
       bool is_sampled_report,
@@ -286,9 +341,9 @@ class RealTimeUrlLookupServiceBase : public KeyedService {
   // Called when the response from the real-time lookup remote endpoint is
   // received. |url| is the URL that was looked up and can be used as a key into
   // the |pending_requests_| map. |access_token_string| is used for calling
-  // |OnResponseUnauthorized| in case the response code is HTTP_UNAUTHORIZED.
-  // |request_start_time| is the time when the request was sent.
-  // |response_body| is the response received.
+  // |SafeBrowsingTokenFetcher::OnInvalidAccessToken| in case the response code
+  // is HTTP_UNAUTHORIZED. |request_start_time| is the time when the request was
+  // sent. |response_body| is the response received.
   void OnURLLoaderComplete(
       const GURL& url,
       std::optional<std::string> access_token_string,
@@ -301,9 +356,26 @@ class RealTimeUrlLookupServiceBase : public KeyedService {
 
   // Fills in fields in |RTLookupRequest|.  |url| is expected to be already
   // sanitized.
-  std::unique_ptr<RTLookupRequest> FillRequestProto(const GURL& url,
-                                                    bool is_sampled_report,
-                                                    SessionID tab_id);
+  void StartFillingRequestProto(
+      const GURL& url,
+      bool is_sampled_report,
+      SessionID tab_id,
+      std::optional<internal::ReferringAppInfo> referring_app_info,
+      base::OnceCallback<void(std::unique_ptr<RTLookupRequest>)> callback);
+
+  // Called when the IP addresses are fetched and adds them to the request.
+  void OnIpAddressesFetched(
+      std::unique_ptr<RTLookupRequest> request,
+      base::OnceCallback<void(std::unique_ptr<RTLookupRequest>)> callback,
+      std::vector<std::string> ip_addresses);
+
+  // Called when the request proto is filled and ready to be sent.
+  void OnRequestProtoFilled(
+      const GURL& sanitized_url,
+      const std::string& access_token_string,
+      scoped_refptr<base::SequencedTaskRunner> callback_task_runner,
+      bool is_sampled_report,
+      std::unique_ptr<RTLookupRequest> request);
 
   // Logs |request| and |oauth_token| on any open
   // chrome://safe-browsing pages. Returns a token that can be passed
@@ -317,6 +389,9 @@ class RealTimeUrlLookupServiceBase : public KeyedService {
                                  const RTLookupResponse& response);
 
   SEQUENCE_CHECKER(sequence_checker_);
+
+  // The token fetcher used for getting access token.
+  std::unique_ptr<SafeBrowsingTokenFetcher> token_fetcher_;
 
   // The URLLoaderFactory we use to issue network requests.
   scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_;
@@ -347,6 +422,10 @@ class RealTimeUrlLookupServiceBase : public KeyedService {
   // and in unit tests. If non-null, guaranteed to outlive this object by
   // contract.
   raw_ptr<WebUIDelegate> webui_delegate_ = nullptr;
+
+  // True if Shutdown() has already been called, or started running. This allows
+  // us to skip unnecessary calls to SendRequest().
+  bool shutting_down_ = false;
 
   friend class RealTimeUrlLookupServiceTest;
   friend class ChromeEnterpriseRealTimeUrlLookupServiceTest;

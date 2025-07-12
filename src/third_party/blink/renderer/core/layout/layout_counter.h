@@ -26,10 +26,9 @@
 #include "third_party/blink/renderer/core/layout/layout_text.h"
 #include "third_party/blink/renderer/core/style/content_data.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_map.h"
+#include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 
 namespace blink {
-
-class PseudoElement;
 
 // LayoutCounter is used to represent the text of a counter.
 // See http://www.w3.org/TR/CSS21/generate.html#counters
@@ -38,7 +37,7 @@ class PseudoElement;
 // LayoutObject is always anonymous.
 class LayoutCounter : public LayoutText {
  public:
-  LayoutCounter(PseudoElement&, const CounterContentData&);
+  LayoutCounter(Document&, const CounterContentData&);
   ~LayoutCounter() override;
   void Trace(Visitor*) const override;
 
@@ -47,6 +46,12 @@ class LayoutCounter : public LayoutText {
     return counter_->Identifier();
   }
 
+  // Generates and returns counter text based on computed counter values
+  // and list separators.
+  static String GenerateCounterText(Vector<int> counter_values,
+                                    const CounterStyle* counter_style,
+                                    const AtomicString& separator);
+  // Calls GenerateCounterText to update counter text.
   void UpdateCounter(Vector<int> counter_values);
 
   // Returns true if <counter-style> is "disclosure-open" or

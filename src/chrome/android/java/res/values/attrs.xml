@@ -15,10 +15,6 @@ found in the LICENSE file.
         <attr name="emptyErrorMessage" format="string" />
     </declare-styleable>
 
-    <declare-styleable name="MostVisitedTilesGridLayout">
-        <attr name="minHorizontalSpacing" format="dimension"/>
-    </declare-styleable>
-
     <declare-styleable name="ExploreSitesTileView">
         <attr name="iconCornerRadius" format="dimension"/>
     </declare-styleable>
@@ -27,15 +23,11 @@ found in the LICENSE file.
         <attr name="showLink" format="boolean" />
     </declare-styleable>
 
-    <declare-styleable name="wootz_list_preference">
-        <attr name="dialog_subtitle" format="string"/>
-        <attr name="dialog_entries" format="string"/>
-        <attr name="dialog_default_index" format="integer"/>
+    <declare-styleable name="HubToolbarView">
+        <attr name="newTabButtonStyle" format="reference" />
     </declare-styleable>
 
-
-    <attr name="ic_onboarding_backup" format="reference"/>
-    <attr name="ic_onboarding_intro" format="reference"/>
-    <attr name="ic_onboarding_password" format="reference"/>
-
+     <declare-styleable name="TabGroupColorPickerContainer">
+        <attr name="colorPickerButtonStyle" format="reference" />
+    </declare-styleable>
 </resources>

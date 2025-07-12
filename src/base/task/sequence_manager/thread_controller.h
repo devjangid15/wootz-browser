@@ -5,6 +5,7 @@
 #ifndef BASE_TASK_SEQUENCE_MANAGER_THREAD_CONTROLLER_H_
 #define BASE_TASK_SEQUENCE_MANAGER_THREAD_CONTROLLER_H_
 
+#include <array>
 #include <optional>
 #include <stack>
 #include <string>
@@ -13,6 +14,7 @@
 
 #include "base/base_export.h"
 #include "base/check.h"
+#include "base/compiler_specific.h"
 #include "base/features.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ref.h"
@@ -27,7 +29,7 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/thread_annotations.h"
 #include "base/time/time.h"
-#include "base/trace_event/base_tracing.h"
+#include "base/trace_event/trace_event.h"
 #include "base/tracing_buildflags.h"
 #include "build/build_config.h"
 
@@ -155,14 +157,6 @@ class BASE_EXPORT ThreadController {
   void EnableMessagePumpTimeKeeperMetrics(
       const char* thread_name,
       bool wall_time_based_metrics_enabled_for_testing);
-
-  // Currently only overridden on ThreadControllerWithMessagePumpImpl.
-  //
-  // While Now() is less than |prioritize_until| we will alternate between
-  // |work_batch_size| tasks before setting |yield_to_native| on the
-  // NextWorkInfo and yielding to the underlying sequence (e.g. the message
-  // pump).
-  virtual void PrioritizeYieldingToNative(base::TimeTicks prioritize_until) = 0;
 
   // Sets the SingleThreadTaskRunner that will be returned by
   // SingleThreadTaskRunner::GetCurrentDefault on the thread controlled by this
@@ -331,7 +325,9 @@ class BASE_EXPORT ThreadController {
       // track event.
       void MaybeEmitIncomingWakeupFlow(perfetto::EventContext& ctx);
 
-      const std::string& thread_name() const { return thread_name_; }
+      const std::string& thread_name() const LIFETIME_BOUND {
+        return thread_name_;
+      }
 
       bool wall_time_based_metrics_enabled_for_testing() const {
         return wall_time_based_metrics_enabled_for_testing_;
@@ -372,7 +368,7 @@ class BASE_EXPORT ThreadController {
       TimeTicks last_phase_end_;
       // The end of the last kIdleWork phase. Used as a minimum for the next
       // kScheduled phase's begin (as it's possible that the next wake-up is
-      // scheduled during DoIdleWork adn we don't want overlapping phases).
+      // scheduled during DoIdleWork and we don't want overlapping phases).
       TimeTicks last_sleep_;
       // Assumes each kWorkItem is native unless OnApplicationTaskSelected() is
       // invoked in a given [OnWorkStarted, OnWorkEnded].
@@ -380,12 +376,7 @@ class BASE_EXPORT ThreadController {
 
       // non-null when recording is enabled.
       raw_ptr<HistogramBase> histogram_ = nullptr;
-#if BUILDFLAG(ENABLE_BASE_TRACING)
-      std::optional<perfetto::Track> perfetto_track_;
-
-      // True if tracing was enabled during the last pass of RecordTimeInPhase.
-      bool was_tracing_enabled_ = false;
-#endif
+      std::optional<perfetto::NamedTrack> perfetto_track_;
       const raw_ref<const RunLevelTracker> outer_;
     } time_keeper_{*this};
 

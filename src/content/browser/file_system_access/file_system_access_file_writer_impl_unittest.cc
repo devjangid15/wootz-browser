@@ -14,6 +14,7 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/bind.h"
@@ -67,6 +68,7 @@ class MockQuarantine : public quarantine::mojom::Quarantine {
   void QuarantineFile(const base::FilePath& full_path,
                       const GURL& source_url,
                       const GURL& referrer_url,
+                      const std::optional<url::Origin>& request_initiator,
                       const std::string& client_guid,
                       QuarantineFileCallback callback) override {
     paths.push_back(full_path);
@@ -355,8 +357,7 @@ class FileSystemAccessFileWriterImplTest : public testing::Test {
 
     // Check default bucket exists.
     return quota_manager_proxy_sync
-        .GetBucket(kTestStorageKey, storage::kDefaultBucketName,
-                   blink::mojom::StorageType::kTemporary)
+        .GetBucket(kTestStorageKey, storage::kDefaultBucketName)
         .transform([&](storage::BucketInfo result) {
           EXPECT_EQ(result.name, storage::kDefaultBucketName);
           EXPECT_EQ(result.storage_key, kTestStorageKey);
@@ -395,7 +396,7 @@ class FileSystemAccessFileWriterImplTest : public testing::Test {
   scoped_refptr<FixedFileSystemAccessPermissionGrant> permission_grant_ =
       base::MakeRefCounted<FixedFileSystemAccessPermissionGrant>(
           FixedFileSystemAccessPermissionGrant::PermissionStatus::GRANTED,
-          base::FilePath());
+          PathInfo());
 
   mojo::PendingRemote<blink::mojom::FileSystemAccessFileWriter> remote_;
   base::WeakPtr<FileSystemAccessFileWriterImpl> handle_;
@@ -554,9 +555,7 @@ TEST_F(FileSystemAccessSandboxedFileWriterImplTest, SkipQuarantine) {
 
 TEST_F(FileSystemAccessSandboxedFileWriterImplTest, QuotaError) {
   ASSERT_TRUE(quota_manager_);
-  quota_manager_->SetQuota(kTestStorageKey,
-                           blink::mojom::StorageType::kTemporary,
-                           /*quota=*/1);
+  quota_manager_->SetQuota(kTestStorageKey, /*quota=*/1);
 
   uint64_t bytes_written;
   FileSystemAccessStatus result = WriteSync(0, "abc", &bytes_written);

@@ -17,13 +17,11 @@
 #include "base/memory/raw_ptr.h"
 #include "base/tracing_buildflags.h"
 #include "build/build_config.h"
-
-#if BUILDFLAG(ENABLE_BASE_TRACING)
 #include "base/test/trace_to_file.h"
-#endif  // BUILDFLAG(ENABLE_BASE_TRACING)
 
 #if BUILDFLAG(IS_WIN)
 #include <vector>
+
 #include "base/memory/raw_ptr_exclusion.h"
 #endif
 
@@ -72,8 +70,8 @@ class TestSuite {
   // terminates the process.
   void UnitTestAssertHandler(const char* file,
                              int line,
-                             const std::string_view summary,
-                             const std::string_view stack_trace);
+                             std::string_view summary,
+                             std::string_view stack_trace);
 
   // Disable crash dialogs so that it doesn't gum up the buildbot
   virtual void SuppressErrorDialogs();
@@ -95,9 +93,7 @@ class TestSuite {
 
   void AddTestLauncherResultPrinter();
 
-#if BUILDFLAG(ENABLE_BASE_TRACING)
   test::TraceToFile trace_to_file_;
-#endif  // BUILDFLAG(ENABLE_BASE_TRACING)
 
   raw_ptr<XmlUnitTestResultPrinter, DanglingUntriaged> printer_ = nullptr;
 

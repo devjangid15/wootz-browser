@@ -6,11 +6,11 @@
 
 #include <cstdint>
 
+#include "partition_alloc/buildflags.h"
 #include "partition_alloc/dangling_raw_ptr_checks.h"
 #include "partition_alloc/in_slot_metadata.h"
 #include "partition_alloc/partition_alloc.h"
 #include "partition_alloc/partition_alloc_base/check.h"
-#include "partition_alloc/partition_alloc_buildflags.h"
 #include "partition_alloc/partition_root.h"
 #include "partition_alloc/reservation_offset_table.h"
 
@@ -19,7 +19,7 @@ namespace base::internal {
 template <bool AllowDangling, bool DisableBRP>
 void RawPtrBackupRefImpl<AllowDangling, DisableBRP>::AcquireInternal(
     uintptr_t address) {
-#if PA_BUILDFLAG(PA_DCHECK_IS_ON) || \
+#if PA_BUILDFLAG(DCHECKS_ARE_ON) || \
     PA_BUILDFLAG(ENABLE_BACKUP_REF_PTR_SLOW_CHECKS)
   PA_BASE_CHECK(UseBrp(address));
 #endif
@@ -39,7 +39,7 @@ void RawPtrBackupRefImpl<AllowDangling, DisableBRP>::AcquireInternal(
 template <bool AllowDangling, bool DisableBRP>
 void RawPtrBackupRefImpl<AllowDangling, DisableBRP>::ReleaseInternal(
     uintptr_t address) {
-#if PA_BUILDFLAG(PA_DCHECK_IS_ON) || \
+#if PA_BUILDFLAG(DCHECKS_ARE_ON) || \
     PA_BUILDFLAG(ENABLE_BACKUP_REF_PTR_SLOW_CHECKS)
   PA_BASE_CHECK(UseBrp(address));
 #endif
@@ -49,13 +49,15 @@ void RawPtrBackupRefImpl<AllowDangling, DisableBRP>::ReleaseInternal(
     if (partition_alloc::PartitionRoot::
             InSlotMetadataPointerFromSlotStartAndSize(slot_start, slot_size)
                 ->ReleaseFromUnprotectedPtr()) {
-      partition_alloc::internal::PartitionAllocFreeForRefCounting(slot_start);
+      partition_alloc::PartitionRoot::FreeAfterBRPQuarantine(slot_start,
+                                                             slot_size);
     }
   } else {
     if (partition_alloc::PartitionRoot::
             InSlotMetadataPointerFromSlotStartAndSize(slot_start, slot_size)
                 ->Release()) {
-      partition_alloc::internal::PartitionAllocFreeForRefCounting(slot_start);
+      partition_alloc::PartitionRoot::FreeAfterBRPQuarantine(slot_start,
+                                                             slot_size);
     }
   }
 }
@@ -100,7 +102,7 @@ bool RawPtrBackupRefImpl<AllowDangling, DisableBRP>::
 template <bool AllowDangling, bool DisableBRP>
 bool RawPtrBackupRefImpl<AllowDangling, DisableBRP>::IsPointeeAlive(
     uintptr_t address) {
-#if PA_BUILDFLAG(PA_DCHECK_IS_ON) || \
+#if PA_BUILDFLAG(DCHECKS_ARE_ON) || \
     PA_BUILDFLAG(ENABLE_BACKUP_REF_PTR_SLOW_CHECKS)
   PA_BASE_CHECK(UseBrp(address));
 #endif
@@ -122,21 +124,23 @@ template struct RawPtrBackupRefImpl</*AllowDangling=*/true,
 template struct RawPtrBackupRefImpl</*AllowDangling=*/true,
                                     /*DisableBRP=*/true>;
 
-#if PA_BUILDFLAG(PA_DCHECK_IS_ON) || \
+#if PA_BUILDFLAG(DCHECKS_ARE_ON) || \
     PA_BUILDFLAG(ENABLE_BACKUP_REF_PTR_SLOW_CHECKS)
 void CheckThatAddressIsntWithinFirstPartitionPage(uintptr_t address) {
-  if (partition_alloc::internal::IsManagedByDirectMap(address)) {
+  auto reservation_offset_table =
+      partition_alloc::internal::ReservationOffsetTable::Get(address);
+  if (reservation_offset_table.IsManagedByDirectMap(address)) {
     uintptr_t reservation_start =
-        partition_alloc::internal::GetDirectMapReservationStart(address);
+        reservation_offset_table.GetDirectMapReservationStart(address);
     PA_BASE_CHECK(address - reservation_start >=
                   partition_alloc::PartitionPageSize());
   } else {
-    PA_BASE_CHECK(partition_alloc::internal::IsManagedByNormalBuckets(address));
+    PA_BASE_CHECK(reservation_offset_table.IsManagedByNormalBuckets(address));
     PA_BASE_CHECK(address % partition_alloc::kSuperPageSize >=
                   partition_alloc::PartitionPageSize());
   }
 }
-#endif  // PA_BUILDFLAG(PA_DCHECK_IS_ON) ||
+#endif  // PA_BUILDFLAG(DCHECKS_ARE_ON) ||
         // PA_BUILDFLAG(ENABLE_BACKUP_REF_PTR_SLOW_CHECKS)
 
 }  // namespace base::internal

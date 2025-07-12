@@ -2,13 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <algorithm>
 #include <vector>
 
 #include "base/containers/to_vector.h"
 #include "base/functional/callback_helpers.h"
-#include "base/ranges/algorithm.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/vr/test/mock_xr_device_hook_base.h"
 #include "chrome/browser/vr/test/multi_class_browser_test.h"
 #include "chrome/browser/vr/test/ui_utils.h"
 #include "chrome/browser/vr/test/webxr_vr_browser_test.h"
@@ -79,6 +80,7 @@ void TestIndicatorOnAccessForContentType(
     ContentSettingsType content_setting_type,
     const std::string& script,
     UserFriendlyElementName element_name) {
+  MockXRDeviceHookBase mock_device;
   // Enter VR while the content setting is CONTENT_SETTING_ASK to suppress
   // its corresponding indicator from initially showing up.
   LoadGenericPageChangeDefaultPermissionAndEnterVr(
@@ -101,6 +103,7 @@ void TestForInitialIndicatorForContentType(
     WebXrVrBrowserTestBase* t,
     const std::vector<TestIndicatorSetting>& test_indicator_settings) {
   DCHECK(!test_indicator_settings.empty());
+  MockXRDeviceHookBase mock_device;
   // Enter VR while the content setting is CONTENT_SETTING_ASK to suppress
   // its corresponding indicator from initially showing up.
   LoadGenericPageChangeDefaultPermissionAndEnterVr(

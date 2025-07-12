@@ -9,6 +9,7 @@
 
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/read_only_shared_memory_region.h"
@@ -23,13 +24,12 @@
 #include "services/network/public/mojom/url_response_head.mojom-forward.h"
 #include "third_party/blink/public/common/loader/loading_behavior_flag.h"
 #include "third_party/blink/public/common/performance/performance_timeline_constants.h"
-#include "third_party/blink/public/common/responsiveness_metrics/user_interaction_latency.h"
 #include "third_party/blink/public/common/subresource_load_metrics.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
 #include "third_party/blink/public/common/use_counter/use_counter_feature.h"
 #include "third_party/blink/public/mojom/devtools/console_message.mojom-shared.h"
+#include "third_party/blink/public/mojom/frame/lifecycle.mojom.h"
 #include "third_party/blink/public/mojom/loader/resource_load_info.mojom-shared.h"
-#include "third_party/blink/public/platform/web_vector.h"
 #include "third_party/blink/public/web/web_meaningful_layout.h"
 #include "third_party/blink/public/web/web_navigation_type.h"
 #include "ui/accessibility/ax_mode.h"
@@ -42,7 +42,6 @@ namespace blink {
 class WebDocumentLoader;
 class WebElement;
 class WebFormElement;
-class WebSecurityOrigin;
 class WebString;
 class WebURLRequest;
 class WebWorkerFetchContext;
@@ -64,17 +63,11 @@ class SchemeHostPort;
 
 namespace content {
 
-class RendererPpapiHost;
 class RenderFrame;
 
 // Base class for objects that want to filter incoming IPCs, and also get
 // notified of changes to the frame.
-class CONTENT_EXPORT RenderFrameObserver
-#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
-    : public IPC::Listener,
-      public IPC::Sender
-#endif
-{
+class CONTENT_EXPORT RenderFrameObserver {
  public:
   RenderFrameObserver(const RenderFrameObserver&) = delete;
   RenderFrameObserver& operator=(const RenderFrameObserver&) = delete;
@@ -84,15 +77,16 @@ class CONTENT_EXPORT RenderFrameObserver
   // go away at any time.
   virtual void OnDestruct() = 0;
 
-  // Called when a Pepper plugin is created.
-  virtual void DidCreatePepperPlugin(RendererPpapiHost* host) {}
-
   // Called when a load is explicitly stopped by the user or browser.
   virtual void OnStop() {}
 
   // Called when the RenderFrame visiblity is changed.
   virtual void WasHidden() {}
   virtual void WasShown() {}
+
+  // Called when the RenderFrame's visibility status changes.
+  virtual void OnFrameVisibilityChanged(
+      blink::mojom::FrameVisibility render_status) {}
 
   // Navigation callbacks.
   //
@@ -152,8 +146,8 @@ class CONTENT_EXPORT RenderFrameObserver
   virtual void DidChangeScrollOffset() {}
   virtual void WillSubmitForm(const blink::WebFormElement& form) {}
   virtual void DidMatchCSS(
-      const blink::WebVector<blink::WebString>& newly_matching_selectors,
-      const blink::WebVector<blink::WebString>& stopped_matching_selectors) {}
+      const std::vector<blink::WebString>& newly_matching_selectors,
+      const std::vector<blink::WebString>& stopped_matching_selectors) {}
 
   // Called when the RenderFrame creates a FencedFrame and provides the
   // RemoteFrameToken to identify the `blink::RemoteFrame` to the inner
@@ -223,7 +217,6 @@ class CONTENT_EXPORT RenderFrameObserver
       base::TimeTicks max_event_queued_main_thread,
       base::TimeTicks max_event_commit_finish,
       base::TimeTicks max_event_end,
-      blink::UserInteractionType interaction_type,
       uint64_t interaction_offset) {}
 
   // Notification when the First Scroll Delay becomes available.
@@ -270,9 +263,6 @@ class CONTENT_EXPORT RenderFrameObserver
   // after an input or scroll occurred in the associated document.
   virtual void DidObserveLayoutShift(double score, bool after_input_or_scroll) {
   }
-
-  // Reports that a resource will be requested.
-  virtual void WillSendRequest(const blink::WebURLRequest& request) {}
 
   // Notification when the renderer a response started, completed or canceled.
   // Complete or Cancel is guaranteed to be called for a response that started.
@@ -368,38 +358,17 @@ class CONTENT_EXPORT RenderFrameObserver
       const std::string& interface_name,
       mojo::ScopedInterfaceEndpointHandle* handle);
 
-  // The smoothness metrics is shared over shared-memory. The interested
-  // observer should invalidate |shared_memory| (by std::move()'ing it), and
-  // return true. All other observers should return false (default).
-  virtual bool SetUpSmoothnessReporting(
-      base::ReadOnlySharedMemoryRegion& shared_memory);
-
-  // Notifies the observers of the origins for which subresource redirect
-  // optimizations can be preloaded.
-  virtual void PreloadSubresourceOptimizationsForOrigins(
-      const std::vector<blink::WebSecurityOrigin>& origins) {}
-
-#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
-  // IPC::Listener implementation.
-  bool OnMessageReceived(const IPC::Message& message) override;
-
-  // IPC::Sender implementation.
-  bool Send(IPC::Message* message) override;
-#endif
+  // The dropped frames metrics is shared over shared-memory. The
+  // interested observer should invalidate |shared_memory| (by std::move()'ing
+  // it), and return true. All other observers should return false (default).
+  virtual bool SetUpDroppedFramesReporting(
+      base::ReadOnlySharedMemoryRegion& shared_memory_dropped_frames);
 
   RenderFrame* render_frame() const;
 
-#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
-  int routing_id() const { return routing_id_; }
-#endif
-
  protected:
   explicit RenderFrameObserver(RenderFrame* render_frame);
-#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
-  ~RenderFrameObserver() override;
-#else
   virtual ~RenderFrameObserver();
-#endif
 
  private:
   friend class RenderFrameImpl;
@@ -409,11 +378,6 @@ class CONTENT_EXPORT RenderFrameObserver
   void RenderFrameGone();
 
   raw_ptr<RenderFrame> render_frame_;
-
-#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
-  // The routing ID of the associated RenderFrame.
-  int routing_id_ = MSG_ROUTING_NONE;
-#endif
 };
 
 }  // namespace content

@@ -38,7 +38,7 @@ public final class ScreenshotTask implements ScreenshotSource {
     private boolean mDone;
     private Bitmap mBitmap;
     private Runnable mCallback;
-    private @ScreenshotMode int mScreenshotMode;
+    private final @ScreenshotMode int mScreenshotMode;
 
     /**
      * Creates a {@link ScreenshotTask} instance that, will grab a screenshot of {@code activity}.
@@ -167,8 +167,8 @@ public final class ScreenshotTask implements ScreenshotSource {
             return false;
         }
 
-        // If the start surface or the grid tab switcher are in use, do not use the compositor, it
-        // will snapshot the last active tab instead of the current screen if we try to use it.
+        // If the grid tab switcher is in use, do not use the compositor, it will snapshot the last
+        // active tab instead of the current screen if we try to use it.
         if (chromeActivity.isInOverviewMode()) {
             return false;
         }

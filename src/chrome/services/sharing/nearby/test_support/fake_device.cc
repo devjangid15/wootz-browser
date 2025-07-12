@@ -4,6 +4,8 @@
 
 #include "chrome/services/sharing/nearby/test_support/fake_device.h"
 
+#include "base/notimplemented.h"
+
 namespace bluetooth {
 
 FakeDevice::FakeDevice() = default;
@@ -27,7 +29,8 @@ void FakeDevice::GetServices(GetServicesCallback callback) {
 
 void FakeDevice::GetCharacteristics(const std::string& service_id,
                                     GetCharacteristicsCallback callback) {
-  std::move(callback).Run(std::move(characteristics_));
+  std::move(callback).Run(
+      std::move(service_id_to_characteristics_map_.at(service_id)));
 }
 
 void FakeDevice::ReadValueForCharacteristic(

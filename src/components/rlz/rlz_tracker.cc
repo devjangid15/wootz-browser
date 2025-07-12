@@ -12,6 +12,7 @@
 #include <utility>
 
 #include "base/functional/bind.h"
+#include "base/notimplemented.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -20,7 +21,6 @@
 #include "base/task/thread_pool.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "components/rlz/rlz_tracker_delegate.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
@@ -28,7 +28,7 @@
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/mojom/url_loader.mojom.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "base/syslog_logging.h"
 #endif
 
@@ -37,7 +37,7 @@ namespace {
 
 // Maximum and minimum delay for financial ping we would allow to be set through
 // master preferences. Somewhat arbitrary, may need to be adjusted in future.
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 const base::TimeDelta kMinInitDelay = base::Seconds(60);
 const base::TimeDelta kMaxInitDelay = base::Hours(24);
 #else
@@ -154,7 +154,7 @@ bool SendFinancialPing(const std::string& brand,
   std::string lang_ascii(base::UTF16ToASCII(lang));
   std::string referral_ascii(base::UTF16ToASCII(referral));
   std::string product_signature;
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   product_signature = "chromeos";
 #else
   product_signature = "chrome";
@@ -316,7 +316,7 @@ bool RLZTracker::Init(bool first_run,
   }
   delegate_->GetReactivationBrand(&reactivation_brand_);
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   // If the brand is organic, RLZ is essentially disabled.  Write a log to the
   // console for administrators and QA.
   if (delegate_->IsBrandOrganic(brand_) &&
@@ -541,8 +541,7 @@ bool* RLZTracker::GetAccessPointRecord(rlz_lib::AccessPoint point) {
   if (point == ChromeAppList())
     return &app_list_used_;
 #endif  // !BUILDFLAG(IS_IOS)
-  NOTREACHED_IN_MIGRATION();
-  return nullptr;
+  NOTREACHED();
 }
 
 // static
@@ -622,7 +621,7 @@ bool RLZTracker::ScheduleGetAccessPointRlz(rlz_lib::AccessPoint point) {
   return true;
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 // static
 void RLZTracker::ClearRlzState() {
   RLZTracker* tracker = GetInstance();

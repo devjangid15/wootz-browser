@@ -16,7 +16,6 @@
 #include "base/containers/contains.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/ranges/algorithm.h"
 #include "base/time/tick_clock.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/traced_value.h"
@@ -366,6 +365,10 @@ void Surface::OnActivationDependencyResolved(
   blocking_allocation_groups_.erase(group);
   if (!activation_dependencies_.empty())
     return;
+
+  TRACE_EVENT_NESTABLE_ASYNC_END0("viz", "SurfaceQueuedPending",
+                                  TRACE_ID_LOCAL(this));
+
   // All blockers have been cleared. The surface can be activated now.
   ActivatePendingFrame();
 }
@@ -484,7 +487,15 @@ std::optional<uint64_t> Surface::GetUncommitedFrameIndexNewerThan(
 void Surface::ResetPendingCopySurfaceId() {
   CHECK(pending_copy_surface_id_.is_valid());
   pending_copy_surface_id_ = SurfaceId();
-  RecomputeActiveReferencedSurfaces();
+  // It's an error to compute the surface references if the current surface does
+  // not have an active frame.
+  if (HasActiveFrame()) {
+    RecomputeActiveReferencedSurfaces();
+  }
+}
+
+void Surface::ClearNonRootCopyRequests() {
+  ClearCopyRequests(/*keep_root=*/true);
 }
 
 void Surface::UpdateReferencedAllocationGroups(
@@ -747,6 +758,11 @@ const CompositorFrameMetadata& Surface::GetActiveFrameMetadata() const {
   return active_frame_data_->frame.metadata;
 }
 
+const FrameIntervalInputs& Surface::GetFrameIntervalInputs() const {
+  DCHECK(active_frame_data_);
+  return active_frame_data_->frame.metadata.frame_interval_inputs;
+}
+
 void Surface::SetActiveFrameForViewTransition(CompositorFrame frame) {
   CHECK(active_frame_data_.has_value());
 
@@ -812,11 +828,11 @@ bool Surface::IsVideoCaptureOnFromClient() {
   return surface_client_->IsVideoCaptureStarted();
 }
 
-base::flat_set<base::PlatformThreadId> Surface::GetThreadIds() {
+std::vector<Thread> Surface::GetThreads() {
   if (!surface_client_)
     return {};
 
-  return surface_client_->GetThreadIds();
+  return surface_client_->GetThreads();
 }
 
 void Surface::UnrefFrameResourcesAndRunCallbacks(
@@ -847,9 +863,13 @@ void Surface::UnrefFrameResourcesAndRunCallbacks(
     info.Terminate();
 }
 
-void Surface::ClearCopyRequests() {
+void Surface::ClearCopyRequests(bool keep_root) {
   if (active_frame_data_) {
-    for (const auto& render_pass : GetActiveFrame().render_pass_list) {
+    const auto& render_pass_list = GetActiveFrame().render_pass_list;
+    for (const auto& render_pass : render_pass_list) {
+      if (keep_root && render_pass == render_pass_list.back()) {
+        break;
+      }
       // When the container is cleared, all copy requests within it will
       // auto-send an empty result as they are being destroyed.
       render_pass->copy_requests.clear();
@@ -872,8 +892,8 @@ void Surface::TakeLatencyInfoFromFrame(
     frame->metadata.latency_info.swap(*latency_info);
     return;
   }
-  base::ranges::copy(frame->metadata.latency_info,
-                     std::back_inserter(*latency_info));
+  std::ranges::copy(frame->metadata.latency_info,
+                    std::back_inserter(*latency_info));
   frame->metadata.latency_info.clear();
   if (!ui::LatencyInfo::Verify(*latency_info,
                                "Surface::TakeLatencyInfoFromFrame")) {

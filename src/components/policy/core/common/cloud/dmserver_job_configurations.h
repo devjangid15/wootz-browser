@@ -15,7 +15,6 @@
 #include "components/policy/core/common/cloud/device_management_service.h"
 #include "components/policy/core/common/cloud/dm_auth.h"
 #include "components/policy/policy_export.h"
-#include "components/policy/proto/cloud_policy.pb.h"
 #include "components/policy/proto/device_management_backend.pb.h"
 #include "url/gurl.h"
 
@@ -41,6 +40,9 @@ struct DMServerJobResult {
   //   - potential error from parsing `response`
   DeviceManagementStatus dm_status =
       DeviceManagementStatus::DM_STATUS_REQUEST_INVALID;
+
+  // HTTP response codes of the DMServer.
+  int response_code = 0;
 
   // The parsed response proto received from DMServer. This could be empty
   // in case of errors.
@@ -92,6 +94,7 @@ class POLICY_EXPORT DMServerJobConfiguration : public JobConfigurationBase {
     DMAuth auth_data = DMAuth::NoAuth();
     std::optional<std::string> profile_id = std::nullopt;
     std::optional<std::string> oauth_token = std::nullopt;
+    bool use_cookies = false;
     scoped_refptr<network::SharedURLLoaderFactory> factory;
     DMServerJobConfiguration::Callback callback;
   };

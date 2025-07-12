@@ -9,6 +9,7 @@
 #include "base/containers/unique_ptr_adapters.h"
 #include "base/feature_list.h"
 #include "base/memory/raw_ptr.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/no_destructor.h"
 #include "base/state_transitions.h"
 #include "base/supports_user_data.h"
@@ -25,10 +26,6 @@
 #include "ipc/ipc_message.h"
 #include "third_party/blink/public/mojom/shared_storage/shared_storage_worklet_service.mojom.h"
 #include "third_party/blink/public/mojom/worker/worklet_global_scope_creation_params.mojom.h"
-
-#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
-#include "content/public/browser/browser_message_filter.h"
-#endif
 
 namespace content {
 
@@ -240,20 +237,6 @@ void AgentSchedulingGroupHost::OnAssociatedInterfaceRequest(
       &*process_, bad_message::ASGH_ASSOCIATED_INTERFACE_REQUEST);
 }
 
-#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
-void AgentSchedulingGroupHost::AddFilter(BrowserMessageFilter* filter) {
-  DCHECK(filter);
-  // When MBI mode is disabled, we forward these kinds of requests straight to
-  // the underlying `RenderProcessHost`.
-  if (GetMBIMode() == features::MBIMode::kLegacy) {
-    process_->AddFilter(filter);
-    return;
-  }
-
-  channel_->AddFilter(filter->GetFilter());
-}
-#endif
-
 RenderProcessHost* AgentSchedulingGroupHost::GetProcess() {
   // `process_` can still be accessed here even if `state_` has been set to
   // `kRenderProcessHostDestroyed`. This is because a `RenderProcessHostImpl` is
@@ -321,6 +304,9 @@ void AgentSchedulingGroupHost::AddRoute(int32_t routing_id,
 }
 
 void AgentSchedulingGroupHost::RemoveRoute(int32_t routing_id) {
+  TRACE_EVENT0("navigation", "AgentSchedulingGroupHost::RemoveRoute");
+  base::ScopedUmaHistogramTimer histogram_timer(
+      "Navigation.AgentSchedulingGroupHost.RemoveRoute");
   DCHECK_EQ(state_, LifecycleState::kBound);
   listener_map_.Remove(routing_id);
   process_->RemoveRoute(routing_id);
@@ -355,12 +341,6 @@ void AgentSchedulingGroupHost::CreateSharedStorageWorkletService(
       std::move(receiver), std::move(global_scope_creation_params));
 }
 
-void AgentSchedulingGroupHost::ReportNoBinderForInterface(
-    const std::string& error) {
-  broker_receiver_.ReportBadMessage(error +
-                                    " for the agent scheduling group scope");
-}
-
 // static
 void AgentSchedulingGroupHost::
     set_agent_scheduling_group_host_factory_for_testing(
@@ -379,8 +359,8 @@ void AgentSchedulingGroupHost::DidUnloadRenderFrame(
     const blink::LocalFrameToken& frame_token) {
   // |frame_host| could be null if we decided to remove the RenderFrameHostImpl
   // because the Unload request took too long.
-  if (auto* frame_host =
-          RenderFrameHostImpl::FromFrameToken(process_->GetID(), frame_token)) {
+  if (auto* frame_host = RenderFrameHostImpl::FromFrameToken(
+          process_->GetDeprecatedID(), frame_token)) {
     frame_host->OnUnloadACK();
   }
 }
@@ -390,7 +370,6 @@ void AgentSchedulingGroupHost::ResetIPC() {
   receiver_.reset();
   mojo_remote_.reset();
   remote_route_provider_.reset();
-  broker_receiver_.reset();
   channel_ = nullptr;
 }
 
@@ -410,7 +389,6 @@ void AgentSchedulingGroupHost::SetUpIPC() {
   DCHECK(!mojo_remote_.is_bound());
   DCHECK(!receiver_.is_bound());
   DCHECK(!remote_route_provider_.is_bound());
-  DCHECK(!broker_receiver_.is_bound());
 
   // After this function returns, all of `this`'s mojo interfaces need to be
   // bound, and associated interfaces need to be associated "properly" - in
@@ -431,8 +409,7 @@ void AgentSchedulingGroupHost::SetUpIPC() {
   //    IPC channel/pipe.
   if (GetMBIMode() == features::MBIMode::kLegacy) {
     process_->GetRendererInterface()->CreateAssociatedAgentSchedulingGroup(
-        mojo_remote_.BindNewEndpointAndPassReceiver(),
-        broker_receiver_.BindNewPipeAndPassRemote());
+        mojo_remote_.BindNewEndpointAndPassReceiver());
   } else {
     auto io_task_runner = GetIOThreadTaskRunner({});
 
@@ -440,8 +417,7 @@ void AgentSchedulingGroupHost::SetUpIPC() {
     PendingRemote<IPC::mojom::ChannelBootstrap> bootstrap;
 
     process_->GetRendererInterface()->CreateAgentSchedulingGroup(
-        bootstrap.InitWithNewPipeAndPassReceiver(),
-        broker_receiver_.BindNewPipeAndPassRemote());
+        bootstrap.InitWithNewPipeAndPassReceiver());
 
     auto channel_factory = ChannelMojo::CreateServerFactory(
         bootstrap.PassPipe(), /*ipc_task_runner=*/io_task_runner,
@@ -457,8 +433,7 @@ void AgentSchedulingGroupHost::SetUpIPC() {
     // TODO(crbug.com/40142495): Add necessary filters.
     // Most of the filters currently installed on the process-wide channel are:
     // 1. "Process-bound", that is, they do not handle messages sent using ASG,
-    // 2. Pepper/NaCl-related, that are going away, and are not supported, or
-    // 3. Related to Android WebViews, which are not currently supported.
+    // 2. Related to Android WebViews, which are not currently supported.
 
     channel_->GetRemoteAssociatedInterface(&mojo_remote_);
   }

@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "ash/system/toast/toast_manager_impl.h"
-
 #include <string>
 
 #include "ash/constants/notifier_catalogs.h"
@@ -19,6 +17,7 @@
 #include "ash/shelf/shelf_widget.h"
 #include "ash/shell.h"
 #include "ash/strings/grit/ash_strings.h"
+#include "ash/system/toast/toast_manager_impl.h"
 #include "ash/test/ash_test_base.h"
 #include "ash/wm/tablet_mode/tablet_mode_controller_test_api.h"
 #include "ash/wm/work_area_insets.h"
@@ -39,7 +38,7 @@
 #include "ui/compositor/test/layer_animation_stopped_waiter.h"
 #include "ui/compositor/test/test_utils.h"
 #include "ui/display/manager/display_manager.h"
-#include "ui/views/controls/button/label_button.h"
+#include "ui/views/controls/button/button.h"
 #include "ui/views/widget/widget.h"
 #include "ui/wm/core/window_util.h"
 
@@ -97,9 +96,6 @@ class ToastManagerImplTest : public AshTestBase,
   ~ToastManagerImplTest() override = default;
 
   void SetUp() override {
-    scoped_feature_list_.InitWithFeatureState(features::kSideAlignedToasts,
-                                              AreSideAlignedToastsEnabled());
-
     AshTestBase::SetUp();
 
     manager_ = Shell::Get()->toast_manager();
@@ -111,8 +107,6 @@ class ToastManagerImplTest : public AshTestBase,
     ChangeLockState(false);
     SetShouldLockScreenAutomatically(false);
   }
-
-  bool AreSideAlignedToastsEnabled() const { return GetParam(); }
 
  protected:
   ToastManagerImpl* manager() { return manager_; }
@@ -144,8 +138,8 @@ class ToastManagerImplTest : public AshTestBase,
 
   void ClickDismissButton(
       aura::Window* root_window = Shell::GetRootWindowForNewWindows()) {
-    views::LabelButton* dismiss_button =
-        GetCurrentOverlay(root_window)->dismiss_button_for_testing();
+    views::Button* dismiss_button =
+        GetCurrentOverlay(root_window)->button_for_testing();
 
     auto* event_generator = GetEventGenerator();
     event_generator->MoveMouseTo(
@@ -167,12 +161,13 @@ class ToastManagerImplTest : public AshTestBase,
   std::string ShowToastWithDismiss(
       const std::string& text,
       base::TimeDelta duration,
-      const std::u16string& dismiss_text = std::u16string()) {
+      const std::u16string& dismiss_text = u"Dismiss") {
     std::string id = "TOAST_ID_" + base::NumberToString(serial_++);
-    manager()->Show(ToastData(id, ToastCatalogName::kTestCatalogName,
-                              base::ASCIIToUTF16(text), duration,
-                              /*visible_on_lock_screen=*/false,
-                              /*has_dismiss_button=*/true, dismiss_text));
+    ToastData toast_data(id, ToastCatalogName::kTestCatalogName,
+                         base::ASCIIToUTF16(text), duration);
+    toast_data.button_type = ToastData::ButtonType::kTextButton;
+    toast_data.button_text = dismiss_text;
+    manager()->Show(std::move(toast_data));
     return id;
   }
 
@@ -202,14 +197,9 @@ class ToastManagerImplTest : public AshTestBase,
  private:
   raw_ptr<ToastManagerImpl, DanglingUntriaged> manager_ = nullptr;
   unsigned int serial_ = 0;
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
-INSTANTIATE_TEST_SUITE_P(All,
-                         ToastManagerImplTest,
-                         testing::Bool() /* AreSideAlignedToastsEnabled() */);
-
-TEST_P(ToastManagerImplTest, ShowAndCloseAutomatically) {
+TEST_F(ToastManagerImplTest, ShowAndCloseAutomatically) {
   // A toast with custom duration closes after its duration plus one second.
   base::TimeDelta custom_duration = base::Milliseconds(10);
   ShowToast("id", custom_duration);
@@ -225,7 +215,7 @@ TEST_P(ToastManagerImplTest, ShowAndCloseAutomatically) {
   EXPECT_FALSE(GetCurrentOverlay());
 }
 
-TEST_P(ToastManagerImplTest, ShowAndCloseManually) {
+TEST_F(ToastManagerImplTest, ShowAndCloseManually) {
   ShowToastWithDismiss("DUMMY", ToastData::kInfiniteDuration, u"Dismiss");
 
   EXPECT_EQ(1, GetToastSerial());
@@ -237,7 +227,7 @@ TEST_P(ToastManagerImplTest, ShowAndCloseManually) {
   EXPECT_EQ(nullptr, GetCurrentOverlay());
 }
 
-TEST_P(ToastManagerImplTest, ShowAndCloseManuallyDuringAnimation) {
+TEST_F(ToastManagerImplTest, ShowAndCloseManuallyDuringAnimation) {
   ui::ScopedAnimationDurationScaleMode slow_animation_duration(
       ui::ScopedAnimationDurationScaleMode::SLOW_DURATION);
 
@@ -257,7 +247,7 @@ TEST_P(ToastManagerImplTest, ShowAndCloseManuallyDuringAnimation) {
   base::RunLoop().RunUntilIdle();
 }
 
-TEST_P(ToastManagerImplTest, ShowToastWithScopedToastPause) {
+TEST_F(ToastManagerImplTest, ShowToastWithScopedToastPause) {
   auto scoped_toast_pause = manager()->CreateScopedPause();
 
   // If a `ScopedToastPause` exists, the toast should not be shown.
@@ -271,7 +261,7 @@ TEST_P(ToastManagerImplTest, ShowToastWithScopedToastPause) {
   EXPECT_FALSE(GetCurrentOverlay());
 }
 
-TEST_P(ToastManagerImplTest, CancelToastWithScopedToastPause) {
+TEST_F(ToastManagerImplTest, CancelToastWithScopedToastPause) {
   ShowToast("DUMMY", base::Milliseconds(10));
   EXPECT_EQ(1, GetToastSerial());
 
@@ -280,7 +270,7 @@ TEST_P(ToastManagerImplTest, CancelToastWithScopedToastPause) {
   EXPECT_FALSE(GetCurrentOverlay());
 }
 
-TEST_P(ToastManagerImplTest, QueueToasts) {
+TEST_F(ToastManagerImplTest, QueueToasts) {
   const base::TimeDelta kDelay = ToastData::kMinimumDuration;
 
   std::string id1 = ShowToast("TEXT1", kDelay);
@@ -303,7 +293,7 @@ TEST_P(ToastManagerImplTest, QueueToasts) {
   EXPECT_TRUE(IsToastShown(id3));
 }
 
-TEST_P(ToastManagerImplTest, PositionWithVisibleBottomShelf) {
+TEST_F(ToastManagerImplTest, PositionWithVisibleBottomShelf) {
   Shelf* shelf = GetPrimaryShelf();
   EXPECT_EQ(ShelfAlignment::kBottom, shelf->alignment());
   EXPECT_EQ(SHELF_VISIBLE, shelf->GetVisibilityState());
@@ -317,13 +307,7 @@ TEST_P(ToastManagerImplTest, PositionWithVisibleBottomShelf) {
 
   EXPECT_TRUE(toast_bounds.Intersects(
       GetPrimaryWorkAreaInsets()->user_work_area_bounds()));
-  if (AreSideAlignedToastsEnabled()) {
-    EXPECT_EQ(root_bounds.right(),
-              toast_bounds.right() + ToastOverlay::kOffset);
-  } else {
-    EXPECT_NEAR(root_bounds.CenterPoint().x(), toast_bounds.CenterPoint().x(),
-                1);
-  }
+  EXPECT_EQ(root_bounds.right(), toast_bounds.right() + ToastOverlay::kOffset);
 
   gfx::Rect shelf_bounds = shelf->GetIdealBounds();
   EXPECT_FALSE(toast_bounds.Intersects(shelf_bounds));
@@ -333,7 +317,7 @@ TEST_P(ToastManagerImplTest, PositionWithVisibleBottomShelf) {
       toast_bounds.bottom());
 }
 
-TEST_P(ToastManagerImplTest, PositionWithHotseatShown) {
+TEST_F(ToastManagerImplTest, PositionWithHotseatShown) {
   Shelf* shelf = GetPrimaryShelf();
   HotseatWidget* hotseat = GetPrimaryShelf()->hotseat_widget();
 
@@ -354,7 +338,7 @@ TEST_P(ToastManagerImplTest, PositionWithHotseatShown) {
             toast_bounds.bottom());
 }
 
-TEST_P(ToastManagerImplTest, PositionWithHotseatExtended) {
+TEST_F(ToastManagerImplTest, PositionWithHotseatExtended) {
   Shelf* shelf = GetPrimaryShelf();
   HotseatWidget* hotseat = GetPrimaryShelf()->hotseat_widget();
 
@@ -375,7 +359,7 @@ TEST_P(ToastManagerImplTest, PositionWithHotseatExtended) {
             toast_bounds.bottom());
 }
 
-TEST_P(ToastManagerImplTest, PositionWithHotseatShownForMultipleMonitors) {
+TEST_F(ToastManagerImplTest, PositionWithHotseatShownForMultipleMonitors) {
   UpdateDisplay("600x400,600x400");
   Shelf* shelf = GetPrimaryShelf();
   HotseatWidget* hotseat = GetPrimaryShelf()->hotseat_widget();
@@ -401,7 +385,7 @@ TEST_P(ToastManagerImplTest, PositionWithHotseatShownForMultipleMonitors) {
 
 // Tests that `ToastOverlay`'s are cleaned up properly on shutdown with hotseat
 // extended on multi-monitor
-TEST_P(ToastManagerImplTest, ShutdownWithExtendedHotseat) {
+TEST_F(ToastManagerImplTest, ShutdownWithExtendedHotseat) {
   UpdateDisplay("600x400,600x400");
   Shelf* const shelf =
       Shell::GetRootWindowControllerWithDisplayId(GetSecondaryDisplay().id())
@@ -424,7 +408,7 @@ TEST_P(ToastManagerImplTest, ShutdownWithExtendedHotseat) {
 
 // Tests that toasts that observe UnifiedSystemTray and are shown in
 // multiple displays are properly destroyed after disconnecting a monitor.
-TEST_P(ToastManagerImplTest, ToastsOnMultipleMonitors) {
+TEST_F(ToastManagerImplTest, ToastsOnMultipleMonitors) {
   UpdateDisplay("800x700,800x700");
   auto* toast_manager = manager();
 
@@ -454,7 +438,7 @@ TEST_P(ToastManagerImplTest, ToastsOnMultipleMonitors) {
   // No crash should happen.
 }
 
-TEST_P(ToastManagerImplTest, PositionWithHotseatExtendedOnSecondMonitor) {
+TEST_F(ToastManagerImplTest, PositionWithHotseatExtendedOnSecondMonitor) {
   UpdateDisplay("600x400,700x400");
   RootWindowController* const secondary_root_window_controller =
       Shell::GetRootWindowControllerWithDisplayId(GetSecondaryDisplay().id());
@@ -490,7 +474,7 @@ TEST_P(ToastManagerImplTest, PositionWithHotseatExtendedOnSecondMonitor) {
             toast_bounds.bottom());
 }
 
-TEST_P(ToastManagerImplTest, PositionWithHotseatExtendedOnAnotherMonitor) {
+TEST_F(ToastManagerImplTest, PositionWithHotseatExtendedOnAnotherMonitor) {
   UpdateDisplay("600x400,700x400");
   RootWindowController* const secondary_root_window_controller =
       Shell::GetRootWindowControllerWithDisplayId(GetSecondaryDisplay().id());
@@ -529,7 +513,7 @@ TEST_P(ToastManagerImplTest, PositionWithHotseatExtendedOnAnotherMonitor) {
             toast_bounds.bottom());
 }
 
-TEST_P(ToastManagerImplTest, PositionWithAutoHiddenBottomShelf) {
+TEST_F(ToastManagerImplTest, PositionWithAutoHiddenBottomShelf) {
   std::unique_ptr<aura::Window> window(
       CreateTestWindowInShellWithBounds(gfx::Rect(1, 2, 3, 4)));
 
@@ -547,13 +531,7 @@ TEST_P(ToastManagerImplTest, PositionWithAutoHiddenBottomShelf) {
 
   EXPECT_TRUE(toast_bounds.Intersects(
       GetPrimaryWorkAreaInsets()->user_work_area_bounds()));
-  if (AreSideAlignedToastsEnabled()) {
-    EXPECT_EQ(root_bounds.right(),
-              toast_bounds.right() + ToastOverlay::kOffset);
-  } else {
-    EXPECT_NEAR(root_bounds.CenterPoint().x(), toast_bounds.CenterPoint().x(),
-                1);
-  }
+  EXPECT_EQ(root_bounds.right(), toast_bounds.right() + ToastOverlay::kOffset);
   EXPECT_EQ(root_bounds.bottom() -
                 ShelfConfig::Get()->hidden_shelf_in_screen_portion() -
                 ToastOverlay::kOffset,
@@ -569,7 +547,7 @@ TEST_P(ToastManagerImplTest, PositionWithAutoHiddenBottomShelf) {
             toast_bounds.bottom());
 }
 
-TEST_P(ToastManagerImplTest, PositionWithHiddenBottomShelf) {
+TEST_F(ToastManagerImplTest, PositionWithHiddenBottomShelf) {
   Shelf* shelf = GetPrimaryShelf();
   EXPECT_EQ(ShelfAlignment::kBottom, shelf->alignment());
   shelf->SetAutoHideBehavior(ShelfAutoHideBehavior::kAlwaysHidden);
@@ -584,13 +562,7 @@ TEST_P(ToastManagerImplTest, PositionWithHiddenBottomShelf) {
 
   EXPECT_TRUE(toast_bounds.Intersects(
       GetPrimaryWorkAreaInsets()->user_work_area_bounds()));
-  if (AreSideAlignedToastsEnabled()) {
-    EXPECT_EQ(root_bounds.right(),
-              toast_bounds.right() + ToastOverlay::kOffset);
-  } else {
-    EXPECT_NEAR(root_bounds.CenterPoint().x(), toast_bounds.CenterPoint().x(),
-                1);
-  }
+  EXPECT_EQ(root_bounds.right(), toast_bounds.right() + ToastOverlay::kOffset);
   EXPECT_EQ(root_bounds.bottom() - ToastOverlay::kOffset,
             toast_bounds.bottom());
 }
@@ -598,7 +570,7 @@ TEST_P(ToastManagerImplTest, PositionWithHiddenBottomShelf) {
 // Tests that toasts follow the shelf when aligning it to the side.
 // Toasts should stay at center of the work area if side aligned toasts are not
 // enabled.
-TEST_P(ToastManagerImplTest, PositionWithVisibleSideShelf) {
+TEST_F(ToastManagerImplTest, PositionWithVisibleSideShelf) {
   Shelf* shelf = GetPrimaryShelf();
   EXPECT_EQ(SHELF_VISIBLE, shelf->GetVisibilityState());
 
@@ -612,28 +584,17 @@ TEST_P(ToastManagerImplTest, PositionWithVisibleSideShelf) {
   work_area_bounds = GetPrimaryWorkAreaInsets()->user_work_area_bounds();
   shelf_bounds = shelf->GetIdealBounds();
   EXPECT_FALSE(GetToastBounds().Intersects(shelf_bounds));
-  if (AreSideAlignedToastsEnabled()) {
-    EXPECT_EQ(work_area_bounds.x(),
-              GetToastBounds().x() - ToastOverlay::kOffset);
-  } else {
-    EXPECT_NEAR(work_area_bounds.CenterPoint().x(),
-                GetToastBounds().CenterPoint().x(), 1);
-  }
+  EXPECT_EQ(work_area_bounds.x(), GetToastBounds().x() - ToastOverlay::kOffset);
 
   shelf->SetAlignment(ShelfAlignment::kRight);
   work_area_bounds = GetPrimaryWorkAreaInsets()->user_work_area_bounds();
   shelf_bounds = shelf->GetIdealBounds();
   EXPECT_FALSE(GetToastBounds().Intersects(shelf_bounds));
-  if (AreSideAlignedToastsEnabled()) {
-    EXPECT_EQ(work_area_bounds.right(),
-              GetToastBounds().right() + ToastOverlay::kOffset);
-  } else {
-    EXPECT_NEAR(work_area_bounds.CenterPoint().x(),
-                GetToastBounds().CenterPoint().x(), 1);
-  }
+  EXPECT_EQ(work_area_bounds.right(),
+            GetToastBounds().right() + ToastOverlay::kOffset);
 }
 
-TEST_P(ToastManagerImplTest, PositionWithUnifiedDesktop) {
+TEST_F(ToastManagerImplTest, PositionWithUnifiedDesktop) {
   display_manager()->SetUnifiedDesktopEnabled(true);
   UpdateDisplay("1000x500,0+600-100x500");
 
@@ -651,13 +612,7 @@ TEST_P(ToastManagerImplTest, PositionWithUnifiedDesktop) {
   EXPECT_TRUE(toast_bounds.Intersects(
       GetPrimaryWorkAreaInsets()->user_work_area_bounds()));
   EXPECT_TRUE(root_bounds.Contains(toast_bounds));
-  if (AreSideAlignedToastsEnabled()) {
-    EXPECT_EQ(root_bounds.right(),
-              toast_bounds.right() + ToastOverlay::kOffset);
-  } else {
-    EXPECT_NEAR(root_bounds.CenterPoint().x(), toast_bounds.CenterPoint().x(),
-                1);
-  }
+  EXPECT_EQ(root_bounds.right(), toast_bounds.right() + ToastOverlay::kOffset);
 
   gfx::Rect shelf_bounds = shelf->GetIdealBounds();
   EXPECT_FALSE(toast_bounds.Intersects(shelf_bounds));
@@ -667,7 +622,7 @@ TEST_P(ToastManagerImplTest, PositionWithUnifiedDesktop) {
       toast_bounds.bottom());
 }
 
-TEST_P(ToastManagerImplTest, CancelToast) {
+TEST_F(ToastManagerImplTest, CancelToast) {
   std::string id1 = ShowToast("TEXT1", ToastData::kInfiniteDuration);
   std::string id2 = ShowToast("TEXT2", ToastData::kInfiniteDuration);
   std::string id3 = ShowToast("TEXT3", ToastData::kInfiniteDuration);
@@ -698,7 +653,7 @@ TEST_P(ToastManagerImplTest, CancelToast) {
   EXPECT_EQ(2, GetToastSerial());
 }
 
-TEST_P(ToastManagerImplTest, ReplaceContentsOfQueuedToast) {
+TEST_F(ToastManagerImplTest, ReplaceContentsOfQueuedToast) {
   std::string id1 = ShowToast(/*text=*/"TEXT1", ToastData::kInfiniteDuration);
   std::string id2 = ShowToast(/*text=*/"TEXT2", ToastData::kInfiniteDuration);
 
@@ -721,7 +676,7 @@ TEST_P(ToastManagerImplTest, ReplaceContentsOfQueuedToast) {
   EXPECT_EQ(2, GetToastSerial());
 }
 
-TEST_P(ToastManagerImplTest, ReplaceContentsOfCurrentToast) {
+TEST_F(ToastManagerImplTest, ReplaceContentsOfCurrentToast) {
   std::string id1 = ShowToast(/*text=*/"TEXT1", ToastData::kInfiniteDuration);
   std::string id2 = ShowToast(/*text=*/"TEXT2", ToastData::kInfiniteDuration);
 
@@ -746,7 +701,7 @@ TEST_P(ToastManagerImplTest, ReplaceContentsOfCurrentToast) {
   EXPECT_EQ(3, GetToastSerial());
 }
 
-TEST_P(ToastManagerImplTest,
+TEST_F(ToastManagerImplTest,
        ReplaceContentsOfCurrentToastBeforePriorReplacementFinishes) {
   // By default, the animation duration is zero in tests. Set the animation
   // duration to non-zero so that toasts don't immediately close.
@@ -788,7 +743,7 @@ TEST_P(ToastManagerImplTest,
   EXPECT_EQ(3, GetToastSerial());
 }
 
-TEST_P(ToastManagerImplTest, ToastDismissedOnSessionStateChanges) {
+TEST_F(ToastManagerImplTest, ToastDismissedOnSessionStateChanges) {
   // Show a toast supported on the lock screen in the unlocked screen.
   std::string id1 = ShowToast("TEXT1", ToastData::kInfiniteDuration,
                               /*visible_on_lock_screen=*/true);
@@ -814,7 +769,7 @@ TEST_P(ToastManagerImplTest, ToastDismissedOnSessionStateChanges) {
   EXPECT_FALSE(GetCurrentOverlay());
 }
 
-TEST_P(ToastManagerImplTest, ToastNotSupportedOnLockScreen) {
+TEST_F(ToastManagerImplTest, ToastNotSupportedOnLockScreen) {
   // Show a toast that is not supported on the lock screen.
   std::string id1 = ShowToast("TEXT1", ToastData::kInfiniteDuration,
                               /*visible_on_lock_screen=*/false);
@@ -836,7 +791,7 @@ TEST_P(ToastManagerImplTest, ToastNotSupportedOnLockScreen) {
   EXPECT_FALSE(GetCurrentOverlay());
 }
 
-TEST_P(ToastManagerImplTest, ShownCountMetric) {
+TEST_F(ToastManagerImplTest, ShownCountMetric) {
   base::HistogramTester histogram_tester;
 
   const ToastCatalogName catalog_name_1 = static_cast<ToastCatalogName>(1);
@@ -867,7 +822,7 @@ TEST_P(ToastManagerImplTest, ShownCountMetric) {
                                      catalog_name_2, 1);
 }
 
-TEST_P(ToastManagerImplTest, TimeInQueueMetric) {
+TEST_F(ToastManagerImplTest, TimeInQueueMetric) {
   base::HistogramTester histogram_tester;
 
   const ToastCatalogName catalog_name_1 = static_cast<ToastCatalogName>(1);
@@ -905,7 +860,7 @@ TEST_P(ToastManagerImplTest, TimeInQueueMetric) {
                                          duration, 1);
 }
 
-TEST_P(ToastManagerImplTest, UserJourneyTimeMetric) {
+TEST_F(ToastManagerImplTest, UserJourneyTimeMetric) {
   base::HistogramTester histogram_tester;
 
   const ToastCatalogName catalog_name = ToastCatalogName::kTestCatalogName;
@@ -938,7 +893,7 @@ TEST_P(ToastManagerImplTest, UserJourneyTimeMetric) {
 // Table-driven test that checks whether a toast's expired callback is run when
 // a toast is closed when the toast manager cancels the toast, when the toast
 // duration cancels the toast, and when the dismiss button is pressed.
-TEST_P(ToastManagerImplTest, ExpiredCallbackRunsWhenToastOverlayClosed) {
+TEST_F(ToastManagerImplTest, ExpiredCallbackRunsWhenToastOverlayClosed) {
   // Covers possible ways that a toast can be cancelled.
   enum class CancellationSource {
     kToastManager,
@@ -1006,7 +961,7 @@ TEST_P(ToastManagerImplTest, ExpiredCallbackRunsWhenToastOverlayClosed) {
 
 // Tests that a toast that is created with `ToastData::persist_on_hover` set to
 // true will not expire while the mouse is hovering over it.
-TEST_P(ToastManagerImplTest, ToastsCanPersistOnHover) {
+TEST_F(ToastManagerImplTest, ToastsCanPersistOnHover) {
   std::string toast_id = "TOAST_ID_" + base::NumberToString(GetToastSerial());
 
   ToastData toast_data(toast_id, ToastCatalogName::kTestCatalogName,
@@ -1045,7 +1000,7 @@ TEST_P(ToastManagerImplTest, ToastsCanPersistOnHover) {
 
 // Table-driven test that checks that toasts designated to show on all windows
 // correctly show and close on all root windows.
-TEST_P(ToastManagerImplTest, ShowAndCloseToastsOnAllRootWindows) {
+TEST_F(ToastManagerImplTest, ShowAndCloseToastsOnAllRootWindows) {
   UpdateDisplay("800x700,800x700");
 
   // Covers possible ways that a toast can be cancelled.
@@ -1123,7 +1078,7 @@ TEST_P(ToastManagerImplTest, ShowAndCloseToastsOnAllRootWindows) {
 
 // This tests that toasts that are designated to persist on hover and appear on
 // all root windows will not close when one of the toast instances is hovered.
-TEST_P(ToastManagerImplTest, ToastsThatPersistOnHoverOnAllRootWindows) {
+TEST_F(ToastManagerImplTest, ToastsThatPersistOnHoverOnAllRootWindows) {
   UpdateDisplay("800x700,800x700");
   auto* toast_manager = manager();
   const aura::Window::Windows root_windows = Shell::GetAllRootWindows();
@@ -1182,7 +1137,7 @@ TEST_P(ToastManagerImplTest, ToastsThatPersistOnHoverOnAllRootWindows) {
 
 // This tests that multi-monitor toast instances do not call the
 // `expired_callback_` when the root window is removed.
-TEST_P(ToastManagerImplTest, ExpiredCallbackNotCalledOnRootWindowRemoved) {
+TEST_F(ToastManagerImplTest, ExpiredCallbackNotCalledOnRootWindowRemoved) {
   UpdateDisplay("800x700,800x700");
   auto* toast_manager = manager();
 
@@ -1225,7 +1180,7 @@ TEST_P(ToastManagerImplTest, ExpiredCallbackNotCalledOnRootWindowRemoved) {
 
 // Tests that toasts are properly closed if they only exist in a secondary
 // display that gets removed e.g. by monitor disconnecteded.
-TEST_P(ToastManagerImplTest, SingleDisplayToastDestroyedOnRootWindowRemoved) {
+TEST_F(ToastManagerImplTest, SingleDisplayToastDestroyedOnRootWindowRemoved) {
   // Add a secondary display, and set it to be the active display so toasts are
   // added here.
   UpdateDisplay("800x700,800x700");
@@ -1260,7 +1215,7 @@ TEST_P(ToastManagerImplTest, SingleDisplayToastDestroyedOnRootWindowRemoved) {
 
 // This tests that new instances of a multi-monitor toast are spawned with the
 // correct duration and correct persisting state.
-TEST_P(ToastManagerImplTest,
+TEST_F(ToastManagerImplTest,
        AllRootWindowToastsCreatedWithCorrectDurationAndPersistState) {
   // Start with display at 800x700 to maintain cursor position when adding root
   // windows.
@@ -1321,7 +1276,7 @@ TEST_P(ToastManagerImplTest,
 // Tests that an offset is added to shift the overlay baseline up when
 // toasts are side aligned and a slider bubble is shown.
 // Overlay baseline is unchanged when toasts are not side aligned.
-TEST_P(ToastManagerImplTest, BaselineUpdatesAfterSliderBubbleShown) {
+TEST_F(ToastManagerImplTest, BaselineUpdatesAfterSliderBubbleShown) {
   ShowToast("DUMMY", ToastData::kInfiniteDuration);
   const int previous_baseline = GetToastBounds().bottom();
 
@@ -1331,12 +1286,8 @@ TEST_P(ToastManagerImplTest, BaselineUpdatesAfterSliderBubbleShown) {
   GetPrimaryUnifiedSystemTray()->ShowVolumeSliderBubble();
   auto* slider_view = GetPrimaryUnifiedSystemTray()->GetSliderView();
   ASSERT_TRUE(slider_view);
-  if (AreSideAlignedToastsEnabled()) {
-    EXPECT_EQ(slider_view->height() + ToastOverlay::kOffset,
-              previous_baseline - GetToastBounds().bottom());
-  } else {
-    EXPECT_EQ(GetToastBounds().bottom(), previous_baseline);
-  }
+  EXPECT_EQ(slider_view->height() + ToastOverlay::kOffset,
+            previous_baseline - GetToastBounds().bottom());
 
   // Baseline returns to previous value when the slider bubble is closed.
   GetPrimaryUnifiedSystemTray()->CloseSecondaryBubbles();

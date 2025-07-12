@@ -12,8 +12,10 @@
 #include "base/location.h"
 #include "base/task/sequenced_task_runner.h"
 #include "components/device_event_log/device_event_log.h"
-#include "services/device/usb/jni_headers/ChromeUsbService_jni.h"
 #include "services/device/usb/usb_device_android.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "services/device/usb/jni_headers/ChromeUsbService_jni.h"
 
 using base::android::JavaRef;
 using base::android::ScopedJavaLocalRef;
@@ -41,7 +43,6 @@ UsbServiceAndroid::~UsbServiceAndroid() {
 }
 
 void UsbServiceAndroid::DeviceAttached(JNIEnv* env,
-                                       const JavaRef<jobject>& caller,
                                        const JavaRef<jobject>& usb_device) {
   scoped_refptr<UsbDeviceAndroid> device =
       UsbDeviceAndroid::Create(env, weak_factory_.GetWeakPtr(), usb_device);
@@ -50,7 +51,6 @@ void UsbServiceAndroid::DeviceAttached(JNIEnv* env,
 }
 
 void UsbServiceAndroid::DeviceDetached(JNIEnv* env,
-                                       const JavaRef<jobject>& caller,
                                        jint device_id) {
   auto it = devices_by_id_.find(device_id);
   if (it == devices_by_id_.end())
@@ -67,11 +67,9 @@ void UsbServiceAndroid::DeviceDetached(JNIEnv* env,
   NotifyDeviceRemoved(device);
 }
 
-void UsbServiceAndroid::DevicePermissionRequestComplete(
-    JNIEnv* env,
-    const base::android::JavaRef<jobject>& caller,
-    jint device_id,
-    jboolean granted) {
+void UsbServiceAndroid::DevicePermissionRequestComplete(JNIEnv* env,
+                                                        jint device_id,
+                                                        jboolean granted) {
   const auto it = devices_by_id_.find(device_id);
   if (it == devices_by_id_.end()) {
     return;

@@ -10,9 +10,11 @@
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/side_panel/side_panel_ui.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/browser/ui/views/side_panel/side_panel_ui.h"
 #include "chrome/common/chrome_paths.h"
+#include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
@@ -28,10 +30,7 @@ namespace {
 
 class ExtensionUntrustedWebUITest : public ExtensionApiTest {
  public:
-  ExtensionUntrustedWebUITest() {
-    scoped_feature_list_.InitWithFeatures(
-        {features::kReadAnything, features::kReadAnythingLocalSidePanel}, {});
-  }
+  ExtensionUntrustedWebUITest() = default;
 
   ~ExtensionUntrustedWebUITest() override = default;
 
@@ -99,7 +98,7 @@ class ExtensionUntrustedWebUITest : public ExtensionApiTest {
     EXPECT_TRUE(ui_test_utils::NavigateToURL(
         browser(), GURL(chrome::kChromeUIUntrustedReadAnythingSidePanelURL)));
     // Get the side panel entry registry.
-    auto* side_panel_ui = SidePanelUI::GetSidePanelUIForBrowser(browser());
+    auto* side_panel_ui = browser()->GetFeatures().side_panel_ui();
     auto* side_panel_web_contents =
         side_panel_ui->GetWebContentsForTest(SidePanelEntryId::kReadAnything);
 
@@ -115,9 +114,6 @@ class ExtensionUntrustedWebUITest : public ExtensionApiTest {
     return result ? testing::AssertionSuccess()
                   : (testing::AssertionFailure() << "Check console output");
   }
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 }  // namespace
@@ -127,8 +123,16 @@ IN_PROC_BROWSER_TEST_F(ExtensionUntrustedWebUITest,
   RunTestOnApiTestPage("confidence_check_available_apis.js");
 }
 
+// TODO(crbug.com/417615981): Re-enable this test
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_ConfidenceCheckAvailableAPIsReadAnything \
+  DISABLED_ConfidenceCheckAvailableAPIsReadAnything
+#else
+#define MAYBE_ConfidenceCheckAvailableAPIsReadAnything \
+  ConfidenceCheckAvailableAPIsReadAnything
+#endif
 IN_PROC_BROWSER_TEST_F(ExtensionUntrustedWebUITest,
-                       ConfidenceCheckAvailableAPIsReadAnything) {
+                       MAYBE_ConfidenceCheckAvailableAPIsReadAnything) {
   ASSERT_TRUE(RunTestOnReadAnythingPage(
       "confidence_check_available_apis_read_anything.js"));
 }

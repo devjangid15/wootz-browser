@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "ash/clipboard/test_support/clipboard_history_item_builder.h"
+
 #include <vector>
 
 #include "ash/clipboard/clipboard_history_item.h"
@@ -106,8 +107,7 @@ ClipboardHistoryItemBuilder& ClipboardHistoryItemBuilder::ClearFormat(
     case ui::ClipboardInternalFormat::kWeb:
       return ClearWebSmartPaste();
   }
-  NOTREACHED_IN_MIGRATION();
-  return *this;
+  NOTREACHED();
 }
 
 ClipboardHistoryItemBuilder& ClipboardHistoryItemBuilder::SetText(
@@ -178,7 +178,8 @@ ClipboardHistoryItemBuilder& ClipboardHistoryItemBuilder::ClearBookmarkTitle() {
 
 ClipboardHistoryItemBuilder& ClipboardHistoryItemBuilder::SetPng(
     const scoped_refptr<base::RefCountedMemory>& png) {
-  std::vector<uint8_t> data(png->data(), png->data() + png->size());
+  std::vector<uint8_t> data;
+  data.assign(png->begin(), png->end());
   return SetPng(std::move(data));
 }
 
@@ -218,7 +219,7 @@ ClipboardHistoryItemBuilder& ClipboardHistoryItemBuilder::SetFileSystemData(
       &custom_data);
 
   return SetCustomData(
-      ui::ClipboardFormatType::WebCustomDataType(),
+      ui::ClipboardFormatType::DataTransferCustomType(),
       std::string(custom_data.data_as_char(), custom_data.size()));
 }
 

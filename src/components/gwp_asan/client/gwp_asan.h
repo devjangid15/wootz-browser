@@ -21,6 +21,8 @@ struct AllocatorSettings {
   size_t num_metadata;
   size_t total_pages;
   size_t sampling_frequency;
+  size_t sampling_min_size;
+  size_t sampling_max_size;
 };
 
 }  // namespace internal
@@ -40,7 +42,7 @@ GWP_ASAN_EXPORT void MaybeEnableLightweightDetector(bool boost_sampling,
                                                     const char* process_type);
 GWP_ASAN_EXPORT void MaybeEnableExtremeLightweightDetector(
     bool boost_sampling,
-    const char* process_type);
+    std::string_view process_type);
 
 }  // namespace gwp_asan
 

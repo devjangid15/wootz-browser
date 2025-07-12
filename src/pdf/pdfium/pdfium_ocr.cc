@@ -4,11 +4,15 @@
 
 #include "pdf/pdfium/pdfium_ocr.h"
 
+#include <math.h>
 #include <stddef.h>
+
+#include <algorithm>
 
 #include "base/check.h"
 #include "base/check_op.h"
 #include "base/logging.h"
+#include "printing/units.h"
 #include "third_party/pdfium/public/cpp/fpdf_scopers.h"
 #include "third_party/pdfium/public/fpdf_edit.h"
 #include "third_party/pdfium/public/fpdfview.h"
@@ -20,19 +24,36 @@
 
 namespace chrome_pdf {
 
+gfx::SizeF GetImageSize(FPDF_PAGEOBJECT page_object) {
+  float left;
+  float bottom;
+  float right;
+  float top;
+  if (!FPDFPageObj_GetBounds(page_object, &left, &bottom, &right, &top)) {
+    return gfx::SizeF();
+  }
+
+  return gfx::SizeF(right - left, top - bottom);
+}
+
 SkBitmap GetImageForOcr(FPDF_DOCUMENT doc,
                         FPDF_PAGE page,
-                        int page_object_index) {
+                        FPDF_PAGEOBJECT page_object,
+                        uint32_t max_image_dimension) {
   SkBitmap bitmap;
 
-  FPDF_PAGEOBJECT page_object = FPDFPage_GetObject(page, page_object_index);
   if (FPDFPageObj_GetType(page_object) != FPDF_PAGEOBJ_IMAGE) {
     return bitmap;
   }
 
-  // OCR needs the image with the highest available quality. To get it, the
-  // image transform matrix is reset to no-scale, the bitmap is extracted,
-  // and then the original matrix is restored.
+  // If image is resized so that it is not shown, no need to OCR it.
+  if (GetImageSize(page_object).IsEmpty()) {
+    return bitmap;
+  }
+
+  // OCR needs the image with at most `max_image_dimension` resolution. To get
+  // it, the image transform matrix is set to an appropriate scale, the bitmap
+  // is extracted, and then the original matrix is restored.
   FS_MATRIX original_matrix;
   if (!FPDFPageObj_GetMatrix(page_object, &original_matrix)) {
     DLOG(ERROR) << "Failed to get original matrix";
@@ -40,16 +61,34 @@ SkBitmap GetImageForOcr(FPDF_DOCUMENT doc,
   }
 
   // Get the actual image size.
-  unsigned int width;
-  unsigned int height;
-  if (!FPDFImageObj_GetImagePixelSize(page_object, &width, &height)) {
+  unsigned int pixel_width;
+  unsigned int pixel_height;
+  if (!FPDFImageObj_GetImagePixelSize(page_object, &pixel_width,
+                                      &pixel_height)) {
     DLOG(ERROR) << "Failed to get image size";
     return bitmap;
   }
+  if (!pixel_width || !pixel_height) {
+    return bitmap;
+  }
 
-  // Resize the matrix to actual size.
-  FS_MATRIX new_matrix = {static_cast<float>(width),  0, 0,
-                          static_cast<float>(height), 0, 0};
+  // Reduce size if resolution is above need.
+  float effective_width;
+  float effective_height;
+  if (pixel_width > max_image_dimension || pixel_height > max_image_dimension) {
+    float reduction_ratio = static_cast<float>(max_image_dimension) /
+                            std::max(pixel_width, pixel_height);
+    effective_width = pixel_width * reduction_ratio;
+    effective_height = pixel_height * reduction_ratio;
+  } else {
+    effective_width = pixel_width;
+    effective_height = pixel_height;
+  }
+
+  // Scale the image to the highest (capped) resolution while keeping its
+  // rotation as it is.
+  const FS_MATRIX new_matrix = {effective_width, 0, 0, effective_height, 0, 0};
+
   if (!FPDFPageObj_SetMatrix(page_object, &new_matrix)) {
     DLOG(ERROR) << "Failed to set new matrix on image";
     return bitmap;
@@ -58,13 +97,13 @@ SkBitmap GetImageForOcr(FPDF_DOCUMENT doc,
   ScopedFPDFBitmap raw_bitmap(
       FPDFImageObj_GetRenderedBitmap(doc, page, page_object));
 
+  // Restore the original matrix.
+  CHECK(FPDFPageObj_SetMatrix(page_object, &original_matrix));
+
   if (!raw_bitmap) {
     DLOG(ERROR) << "Failed to get rendered bitmap";
     return bitmap;
   }
-
-  // Restore the original matrix.
-  CHECK(FPDFPageObj_SetMatrix(page_object, &original_matrix));
 
   CHECK_EQ(FPDFBitmap_GetFormat(raw_bitmap.get()), FPDFBitmap_BGRA);
   SkImageInfo info =

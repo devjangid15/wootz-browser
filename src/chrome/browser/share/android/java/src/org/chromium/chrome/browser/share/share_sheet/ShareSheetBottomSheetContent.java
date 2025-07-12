@@ -5,6 +5,7 @@
 package org.chromium.chrome.browser.share.share_sheet;
 
 import android.app.Activity;
+import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
@@ -24,12 +25,13 @@ import android.widget.TextView;
 
 import androidx.annotation.ColorInt;
 import androidx.annotation.ColorRes;
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.StringRes;
 import androidx.appcompat.content.res.AppCompatResources;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.BuildInfo;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.metrics.RecordUserAction;
@@ -41,7 +43,7 @@ import org.chromium.chrome.browser.share.link_to_text.LinkToTextCoordinator.Link
 import org.chromium.chrome.browser.share.share_sheet.ShareSheetLinkToggleCoordinator.LinkToggleState;
 import org.chromium.chrome.browser.share.share_sheet.ShareSheetLinkToggleMetricsHelper.LinkToggleMetricsDetails;
 import org.chromium.chrome.browser.ui.favicon.FaviconUtils;
-import org.chromium.chrome.browser.user_education.IPHCommandBuilder;
+import org.chromium.chrome.browser.user_education.IphCommandBuilder;
 import org.chromium.chrome.browser.user_education.UserEducationHelper;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetContent;
 import org.chromium.components.browser_ui.share.ShareImageFileUtils;
@@ -134,7 +136,7 @@ class ShareSheetBottomSheetContent implements BottomSheetContent, OnItemClickLis
         mContentScrollableView = mContentView.findViewById(R.id.share_sheet_scrollview);
     }
 
-    /*
+    /**
      * Creates a new share sheet view with two rows based on the provided PropertyModels.
      *
      * @param activity The activity the share sheet belongs to.
@@ -144,7 +146,7 @@ class ShareSheetBottomSheetContent implements BottomSheetContent, OnItemClickLis
      * @param fileContentType The MIME type of the file(s) being shared.
      * @param detailedContentType The {@link DetailedContentType} of the content being shared.
      * @param shareSheetLinkToggleCoordinator The {@link ShareSheetLinkToggleCoordinator} for
-     *         whether to show the toggle and the default enabled status.
+     *     whether to show the toggle and the default enabled status.
      */
     void createRecyclerViews(
             List<PropertyModel> firstPartyModels,
@@ -336,7 +338,7 @@ class ShareSheetBottomSheetContent implements BottomSheetContent, OnItemClickLis
 
     private void setTitleStyle(int resId) {
         TextView titleView = this.getContentView().findViewById(R.id.title_preview);
-        ApiCompatibilityUtils.setTextAppearance(titleView, resId);
+        titleView.setTextAppearance(resId);
     }
 
     private void setTextForPreview(String title, String subtitle) {
@@ -492,8 +494,8 @@ class ShareSheetBottomSheetContent implements BottomSheetContent, OnItemClickLis
 
         UserEducationHelper userEducationHelper =
                 new UserEducationHelper(mActivity, mProfile, new Handler(Looper.getMainLooper()));
-        userEducationHelper.requestShowIPH(
-                new IPHCommandBuilder(
+        userEducationHelper.requestShowIph(
+                new IphCommandBuilder(
                                 mActivity.getResources(),
                                 FeatureConstants.IPH_SHARING_HUB_LINK_TOGGLE_FEATURE,
                                 R.string.link_toggle_iph,
@@ -530,9 +532,7 @@ class ShareSheetBottomSheetContent implements BottomSheetContent, OnItemClickLis
         imageView.setPadding(padding, padding, padding, padding);
     }
 
-    /**
-     * Fetches the favicon for the given url.
-     **/
+    /** Fetches the favicon for the given url. */
     private void fetchFavicon(String url) {
         if (!url.isEmpty()) {
             mIconBridge.getLargeIconForUrl(
@@ -605,7 +605,7 @@ class ShareSheetBottomSheetContent implements BottomSheetContent, OnItemClickLis
     /** One-shot reporter that records the first time the user scrolls a {@link RecyclerView}. */
     private static class ScrollEventReporter extends RecyclerView.OnScrollListener {
         private boolean mFired;
-        private String mActionName;
+        private final String mActionName;
 
         public ScrollEventReporter(String actionName) {
             mActionName = actionName;
@@ -669,12 +669,6 @@ class ShareSheetBottomSheetContent implements BottomSheetContent, OnItemClickLis
     }
 
     @Override
-    public int getPeekHeight() {
-        // Return false to ensure that the entire bottom sheet is shown.
-        return BottomSheetContent.HeightMode.DISABLED;
-    }
-
-    @Override
     public float getFullHeightRatio() {
         // Return WRAP_CONTENT to have the bottom sheet only open as far as it needs to display the
         // list of devices and nothing beyond that.
@@ -682,22 +676,22 @@ class ShareSheetBottomSheetContent implements BottomSheetContent, OnItemClickLis
     }
 
     @Override
-    public int getSheetContentDescriptionStringId() {
-        return R.string.sharing_hub_content_description;
+    public @NonNull String getSheetContentDescription(Context context) {
+        return context.getString(R.string.sharing_hub_content_description);
     }
 
     @Override
-    public int getSheetHalfHeightAccessibilityStringId() {
+    public @StringRes int getSheetHalfHeightAccessibilityStringId() {
         return R.string.sharing_hub_sheet_half_height;
     }
 
     @Override
-    public int getSheetFullHeightAccessibilityStringId() {
+    public @StringRes int getSheetFullHeightAccessibilityStringId() {
         return R.string.sharing_hub_sheet_full_height;
     }
 
     @Override
-    public int getSheetClosedAccessibilityStringId() {
+    public @StringRes int getSheetClosedAccessibilityStringId() {
         return R.string.sharing_hub_sheet_closed;
     }
 

@@ -12,7 +12,6 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.SystemClock;
 import android.view.Display;
-import android.view.Menu;
 import android.view.View;
 import android.view.WindowManager;
 
@@ -42,7 +41,7 @@ import org.chromium.chrome.browser.metrics.SimpleStartupForegroundSessionDetecto
 import org.chromium.chrome.browser.multiwindow.MultiWindowModeStateDispatcher;
 import org.chromium.chrome.browser.multiwindow.MultiWindowModeStateDispatcherImpl;
 import org.chromium.chrome.browser.profiles.ProfileProvider;
-import org.chromium.chrome.features.start_surface.StartSurfaceConfiguration;
+import org.chromium.chrome.browser.util.BrowserUiUtils;
 import org.chromium.components.browser_ui.share.ShareHelper;
 import org.chromium.components.browser_ui.util.FirstDrawDetector;
 import org.chromium.ui.base.ActivityIntentRequestTrackerDelegate;
@@ -79,6 +78,9 @@ public abstract class AsyncInitializationActivity extends ChromeBaseAppCompatAct
     /** Time at which onPause is called. */
     private long mOnPauseTimestampMs;
 
+    /** Time at which onStart is called. */
+    private long mOnStartTimestampMs;
+
     /**
      * Time at which onPause is called before the activity is recreated due to unfolding. The
      * timestamp is captured only if recreation starts when the activity is not in stopped state.
@@ -90,7 +92,6 @@ public abstract class AsyncInitializationActivity extends ChromeBaseAppCompatAct
     private Bundle mSavedInstanceState;
     private int mCurrentOrientation;
     private boolean mDestroyed;
-    private long mLastUserInteractionTime;
     private boolean mIsTablet;
     private boolean mHadWarmStart;
     private boolean mIsWarmOnResume;
@@ -171,6 +172,7 @@ public abstract class AsyncInitializationActivity extends ChromeBaseAppCompatAct
     protected void performPreInflationStartup() {
         mIsTablet = DeviceFormFactor.isNonMultiDisplayContextOnTablet(this);
         mHadWarmStart = LibraryLoader.getInstance().isInitialized();
+        SimpleStartupForegroundSessionDetector.onTransitionToForeground();
         // TODO(crbug.com/40621278): Dispatch in #preInflationStartup instead so that
         // subclass's #performPreInflationStartup has executed before observers are notified.
         mLifecycleDispatcher.dispatchPreInflationStartup();
@@ -221,7 +223,7 @@ public abstract class AsyncInitializationActivity extends ChromeBaseAppCompatAct
                 firstDrawView,
                 () -> {
                     mFirstDrawComplete = true;
-                    StartSurfaceConfiguration.recordHistogram(
+                    BrowserUiUtils.recordHistogram(
                             FIRST_DRAW_COMPLETED_TIME_MS_UMA,
                             SystemClock.elapsedRealtime() - getOnCreateTimestampMs());
                     if (!mStartupDelayed) {
@@ -244,6 +246,8 @@ public abstract class AsyncInitializationActivity extends ChromeBaseAppCompatAct
             TraceEvent.begin("maybePreconnect");
             Intent intent = getIntent();
             if (intent == null || !Intent.ACTION_VIEW.equals(intent.getAction())) return;
+            // Preconnect is too late if we've already started navigation early.
+            if (intent.getBooleanExtra(IntentHandler.EXTRA_CCT_EARLY_NAV, false)) return;
             String url = IntentHandler.getUrlFromIntent(intent);
             if (url == null) return;
             // Blocking pre-connect for all off-the-record profiles.
@@ -299,11 +303,14 @@ public abstract class AsyncInitializationActivity extends ChromeBaseAppCompatAct
         throw new ProcessInitException(LoaderErrors.NATIVE_STARTUP_FAILED, failureCause);
     }
 
+    @Override
+    public void onTopResumedActivityChangedWithNative(boolean isTopResumedActivity) {}
+
     /**
      * Extending classes should override {@link AsyncInitializationActivity#preInflationStartup()},
-     * {@link AsyncInitializationActivity#triggerLayoutInflation()} and
-     * {@link AsyncInitializationActivity#postInflationStartup()} instead of this call which will
-     * be called on that order.
+     * {@link AsyncInitializationActivity#triggerLayoutInflation()} and {@link
+     * AsyncInitializationActivity#postInflationStartup()} instead of this call which will be called
+     * on that order.
      */
     @Override
     @SuppressLint("MissingSuperCall") // Called in onCreateInternal.
@@ -444,10 +451,10 @@ public abstract class AsyncInitializationActivity extends ChromeBaseAppCompatAct
     }
 
     /**
-     * Allows subclasses to override the instance state passed to super.onCreate().
-     * The original instance state will still be available via getSavedInstanceState().
+     * Allows subclasses to override the instance state passed to super.onCreate(). The original
+     * instance state will still be available via getSavedInstanceState().
      */
-    protected Bundle transformSavedInstanceStateForOnCreate(Bundle savedInstanceState) {
+    protected @Nullable Bundle transformSavedInstanceStateForOnCreate(Bundle savedInstanceState) {
         return savedInstanceState;
     }
 
@@ -477,6 +484,13 @@ public abstract class AsyncInitializationActivity extends ChromeBaseAppCompatAct
      */
     protected long getOnCreateTimestampMs() {
         return mOnCreateTimestampMs;
+    }
+
+    /**
+     * @return The timestamp for the activity OnStart event in ms.
+     */
+    protected long getOnStartTimestampMs() {
+        return mOnStartTimestampMs;
     }
 
     /**
@@ -515,6 +529,7 @@ public abstract class AsyncInitializationActivity extends ChromeBaseAppCompatAct
     @CallSuper
     @Override
     public void onStart() {
+        mOnStartTimestampMs = SystemClock.uptimeMillis();
         super.onStart();
         mNativeInitializationController.onStart();
 
@@ -535,11 +550,15 @@ public abstract class AsyncInitializationActivity extends ChromeBaseAppCompatAct
     public void onResume() {
         super.onResume();
 
+        if (!mFirstResumePending) {
+            // The foreground transition for the first onResume() is handled in
+            // #performPreInflationStartup().
+            SimpleStartupForegroundSessionDetector.onTransitionToForeground();
+        }
         // Start by setting the launch as cold or warm. It will be used in some resume handlers.
         mIsWarmOnResume = !mFirstResumePending || hadWarmStart();
         mFirstResumePending = false;
 
-        SimpleStartupForegroundSessionDetector.onTransitionToForeground();
         mNativeInitializationController.onResume();
     }
 
@@ -645,12 +664,6 @@ public abstract class AsyncInitializationActivity extends ChromeBaseAppCompatAct
 
     @Override
     public abstract boolean shouldStartGpuProcess();
-
-    @CallSuper
-    @Override
-    public void onContextMenuClosed(Menu menu) {
-        if (mWindowAndroid != null) mWindowAndroid.onContextMenuClosed();
-    }
 
     /**
      * Called when the content view gets drawn for the first time. See {@link FirstDrawDetector} for
@@ -764,6 +777,7 @@ public abstract class AsyncInitializationActivity extends ChromeBaseAppCompatAct
         super.onTopResumedActivityChanged(isTopResumedActivity);
 
         mLifecycleDispatcher.dispatchOnTopResumedActivityChanged(isTopResumedActivity);
+        mNativeInitializationController.onTopResumedActivityChanged(isTopResumedActivity);
     }
 
     /**
@@ -793,23 +807,12 @@ public abstract class AsyncInitializationActivity extends ChromeBaseAppCompatAct
         return mIsWarmOnResume;
     }
 
-    @Override
-    public void onUserInteraction() {
-        mLastUserInteractionTime = SystemClock.elapsedRealtime();
-    }
-
     /**
-     * @return timestamp when the last user interaction was made.
-     */
-    public long getLastUserInteractionTime() {
-        return mLastUserInteractionTime;
-    }
-
-    /**
-     * Called when the orientation of the device changes.  The orientation is checked/detected on
+     * Called when the orientation of the device changes. The orientation is checked/detected on
      * root view layouts.
-     * @param orientation One of {@link Configuration#ORIENTATION_PORTRAIT} or
-     *                    {@link Configuration#ORIENTATION_LANDSCAPE}.
+     *
+     * @param orientation One of {@link Configuration#ORIENTATION_PORTRAIT} or {@link
+     *     Configuration#ORIENTATION_LANDSCAPE}.
      */
     protected void onOrientationChange(int orientation) {}
 

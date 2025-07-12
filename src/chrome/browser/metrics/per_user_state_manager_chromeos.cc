@@ -19,6 +19,7 @@
 #include "chrome/browser/policy/profile_policy_connector.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/common/pref_names.h"
+#include "chromeos/ash/components/demo_mode/utils/demo_session_utils.h"
 #include "components/metrics/metrics_pref_names.h"
 #include "components/metrics/metrics_service_client.h"
 #include "components/metrics/unsent_log_store_metrics_impl.h"
@@ -371,6 +372,11 @@ void PerUserStateManagerChromeOS::WaitForOwnershipStatus() {
       weak_ptr_factory_.GetWeakPtr()));
 }
 
+bool PerUserStateManagerChromeOS::ShouldUseUserLogStore() const {
+  CHECK_GT(state_, State::CONSTRUCTED);
+  return !ash::demo_mode::IsDeviceInDemoMode();
+}
+
 void PerUserStateManagerChromeOS::InitializeProfileMetricsState(
     ash::DeviceSettingsService::OwnershipStatus status) {
   DCHECK_NE(status,
@@ -379,11 +385,14 @@ void PerUserStateManagerChromeOS::InitializeProfileMetricsState(
 
   state_ = State::USER_PROFILE_READY;
 
-  // Sets the metrics log store to the user cryptohome, flushing pending logs
-  // recorded before user login to local state. Ephemeral state users use a
-  // temporary log store, doing a best effort upload of metrics when consented.
-  // Persistent cryptohome users store logs in their cryptohome.
-  AssignUserLogStore();
+  if (ShouldUseUserLogStore()) {
+    // Sets the metrics log store to the user cryptohome, flushing pending logs
+    // recorded before user login to local state. Non-Demo-mode Ephemeral state
+    // users use a temporary log store, doing a best effort upload of metrics
+    // when consented. Persistent cryptohome users store logs in their
+    // cryptohome. Demo mode user uses Local State store instead of cryptohome.
+    AssignUserLogStore();
+  }
 
   state_ = State::USER_LOG_STORE_HANDLED;
 

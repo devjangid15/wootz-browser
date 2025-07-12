@@ -6,17 +6,17 @@ package org.chromium.chrome.browser.tabmodel;
 
 import android.util.SparseBooleanArray;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
-
 import org.chromium.base.Callback;
 import org.chromium.base.task.SequencedTaskRunner;
 import org.chromium.base.task.TaskRunner;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.tab_ui.TabContentManager;
 
 import java.io.File;
 
 /** Policy that handles the Activity specific behaviors regarding the persistence of tab data. */
+@NullMarked
 public interface TabPersistencePolicy {
 
     /**
@@ -29,7 +29,6 @@ public interface TabPersistencePolicy {
      * Returns the filename of the primary metadata file containing information about the tabs to be
      * loaded.
      */
-    @NonNull
     String getMetadataFileName();
 
     /**
@@ -120,15 +119,8 @@ public interface TabPersistencePolicy {
     default void setTaskRunner(SequencedTaskRunner taskRunner) {}
 
     /**
-     * @return Whether allows to skip loading the first active Tab during Startup when an overview
-     *         page is showing.
-     */
-    default boolean allowSkipLoadingTab() {
-        return false;
-    }
-
-    /**
      * Acquire all {@link Tab} identifiers across all windows.
+     *
      * @param tabIdsCallback callback to pass {@link Tab} identifiers back in.
      */
     void getAllTabIds(Callback<SparseBooleanArray> tabIdsCallback);

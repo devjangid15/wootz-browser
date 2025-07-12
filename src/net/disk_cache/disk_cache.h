@@ -204,8 +204,10 @@ class NET_EXPORT Backend {
   // Returns the type of this cache.
   net::CacheType GetCacheType() const { return cache_type_; }
 
-  // Returns the number of entries in the cache.
-  virtual int32_t GetEntryCount() const = 0;
+  // Returns the entry count synchronously if available, or
+  // net::ERR_IO_PENDING for asynchronous completion via `callback`.
+  virtual int32_t GetEntryCount(
+      net::Int32CompletionOnceCallback callback) const = 0;
 
   // Atomically attempts to open an existing entry based on |key| or, if none
   // already exists, to create a new entry. Returns an EntryResult object,
@@ -300,8 +302,8 @@ class NET_EXPORT Backend {
   // referred to by |key|.
   virtual void OnExternalCacheHit(const std::string& key) = 0;
 
-  // Backends can optionally permit one to store, probabilistically, up to a
-  // byte associated with a key of an existing entry in memory.
+  // Backends can optionally permit one to store, probabilistically, up to 2
+  // bits associated with a key of an existing entry in memory.
 
   // GetEntryInMemoryData has the following behavior:
   // - If the data is not available at this time for any reason, returns 0.
@@ -343,9 +345,6 @@ class NET_EXPORT Entry {
 
   // Returns the time when this cache entry was last used.
   virtual base::Time GetLastUsed() const = 0;
-
-  // Returns the time when this cache entry was last modified.
-  virtual base::Time GetLastModified() const = 0;
 
   // Returns the size of the cache data with the given index.
   virtual int32_t GetDataSize(int index) const = 0;

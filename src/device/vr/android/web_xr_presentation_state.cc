@@ -11,7 +11,6 @@
 #include "base/logging.h"
 #include "base/trace_event/trace_event.h"
 #include "components/viz/common/frame_sinks/begin_frame_args.h"
-#include "gpu/ipc/common/gpu_memory_buffer_impl_android_hardware_buffer.h"
 #include "ui/gl/gl_fence.h"
 
 namespace device {
@@ -35,6 +34,13 @@ void WebXrFrame::Recycle() {
   recycle_once_unlocked = false;
   gvr_handoff_fence.reset();
   begin_frame_args.reset();
+
+  waiting_for_webxr = false;
+  waiting_for_overlay = false;
+  webxr_submitted = true;
+  overlay_submitted = false;
+  frame_data = nullptr;
+  render_info = nullptr;
 }
 
 WebXrPresentationState::WebXrPresentationState() {
@@ -250,7 +256,7 @@ WebXrPresentationState::TakeSharedBuffers() {
 }
 
 void WebXrPresentationState::EndPresentation() {
-  TRACE_EVENT0("gpu", __FUNCTION__);
+  TRACE_EVENT0("gpu", "EndPresentation");
 
   if (HaveRenderingFrame()) {
     rendering_frame_->Recycle();
@@ -274,11 +280,11 @@ void WebXrPresentationState::EndPresentation() {
 
 bool WebXrPresentationState::CanProcessFrame() const {
   if (!mailbox_bridge_ready_) {
-    DVLOG(2) << __FUNCTION__ << ": waiting for mailbox bridge";
+    DVLOG(2) << __func__ << ": waiting for mailbox bridge";
     return false;
   }
   if (processing_frame_) {
-    DVLOG(2) << __FUNCTION__ << ": waiting for previous processing frame";
+    DVLOG(2) << __func__ << ": waiting for previous processing frame";
     return false;
   }
 
@@ -286,7 +292,12 @@ bool WebXrPresentationState::CanProcessFrame() const {
   // in the "Animating" state until we have our BeginFrameArgs.
   if (state_machine_type_ == StateMachineType::kVizComposited &&
       !animating_frame_->begin_frame_args) {
-    DVLOG(2) << __FUNCTION__ << ": waiting for BeginFrameArgs";
+    DVLOG(2) << __func__ << ": waiting for BeginFrameArgs";
+    return false;
+  }
+
+  if (animating_frame_->waiting_for_webxr ||
+      animating_frame_->waiting_for_overlay) {
     return false;
   }
 

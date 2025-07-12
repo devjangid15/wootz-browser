@@ -35,6 +35,9 @@ class MediaRouterUiForTestBase {
   // destructor will have already completed.
   void TearDown();
 
+  // NOTE: the dialog being showable depends on the button used to open it
+  // being visible. Callers should ensure that the button is visible before
+  // calling ShowDialog(), e.g. by playing video to make the GMC button appear.
   virtual void ShowDialog() = 0;
   virtual bool IsDialogShown() const = 0;
   virtual void HideDialog() = 0;
@@ -86,9 +89,9 @@ class MediaRouterUiForTestBase {
   explicit MediaRouterUiForTestBase(content::WebContents* web_contents);
   void WaitForAnyDialogShown();
 
-  static void ClickOnView(views::View* view);
+  static void ClickOnButton(views::Button* button);
 
-  virtual views::View* GetSinkButton(const std::string& sink_name) const = 0;
+  virtual views::Button* GetSinkButton(const std::string& sink_name) const = 0;
 
   // Registers itself as an observer to the dialog, and waits until an event
   // of |watch_type| is observed. |sink_name| should be set only if observing

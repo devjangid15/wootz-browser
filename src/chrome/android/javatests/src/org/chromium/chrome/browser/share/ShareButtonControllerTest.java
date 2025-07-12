@@ -19,21 +19,22 @@ import org.junit.Test;
 import org.junit.rules.RuleChain;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisabledTest;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.toolbar.adaptive.AdaptiveToolbarButtonVariant;
 import org.chromium.chrome.browser.toolbar.adaptive.AdaptiveToolbarFeatures;
 import org.chromium.chrome.browser.toolbar.adaptive.AdaptiveToolbarStatePredictor;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.R;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
+import org.chromium.chrome.test.transit.page.WebPageStation;
 import org.chromium.chrome.test.util.ChromeTabUtils;
 import org.chromium.chrome.test.util.browser.signin.SigninTestRule;
 import org.chromium.components.embedder_support.util.UrlConstants;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.ui.modaldialog.DialogDismissalCause;
 import org.chromium.ui.modaldialog.ModalDialogManager.ModalDialogType;
 import org.chromium.ui.modaldialog.ModalDialogProperties;
@@ -42,14 +43,10 @@ import org.chromium.ui.modelutil.PropertyModel;
 /** Tests {@link ShareButtonController}. */
 @RunWith(ChromeJUnit4ClassRunner.class)
 @Batch(Batch.PER_CLASS)
-@CommandLineFlags.Add({
-    ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-    "enable-features=" + ChromeFeatureList.START_SURFACE_ANDROID + "<Study",
-    "force-fieldtrials=Study/Group"
-})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public final class ShareButtonControllerTest {
-    private final ChromeTabbedActivityTestRule mActivityTestRule =
-            new ChromeTabbedActivityTestRule();
+    private final FreshCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.freshChromeTabbedActivityRule();
 
     private final SigninTestRule mSigninTestRule = new SigninTestRule();
 
@@ -60,11 +57,12 @@ public final class ShareButtonControllerTest {
             RuleChain.outerRule(mSigninTestRule).around(mActivityTestRule);
 
     private boolean mButtonExpected;
+    private WebPageStation mInitialPage;
 
     @Before
     public void setUp() {
         AdaptiveToolbarStatePredictor.setToolbarStateForTesting(AdaptiveToolbarButtonVariant.SHARE);
-        mActivityTestRule.startMainActivityOnBlankPage();
+        mInitialPage = mActivityTestRule.startOnBlankPage();
 
         int deviceWidth =
                 mActivityTestRule.getActivity().getResources().getConfiguration().screenWidthDp;
@@ -140,13 +138,13 @@ public final class ShareButtonControllerTest {
                 };
 
         PropertyModel dialogModel =
-                TestThreadUtils.runOnUiThreadBlockingNoException(
+                ThreadUtils.runOnUiThreadBlocking(
                         () ->
                                 new PropertyModel.Builder(ModalDialogProperties.ALL_KEYS)
                                         .with(ModalDialogProperties.CONTROLLER, controller)
                                         .build());
 
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mActivityTestRule
                             .getActivity()
@@ -166,7 +164,7 @@ public final class ShareButtonControllerTest {
             assertTrue(shareString.equals(experimentalButton.getContentDescription()));
             assertFalse(experimentalButton.isEnabled());
         }
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mActivityTestRule
                             .getActivity()

@@ -14,7 +14,7 @@
 namespace syncer {
 
 UploadState GetUploadToGoogleState(const SyncService* sync_service,
-                                   ModelType type) {
+                                   DataType type) {
   // Without a SyncService, or in local-sync mode, there's no upload to Google.
   if (!sync_service || sync_service->IsLocalSyncEnabled()) {
     return UploadState::NOT_ACTIVE;
@@ -25,7 +25,7 @@ UploadState GetUploadToGoogleState(const SyncService* sync_service,
     return UploadState::NOT_ACTIVE;
   }
 
-  // If the given ModelType is encrypted with a custom passphrase, we also
+  // If the given DataType is encrypted with a custom passphrase, we also
   // consider uploading inactive, since Google can't read the data.
   // Note that encryption is tricky: Some data types (e.g. PASSWORDS) are always
   // encrypted, but not necessarily with a custom passphrase. On the other hand,
@@ -36,12 +36,15 @@ UploadState GetUploadToGoogleState(const SyncService* sync_service,
     return UploadState::NOT_ACTIVE;
   }
 
-  // Persistent auth errors always map to NOT_ACTIVE because the transport is
-  // guaranteed to be PAUSED.
-  if (sync_service->GetAuthError().IsPersistentError()) {
-    DCHECK_EQ(sync_service->GetTransportState(),
-              SyncService::TransportState::PAUSED);
-  }
+  // Persistent auth errors always map to NOT_ACTIVE because they cause the
+  // transport state to be PAUSED (unless sync was DISABLED afterwards).
+  CHECK(!sync_service->GetAuthError().IsPersistentError() ||
+        sync_service->GetTransportState() ==
+            SyncService::TransportState::PAUSED ||
+        sync_service->GetTransportState() ==
+            SyncService::TransportState::DISABLED)
+      << "Invalid transport state: "
+      << static_cast<int>(sync_service->GetTransportState());
 
   // SyncService never reports transient errors.
   DCHECK(!sync_service->GetAuthError().IsTransientError());
@@ -70,8 +73,7 @@ UploadState GetUploadToGoogleState(const SyncService* sync_service,
       }
       return UploadState::ACTIVE;
   }
-  NOTREACHED_IN_MIGRATION();
-  return UploadState::NOT_ACTIVE;
+  NOTREACHED();
 }
 
 void RecordKeyRetrievalTrigger(TrustedVaultUserActionTriggerForUMA trigger) {
@@ -96,7 +98,7 @@ bool ShouldOfferTrustedVaultOptIn(const SyncService* service) {
     return false;
   }
 
-  const ModelTypeSet encrypted_types =
+  const DataTypeSet encrypted_types =
       service->GetUserSettings()->GetAllEncryptedDataTypes();
   if (Intersection(service->GetActiveDataTypes(), encrypted_types).empty()) {
     // No point in offering the user a new encryption method if they are not

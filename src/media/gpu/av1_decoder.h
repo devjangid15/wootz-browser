@@ -9,6 +9,7 @@
 #include <memory>
 
 #include "base/containers/span.h"
+#include "base/memory/raw_ptr.h"
 #include "base/sequence_checker.h"
 #include "media/base/video_codecs.h"
 #include "media/base/video_color_space.h"
@@ -191,8 +192,7 @@ class MEDIA_GPU_EXPORT AV1Decoder : public AcceleratedVideoDecoder {
   std::optional<gfx::HDRMetadata> hdr_metadata_;
 
   int32_t stream_id_ = 0;
-  const uint8_t* stream_ = nullptr;
-  size_t stream_size_ = 0;
+  base::raw_span<const uint8_t, DanglingUntriaged> stream_;
   std::unique_ptr<DecryptConfig> decrypt_config_;
 
   // Secure handle to pass through to the accelerator when doing secure playback

@@ -7,6 +7,7 @@
 
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace gfx {
 struct VectorIcon;
@@ -42,6 +43,17 @@ class AuthenticatorRequestSheetModel {
     const T light, dark;
   };
 
+  enum class AcceptButtonState {
+    // Button is not visible.
+    kNotVisible,
+    // Button is visible and interactive.
+    kEnabled,
+    // Button is visible but not interactive.
+    kDisabled,
+    // Button is visible, not interactive, and shows a spinner.
+    kDisabledWithSpinner,
+  };
+
   virtual ~AuthenticatorRequestSheetModel() = default;
 
   virtual bool IsActivityIndicatorVisible() const = 0;
@@ -49,8 +61,7 @@ class AuthenticatorRequestSheetModel {
   virtual bool IsCancelButtonVisible() const = 0;
   virtual std::u16string GetCancelButtonLabel() const = 0;
 
-  virtual bool IsAcceptButtonVisible() const = 0;
-  virtual bool IsAcceptButtonEnabled() const = 0;
+  virtual AcceptButtonState GetAcceptButtonState() const = 0;
   virtual std::u16string GetAcceptButtonLabel() const = 0;
 
   virtual bool IsManageDevicesButtonVisible() const;
@@ -61,8 +72,9 @@ class AuthenticatorRequestSheetModel {
 
   virtual std::u16string GetStepTitle() const = 0;
   virtual std::u16string GetStepDescription() const = 0;
-  virtual std::u16string GetAdditionalDescription() const;
+  virtual std::vector<std::u16string> GetAdditionalDescriptions() const;
   virtual std::u16string GetError() const;
+  virtual std::u16string GetHint() const;
 
   virtual void OnBack() = 0;
   virtual void OnAccept() = 0;
@@ -76,10 +88,6 @@ class AuthenticatorRequestSheetModel {
     return lottie_illustrations_;
   }
 
-  // If true, the sheet has a Google Password Manager banner at the top, which
-  // is indented the same as the title and description.
-  bool has_gpm_banner() const { return has_gpm_banner_; }
-
   std::optional<IllustrationPair<const gfx::VectorIcon&>> vector_illustrations()
       const {
     return vector_illustrations_;
@@ -88,7 +96,6 @@ class AuthenticatorRequestSheetModel {
  protected:
   std::optional<IllustrationPair<int>> lottie_illustrations_;
   std::optional<IllustrationPair<const gfx::VectorIcon&>> vector_illustrations_;
-  bool has_gpm_banner_ = false;
 };
 
 #endif  // CHROME_BROWSER_UI_WEBAUTHN_AUTHENTICATOR_REQUEST_SHEET_MODEL_H_

@@ -11,15 +11,24 @@ import android.view.View;
 import android.view.ViewStub;
 import android.widget.CompoundButton.OnCheckedChangeListener;
 import android.widget.FrameLayout;
+import android.widget.ScrollView;
 
+import androidx.annotation.ColorInt;
+
+import org.chromium.build.annotations.Initializer;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.R;
+import org.chromium.components.browser_ui.widget.FadingShadow;
+import org.chromium.components.browser_ui.widget.FadingShadowView;
 import org.chromium.components.content_settings.CookieControlsEnforcement;
 import org.chromium.ui.base.ViewUtils;
 
 /** The New Tab Page for use in the incognito profile. */
+@NullMarked
 public class IncognitoNewTabPageView extends FrameLayout {
     private IncognitoNewTabPageManager mManager;
     private boolean mFirstShow = true;
+    private FadingShadowView mFadingShadowBottom;
     private NewTabPageScrollView mScrollView;
     private IncognitoDescriptionView mDescriptionView;
 
@@ -62,14 +71,37 @@ public class IncognitoNewTabPageView extends FrameLayout {
     protected void onFinishInflate() {
         super.onFinishInflate();
 
-        mScrollView = (NewTabPageScrollView) findViewById(R.id.ntp_scrollview);
-        mScrollView.setBackgroundColor(getContext().getColor(R.color.ntp_bg_incognito));
+        @ColorInt int bgColor = getContext().getColor(R.color.ntp_bg_incognito);
+        mScrollView = findViewById(R.id.ntp_scrollview);
+        mScrollView.setBackgroundColor(bgColor);
         setContentDescription(
                 getResources().getText(R.string.accessibility_new_incognito_tab_page));
 
         // FOCUS_BEFORE_DESCENDANTS is needed to support keyboard shortcuts. Otherwise, pressing
         // any shortcut causes the UrlBar to be focused. See ViewRootImpl.leaveTouchMode().
         mScrollView.setDescendantFocusability(FOCUS_BEFORE_DESCENDANTS);
+        mFadingShadowBottom = findViewById(R.id.shadow_bottom);
+        mFadingShadowBottom.init(bgColor, FadingShadow.POSITION_BOTTOM);
+        mScrollView.setOnScrollChangeListener(
+                new OnScrollChangeListener() {
+                    @Override
+                    public void onScrollChange(
+                            View v, int scrollX, int scrollY, int oldScrollX, int oldScrollY) {
+                        mFadingShadowBottom.setVisibility(
+                                mScrollView.canScrollVertically(1) ? View.VISIBLE : View.GONE);
+                    }
+                });
+    }
+
+    /**
+     * Initialize the incognito New Tab Page.
+     * @param manager The manager that handles external dependencies of the view.
+     */
+    @Initializer
+    void initialize(IncognitoNewTabPageManager manager) {
+        mManager = manager;
+        inflateConditionalLayouts();
+        mManager.initCookieControlsManager();
     }
 
     private void inflateConditionalLayouts() {
@@ -89,16 +121,10 @@ public class IncognitoNewTabPageView extends FrameLayout {
         if (cardStub == null) return;
         if (mManager.shouldShowTrackingProtectionNtp()) {
             cardStub.setLayoutResource(R.layout.incognito_tracking_protection_card);
-            cardStub.inflate();
-            mDescriptionView.setTextWithAppNameReplacement(
-                R.id.tracking_protection_card,
-                R.id.tracking_protection_description_one,
-                R.string.new_tab_otr_third_party_blocked_cookie_part_one
-            );
         } else {
             cardStub.setLayoutResource(R.layout.incognito_cookie_controls_card);
-            cardStub.inflate();
         }
+        cardStub.inflate();
         mDescriptionView.formatTrackingProtectionText(getContext(), this);
     }
 
@@ -112,24 +138,21 @@ public class IncognitoNewTabPageView extends FrameLayout {
         }
     }
 
-    /**
-     * Initialize the incognito New Tab Page.
-     * @param manager The manager that handles external dependencies of the view.
-     */
-    void initialize(IncognitoNewTabPageManager manager) {
-        mManager = manager;
-        inflateConditionalLayouts();
-        mManager.initCookieControlsManager();
-    }
-
     /** @return The IncognitoNewTabPageManager associated with this IncognitoNewTabPageView. */
     protected IncognitoNewTabPageManager getManager() {
         return mManager;
     }
 
     /**
+     * @return The ScrollView of within the page. Used for padding when drawing edge to edge.
+     */
+    ScrollView getScrollView() {
+        return mScrollView;
+    }
+
+    /**
      * @see org.chromium.chrome.browser.compositor.layouts.content.
-     *         InvalidationAwareThumbnailProvider#shouldCaptureThumbnail()
+     *     InvalidationAwareThumbnailProvider#shouldCaptureThumbnail()
      */
     boolean shouldCaptureThumbnail() {
         if (getWidth() == 0 || getHeight() == 0) return false;

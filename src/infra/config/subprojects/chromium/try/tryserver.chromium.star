@@ -18,7 +18,6 @@ try_.defaults.set(
     os = os.LINUX_DEFAULT,
     execution_timeout = try_.DEFAULT_EXECUTION_TIMEOUT,
     service_account = try_.DEFAULT_SERVICE_ACCOUNT,
-    siso_enabled = True,
     siso_project = siso.project.DEFAULT_UNTRUSTED,
     siso_remote_jobs = siso.remote_jobs.HIGH_JOBS_FOR_CQ,
 )
@@ -59,6 +58,14 @@ try_.builder(
         configs = ["ci/linux-official", "try_builder"],
     ),
     ssd = True,
+    # crbug.com/427503493: It produces large amount of dwo files (>700GB).
+    # Enabling remote linking without bytes avoids downloading them to the bot.
+    # It also sets no-remote-timeout for long remote linking steps.
+    siso_configs = [
+        "builder",
+        "no-remote-timeout",
+    ],
+    siso_remote_linking = True,
 )
 
 try_.builder(
@@ -74,13 +81,17 @@ try_.builder(
             "dcheck_always_on",
         ],
     ),
-    builderless = False,
     cores = None,
     os = os.MAC_ANY,
     cpu = cpu.ARM64,
     # TODO(crbug.com/40208487) builds with PGO change take long time.
     # Keep in sync with mac-official in ci/chromium.star.
     execution_timeout = 15 * time.hour,
+    tryjob = try_.job(
+        location_filters = [
+            "chrome/build/mac-arm.pgo.txt",
+        ],
+    ),
 )
 
 try_.builder(
@@ -96,6 +107,7 @@ try_.builder(
         ],
     ),
     os = os.WINDOWS_DEFAULT,
+    ssd = True,
     execution_timeout = 6 * time.hour,
 )
 
@@ -113,5 +125,6 @@ try_.builder(
         ],
     ),
     os = os.WINDOWS_DEFAULT,
+    ssd = True,
     execution_timeout = 6 * time.hour,
 )

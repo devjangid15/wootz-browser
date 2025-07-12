@@ -109,7 +109,7 @@ void CohortImpl::CheckMembershipOprf() {
 }
 
 void CohortImpl::OnCheckMembershipOprfComplete(
-    std::unique_ptr<std::string> response_body) {
+    std::optional<std::string> response_body) {
   // Use RAII to reset |url_loader_| after current function scope.
   auto url_loader = std::move(url_loader_);
 
@@ -119,14 +119,12 @@ void CohortImpl::OnCheckMembershipOprfComplete(
 
   // Convert serialized response body to oprf response protobuf.
   FresnelPsmRlweOprfResponse psm_oprf_response;
-  bool is_response_body_set = response_body.get() != nullptr;
-
-  if (!is_response_body_set ||
+  if (!response_body.has_value() ||
       !psm_oprf_response.ParseFromString(*response_body)) {
     LOG(ERROR) << "Oprf response net code = " << net_code;
     LOG(ERROR) << "Response body was not set or could not be parsed into "
                << "FresnelPsmRlweOprfResponse proto. "
-               << "Is response body set = " << is_response_body_set;
+               << "Is response body set = " << response_body.has_value();
     std::move(callback_).Run();
     return;
   }
@@ -183,7 +181,7 @@ void CohortImpl::CheckMembershipQuery(
 }
 
 void CohortImpl::OnCheckMembershipQueryComplete(
-    std::unique_ptr<std::string> response_body) {
+    std::optional<std::string> response_body) {
   // Use RAII to reset |url_loader_| after current function scope.
   auto url_loader = std::move(url_loader_);
 
@@ -193,14 +191,12 @@ void CohortImpl::OnCheckMembershipQueryComplete(
 
   // Convert serialized response body to fresnel query response protobuf.
   FresnelPsmRlweQueryResponse psm_query_response;
-  bool is_response_body_set = response_body.get() != nullptr;
-
-  if (!is_response_body_set ||
+  if (!response_body.has_value() ||
       !psm_query_response.ParseFromString(*response_body)) {
     LOG(ERROR) << "Query response net code = " << net_code;
     LOG(ERROR) << "Response body was not set or could not be parsed into "
                << "FresnelPsmRlweQueryResponse proto. "
-               << "Is response body set = " << is_response_body_set;
+               << "Is response body set = " << response_body.has_value();
     std::move(callback_).Run();
     return;
   }
@@ -277,7 +273,7 @@ void CohortImpl::CheckIn() {
                                 utils::GetMaxFresnelResponseSizeBytes());
 }
 
-void CohortImpl::OnCheckInComplete(std::unique_ptr<std::string> response_body) {
+void CohortImpl::OnCheckInComplete(std::optional<std::string> response_body) {
   // Use RAII to reset |url_loader_| after current function scope.
   auto url_loader = std::move(url_loader_);
 
@@ -318,7 +314,7 @@ CohortImpl::GenerateImportRequestBody() {
 
   // Certain metadata is passed by chrome, since it's not available in ash.
   version_info::Channel version_channel =
-      GetParams()->GetChromeDeviceParams().WOOTZAPP_CHANNEL;
+      GetParams()->GetChromeDeviceParams().chrome_channel;
   ash::report::MarketSegment market_segment =
       GetParams()->GetChromeDeviceParams().market_segment;
 
@@ -352,6 +348,28 @@ CohortImpl::GenerateImportRequestBody() {
   if (!new_cohort_metadata.has_value()) {
     LOG(ERROR) << "Failed to calculate new cohort metadata.";
     return std::nullopt;
+  }
+
+  base::Time active_ts = GetParams()->GetActiveTs();
+  std::optional<base::Time> first_active_week_ts = utils::GetFirstActiveWeek();
+
+  if (!first_active_week_ts.has_value() ||
+      first_active_week_ts.value() == base::Time() ||
+      first_active_week_ts.value() == base::Time::UnixEpoch()) {
+    LOG(ERROR) << "Failed to retrieve first active week from VPD. "
+                  "Setting first active week to UNKNOWN.";
+    cohort_metadata->set_first_active_week("UNKNOWN");
+  } else {
+    int max_days_in_5_weeks = 7 * 5;
+    bool within_date_range = utils::IsFirstActiveUnderNDaysAgo(
+        active_ts, first_active_week_ts.value(), max_days_in_5_weeks);
+
+    // Privacy approved 5 weeks of first active week history in cohort ping.
+    // In order for analysts to avoid double counting on the server-side.
+    if (within_date_range) {
+      cohort_metadata->set_first_active_week(
+          utils::ConvertTimeToISO8601String(first_active_week_ts.value()));
+    }
   }
 
   *cohort_metadata = new_cohort_metadata.value();

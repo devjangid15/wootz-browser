@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chromecast/media/cma/backend/android/audio_sink_android_audiotrack_impl.h"
 
 #include <algorithm>
@@ -14,8 +19,10 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "chromecast/media/api/decoder_buffer_base.h"
-#include "chromecast/media/cma/backend/android/audio_track_jni_headers/AudioSinkAudioTrackImpl_jni.h"
 #include "media/base/audio_bus.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "chromecast/media/cma/backend/android/audio_track_jni_headers/AudioSinkAudioTrackImpl_jni.h"
 
 #define RUN_ON_FEEDER_THREAD(callback, ...)                               \
   if (!feeder_task_runner_->BelongsToCurrentThread()) {                   \
@@ -179,7 +186,6 @@ void AudioSinkAndroidAudioTrackImpl::PreventDelegateCalls() {
 
 void AudioSinkAndroidAudioTrackImpl::CacheDirectBufferAddress(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
     const JavaParamRef<jobject>& pcm_byte_buffer,
     const JavaParamRef<jobject>& rendering_delay_byte_buffer,
     const JavaParamRef<jobject>& audio_track_timestamp_byte_buffer) {

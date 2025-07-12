@@ -2,13 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "content/browser/background_fetch/background_fetch_job_controller.h"
+
 #include <utility>
 
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "content/browser/background_fetch/background_fetch_cross_origin_filter.h"
 #include "content/browser/background_fetch/background_fetch_data_manager.h"
-#include "content/browser/background_fetch/background_fetch_job_controller.h"
 #include "content/browser/background_fetch/background_fetch_request_match_params.h"
 #include "content/public/browser/browser_thread.h"
 #include "services/network/public/cpp/cors/cors.h"
@@ -352,7 +353,7 @@ void BackgroundFetchJobController::DidMarkRequestAsComplete(
       Abort(BackgroundFetchFailureReason::QUOTA_EXCEEDED, base::DoNothing());
       return;
     default:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
 
   if (completed_downloads_ == total_downloads_) {
@@ -366,7 +367,7 @@ void BackgroundFetchJobController::NotifyDownloadComplete(
   --pending_downloads_;
   ++completed_downloads_;
   auto it = active_request_finished_callbacks_.find(request->download_guid());
-  DCHECK(it != active_request_finished_callbacks_.end());
+  CHECK(it != active_request_finished_callbacks_.end());
   std::move(it->second).Run(registration_id(), std::move(request));
   active_request_finished_callbacks_.erase(it);
 }

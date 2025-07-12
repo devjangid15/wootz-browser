@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "net/ssl/ssl_platform_key_mac.h"
 
 #include <CoreFoundation/CoreFoundation.h>
@@ -23,6 +28,7 @@
 #include "base/mac/mac_util.h"
 #include "base/memory/scoped_policy.h"
 #include "base/numerics/safe_conversions.h"
+#include "crypto/evp.h"
 #include "crypto/openssl_util.h"
 #include "net/base/net_errors.h"
 #include "net/cert/x509_certificate.h"
@@ -121,7 +127,7 @@ class SSLPlatformKeySecKey : public ThreadedSSLPrivateKey::Delegate {
                            md, nullptr)) {
       return ERR_SSL_CLIENT_AUTH_SIGNATURE_FAILED;
     }
-    base::span<const uint8_t> digest = base::make_span(digest_buf, digest_len);
+    base::span<const uint8_t> digest = base::span(digest_buf, digest_len);
 
     std::optional<std::vector<uint8_t>> pss_storage;
     if (pss_fallback) {
@@ -148,9 +154,8 @@ class SSLPlatformKeySecKey : public ThreadedSSLPrivateKey::Delegate {
       return ERR_SSL_CLIENT_AUTH_SIGNATURE_FAILED;
     }
 
-    signature->assign(CFDataGetBytePtr(signature_ref.get()),
-                      CFDataGetBytePtr(signature_ref.get()) +
-                          CFDataGetLength(signature_ref.get()));
+    auto signature_span = base::apple::CFDataToSpan(signature_ref.get());
+    signature->assign(signature_span.begin(), signature_span.end());
     return OK;
   }
 
@@ -199,8 +204,8 @@ scoped_refptr<SSLPrivateKey> CreateSSLPrivateKeyForSecKey(
 
 scoped_refptr<SSLPrivateKey> WrapUnexportableKey(
     const crypto::UnexportableSigningKey& unexportable_key) {
-  bssl::UniquePtr<EVP_PKEY> pubkey =
-      ParseSpki(unexportable_key.GetSubjectPublicKeyInfo());
+  bssl::UniquePtr<EVP_PKEY> pubkey = crypto::evp::PublicKeyFromBytes(
+      unexportable_key.GetSubjectPublicKeyInfo());
   if (!pubkey) {
     return nullptr;
   }

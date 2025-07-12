@@ -10,7 +10,7 @@
 #include "chrome/browser/ash/account_manager/account_manager_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
-#include "components/account_manager_core/chromeos/account_manager_facade_factory.h"
+#include "chromeos/ash/components/account_manager/account_manager_facade_factory.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "content/public/browser/browser_context.h"
 
@@ -37,6 +37,9 @@ AccountAppsAvailabilityFactory::AccountAppsAvailabilityFactory()
               // TODO(crbug.com/40257657): Check if this service is needed in
               // Guest mode.
               .WithGuest(ProfileSelection::kOriginalOnly)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kOriginalOnly)
               .Build()) {
   DependsOn(IdentityManagerFactory::GetInstance());
 }
@@ -51,11 +54,8 @@ AccountAppsAvailabilityFactory::BuildServiceInstanceForBrowserContext(
   if (!IsAccountManagerAvailable(profile))
     return nullptr;
 
-  if (!AccountAppsAvailability::IsArcAccountRestrictionsEnabled())
-    return nullptr;
-
   return std::make_unique<AccountAppsAvailability>(
-      ::GetAccountManagerFacade(profile->GetPath().value()),
+      GetAccountManagerFacade(profile->GetPath().value()),
       IdentityManagerFactory::GetForProfile(profile), profile->GetPrefs());
 }
 

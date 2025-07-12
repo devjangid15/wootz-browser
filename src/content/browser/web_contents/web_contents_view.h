@@ -68,12 +68,6 @@ class WebContentsView {
   // Returns the current drop data, if any.
   virtual DropData* GetDropData() const = 0;
 
-  // Used to transfer WebContentsViewDragSecurityInfo across portal activation
-  // (where we destroy and create a new WebContentsView for a tab).
-  // TODO(crbug.com/40199730): We don't need this after we migrate portals to
-  // MPArch.
-  virtual void TransferDragSecurityInfo(WebContentsView* view) = 0;
-
   // Get the bounds of the View in the global screen position.
   virtual gfx::Rect GetViewBounds() const = 0;
 
@@ -122,16 +116,14 @@ class WebContentsView {
 
   virtual void FullscreenStateChanged(bool is_fullscreen) = 0;
 
-  // Intended for desktop PWAs with manifest entry of window-controls-overlay,
-  // this informs the view of which area at the top of the view is available for
-  // web contents.
-  virtual void UpdateWindowControlsOverlay(const gfx::Rect& bounding_rect) = 0;
-
   // Returns an animation manager that displays a preview of the history page
   // during a session history navigation gesture. Only non-null if
   // `features::kBackForwardTransitions` is enabled for the supported platform.
   virtual BackForwardTransitionAnimationManager*
   GetBackForwardTransitionAnimationManager() = 0;
+
+  // Reset the above animation manager.
+  virtual void DestroyBackForwardTransitionAnimationManager() = 0;
 };
 
 // Factory function to create `WebContentsView`s. Implemented in the platform

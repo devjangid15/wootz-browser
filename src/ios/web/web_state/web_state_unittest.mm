@@ -10,6 +10,7 @@
 #import "base/path_service.h"
 #import "base/run_loop.h"
 #import "base/strings/stringprintf.h"
+#import "base/strings/utf_string_conversions.h"
 #import "base/test/ios/wait_util.h"
 #import "base/test/metrics/histogram_tester.h"
 #import "base/values.h"
@@ -36,9 +37,9 @@
 #import "net/test/embedded_test_server/embedded_test_server.h"
 #import "ui/gfx/image/image_unittest_util.h"
 
-using base::test::ios::WaitUntilConditionOrTimeout;
 using base::test::ios::kWaitForJSCompletionTimeout;
 using base::test::ios::kWaitForPageLoadTimeout;
+using base::test::ios::WaitUntilConditionOrTimeout;
 
 namespace web {
 namespace {
@@ -75,8 +76,6 @@ std::unique_ptr<WebState> CreateUnrealizedWebStateWithItemsCount(
 }
 
 }  // namespace
-
-using wk_navigation_util::IsWKInternalUrl;
 
 // Test fixture for web::WebTest class.
 class WebStateTest : public FakeWebClient, public WebTestWithWebState {
@@ -147,9 +146,8 @@ TEST_F(WebStateTest, ReloadWithOriginalTypeWithEmptyNavigationManager) {
 
 // Tests that the snapshot method returns an image of a rendered html page.
 TEST_F(WebStateTest, Snapshot) {
-  ASSERT_TRUE(
-      LoadHtml("<html><div style='background-color:#FF0000; width:50%; "
-               "height:100%;'></div></html>"));
+  ASSERT_TRUE(LoadHtml("<html><div style='background-color:#FF0000; width:50%; "
+                       "height:100%;'></div></html>"));
   __block bool snapshot_complete = false;
   [GetAnyKeyWindow() addSubview:web_state()->GetView()];
   // The subview is added but not immediately painted, so a small delay is
@@ -262,7 +260,15 @@ TEST_F(WebStateTest, CreateFullPagePdf_InvalidURLs) {
 
 // Tests that CreateFullPagePdf invokes completion callback nil when the
 // WebState content is not HTML (e.g. a PDF file).
-TEST_F(WebStateTest, CreateFullPagePdfWebStatePdfContent) {
+// TODO(crbug.com/428630864): Flaky on device.
+#if TARGET_IPHONE_SIMULATOR
+#define MAYBE_CreateFullPagePdfWebStatePdfContent \
+  CreateFullPagePdfWebStatePdfContent
+#else
+#define MAYBE_CreateFullPagePdfWebStatePdfContent \
+  DISABLED_CreateFullPagePdfWebStatePdfContent
+#endif
+TEST_F(WebStateTest, MAYBE_CreateFullPagePdfWebStatePdfContent) {
   CGRect fake_bounds = CGRectMake(0, 0, 100, 100);
   UIGraphicsPDFRenderer* pdf_renderer =
       [[UIGraphicsPDFRenderer alloc] initWithBounds:fake_bounds];
@@ -333,7 +339,6 @@ TEST_F(WebStateTest, RestoreLargeSession) {
   auto block = ^{
     bool restored = navigation_manager->GetItemCount() == maxSessionSize &&
                     navigation_manager->CanGoForward();
-    EXPECT_EQ(restored, !navigation_manager->IsRestoreSessionInProgress());
     if (!restored) {
       EXPECT_FALSE(navigation_manager->GetLastCommittedItem());
       EXPECT_EQ(-1, navigation_manager->GetLastCommittedItemIndex());
@@ -378,7 +383,6 @@ TEST_F(WebStateTest, RestoreLargeSession) {
     EXPECT_TRUE(visible_item);
     EXPECT_TRUE(visible_item && visible_item->GetURL() == "http://www.0.com/");
     EXPECT_FALSE(navigation_manager->CanGoBack());
-    EXPECT_FALSE(IsWKInternalUrl(web_state_ptr->GetVisibleURL()));
 
     return restored;
   };
@@ -391,8 +395,6 @@ TEST_F(WebStateTest, RestoreLargeSession) {
 
   // Now wait until the last committed item is fully loaded.
   auto block2 = ^{
-    EXPECT_FALSE(IsWKInternalUrl(web_state_ptr->GetVisibleURL()));
-
     return !navigation_manager->GetPendingItem() &&
            !web_state_ptr->IsLoading() &&
            web_state_ptr->GetLoadingProgress() == 1.0;
@@ -563,6 +565,8 @@ TEST_F(WebStateTest, RestorePageTitles) {
               item->GetVirtualURL());
     EXPECT_EQ(base::ASCIIToUTF16(base::StringPrintf("Test%u", i)),
               item->GetTitle());
+    EXPECT_EQ(base::ASCIIToUTF16(base::StringPrintf("Test%u", i)),
+              item->GetTitleForDisplay());
   }
 }
 

@@ -4,21 +4,27 @@
 
 #include "components/power_bookmarks/storage/power_bookmark_sync_bridge.h"
 
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include "components/power_bookmarks/common/power.h"
 #include "components/power_bookmarks/storage/power_bookmark_sync_metadata_database.h"
 #include "components/sync/base/deletion_origin.h"
+#include "components/sync/model/data_type_local_change_processor.h"
 #include "components/sync/model/in_memory_metadata_change_list.h"
 #include "components/sync/model/metadata_batch.h"
 #include "components/sync/model/metadata_change_list.h"
-#include "components/sync/model/model_type_change_processor.h"
 #include "components/sync/model/mutable_data_batch.h"
 #include "components/sync/model/sync_metadata_store_change_list.h"
 
 namespace power_bookmarks {
 
 namespace {
-void WritePowersToSyncData(const std::vector<std::unique_ptr<Power>>& powers,
-                           PowerBookmarkSyncBridge::DataCallback callback) {
+std::unique_ptr<syncer::DataBatch> ConvertPowersToSyncData(
+    const std::vector<std::unique_ptr<Power>>& powers) {
   auto batch = std::make_unique<syncer::MutableDataBatch>();
   for (const auto& power : powers) {
     std::string guid = power->guid_string();
@@ -28,15 +34,15 @@ void WritePowersToSyncData(const std::vector<std::unique_ptr<Power>>& powers,
         entity_data->specifics.mutable_power_bookmark());
     batch->Put(guid, std::move(entity_data));
   }
-  std::move(callback).Run(std::move(batch));
+  return batch;
 }
 }  // namespace
 
 PowerBookmarkSyncBridge::PowerBookmarkSyncBridge(
     PowerBookmarkSyncMetadataDatabase* meta_db,
     Delegate* delegate,
-    std::unique_ptr<syncer::ModelTypeChangeProcessor> change_processor)
-    : syncer::ModelTypeSyncBridge(std::move(change_processor)),
+    std::unique_ptr<syncer::DataTypeLocalChangeProcessor> change_processor)
+    : syncer::DataTypeSyncBridge(std::move(change_processor)),
       meta_db_(meta_db),
       delegate_(delegate) {}
 
@@ -48,7 +54,9 @@ void PowerBookmarkSyncBridge::Init() {
     initialized_ = true;
     change_processor()->ModelReadyToSync(std::move(batch));
   } else {
-    change_processor()->ReportError({FROM_HERE, "Failed to load metadata"});
+    change_processor()->ReportError(
+        {FROM_HERE,
+         syncer::ModelError::Type::kPowerBookmarkFailedToLoadMetadata});
   }
 }
 
@@ -73,23 +81,29 @@ PowerBookmarkSyncBridge::ApplyIncrementalSyncChanges(
 }
 
 std::string PowerBookmarkSyncBridge::GetStorageKey(
-    const syncer::EntityData& entity_data) {
+    const syncer::EntityData& entity_data) const {
   return entity_data.specifics.power_bookmark().guid();
 }
 
 std::string PowerBookmarkSyncBridge::GetClientTag(
-    const syncer::EntityData& entity_data) {
+    const syncer::EntityData& entity_data) const {
   return GetStorageKey(entity_data);
 }
 
-void PowerBookmarkSyncBridge::GetData(StorageKeyList storage_keys,
-                                      DataCallback callback) {
-  WritePowersToSyncData(delegate_->GetPowersForGUIDs(storage_keys),
-                        std::move(callback));
+bool PowerBookmarkSyncBridge::IsEntityDataValid(
+    const syncer::EntityData& entity_data) const {
+  CHECK(entity_data.specifics.has_power_bookmark());
+  return !entity_data.specifics.power_bookmark().guid().empty();
 }
 
-void PowerBookmarkSyncBridge::GetAllDataForDebugging(DataCallback callback) {
-  WritePowersToSyncData(delegate_->GetAllPowers(), std::move(callback));
+std::unique_ptr<syncer::DataBatch> PowerBookmarkSyncBridge::GetDataForCommit(
+    StorageKeyList storage_keys) {
+  return ConvertPowersToSyncData(delegate_->GetPowersForGUIDs(storage_keys));
+}
+
+std::unique_ptr<syncer::DataBatch>
+PowerBookmarkSyncBridge::GetAllDataForDebugging() {
+  return ConvertPowersToSyncData(delegate_->GetAllPowers());
 }
 
 void PowerBookmarkSyncBridge::SendPowerToSync(const Power& power) {
@@ -119,7 +133,7 @@ PowerBookmarkSyncBridge::CreateMetadataChangeListInTransaction() {
   // transaction.
   return std::make_unique<syncer::SyncMetadataStoreChangeList>(
       meta_db_, syncer::POWER_BOOKMARK,
-      base::BindRepeating(&syncer::ModelTypeChangeProcessor::ReportError,
+      base::BindRepeating(&syncer::DataTypeLocalChangeProcessor::ReportError,
                           change_processor()->GetWeakPtr()));
 }
 
@@ -131,7 +145,8 @@ std::optional<syncer::ModelError> PowerBookmarkSyncBridge::ApplyChanges(
   std::unique_ptr<Transaction> transaction = delegate_->BeginTransaction();
   if (!transaction) {
     return syncer::ModelError(
-        FROM_HERE, "Failed to begin transaction for PowerBookmarks.");
+        FROM_HERE,
+        syncer::ModelError::Type::kPowerBookmarkFailedToBeginTransaction);
   }
 
   for (const std::unique_ptr<syncer::EntityChange>& change : entity_changes) {
@@ -141,7 +156,8 @@ std::optional<syncer::ModelError> PowerBookmarkSyncBridge::ApplyChanges(
         if (!delegate_->CreateOrMergePowerFromSync(*std::make_unique<Power>(
                 change->data().specifics.power_bookmark()))) {
           return syncer::ModelError(
-              FROM_HERE, "Failed to merge local powers for PowerBookmarks.");
+              FROM_HERE,
+              syncer::ModelError::Type::kPowerBookmarkFailedToMergeLocalPowers);
         }
         if (is_initial_merge) {
           synced_entries.insert(change->storage_key());
@@ -150,7 +166,8 @@ std::optional<syncer::ModelError> PowerBookmarkSyncBridge::ApplyChanges(
       case syncer::EntityChange::ACTION_DELETE:
         if (!delegate_->DeletePowerFromSync(change->storage_key())) {
           return syncer::ModelError(
-              FROM_HERE, "Failed to delete local powers for PowerBookmarks.");
+              FROM_HERE, syncer::ModelError::Type::
+                             kPowerBookmarkFailedToDeleteLocalPowers);
         }
         break;
     }
@@ -172,7 +189,8 @@ std::optional<syncer::ModelError> PowerBookmarkSyncBridge::ApplyChanges(
 
   if (!transaction->Commit()) {
     return syncer::ModelError(
-        FROM_HERE, "Failed to commit transaction for PowerBookmarks.");
+        FROM_HERE,
+        syncer::ModelError::Type::kPowerBookmarkFailedToCommitTransaction);
   }
 
   delegate_->NotifyPowersChanged();

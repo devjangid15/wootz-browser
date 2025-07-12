@@ -20,7 +20,7 @@ import static org.chromium.chrome.browser.tasks.tab_management.TabUiTestHelper.s
 import static org.chromium.chrome.browser.tasks.tab_management.TabUiTestHelper.verifyTabModelTabCount;
 import static org.chromium.chrome.browser.tasks.tab_management.TabUiTestHelper.verifyTabSwitcherCardCount;
 
-import android.os.Build;
+import android.os.Build.VERSION_CODES;
 
 import androidx.test.filters.LargeTest;
 import androidx.test.filters.MediumTest;
@@ -28,27 +28,27 @@ import androidx.test.platform.app.InstrumentationRegistry;
 
 import org.junit.After;
 import org.junit.Before;
-import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.test.util.ApplicationTestUtils;
-import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.CriteriaHelper;
+import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.layouts.LayoutType;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.R;
-import org.chromium.chrome.test.batch.BlankCTATabInitialStateRule;
+import org.chromium.chrome.test.transit.AutoResetCtaTransitTestRule;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.page.WebPageStation;
 import org.chromium.chrome.test.util.MenuUtils;
-import org.chromium.ui.test.util.UiRestriction;
+import org.chromium.ui.base.DeviceFormFactor;
+import org.chromium.ui.base.UiAndroidFeatures;
 
 /** Tests for Multi-window related behavior in grid tab switcher. */
 @RunWith(ChromeJUnit4ClassRunner.class)
@@ -56,32 +56,30 @@ import org.chromium.ui.test.util.UiRestriction;
     ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
     ChromeSwitches.DISABLE_TAB_MERGING_FOR_TESTING
 })
-@Restriction({UiRestriction.RESTRICTION_TYPE_PHONE, RESTRICTION_TYPE_NON_LOW_END_DEVICE})
-@DisableFeatures({ChromeFeatureList.TAB_GROUP_PARITY_ANDROID})
-@Batch(Batch.PER_CLASS)
+@Restriction({DeviceFormFactor.PHONE, RESTRICTION_TYPE_NON_LOW_END_DEVICE})
+@DisableIf.Build(sdk_is_greater_than = VERSION_CODES.R) // https://crbug.com/1297370
+@DisableFeatures(UiAndroidFeatures.USE_NEW_ETC1_ENCODER) // https://crbug.com/400962657
+// TODO(crbug.com/344669867): Failing when batched, batch this again.
 public class TabSwitcherMultiWindowTest {
-    @ClassRule
-    public static ChromeTabbedActivityTestRule sActivityTestRule =
-            new ChromeTabbedActivityTestRule();
-
     @Rule
-    public BlankCTATabInitialStateRule mBlankCTATabInitialStateRule =
-            new BlankCTATabInitialStateRule(sActivityTestRule, true);
+    public AutoResetCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.autoResetCtaActivityRule();
 
+    private WebPageStation mInitialPage;
     private ChromeTabbedActivity mCta1;
     private ChromeTabbedActivity mCta2;
 
     @Before
     public void setUp() {
-        TabUiTestHelper.verifyTabSwitcherLayoutType(sActivityTestRule.getActivity());
-        mCta1 = sActivityTestRule.getActivity();
+        mInitialPage = mActivityTestRule.startOnBlankPage();
+        TabUiTestHelper.verifyTabSwitcherLayoutType(mInitialPage.getActivity());
+        mCta1 = mInitialPage.getActivity();
         CriteriaHelper.pollUiThread(mCta1.getTabModelSelector()::isTabStateInitialized);
     }
 
     @After
     public void tearDown() throws Exception {
-        // On Android N this throws an exception because of legacy multi window.
-        if (mCta2 != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        if (mCta2 != null) {
             ApplicationTestUtils.finishActivity(mCta2);
         }
         if (mCta1 != null) {
@@ -170,15 +168,15 @@ public class TabSwitcherMultiWindowTest {
 
         assertThat(
                 mCta1.getTabModelSelector()
-                        .getTabModelFilterProvider()
-                        .getTabModelFilter(true)
-                        .getCount(),
+                        .getTabGroupModelFilterProvider()
+                        .getTabGroupModelFilter(true)
+                        .getIndividualTabAndGroupCount(),
                 is(0));
         assertThat(
                 mCta2.getTabModelSelector()
-                        .getTabModelFilterProvider()
-                        .getTabModelFilter(true)
-                        .getCount(),
+                        .getTabGroupModelFilterProvider()
+                        .getTabGroupModelFilter(true)
+                        .getIndividualTabAndGroupCount(),
                 is(1));
     }
 

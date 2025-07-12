@@ -61,11 +61,11 @@ void SubresourceUrlAuthorizations::AuthorizeSubresourceUrls(
 void SubresourceUrlAuthorizations::OnWorkletHandleDestruction(
     const AuctionWorkletManager::WorkletHandle* worklet_handle) {
   auto per_handle_it = subresource_urls_per_handle_.find(worklet_handle);
-  DCHECK(per_handle_it != subresource_urls_per_handle_.end());
+  CHECK(per_handle_it != subresource_urls_per_handle_.end());
   for (const GURL& subresource_url : per_handle_it->second) {
     auto authorized_urls_it =
         authorized_subresource_urls_.find(subresource_url);
-    DCHECK(authorized_urls_it != authorized_subresource_urls_.end());
+    CHECK(authorized_urls_it != authorized_subresource_urls_.end());
     if (--authorized_urls_it->second.count <= 0)
       authorized_subresource_urls_.erase(authorized_urls_it);
   }

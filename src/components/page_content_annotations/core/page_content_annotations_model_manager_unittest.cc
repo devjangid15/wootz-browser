@@ -13,10 +13,10 @@
 #include "base/test/scoped_run_loop_timeout.h"
 #include "base/test/task_environment.h"
 #include "build/build_config.h"
-#include "components/optimization_guide/core/execution_status.h"
+#include "components/optimization_guide/core/delivery/test_model_info_builder.h"
+#include "components/optimization_guide/core/delivery/test_optimization_guide_model_provider.h"
+#include "components/optimization_guide/core/inference/execution_status.h"
 #include "components/optimization_guide/core/optimization_guide_features.h"
-#include "components/optimization_guide/core/test_model_info_builder.h"
-#include "components/optimization_guide/core/test_optimization_guide_model_provider.h"
 #include "components/page_content_annotations/core/page_content_annotations_features.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -145,54 +145,6 @@ TEST_F(PageContentAnnotationsModelManagerTest, PageVisibility) {
   run_loop.Run();
 
   EXPECT_TRUE(model_observer_tracker()->DidRegisterForTarget(
-      optimization_guide::proto::OptimizationTarget::
-          OPTIMIZATION_TARGET_PAGE_VISIBILITY,
-      nullptr));
-  histogram_tester.ExpectUniqueSample(
-      "OptimizationGuide.PageContentAnnotations.BatchRequestedSize."
-      "ContentVisibility",
-      1, 1);
-  histogram_tester.ExpectUniqueSample(
-      "OptimizationGuide.PageContentAnnotations.BatchSuccess.ContentVisibility",
-      false, 1);
-  histogram_tester.ExpectTotalCount(
-      "OptimizationGuide.PageContentAnnotations.JobExecutionTime."
-      "ContentVisibility",
-      1);
-  histogram_tester.ExpectTotalCount(
-      "OptimizationGuide.PageContentAnnotations.JobScheduleTime."
-      "ContentVisibility",
-      1);
-
-  ASSERT_EQ(result.size(), 1U);
-  EXPECT_EQ(result[0].input(), "input");
-  EXPECT_EQ(result[0].visibility_score(), std::nullopt);
-}
-
-TEST_F(PageContentAnnotationsModelManagerTest, PageVisibilityDisabled) {
-  base::HistogramTester histogram_tester;
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndDisableFeature(
-      features::kPageVisibilityBatchAnnotations);
-
-  SendPageVisibilityModelToExecutor();
-
-  base::RunLoop run_loop;
-  std::vector<BatchAnnotationResult> result;
-  BatchAnnotationCallback callback = base::BindOnce(
-      [](base::RunLoop* run_loop,
-         std::vector<BatchAnnotationResult>* out_result,
-         const std::vector<BatchAnnotationResult>& in_result) {
-        *out_result = in_result;
-        run_loop->Quit();
-      },
-      &run_loop, &result);
-
-  model_manager()->Annotate(std::move(callback), {"input"},
-                            AnnotationType::kContentVisibility);
-  run_loop.Run();
-
-  EXPECT_FALSE(model_observer_tracker()->DidRegisterForTarget(
       optimization_guide::proto::OptimizationTarget::
           OPTIMIZATION_TARGET_PAGE_VISIBILITY,
       nullptr));

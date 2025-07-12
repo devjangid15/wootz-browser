@@ -29,6 +29,7 @@
 #import "third_party/blink/renderer/core/style/computed_style.h"
 #import "third_party/blink/renderer/platform/web_test_support.h"
 #import "ui/base/ui_base_features.h"
+#import "ui/color/color_provider.h"
 #import "ui/native_theme/native_theme.h"
 
 namespace blink {
@@ -99,6 +100,21 @@ bool LayoutThemeMac::IsAccentColorCustomized(
 Color LayoutThemeMac::GetSystemAccentColor(
     mojom::blink::ColorScheme color_scheme) const {
   return GetSystemColor(MacSystemColorID::kControlAccentColor, color_scheme);
+}
+
+Color LayoutThemeMac::SystemHighlightFromColorProvider(
+    mojom::blink::ColorScheme color_scheme,
+    const ui::ColorProvider* color_provider) const {
+  SkColor system_highlight_color =
+      color_provider->GetColor(ui::kColorCssSystemHighlight);
+  Color color = Color::FromSkColor(system_highlight_color);
+  // BlendWithWhite() darkens Mac system colors too much.
+  // Apply .8 (204/255) alpha instead, same as Safari.
+  if (color_scheme == mojom::blink::ColorScheme::kDark) {
+    return Color(color.Red(), color.Green(), color.Blue(), 204);
+  }
+
+  return color.BlendWithWhite();
 }
 
 Color LayoutThemeMac::GetCustomFocusRingColor(

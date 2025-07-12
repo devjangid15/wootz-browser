@@ -15,6 +15,7 @@
 #include "net/base/ip_endpoint.h"
 #include "net/base/transport_info.h"
 #include "services/network/public/cpp/content_security_policy/content_security_policy.h"
+#include "services/network/public/cpp/features.h"
 #include "services/network/public/cpp/network_switches.h"
 #include "services/network/public/mojom/ip_address_space.mojom.h"
 #include "services/network/public/mojom/parsed_headers.mojom.h"
@@ -72,12 +73,21 @@ std::optional<IPAddressSpace> ParseIPAddressSpace(std::string_view str) {
     return IPAddressSpace::kPublic;
   }
 
+  // Keep 'private' as an alias for 'local' until usages of 'private' are
+  // removed from Web Platform Test code base.
+  //
+  // TODO(crbug.com/418737577): remove private alias after Web Platform Test
+  // code base moves to using "local"
   if (str == "private") {
     return IPAddressSpace::kPrivate;
   }
 
   if (str == "local") {
-    return IPAddressSpace::kLocal;
+    return IPAddressSpace::kPrivate;
+  }
+
+  if (str == "loopback") {
+    return IPAddressSpace::kLoopback;
   }
 
   return std::nullopt;
@@ -158,6 +168,10 @@ std::optional<IPAddressSpace> ApplyCommandLineOverrides(
     if (endpoint_override.endpoint == endpoint) {
       return endpoint_override.space;
     }
+    if ((endpoint_override.endpoint.port() == 0) &&
+        (endpoint_override.endpoint.address() == endpoint.address())) {
+      return endpoint_override.space;
+    }
   }
 
   return std::nullopt;
@@ -231,7 +245,7 @@ const AddressSpaceMap& NonPublicAddressSpaceMap() {
   // well with initializer lists.
   static const base::NoDestructor<AddressSpaceMap> kMap(AddressSpaceMap({
       // IPv6 Loopback (RFC 4291): ::1/128
-      Entry(IPAddress::IPv6Localhost(), 128, IPAddressSpace::kLocal),
+      Entry(IPAddress::IPv6Localhost(), 128, IPAddressSpace::kLoopback),
       // IPv6 Unique-local (RFC 4193, RFC 8190): fc00::/7
       Entry(IPAddress(0xfc, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), 7,
             IPAddressSpace::kPrivate),
@@ -239,13 +253,26 @@ const AddressSpaceMap& NonPublicAddressSpaceMap() {
       Entry(IPAddress(0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), 10,
             IPAddressSpace::kPrivate),
       // IPv4 Loopback (RFC 1122): 127.0.0.0/8
-      Entry(IPAddress(127, 0, 0, 0), 8, IPAddressSpace::kLocal),
+      Entry(IPAddress(127, 0, 0, 0), 8, IPAddressSpace::kLoopback),
       // IPv4 Private use (RFC 1918): 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
       Entry(IPAddress(10, 0, 0, 0), 8, IPAddressSpace::kPrivate),
       Entry(IPAddress(172, 16, 0, 0), 12, IPAddressSpace::kPrivate),
       Entry(IPAddress(192, 168, 0, 0), 16, IPAddressSpace::kPrivate),
       // IPv4 Link-local (RFC 3927): 169.254.0.0/16
       Entry(IPAddress(169, 254, 0, 0), 16, IPAddressSpace::kPrivate),
+      // IPv4 Null IP (RFC 5735): 0.0.0.0/32 is "this host on this network".
+      // Other addresses in 0.0.0.0/8 may refer to "specified hosts on this
+      // network". This is somewhat under-defined for the purposes of assigning
+      // local vs private address space but we assign 0.0.0.0/32 to "local" and
+      // the rest of the block to "private". Note that this mapping can be
+      // overridden by a killswitch feature flag in IPAddressToIPAddressSpace()
+      // since these addresses were previously treated as public. See
+      // https://crbug.com/40058874.
+      //
+      // TODO(https://crbug.com/40058874): decide if we should do the same for
+      // the all-zero IPv6 address.
+      Entry(IPAddress(0, 0, 0, 0), 32, IPAddressSpace::kLoopback),
+      Entry(IPAddress(0, 0, 0, 0), 8, IPAddressSpace::kPrivate),
   }));
   return *kMap;
 }
@@ -253,6 +280,17 @@ const AddressSpaceMap& NonPublicAddressSpaceMap() {
 }  // namespace
 
 IPAddressSpace IPAddressToIPAddressSpace(const IPAddress& address) {
+  // The null IP block (0.0.0.0/8) was previously treated as public, but this
+  // was a loophole in Private Network Access and thus these addresses are now
+  // mapped to the local/private address space instead. This feature is a
+  // killswitch for this behavior to revert these addresses to the public
+  // address space.
+  if (base::FeatureList::IsEnabled(
+          network::features::kTreatNullIPAsPublicAddressSpace) &&
+      address.IsIPv4() &&
+      IPAddressMatchesPrefix(address, IPAddress(0, 0, 0, 0), 8)) {
+    return IPAddressSpace::kPublic;
+  }
   return NonPublicAddressSpaceMap().Apply(address).value_or(
       IPAddressSpace::kPublic);
 }
@@ -282,8 +320,8 @@ std::string_view IPAddressSpaceToStringPiece(IPAddressSpace space) {
       return "public";
     case IPAddressSpace::kPrivate:
       return "private";
-    case IPAddressSpace::kLocal:
-      return "local";
+    case IPAddressSpace::kLoopback:
+      return "loopback";
   }
 }
 
@@ -308,6 +346,15 @@ IPAddressSpace CollapseUnknown(IPAddressSpace space) {
   return space;
 }
 
+// For comparison purposes, we treat kPrivate and kLoopback as equivalent
+// (kPrivate arbitrarily chosen over kLoopback).
+IPAddressSpace CollapsePrivateAndLocal(IPAddressSpace space) {
+  if (space == IPAddressSpace::kLoopback) {
+    return IPAddressSpace::kPrivate;
+  }
+  return space;
+}
+
 }  // namespace
 
 bool IsLessPublicAddressSpace(IPAddressSpace lhs, IPAddressSpace rhs) {
@@ -315,6 +362,13 @@ bool IsLessPublicAddressSpace(IPAddressSpace lhs, IPAddressSpace rhs) {
   // works just fine. The comment on IPAddressSpace's definition notes that the
   // enum values' ordering matters.
   return CollapseUnknown(lhs) < CollapseUnknown(rhs);
+}
+
+bool IsLessPublicAddressSpaceLNA(IPAddressSpace lhs, IPAddressSpace rhs) {
+  // Similar to IsLessPublicAddressSpace but with additional collapsing of
+  // kPrivate and kLoopback.
+  return CollapsePrivateAndLocal(CollapseUnknown(lhs)) <
+         CollapsePrivateAndLocal(CollapseUnknown(rhs));
 }
 
 CalculateClientAddressSpaceParams::~CalculateClientAddressSpaceParams() =
@@ -330,7 +384,7 @@ mojom::IPAddressSpace CalculateClientAddressSpace(
 
   if (url.SchemeIsFile()) {
     // See: https://wicg.github.io/cors-rfc1918/#file-url.
-    return mojom::IPAddressSpace::kLocal;
+    return mojom::IPAddressSpace::kLoopback;
   }
 
   if (!params.has_value()) {
@@ -355,10 +409,27 @@ mojom::IPAddressSpace CalculateResourceAddressSpace(
     const net::IPEndPoint& endpoint) {
   if (url.SchemeIsFile()) {
     // See: https://wicg.github.io/cors-rfc1918/#file-url.
-    return mojom::IPAddressSpace::kLocal;
+    return mojom::IPAddressSpace::kLoopback;
   }
 
   return IPEndPointToIPAddressSpace(endpoint);
+}
+
+std::optional<net::IPAddress> ParsePrivateIpFromUrl(const GURL& url) {
+  net::IPAddress address;
+  if (!address.AssignFromIPLiteral(url.HostNoBracketsPiece())) {
+    return std::nullopt;
+  }
+
+  if (IPAddressToIPAddressSpace(address) != mojom::IPAddressSpace::kPrivate) {
+    return std::nullopt;
+  }
+
+  return address;
+}
+
+bool IsRFC6762LocalDomain(const GURL& url) {
+  return url.DomainIs("local");
 }
 
 }  // namespace network

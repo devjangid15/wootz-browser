@@ -80,6 +80,11 @@ api::os_diagnostics::FanRoutineFinishedDetail UncheckedConvertPtr(
 api::os_diagnostics::NetworkBandwidthRoutineFinishedDetail UncheckedConvertPtr(
     crosapi::mojom::TelemetryDiagnosticNetworkBandwidthRoutineDetailPtr input);
 
+api::os_diagnostics::CameraFrameAnalysisRoutineFinishedDetail
+UncheckedConvertPtr(
+    crosapi::mojom::TelemetryDiagnosticCameraFrameAnalysisRoutineDetailPtr
+        input);
+
 api::os_diagnostics::RoutineFinishedInfo UncheckedConvertPtr(
     crosapi::mojom::TelemetryDiagnosticRoutineStateFinishedPtr input,
     base::Uuid uuid,
@@ -103,10 +108,16 @@ api::os_diagnostics::NetworkBandwidthRoutineRunningType Convert(
     crosapi::mojom::TelemetryDiagnosticNetworkBandwidthRoutineRunningInfo::Type
         input);
 
+api::os_diagnostics::CameraFrameAnalysisIssue Convert(
+    crosapi::mojom::TelemetryDiagnosticCameraFrameAnalysisRoutineDetail::Issue
+        input);
+
+api::os_diagnostics::CameraSubtestResult Convert(
+    crosapi::mojom::TelemetryDiagnosticCameraSubtestResult input);
+
 template <class InputT,
-          class OutputT = decltype(Convert(std::declval<InputT>())),
-          class = std::enable_if_t<std::is_enum_v<InputT> ||
-                                   std::is_integral_v<InputT>>>
+          class OutputT = decltype(Convert(std::declval<InputT>()))>
+  requires(std::is_enum_v<InputT> || std::is_integral_v<InputT>)
 std::vector<OutputT> ConvertVector(std::vector<InputT> input) {
   std::vector<OutputT> output;
   for (auto elem : input) {
@@ -119,8 +130,8 @@ template <class InputT,
           class... Types,
           class OutputT = decltype(unchecked::UncheckedConvertPtr(
               std::declval<InputT>(),
-              std::declval<Types>()...)),
-          class = std::enable_if_t<std::is_default_constructible_v<OutputT>>>
+              std::declval<Types>()...))>
+  requires(std::is_default_constructible_v<OutputT>)
 OutputT ConvertPtr(InputT input, Types... args) {
   return (input) ? unchecked::UncheckedConvertPtr(std::move(input), args...)
                  : OutputT();

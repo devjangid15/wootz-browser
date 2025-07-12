@@ -16,11 +16,11 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.components.browser_ui.util.ConversionUtils;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 import java.util.ArrayList;
 import java.util.Set;
@@ -45,7 +45,7 @@ public class ThumbnailDiskStorageTest {
     private TestThumbnailDiskStorage mTestThumbnailDiskStorage;
 
     private static class TestThumbnailRequest implements ThumbnailProvider.ThumbnailRequest {
-        private String mContentId;
+        private final String mContentId;
 
         public TestThumbnailRequest(String contentId) {
             mContentId = contentId;
@@ -78,7 +78,7 @@ public class ThumbnailDiskStorageTest {
 
     private static class TestThumbnailDiskStorage extends ThumbnailDiskStorage {
         // Incremented when adding an existing entry and trimming. Accessed by test and UI threads.
-        public AtomicInteger removeCount = new AtomicInteger();
+        public final AtomicInteger removeCount = new AtomicInteger();
 
         public TestThumbnailDiskStorage(TestThumbnailGenerator thumbnailGenerator) {
             super(new ThumbnailStorageDelegate() {}, thumbnailGenerator, TEST_MAX_CACHE_BYTES);
@@ -104,8 +104,7 @@ public class ThumbnailDiskStorageTest {
         public Pair<String, Integer> getMostRecentEntry() {
             if (getCacheCount() <= 0) return null;
 
-            ArrayList<Pair<String, Integer>> list =
-                    new ArrayList<Pair<String, Integer>>(sDiskLruCache);
+            ArrayList<Pair<String, Integer>> list = new ArrayList<>(sDiskLruCache);
             return list.get(list.size() - 1);
         }
     }
@@ -126,7 +125,7 @@ public class ThumbnailDiskStorageTest {
     @Before
     public void setUp() {
         mTestThumbnailGenerator = new TestThumbnailGenerator();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mTestThumbnailDiskStorage =
                             new TestThumbnailDiskStorage(mTestThumbnailGenerator);
@@ -264,7 +263,7 @@ public class ThumbnailDiskStorageTest {
 
     /** Retrieve thumbnail and assert that {@link ThumbnailStorageDelegate} has received it. */
     private void retrieveThumbnailAndAssertRetrieved(final TestThumbnailRequest request) {
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> mTestThumbnailDiskStorage.retrieveThumbnail(request));
 
         try {
@@ -290,7 +289,7 @@ public class ThumbnailDiskStorageTest {
      * @param expectedRemoveCount The expected removeCount.
      */
     private void removeThumbnailAndExpectedCount(String contentId, int expectedRemoveCount) {
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> mTestThumbnailDiskStorage.removeFromDisk(contentId));
         try {
             mTestThumbnailDiskStorage.mLastRemoveThumbnailTask.get();

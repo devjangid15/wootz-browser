@@ -10,6 +10,7 @@
 #include "base/functional/bind.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
+#include "base/test/values_test_util.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/install_verifier.h"
 #include "chrome/browser/extensions/test_extension_system.h"
@@ -38,10 +39,11 @@
 #include "extensions/common/extension_builder.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
+#include "services/network/public/cpp/features.h"
+#include "services/network/public/cpp/network_switches.h"
 #include "services/network/public/cpp/private_network_access_check_result.h"
 #include "services/network/public/cpp/url_loader_completion_status.h"
 #include "testing/gmock/include/gmock/gmock.h"
-#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom.h"
 
 namespace {
@@ -145,26 +147,26 @@ std::string FetchSharedWorkerScript(std::string_view path) {
 
 std::vector<WebFeature> AllAddressSpaceFeatures() {
   return {
-      WebFeature::kAddressSpacePrivateSecureContextEmbeddedLocal,
-      WebFeature::kAddressSpacePrivateNonSecureContextEmbeddedLocal,
-      WebFeature::kAddressSpacePublicSecureContextEmbeddedLocal,
-      WebFeature::kAddressSpacePublicNonSecureContextEmbeddedLocal,
-      WebFeature::kAddressSpaceUnknownSecureContextEmbeddedLocal,
-      WebFeature::kAddressSpaceUnknownNonSecureContextEmbeddedLocal,
-      WebFeature::kAddressSpacePublicSecureContextEmbeddedPrivate,
-      WebFeature::kAddressSpacePublicNonSecureContextEmbeddedPrivate,
-      WebFeature::kAddressSpaceUnknownSecureContextEmbeddedPrivate,
-      WebFeature::kAddressSpaceUnknownNonSecureContextEmbeddedPrivate,
-      WebFeature::kAddressSpacePrivateSecureContextNavigatedToLocal,
-      WebFeature::kAddressSpacePrivateNonSecureContextNavigatedToLocal,
-      WebFeature::kAddressSpacePublicSecureContextNavigatedToLocal,
-      WebFeature::kAddressSpacePublicNonSecureContextNavigatedToLocal,
-      WebFeature::kAddressSpaceUnknownSecureContextNavigatedToLocal,
-      WebFeature::kAddressSpaceUnknownNonSecureContextNavigatedToLocal,
-      WebFeature::kAddressSpacePublicSecureContextNavigatedToPrivate,
-      WebFeature::kAddressSpacePublicNonSecureContextNavigatedToPrivate,
-      WebFeature::kAddressSpaceUnknownSecureContextNavigatedToPrivate,
-      WebFeature::kAddressSpaceUnknownNonSecureContextNavigatedToPrivate,
+      WebFeature::kAddressSpaceLocalSecureContextEmbeddedLoopbackV2,
+      WebFeature::kAddressSpaceLocalNonSecureContextEmbeddedLoopbackV2,
+      WebFeature::kAddressSpacePublicSecureContextEmbeddedLoopbackV2,
+      WebFeature::kAddressSpacePublicNonSecureContextEmbeddedLoopbackV2,
+      WebFeature::kAddressSpaceUnknownSecureContextEmbeddedLoopbackV2,
+      WebFeature::kAddressSpaceUnknownNonSecureContextEmbeddedLoopbackV2,
+      WebFeature::kAddressSpacePublicSecureContextEmbeddedLocalV2,
+      WebFeature::kAddressSpacePublicNonSecureContextEmbeddedLocalV2,
+      WebFeature::kAddressSpaceUnknownSecureContextEmbeddedLocalV2,
+      WebFeature::kAddressSpaceUnknownNonSecureContextEmbeddedLocalV2,
+      WebFeature::kAddressSpaceLocalSecureContextNavigatedToLoopbackV2,
+      WebFeature::kAddressSpaceLocalNonSecureContextNavigatedToLoopbackV2,
+      WebFeature::kAddressSpacePublicSecureContextNavigatedToLoopbackV2,
+      WebFeature::kAddressSpacePublicNonSecureContextNavigatedToLoopbackV2,
+      WebFeature::kAddressSpaceUnknownSecureContextNavigatedToLoopbackV2,
+      WebFeature::kAddressSpaceUnknownNonSecureContextNavigatedToLoopbackV2,
+      WebFeature::kAddressSpacePublicSecureContextNavigatedToLocalV2,
+      WebFeature::kAddressSpacePublicNonSecureContextNavigatedToLocalV2,
+      WebFeature::kAddressSpaceUnknownSecureContextNavigatedToLocalV2,
+      WebFeature::kAddressSpaceUnknownNonSecureContextNavigatedToLocalV2,
       WebFeature::kPrivateNetworkAccessFetchedWorkerScript,
       WebFeature::kPrivateNetworkAccessFetchedSubFrame,
       WebFeature::kPrivateNetworkAccessFetchedTopFrame,
@@ -229,6 +231,10 @@ class PrivateNetworkAccessBrowserTestBase : public InProcessBrowserTest {
         "dRCs+TocuKkocNKa0AtZ4awrt9XKH2SQCI6o4FY6BNA=";
     command_line->AppendSwitchASCII(embedder_support::kOriginTrialPublicKey,
                                     kOriginTrialTestPublicKey);
+    // Clear default from InProcessBrowserTest as test doesn't want 127.0.0.1 in
+    // the public address space
+    command_line->AppendSwitchASCII(network::switches::kIpAddressSpaceOverrides,
+                                    "");
   }
 
  private:
@@ -244,6 +250,7 @@ class PrivateNetworkAccessWithFeatureDisabledBrowserTest
             {
                 features::kBlockInsecurePrivateNetworkRequests,
                 features::kBlockInsecurePrivateNetworkRequestsFromPrivate,
+                network::features::kLocalNetworkAccessChecks,
             }) {}
 };
 
@@ -260,7 +267,6 @@ class PrivateNetworkAccessWithFeatureEnabledBrowserTest
       bool is_warning_only = false)
       : PrivateNetworkAccessBrowserTestBase(
             {
-                blink::features::kPlzDedicatedWorker,
                 features::kBlockInsecurePrivateNetworkRequests,
                 features::kBlockInsecurePrivateNetworkRequestsFromPrivate,
                 features::kBlockInsecurePrivateNetworkRequestsDeprecationTrial,
@@ -269,13 +275,13 @@ class PrivateNetworkAccessWithFeatureEnabledBrowserTest
                 features::kPrivateNetworkAccessForWorkers,
             },
             is_warning_only
-                ? std::vector<base::test::FeatureRef>()
+                ? std::vector<base::test::FeatureRef>({
+                      network::features::kLocalNetworkAccessChecks,
+                  })
                 : std::vector<base::test::FeatureRef>({
                       features::kPrivateNetworkAccessForWorkersWarningOnly,
+                      network::features::kLocalNetworkAccessChecks,
                   })) {}
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    PrivateNetworkAccessBrowserTestBase::SetUpCommandLine(command_line);
-  }
 };
 
 class PrivateNetworkAccessWithFeatureEnabledWorkerBrowserTest
@@ -294,16 +300,18 @@ class PrivateNetworkAccessRespectPreflightResultsBrowserTest
   PrivateNetworkAccessRespectPreflightResultsBrowserTest()
       : PrivateNetworkAccessBrowserTestBase(
             {
-                blink::features::kPlzDedicatedWorker,
                 features::kBlockInsecurePrivateNetworkRequests,
                 features::kPrivateNetworkAccessSendPreflights,
                 features::kPrivateNetworkAccessRespectPreflightResults,
                 features::kPrivateNetworkAccessForWorkers,
             },
             GetParam().is_warning_only
-                ? std::vector<base::test::FeatureRef>()
+                ? std::vector<base::test::FeatureRef>({
+                      network::features::kLocalNetworkAccessChecks,
+                  })
                 : std::vector<base::test::FeatureRef>({
                       features::kPrivateNetworkAccessForWorkersWarningOnly,
+                      network::features::kLocalNetworkAccessChecks,
                   })) {}
 };
 
@@ -372,7 +380,7 @@ IN_PROC_BROWSER_TEST_F(PrivateNetworkAccessWithFeatureDisabledBrowserTest,
   feature_histogram_tester.ExpectCounts(AddFeatureCounts(
       AllZeroFeatureCounts(AllAddressSpaceFeatures()),
       {
-          {WebFeature::kAddressSpacePublicNonSecureContextEmbeddedLocal, 1},
+          {WebFeature::kAddressSpacePublicNonSecureContextEmbeddedLocalV2, 1},
       }));
 }
 
@@ -415,7 +423,8 @@ IN_PROC_BROWSER_TEST_F(PrivateNetworkAccessWithFeatureDisabledBrowserTest,
   feature_histogram_tester.ExpectCounts(AddFeatureCounts(
       AllZeroFeatureCounts(AllAddressSpaceFeatures()),
       {
-          {WebFeature::kAddressSpacePublicNonSecureContextNavigatedToLocal, 1},
+          {WebFeature::kAddressSpacePublicNonSecureContextNavigatedToLocalV2,
+           1},
           {WebFeature::kPrivateNetworkAccessFetchedTopFrame, 1},
       }));
 }
@@ -447,7 +456,8 @@ IN_PROC_BROWSER_TEST_F(
   feature_histogram_tester.ExpectCounts(AddFeatureCounts(
       AllZeroFeatureCounts(AllAddressSpaceFeatures()),
       {
-          {WebFeature::kAddressSpacePublicNonSecureContextNavigatedToLocal, 1},
+          {WebFeature::kAddressSpacePublicNonSecureContextNavigatedToLocalV2,
+           1},
           {WebFeature::kPrivateNetworkAccessFetchedTopFrame, 1},
       }));
 }
@@ -507,7 +517,8 @@ IN_PROC_BROWSER_TEST_F(PrivateNetworkAccessWithFeatureDisabledBrowserTest,
   feature_histogram_tester.ExpectCounts(AddFeatureCounts(
       AllZeroFeatureCounts(AllAddressSpaceFeatures()),
       {
-          {WebFeature::kAddressSpacePublicNonSecureContextNavigatedToLocal, 1},
+          {WebFeature::kAddressSpacePublicNonSecureContextNavigatedToLocalV2,
+           1},
           {WebFeature::kPrivateNetworkAccessFetchedSubFrame, 1},
       }));
 }
@@ -549,7 +560,8 @@ IN_PROC_BROWSER_TEST_F(PrivateNetworkAccessWithFeatureDisabledBrowserTest,
   feature_histogram_tester.ExpectCounts(AddFeatureCounts(
       AllZeroFeatureCounts(AllAddressSpaceFeatures()),
       {
-          {WebFeature::kAddressSpacePublicNonSecureContextNavigatedToLocal, 1},
+          {WebFeature::kAddressSpacePublicNonSecureContextNavigatedToLocalV2,
+           1},
           {WebFeature::kPrivateNetworkAccessFetchedSubFrame, 1},
       }));
 }
@@ -581,7 +593,8 @@ IN_PROC_BROWSER_TEST_F(PrivateNetworkAccessWithFeatureDisabledBrowserTest,
   feature_histogram_tester.ExpectCounts(AddFeatureCounts(
       AllZeroFeatureCounts(AllAddressSpaceFeatures()),
       {
-          {WebFeature::kAddressSpacePublicNonSecureContextNavigatedToLocal, 1},
+          {WebFeature::kAddressSpacePublicNonSecureContextNavigatedToLocalV2,
+           1},
           {WebFeature::kPrivateNetworkAccessFetchedSubFrame, 1},
       }));
 }
@@ -773,7 +786,7 @@ IN_PROC_BROWSER_TEST_F(PrivateNetworkAccessWithFeatureEnabledBrowserTest,
   feature_histogram_tester.ExpectCounts(AddFeatureCounts(
       AllZeroFeatureCounts(AllAddressSpaceFeatures()),
       {
-          {WebFeature::kAddressSpacePublicSecureContextEmbeddedLocal, 1},
+          {WebFeature::kAddressSpacePublicSecureContextEmbeddedLocalV2, 1},
       }));
 }
 
@@ -1221,7 +1234,7 @@ IN_PROC_BROWSER_TEST_F(PrivateNetworkAccessWithFeatureEnabledBrowserTest,
   // however so we load chrome://new-tab-page that embeds chrome-untrusted://
   // frame(s) by default.
   EXPECT_TRUE(
-      content::NavigateToURL(web_contents(), GURL("wootzapp://new-tab-page")));
+      content::NavigateToURL(web_contents(), GURL("chrome://new-tab-page")));
   content::RenderFrameHost* iframe = ChildFrameAt(web_contents(), 0);
   ASSERT_TRUE(iframe);
   EXPECT_TRUE(iframe->GetLastCommittedURL().SchemeIs(
@@ -1298,9 +1311,6 @@ IN_PROC_BROWSER_TEST_F(PrivateNetworkAccessWithFeatureEnabledBrowserTest,
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
 
   static constexpr char kPageFile[] = "page.html";
-
-  base::Value::List resources;
-  resources.Append(kPageFile);
   constexpr char kContents[] = R"(
   <html>
     <head>
@@ -1311,18 +1321,22 @@ IN_PROC_BROWSER_TEST_F(PrivateNetworkAccessWithFeatureEnabledBrowserTest,
   </html>
   )";
   base::WriteFile(temp_dir.GetPath().AppendASCII(kPageFile), kContents);
+  static constexpr char kWebAccessibleResources[] =
+      R"([{
+            "resources": ["page.html"],
+            "matches": ["*://*/*"]
+         }])";
 
   extensions::ExtensionBuilder builder("test");
   builder.SetPath(temp_dir.GetPath())
       .SetVersion("1.0")
       .SetLocation(extensions::mojom::ManifestLocation::kExternalPolicyDownload)
-      .SetManifestKey("web_accessible_resources", std::move(resources));
+      .SetManifestKey("web_accessible_resources",
+                      base::test::ParseJson(kWebAccessibleResources));
 
-  extensions::ExtensionService* service =
-      extensions::ExtensionSystem::Get(browser()->profile())
-          ->extension_service();
   scoped_refptr<const extensions::Extension> extension = builder.Build();
-  service->OnExtensionInstalled(extension.get(), syncer::StringOrdinal(), 0);
+  extensions::ExtensionRegistrar::Get(browser()->profile())
+      ->OnExtensionInstalled(extension.get(), syncer::StringOrdinal(), 0);
 
   const GURL url = extension->GetResourceURL(kPageFile);
 
@@ -1401,7 +1415,9 @@ class PrivateNetworkAccessAutoReloadBrowserTest
                 features::kBlockInsecurePrivateNetworkRequestsDeprecationTrial,
                 features::kPrivateNetworkAccessForNavigations,
             },
-            {}) {}
+            {
+                network::features::kLocalNetworkAccessChecks,
+            }) {}
 
   void SetUpOnMainThread() override {
     PrivateNetworkAccessBrowserTestBase::SetUpOnMainThread();
@@ -1431,6 +1447,69 @@ IN_PROC_BROWSER_TEST_F(PrivateNetworkAccessAutoReloadBrowserTest,
   // Observe second navigation, which succeeds.
   observer.Wait();
   EXPECT_TRUE(observer.last_navigation_succeeded());
+}
+
+// ================
+// 0.0.0.0 TESTS
+// ================
+
+// This test verifies that a 0.0.0.0 subresource is blocked on a nonsecure
+// public URL.
+IN_PROC_BROWSER_TEST_F(PrivateNetworkAccessWithFeatureEnabledBrowserTest,
+                       NullIPBlockedOnNonsecure) {
+  if constexpr (BUILDFLAG(IS_WIN)) {
+    GTEST_SKIP() << "0.0.0.0 behavior varies across platforms and is "
+                    "unreachable on Windows.";
+  }
+
+  std::unique_ptr<net::EmbeddedTestServer> server = NewServer();
+  GURL url = PublicNonSecureURL(*server);
+  EXPECT_TRUE(content::NavigateToURL(web_contents(), url));
+  GURL subresource_url = server->GetURL("0.0.0.0", "/cors-ok.txt");
+  EXPECT_EQ(false, content::EvalJs(web_contents(),
+                                   content::JsReplace(R"(
+    fetch($1).then(response => true).catch(error => false)
+  )",
+                                                      subresource_url)));
+}
+
+class PrivateNetworkAccessWithNullIPKillswitchTest
+    : public PrivateNetworkAccessBrowserTestBase {
+ public:
+  PrivateNetworkAccessWithNullIPKillswitchTest()
+      : PrivateNetworkAccessBrowserTestBase(
+            {
+                features::kBlockInsecurePrivateNetworkRequests,
+                features::kBlockInsecurePrivateNetworkRequestsFromPrivate,
+                features::kBlockInsecurePrivateNetworkRequestsDeprecationTrial,
+                features::kPrivateNetworkAccessSendPreflights,
+                features::kPrivateNetworkAccessForNavigations,
+                features::kPrivateNetworkAccessForWorkers,
+                network::features::kTreatNullIPAsPublicAddressSpace,
+            },
+            {
+                network::features::kLocalNetworkAccessChecks,
+            }) {}
+};
+
+// This test verifies that 0.0.0.0 subresources are not blocked when the
+// killswitch feature is enabled.
+IN_PROC_BROWSER_TEST_F(PrivateNetworkAccessWithNullIPKillswitchTest,
+                       NullIPNotBlockedWithKillswitch) {
+  if constexpr (BUILDFLAG(IS_WIN)) {
+    GTEST_SKIP() << "0.0.0.0 behavior varies across platforms and is "
+                    "unreachable on Windows.";
+  }
+
+  std::unique_ptr<net::EmbeddedTestServer> server = NewServer();
+  GURL url = PublicNonSecureURL(*server);
+  EXPECT_TRUE(content::NavigateToURL(web_contents(), url));
+  GURL subresource_url = server->GetURL("0.0.0.0", "/cors-ok.txt");
+  EXPECT_EQ(true, content::EvalJs(web_contents(),
+                                  content::JsReplace(R"(
+    fetch($1).then(response => response.ok)
+  )",
+                                                     subresource_url)));
 }
 
 }  // namespace

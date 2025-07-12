@@ -29,6 +29,7 @@
 #include "ash/wm/overview/overview_controller.h"
 #include "ash/wm/splitview/split_view_controller.h"
 #include "ash/wm/splitview/split_view_utils.h"
+#include "ash/wm/tablet_mode/accelerometer_test_data_literals.h"
 #include "ash/wm/tablet_mode/tablet_mode_controller_test_api.h"
 #include "ash/wm/toplevel_window_event_handler.h"
 #include "ash/wm/window_util.h"
@@ -44,6 +45,7 @@
 #include "base/test/simple_test_tick_clock.h"
 #include "chromeos/dbus/power/fake_power_manager_client.h"
 #include "chromeos/ui/frame/caption_buttons/snap_controller.h"
+#include "device/bluetooth/bluetooth_adapter_factory.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/test/test_window_delegate.h"
 #include "ui/base/hit_test.h"
@@ -87,37 +89,9 @@ constexpr char kLsbReleaseContent[] = "CHROMEOS_RELEASE_NAME=Chromium OS\n";
 
 }  // namespace
 
-// Test accelerometer data taken with the lid at less than 180 degrees while
-// shaking the device around. The data is to be interpreted in groups of 6 where
-// each 6 values corresponds to the base accelerometer (-y / g, -x / g, -z / g)
-// followed by the lid accelerometer (-y / g , x / g, z / g).
-extern const float kAccelerometerLaptopModeTestData[];
-extern const size_t kAccelerometerLaptopModeTestDataLength;
-
-// Test accelerometer data taken with the lid open 360 degrees while
-// shaking the device around. The data is to be interpreted in groups of 6 where
-// each 6 values corresponds to the base accelerometer (-y / g, -x / g, -z / g)
-// followed by the lid accelerometer (-y / g , x / g, z / g).
-extern const float kAccelerometerFullyOpenTestData[];
-extern const size_t kAccelerometerFullyOpenTestDataLength;
-
-// Test accelerometer data taken with the lid open 360 degrees while the device
-// hinge was nearly vertical, while shaking the device around. The data is to be
-// interpreted in groups of 6 where each 6 values corresponds to the X, Y, and Z
-// readings from the base and lid accelerometers in this order.
-extern const float kAccelerometerVerticalHingeTestData[];
-extern const size_t kAccelerometerVerticalHingeTestDataLength;
-extern const float kAccelerometerVerticalHingeUnstableAnglesTestData[];
-extern const size_t kAccelerometerVerticalHingeUnstableAnglesTestDataLength;
-
 class TabletModeControllerTest : public AshTestBase {
  public:
-  TabletModeControllerTest() {
-    scoped_feature_list_.InitWithFeatures(
-        /*enabled_features=*/{features::kFasterSplitScreenSetup,
-                              features::kOsSettingsRevampWayfinding},
-        /*disabled_features=*/{});
-  }
+  TabletModeControllerTest() = default;
 
   TabletModeControllerTest(const TabletModeControllerTest&) = delete;
   TabletModeControllerTest& operator=(const TabletModeControllerTest&) = delete;
@@ -127,6 +101,14 @@ class TabletModeControllerTest : public AshTestBase {
   void SetUp() override {
     base::CommandLine::ForCurrentProcess()->AppendSwitch(
         switches::kAshEnableTabletMode);
+    bluetooth_adapter_ =
+        base::MakeRefCounted<testing::NiceMock<device::MockBluetoothAdapter>>();
+    device::BluetoothAdapterFactory::SetAdapterForTesting(bluetooth_adapter_);
+    ON_CALL(*bluetooth_adapter_, IsPowered)
+        .WillByDefault(testing::Return(true));
+    ON_CALL(*bluetooth_adapter_, IsPresent)
+        .WillByDefault(testing::Return(true));
+
     AshTestBase::SetUp();
     AccelerometerReader::GetInstance()->RemoveObserver(
         tablet_mode_controller());
@@ -162,7 +144,13 @@ class TabletModeControllerTest : public AshTestBase {
   }
 
   void AttachExternalMouse() { test_api_->AttachExternalMouse(); }
+  void AttachBluetoothMouse() {
+    test_api_->AttachBluetoothMouse(bluetooth_adapter_.get());
+  }
   void AttachExternalTouchpad() { test_api_->AttachExternalTouchpad(); }
+  void ClearBluetoothAdapter() {
+    testing::Mock::VerifyAndClear(bluetooth_adapter_.get());
+  }
   void DetachAllMice() { test_api_->DetachAllMice(); }
   void DetachAllTouchpads() { test_api_->DetachAllTouchpads(); }
 
@@ -232,8 +220,9 @@ class TabletModeControllerTest : public AshTestBase {
   void WaitForWindowAnimation(aura::Window* window) {
     auto* compositor = window->layer()->GetCompositor();
 
-    while (window->layer()->GetAnimator()->is_animating())
+    while (window->layer()->GetAnimator()->is_animating()) {
       EXPECT_TRUE(ui::WaitForNextFrameToBePresented(compositor));
+    }
   }
 
   // Wait one more frame presented for the metrics to get recorded.
@@ -246,11 +235,12 @@ class TabletModeControllerTest : public AshTestBase {
   }
 
  private:
-  base::test::ScopedFeatureList scoped_feature_list_;
-
   std::unique_ptr<TabletModeControllerTestApi> test_api_;
 
   base::SimpleTestTickClock test_tick_clock_;
+
+  scoped_refptr<testing::NiceMock<device::MockBluetoothAdapter>>
+      bluetooth_adapter_;
 
   // Tracks user action counts.
   base::UserActionTester user_action_tester_;
@@ -552,8 +542,8 @@ TEST_F(TabletModeControllerTest, LaptopTest) {
   // transitions into tabletmode / tablet mode while shaking the device around
   // with the hinge at less than 180 degrees. Note the conversion from device
   // data to accelerometer updates consistent with accelerometer_reader.cc.
-  ASSERT_EQ(0u, kAccelerometerLaptopModeTestDataLength % 6);
-  for (size_t i = 0; i < kAccelerometerLaptopModeTestDataLength / 6; ++i) {
+  ASSERT_EQ(0u, kAccelerometerLaptopModeTestData.size() % 6);
+  for (size_t i = 0; i < kAccelerometerLaptopModeTestData.size() / 6; ++i) {
     gfx::Vector3dF base(-kAccelerometerLaptopModeTestData[i * 6 + 1],
                         -kAccelerometerLaptopModeTestData[i * 6],
                         -kAccelerometerLaptopModeTestData[i * 6 + 2]);
@@ -579,8 +569,8 @@ TEST_F(TabletModeControllerTest, TabletModeTest) {
   // transitions out of tabletmode / tablet mode while shaking the device
   // around. Note the conversion from device data to accelerometer updates
   // consistent with accelerometer_reader.cc.
-  ASSERT_EQ(0u, kAccelerometerFullyOpenTestDataLength % 6);
-  for (size_t i = 0; i < kAccelerometerFullyOpenTestDataLength / 6; ++i) {
+  ASSERT_EQ(0u, kAccelerometerFullyOpenTestData.size() % 6);
+  for (size_t i = 0; i < kAccelerometerFullyOpenTestData.size() / 6; ++i) {
     gfx::Vector3dF base(-kAccelerometerFullyOpenTestData[i * 6 + 1],
                         -kAccelerometerFullyOpenTestData[i * 6],
                         -kAccelerometerFullyOpenTestData[i * 6 + 2]);
@@ -601,8 +591,8 @@ TEST_F(TabletModeControllerTest, VerticalHingeTest) {
   // transitions out of tabletmode / tablet mode while shaking the device
   // around, while the hinge is nearly vertical. The data was captured from
   // maxmimize_mode_controller.cc and does not require conversion.
-  ASSERT_EQ(0u, kAccelerometerVerticalHingeTestDataLength % 6);
-  for (size_t i = 0; i < kAccelerometerVerticalHingeTestDataLength / 6; ++i) {
+  ASSERT_EQ(0u, kAccelerometerVerticalHingeTestData.size() % 6);
+  for (size_t i = 0; i < kAccelerometerVerticalHingeTestData.size() / 6; ++i) {
     gfx::Vector3dF base(kAccelerometerVerticalHingeTestData[i * 6],
                         kAccelerometerVerticalHingeTestData[i * 6 + 1],
                         kAccelerometerVerticalHingeTestData[i * 6 + 2]);
@@ -743,9 +733,9 @@ TEST_F(TabletModeControllerTest, VerticalHingeUnstableAnglesTest) {
   // transitions out of tabletmode / tablet mode while shaking the device
   // around, while the hinge is nearly vertical. The data was captured
   // from maxmimize_mode_controller.cc and does not require conversion.
-  ASSERT_EQ(0u, kAccelerometerVerticalHingeUnstableAnglesTestDataLength % 6);
+  ASSERT_EQ(0u, kAccelerometerVerticalHingeUnstableAnglesTestData.size() % 6);
   for (size_t i = 0;
-       i < kAccelerometerVerticalHingeUnstableAnglesTestDataLength / 6; ++i) {
+       i < kAccelerometerVerticalHingeUnstableAnglesTestData.size() / 6; ++i) {
     gfx::Vector3dF base(
         kAccelerometerVerticalHingeUnstableAnglesTestData[i * 6],
         kAccelerometerVerticalHingeUnstableAnglesTestData[i * 6 + 1],
@@ -871,7 +861,7 @@ TEST_F(TabletModeControllerTest, CannotEnterTabletModeWithExternalMouse) {
   EXPECT_FALSE(display::Screen::GetScreen()->InTabletMode());
 }
 
-// Tests that when we plug in a external mouse the device will
+// Tests that when we plug in an external mouse the device will
 // leave tablet mode.
 TEST_F(TabletModeControllerTest, LeaveTabletModeWhenExternalMouseConnected) {
   // Start in tablet mode.
@@ -886,6 +876,46 @@ TEST_F(TabletModeControllerTest, LeaveTabletModeWhenExternalMouseConnected) {
   EXPECT_TRUE(AreEventsBlocked());
 
   // Verify that after unplugging the mouse, tablet mode will resume.
+  DetachAllMice();
+  EXPECT_TRUE(display::Screen::GetScreen()->InTabletMode());
+  EXPECT_TRUE(AreEventsBlocked());
+}
+
+// Tests that when we connect a bluetooth mouse the device will
+// leave tablet mode.
+TEST_F(TabletModeControllerTest, LeaveTabletModeWhenBluetoothMouseConnected) {
+  // Start in tablet mode.
+  OpenLidToAngle(300.0f);
+  EXPECT_TRUE(display::Screen::GetScreen()->InTabletMode());
+  EXPECT_TRUE(AreEventsBlocked());
+
+  // Connect bluetooth mouse and verify that tablet mode has ended, but events
+  // are still blocked because the keyboard is still facing the bottom.
+  AttachBluetoothMouse();
+  EXPECT_FALSE(display::Screen::GetScreen()->InTabletMode());
+  EXPECT_TRUE(AreEventsBlocked());
+
+  // Verify that after disconnecting mouse, tablet mode will resume.
+  ClearBluetoothAdapter();
+  DetachAllMice();
+  EXPECT_TRUE(display::Screen::GetScreen()->InTabletMode());
+  EXPECT_TRUE(AreEventsBlocked());
+}
+
+// Tests that when bluetooth mouse is connected device will not start
+// in tablet mode.
+TEST_F(TabletModeControllerTest, StartInLaptopModeWhenBluetoothMouseConnected) {
+  // Have a bluetooth mouse connected in the beginning.
+  AttachBluetoothMouse();
+
+  // Start with device folded back and verify that it is not in tablet mode and
+  // events are blocked
+  OpenLidToAngle(300.0f);
+  EXPECT_FALSE(display::Screen::GetScreen()->InTabletMode());
+  EXPECT_TRUE(AreEventsBlocked());
+
+  // Verify that after unplugging the mouse, tablet mode will resume.
+  ClearBluetoothAdapter();
   DetachAllMice();
   EXPECT_TRUE(display::Screen::GetScreen()->InTabletMode());
   EXPECT_TRUE(AreEventsBlocked());
@@ -1115,6 +1145,76 @@ TEST_F(TabletModeControllerTest, ShowAndHideMouseCursorTest) {
   EXPECT_TRUE(cursor_manager->IsCursorVisible());
 }
 
+TEST_F(TabletModeControllerTest, StartingKioskSwitchesToUiClamshellMode) {
+  SetTabletMode(true);
+  EXPECT_TRUE(display::Screen::GetScreen()->InTabletMode());
+  EXPECT_TRUE(AreEventsBlocked());
+
+  SimulateKioskMode(user_manager::UserType::kKioskChromeApp);
+
+  EXPECT_FALSE(display::Screen::GetScreen()->InTabletMode());
+  // When the device is in the physical tablet state, the internal events should
+  // still be blocked even when the device is in the UI clamshell mode.
+  EXPECT_TRUE(AreEventsBlocked());
+}
+
+TEST_F(TabletModeControllerTest, KioskBlocksEnteringTabletMode) {
+  EXPECT_FALSE(display::Screen::GetScreen()->InTabletMode());
+  EXPECT_FALSE(AreEventsBlocked());
+  SimulateKioskMode(user_manager::UserType::kKioskChromeApp);
+
+  SetTabletMode(true);
+
+  EXPECT_FALSE(display::Screen::GetScreen()->InTabletMode());
+  EXPECT_TRUE(AreEventsBlocked());
+  EXPECT_TRUE(IsInPhysicalTabletState());
+}
+
+TEST_F(TabletModeControllerTest,
+       KioskModeExplicitlyHidesCursorWhenEnteringClamshellMode) {
+  SetTabletMode(true);
+  EXPECT_TRUE(display::Screen::GetScreen()->InTabletMode());
+  EXPECT_TRUE(AreEventsBlocked());
+  Shell::Get()->cursor_manager()->ShowCursor();
+  EXPECT_TRUE(Shell::Get()->cursor_manager()->IsCursorVisible());
+
+  SimulateKioskMode(user_manager::UserType::kKioskChromeApp);
+
+  EXPECT_FALSE(Shell::Get()->cursor_manager()->IsCursorVisible());
+}
+
+TEST_F(TabletModeControllerTest, DeviceReactsOnLidChangeInKioskSession) {
+  EXPECT_FALSE(display::Screen::GetScreen()->InTabletMode());
+  EXPECT_FALSE(AreEventsBlocked());
+  SimulateKioskMode(user_manager::UserType::kKioskChromeApp);
+
+  // Opening the lid to 270 degrees should start tablet mode if not blocked.
+  OpenLidToAngle(270.0f);
+
+  EXPECT_FALSE(display::Screen::GetScreen()->InTabletMode());
+  EXPECT_TRUE(AreEventsBlocked());
+  EXPECT_TRUE(IsInPhysicalTabletState());
+}
+
+TEST_F(TabletModeControllerTest,
+       KioskBlocksUiTabletModeEvenAfterMultipleLidChange) {
+  EXPECT_FALSE(display::Screen::GetScreen()->InTabletMode());
+  EXPECT_FALSE(AreEventsBlocked());
+  SimulateKioskMode(user_manager::UserType::kKioskChromeApp);
+
+  OpenLidToAngle(270.0f);
+  EXPECT_FALSE(display::Screen::GetScreen()->InTabletMode());
+  EXPECT_TRUE(AreEventsBlocked());
+
+  OpenLidToAngle(30.0f);
+  EXPECT_FALSE(display::Screen::GetScreen()->InTabletMode());
+  EXPECT_FALSE(AreEventsBlocked());
+
+  OpenLidToAngle(270.0f);
+  EXPECT_FALSE(display::Screen::GetScreen()->InTabletMode());
+  EXPECT_TRUE(AreEventsBlocked());
+}
+
 class TabletModeControllerForceTabletModeTest
     : public TabletModeControllerTest {
  public:
@@ -1155,6 +1255,15 @@ TEST_F(TabletModeControllerForceTabletModeTest, ForceTabletModeTest) {
   AttachExternalMouse();
   EXPECT_TRUE(display::Screen::GetScreen()->InTabletMode());
   EXPECT_FALSE(AreEventsBlocked());
+}
+
+TEST_F(TabletModeControllerForceTabletModeTest,
+       ForceTabletModeOverridenInKiosk) {
+  EXPECT_TRUE(display::Screen::GetScreen()->InTabletMode());
+
+  SimulateKioskMode(user_manager::UserType::kKioskChromeApp);
+
+  EXPECT_FALSE(display::Screen::GetScreen()->InTabletMode());
 }
 
 TEST_F(TabletModeControllerForceTabletModeTest, DockInForcedTabletMode) {
@@ -1886,8 +1995,9 @@ class TabletModeControllerScreenshotTest : public TabletModeControllerTest {
     for (int id :
          {kShellWindowId_FloatContainer, kShellWindowId_ShelfContainer}) {
       const aura::Window* container = root->GetChildById(id);
-      if (container->layer()->opacity() != 1.0f)
+      if (container->layer()->opacity() != 1.0f) {
         return false;
+      }
     }
     return true;
   }

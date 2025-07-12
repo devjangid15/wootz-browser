@@ -4,6 +4,9 @@
 
 package org.chromium.chrome.browser.tabmodel;
 
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
+
 import static org.chromium.base.test.util.Restriction.RESTRICTION_TYPE_NON_LOW_END_DEVICE;
 
 import android.app.Activity;
@@ -15,7 +18,6 @@ import androidx.test.filters.LargeTest;
 import androidx.test.platform.app.InstrumentationRegistry;
 
 import org.hamcrest.Matchers;
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -24,6 +26,7 @@ import org.junit.runner.RunWith;
 import org.chromium.base.ActivityState;
 import org.chromium.base.ApplicationStatus;
 import org.chromium.base.ApplicationStatus.ActivityStateListener;
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.shared_preferences.SharedPreferencesManager;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
@@ -47,12 +50,11 @@ import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
 import org.chromium.chrome.browser.tab.TabLaunchType;
 import org.chromium.chrome.browser.tabmodel.TabPersistentStoreTest.MockTabPersistentStoreObserver;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
 import org.chromium.chrome.test.util.ChromeTabUtils;
 import org.chromium.content_public.browser.LoadUrlParams;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
-import org.chromium.ui.test.util.UiDisableIf;
-import org.chromium.ui.test.util.UiRestriction;
+import org.chromium.ui.base.DeviceFormFactor;
 
 import java.util.Collections;
 import java.util.concurrent.TimeoutException;
@@ -60,9 +62,11 @@ import java.util.concurrent.TimeoutException;
 /** Tests merging tab models for Android N+ multi-instance. */
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
+@DisableIf.Build(sdk_is_greater_than = VERSION_CODES.R) // https://crbug.com/1297370
 public class TabModelMergingTest {
     @Rule
-    public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
+    public FreshCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.freshChromeTabbedActivityRule();
 
     private static final String TEST_URL_0 = UrlUtils.encodeHtmlDataUri("<html>test_url_0.</html>");
     private static final String TEST_URL_1 = UrlUtils.encodeHtmlDataUri("<html>test_url_1.</html>");
@@ -85,7 +89,8 @@ public class TabModelMergingTest {
 
     @Before
     public void setUp() throws Exception {
-        mActivityTestRule.startMainActivityOnBlankPage();
+        mActivityTestRule.startOnBlankPage();
+
         // Make sure file migrations don't run as they are unnecessary since app data was cleared.
         SharedPreferencesManager prefs = ChromeSharedPreferences.getInstance();
         prefs.writeBoolean(ChromePreferenceKeys.TABMODEL_HAS_RUN_FILE_MIGRATION, true);
@@ -115,7 +120,7 @@ public class TabModelMergingTest {
         // Create a few tabs in each activity.
         createTabsOnUiThread();
 
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     // Initialize activity states and register for state change events.
                     mActivity1State = ApplicationStatus.getStateForActivity(mActivity1);
@@ -143,7 +148,7 @@ public class TabModelMergingTest {
      * has the expected number of tabs.
      */
     private void createTabsOnUiThread() {
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     // Create normal tabs.
                     mActivity1
@@ -183,14 +188,14 @@ public class TabModelMergingTest {
 
         // ChromeTabbedActivity should have four normal tabs, the one it started with and the three
         // just created.
-        Assert.assertEquals(
+        assertEquals(
                 "Wrong number of tabs in ChromeTabbedActivity",
                 4,
                 mActivity1.getTabModelSelector().getModel(false).getCount());
 
         // ChromeTabbedActivity2 should have three normal tabs, the one it started with and the two
         // just created.
-        Assert.assertEquals(
+        assertEquals(
                 "Wrong number of tabs in ChromeTabbedActivity2",
                 3,
                 mActivity2.getTabModelSelector().getModel(false).getCount());
@@ -238,7 +243,7 @@ public class TabModelMergingTest {
             final int expectedNumberOfTabs,
             String expectedSelectedTabUrl) {
         // Merge tabs into the activity.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> activity.getMultiInstanceMangerForTesting().maybeMergeTabs());
 
         // Wait for all tabs to be merged into the activity.
@@ -297,13 +302,13 @@ public class TabModelMergingTest {
             String expectedSelectedTabUrl,
             final String[] expectedTabUrls) {
         // Assert there are the correct number of tabs.
-        Assert.assertEquals(
+        assertEquals(
                 "Wrong number of normal tabs",
                 expectedTabUrls.length,
                 activity.getTabModelSelector().getModel(false).getCount());
 
         // Assert that the correct tab is selected.
-        Assert.assertEquals(
+        assertEquals(
                 "Wrong tab selected",
                 expectedSelectedTabUrl,
                 ChromeTabUtils.getUrlStringOnUiThread(
@@ -311,7 +316,7 @@ public class TabModelMergingTest {
 
         // Assert that tabs are in the correct order.
         for (int i = 0; i < expectedTabUrls.length; i++) {
-            Assert.assertEquals(
+            assertEquals(
                     "Wrong tab at position " + i,
                     expectedTabUrls[i],
                     ChromeTabUtils.getUrlStringOnUiThread(
@@ -326,7 +331,6 @@ public class TabModelMergingTest {
      * @param activity The activity whose state will be observed.
      * @param expected If true, wait until activity is on the {@code state}; otherwise, wait util
      *     activity is on any state other than {@code state}.
-     * @throws TimeoutException
      */
     private void waitForActivityStateChange(
             @ActivityState int state, Activity activity, boolean expected) throws TimeoutException {
@@ -336,7 +340,7 @@ public class TabModelMergingTest {
                 (act, newState) -> {
                     if (expected == (state == newState)) helper.notifyCalled();
                 };
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     int currentState = ApplicationStatus.getStateForActivity(activity);
                     if (expected == (state == currentState)) {
@@ -345,9 +349,9 @@ public class TabModelMergingTest {
                     }
                     ApplicationStatus.registerStateListenerForActivity(listener, activity);
                 });
-        helper.waitForFirst();
+        helper.waitForOnly();
         // listener was registered on UiThread. So it should be unregistered on UiThread.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     ApplicationStatus.unregisterActivityStateListener(listener);
                 });
@@ -384,7 +388,7 @@ public class TabModelMergingTest {
         Intent intent = createChromeTabbedActivityIntent(mActivity1);
 
         // Save state.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mActivity1.saveState();
                     mActivity2.saveState();
@@ -428,9 +432,7 @@ public class TabModelMergingTest {
                         mActivity2.getTabModelSelector().getCurrentTab());
 
         MockTabPersistentStoreObserver mockObserver = new MockTabPersistentStoreObserver();
-        TabModelSelectorImpl tabModelSelector =
-                (TabModelSelectorImpl) mActivity2.getTabModelSelector();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mActivity2
                             .getTabModelOrchestratorSupplier()
@@ -480,7 +482,7 @@ public class TabModelMergingTest {
         String CTA2ClassName = mActivity2.getClass().getName();
         String CTA2PackageName = mActivity2.getPackageName();
 
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mActivity1.saveState();
                     mActivity2.saveState();
@@ -519,7 +521,7 @@ public class TabModelMergingTest {
                 });
 
         // Check that a merge occurred.
-        Assert.assertEquals(
+        assertEquals(
                 "Wrong number of tabs after restart.",
                 mMergeIntoActivity2ExpectedTabs.length,
                 mNewCTA2.getTabModelSelector().getModel(false).getCount());
@@ -536,14 +538,14 @@ public class TabModelMergingTest {
     @Test
     @LargeTest
     @Feature({"TabPersistentStore", "MultiWindow"})
-    @Restriction({UiRestriction.RESTRICTION_TYPE_PHONE, RESTRICTION_TYPE_NON_LOW_END_DEVICE})
+    @Restriction({DeviceFormFactor.PHONE, RESTRICTION_TYPE_NON_LOW_END_DEVICE})
     @DisabledTest(message = "https://crbug.com/1275082")
     public void testMergeWhileInTabSwitcher() {
         LayoutTestUtils.startShowingAndWaitForLayout(
                 mActivity1.getLayoutManager(), LayoutType.TAB_SWITCHER, false);
 
         mergeTabsAndAssert(mActivity1, mMergeIntoActivity1ExpectedTabs);
-        Assert.assertTrue("Overview mode should still be showing", mActivity1.isInOverviewMode());
+        assertTrue("Overview mode should still be showing", mActivity1.isInOverviewMode());
         mActivity1.finishAndRemoveTask();
     }
 
@@ -582,25 +584,25 @@ public class TabModelMergingTest {
                 InstrumentationRegistry.getInstrumentation(), mActivity2, TEST_URL_6, true);
 
         // Save state.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mActivity1.saveState();
                     mActivity2.saveState();
                 });
 
-        Assert.assertEquals(
+        assertEquals(
                 "Wrong number of incognito tabs in ChromeTabbedActivity",
                 1,
                 mActivity1.getTabModelSelector().getModel(true).getCount());
-        Assert.assertEquals(
+        assertEquals(
                 "Wrong number of tabs in ChromeTabbedActivity",
                 5,
                 mActivity1.getTabModelSelector().getTotalTabCount());
-        Assert.assertEquals(
+        assertEquals(
                 "Wrong number of incognito tabs in ChromeTabbedActivity2",
                 1,
                 mActivity2.getTabModelSelector().getModel(true).getCount());
-        Assert.assertEquals(
+        assertEquals(
                 "Wrong number of tabs in ChromeTabbedActivity2",
                 4,
                 mActivity2.getTabModelSelector().getTotalTabCount());
@@ -613,10 +615,9 @@ public class TabModelMergingTest {
 
     @Test
     @LargeTest
-    @DisableIf.Build(sdk_is_less_than = VERSION_CODES.P)
-    @DisableIf.Device(type = {UiDisableIf.TABLET}) // https://crbug.com/338997261
+    @DisableIf.Device(DeviceFormFactor.ONLY_TABLET) // https://crbug.com/338997261
     public void testMergeOnMultiDisplay_CTA_Resumed_CTA2_Not_Resumed() throws TimeoutException {
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mActivity1.saveState();
                     mActivity2.saveState();
@@ -635,7 +636,7 @@ public class TabModelMergingTest {
         m1.setCurrentDisplayIdForTesting(0);
         m2.setCurrentDisplayIdForTesting(1);
 
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     m1.getDisplayListenerForTesting().onDisplayRemoved(1);
                     m2.getDisplayListenerForTesting().onDisplayRemoved(1);
@@ -665,10 +666,9 @@ public class TabModelMergingTest {
 
     @Test
     @LargeTest
-    @DisableIf.Build(sdk_is_less_than = VERSION_CODES.P)
-    @DisableIf.Device(type = {UiDisableIf.TABLET}) // https://crbug.com/338997261
+    @DisableIf.Device(DeviceFormFactor.ONLY_TABLET) // https://crbug.com/338997261
     public void testMergeOnMultiDisplay_OnDisplayChanged() throws TimeoutException {
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mActivity1.saveState();
                     mActivity2.saveState();
@@ -687,7 +687,7 @@ public class TabModelMergingTest {
         m1.setCurrentDisplayIdForTesting(0);
         m2.setCurrentDisplayIdForTesting(1);
 
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     m1.getDisplayListenerForTesting().onDisplayChanged(1);
                     m2.getDisplayListenerForTesting().onDisplayChanged(1);

@@ -19,6 +19,7 @@
 #include "third_party/blink/renderer/bindings/modules/v8/v8_cookie_list_item.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_cookie_store_delete_options.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_cookie_store_get_options.h"
+#include "third_party/blink/renderer/core/core_probes_inl.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
@@ -87,10 +88,29 @@ std::unique_ptr<net::CanonicalCookie> ToCanonicalCookie(
                                  options->expiresNonNull())
                            : base::Time();
 
-  String cookie_url_host = cookie_url.Host();
+  String cookie_url_host = cookie_url.Host().ToString();
   String domain;
+  // Trying to set `__http-` prefixed cookie will be rejected further down by
+  // CreateSanitizedCookie regardless of the condition below. Its role is to
+  // provide a more meaningful exception message than "Cookie was malformed..".
+  const bool is_http_prefix =
+      base::FeatureList::IsEnabled(net::features::kPrefixCookieHttp) &&
+      name.StartsWithIgnoringASCIICase("__http-");
+  const bool is_host_http_prefix =
+      base::FeatureList::IsEnabled(net::features::kPrefixCookieHostHttp) &&
+      name.StartsWithIgnoringASCIICase("__hosthttp-");
+  if (is_http_prefix || is_host_http_prefix) {
+    StringBuilder builder;
+    builder.AppendFormat(
+        "Cookies with \"%s\" prefix cannot be set using the CookieStore API.",
+        is_http_prefix ? "__Http-" : "__HostHttp-");
+    exception_state.ThrowTypeError(builder.ToString());
+    return nullptr;
+  }
+  const bool is_host_prefixed_cookie =
+      name.StartsWithIgnoringASCIICase("__host-");
   if (!options->domain().IsNull()) {
-    if (name.StartsWith("__Host-")) {
+    if (is_host_prefixed_cookie) {
       exception_state.ThrowTypeError(
           "Cookies with \"__Host-\" prefix cannot have a domain");
       return nullptr;
@@ -103,9 +123,9 @@ std::unique_ptr<net::CanonicalCookie> ToCanonicalCookie(
       return nullptr;
     }
 
-    domain = String(".") + options->domain();
+    domain = StrCat({".", options->domain()}).LowerASCII();
     if (!cookie_url_host.EndsWith(domain) &&
-        cookie_url_host != options->domain()) {
+        cookie_url_host != options->domain().LowerASCII()) {
       exception_state.ThrowTypeError(
           "Cookie domain must domain-match current host");
       return nullptr;
@@ -114,7 +134,7 @@ std::unique_ptr<net::CanonicalCookie> ToCanonicalCookie(
 
   String path = options->path();
   if (!path.empty()) {
-    if (name.StartsWith("__Host-") && path != "/") {
+    if (is_host_prefixed_cookie && path != "/") {
       exception_state.ThrowTypeError(
           "Cookies with \"__Host-\" prefix cannot have a non-\"/\" path");
       return nullptr;
@@ -124,7 +144,7 @@ std::unique_ptr<net::CanonicalCookie> ToCanonicalCookie(
       return nullptr;
     }
     if (!path.EndsWith("/")) {
-      path = path + String("/");
+      path = StrCat({path, "/"});
     }
   }
 
@@ -258,6 +278,15 @@ const scoped_refptr<const SecurityOrigin> DefaultTopFrameOrigin(
       url::Origin::Create(net::SchemefulSite(key.GetTopLevelSite()).GetURL()));
 }
 
+bool IsAdTagged(ExecutionContext* context) {
+  if (auto* window = DynamicTo<LocalDOMWindow>(context)) {
+    if (auto* local_frame = window->GetFrame()) {
+      return local_frame->IsAdFrame();
+    }
+  }
+  return false;
+}
+
 }  // namespace
 
 CookieStore::CookieStore(
@@ -298,6 +327,10 @@ ScriptPromise<IDLSequence<CookieListItem>> CookieStore::getAll(
          WTF::BindOnce(&CookieStore::GetAllForUrlToGetAllResult,
                        WrapPersistent(resolver)),
          exception_state);
+  if (exception_state.HadException()) {
+    resolver->Detach();
+    return EmptyPromise();
+  }
   return promise;
 }
 
@@ -330,6 +363,10 @@ ScriptPromise<IDLNullable<CookieListItem>> CookieStore::get(
          WTF::BindOnce(&CookieStore::GetAllForUrlToGetResult,
                        WrapPersistent(resolver)),
          exception_state);
+  if (exception_state.HadException()) {
+    resolver->Detach();
+    return EmptyPromise();
+  }
   return promise;
 }
 
@@ -455,17 +492,17 @@ void CookieStore::DoRead(ScriptState* script_state,
     return;
   }
 
-  bool is_ad_tagged = false;
-  if (auto* window = DynamicTo<LocalDOMWindow>(context)) {
-    if (auto* local_frame = window->GetFrame()) {
-      is_ad_tagged = local_frame->IsAdFrame();
-    }
-  }
-  backend_->GetAllForUrl(cookie_url, default_site_for_cookies_,
-                         default_top_frame_origin_, context->HasStorageAccess(),
-                         std::move(backend_options), is_ad_tagged,
-                         /*force_disable_third_party_cookies=*/false,
-                         std::move(backend_result_converter));
+  bool is_ad_tagged = IsAdTagged(context);
+  bool should_apply_devtools_overrides = false;
+  probe::ShouldApplyDevtoolsCookieSettingOverrides(
+      GetExecutionContext(), &should_apply_devtools_overrides);
+
+  backend_->GetAllForUrl(
+      cookie_url, default_site_for_cookies_, default_top_frame_origin_,
+      context->GetStorageAccessApiStatus(), std::move(backend_options),
+      is_ad_tagged, should_apply_devtools_overrides,
+      /*force_disable_third_party_cookies=*/false,
+      std::move(backend_result_converter));
 }
 
 // static
@@ -521,7 +558,7 @@ ScriptPromise<IDLUndefined> CookieStore::DoWrite(
   if (!context->GetSecurityOrigin()->CanAccessCookies()) {
     exception_state.ThrowSecurityError(
         "Access to the CookieStore API is denied in this context.");
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   net::CookieInclusionStatus status;
@@ -530,7 +567,7 @@ ScriptPromise<IDLUndefined> CookieStore::DoWrite(
 
   if (!canonical_cookie) {
     DCHECK(exception_state.HadException());
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
   // Since a canonical cookie exists, the status should have no exclusion
   // reasons associated with it.
@@ -539,15 +576,21 @@ ScriptPromise<IDLUndefined> CookieStore::DoWrite(
   if (!backend_) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                       "CookieStore backend went away");
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
+
+  bool is_ad_tagged = IsAdTagged(context);
+  bool should_apply_devtools_overrides = false;
+  probe::ShouldApplyDevtoolsCookieSettingOverrides(
+      GetExecutionContext(), &should_apply_devtools_overrides);
 
   auto* resolver = MakeGarbageCollected<ScriptPromiseResolver<IDLUndefined>>(
       script_state, exception_state.GetContext());
   backend_->SetCanonicalCookie(
       *std::move(canonical_cookie), default_cookie_url_,
       default_site_for_cookies_, default_top_frame_origin_,
-      context->HasStorageAccess(), status,
+      context->GetStorageAccessApiStatus(), status, is_ad_tagged,
+      should_apply_devtools_overrides,
       WTF::BindOnce(&CookieStore::OnSetCanonicalCookieResult,
                     WrapPersistent(resolver)));
   return resolver->Promise();
@@ -575,7 +618,7 @@ void CookieStore::StartObserving() {
       GetExecutionContext()->GetTaskRunner(TaskType::kDOMManipulation);
   backend_->AddChangeListener(
       default_cookie_url_, default_site_for_cookies_, default_top_frame_origin_,
-      GetExecutionContext()->HasStorageAccess(),
+      GetExecutionContext()->GetStorageAccessApiStatus(),
       change_listener_receiver_.BindNewPipeAndPassRemote(task_runner), {});
 }
 

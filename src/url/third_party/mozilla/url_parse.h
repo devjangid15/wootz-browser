@@ -6,6 +6,7 @@
 #define URL_THIRD_PARTY_MOZILLA_URL_PARSE_H_
 
 #include <iosfwd>
+#include <optional>
 #include <string_view>
 
 #include "base/check.h"
@@ -26,25 +27,23 @@ enum class ParserMode { kSpecialURL, kNonSpecialURL };
 
 // Represents a substring for URL parsing.
 struct Component {
-  Component() : begin(0), len(-1) {}
+  constexpr Component() : begin(0), len(-1) {}
 
   // Normal constructor: takes an offset and a length.
-  Component(int b, int l) : begin(b), len(l) {}
+  constexpr Component(int b, int l) : begin(b), len(l) {}
 
-  int end() const {
-    return begin + len;
-  }
+  constexpr int end() const { return begin + len; }
 
   // Returns true if this component is valid, meaning the length is given.
   // Valid components may be empty to record the fact that they exist.
-  bool is_valid() const { return len >= 0; }
+  constexpr bool is_valid() const { return len >= 0; }
 
   // Determine if the component is empty or not. Empty means the length is
   // zero or the component is invalid.
-  bool is_empty() const { return len <= 0; }
-  bool is_nonempty() const { return len > 0; }
+  constexpr bool is_empty() const { return len <= 0; }
+  constexpr bool is_nonempty() const { return len > 0; }
 
-  void reset() {
+  constexpr void reset() {
     begin = 0;
     len = -1;
   }
@@ -57,6 +56,17 @@ struct Component {
   template <typename CharT>
   std::basic_string_view<CharT> as_string_view_on(const CharT* source) const {
     DCHECK(is_valid());
+    return std::basic_string_view(&source[begin], len);
+  }
+
+  // Returns a std::optional<string_view> using `source` as a backend.
+  // Returns std::nullopt if the component is invalid.
+  template <typename CharT>
+  std::optional<std::basic_string_view<CharT>> maybe_as_string_view_on(
+      const CharT* source) const {
+    if (!is_valid()) {
+      return std::nullopt;
+    }
     return std::basic_string_view(&source[begin], len);
   }
 
@@ -296,15 +306,22 @@ COMPONENT_EXPORT(URL) Parsed ParseNonSpecialURL(std::u16string_view url);
 // everything after the scheme is considered as the path. This is used for
 // things like "about:" and "javascript:"
 //
-// Historically, this is used to parse non-special URLs, but this should be
-// removed after StandardCompliantNonSpecialSchemeURLParsing is enabled by
-// default.
+// TODO: Replace ParsePathURL() with ParseNonSpecialURL(), ensuring it works
+// with the android:// escape hatch introduced in crrev.com/c/5515685.
 COMPONENT_EXPORT(URL)
 Parsed ParsePathURL(std::string_view url, bool trim_path_end);
 COMPONENT_EXPORT(URL)
 Parsed ParsePathURL(std::u16string_view url, bool trim_path_end);
-// TODO(crbug.com/325408566): Remove once all third-party libraries use the
-// overloads above.
+// TODO(crbug.com/325408566): Remove once openscreen starts using
+// ParseNonSpecialURL(), now that kStandardCompliantNonSpecialSchemeURLParsing
+// has been launched. This is non-trivial because it involves:
+//
+// 1. Adding ParseNonSpecialURL() into
+// https://quiche.googlesource.com/googleurl/+/refs/heads/master/url/third_party/mozilla/url_parse.h.
+// 2. Rolling quiche into openscreen, and making the change in openscreen to use
+// ParseNonSpecialURL() instead of ParsePathURL().
+// 3. Removing all traces of ParsePathURL() from
+// url/third_party/mozilla/url_parse here in chromium.
 COMPONENT_EXPORT(URL)
 void ParsePathURL(const char* url,
                   int url_len,

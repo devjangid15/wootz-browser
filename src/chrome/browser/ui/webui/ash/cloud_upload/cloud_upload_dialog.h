@@ -22,14 +22,19 @@
 #include "chrome/browser/ui/webui/ash/cloud_upload/cloud_upload_util.h"
 #include "chrome/browser/ui/webui/ash/cloud_upload/drive_upload_handler.h"
 #include "chrome/browser/ui/webui/ash/cloud_upload/one_drive_upload_handler.h"
-#include "chrome/browser/ui/webui/ash/system_web_dialog_delegate.h"
+#include "chrome/browser/ui/webui/ash/system_web_dialog/system_web_dialog_delegate.h"
 #include "chromeos/ash/components/drivefs/mojom/drivefs.mojom-forward.h"
 #include "components/drive/file_errors.h"
 #include "storage/browser/file_system/file_system_url.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/native_widget_types.h"
 
 class Profile;
+
+namespace ash {
+class BrowserDelegate;
+}  // namespace ash
 
 namespace extensions::app_file_handler_util {
 class MimeTypeCollector;
@@ -51,6 +56,7 @@ FORWARD_DECLARE_TEST(OneDriveTest, FailToOpenFileFromAndroidOneDriveNotOnODFS);
 FORWARD_DECLARE_TEST(
     OneDriveTest,
     FailToOpenFileFromAndroidOneDriveDirectoryNotAccessibleToODFS);
+FORWARD_DECLARE_TEST(OneDriveTest, FailToOpenFileFromODFSWhenMS365NotInstalled);
 }  // namespace file_manager::file_tasks
 
 namespace ash::cloud_upload {
@@ -61,15 +67,15 @@ struct ODFSFileSystemAndPath {
 };
 
 // The string conversions of ash::cloud_upload::mojom::UserAction.
-constexpr char kUserActionCancel[] = "cancel";
-constexpr char kUserActionCancelGoogleDrive[] = "cancel-drive";
-constexpr char kUserActionCancelOneDrive[] = "cancel-onedrive";
-constexpr char kUserActionSetUpOneDrive[] = "setup-onedrive";
-constexpr char kUserActionUploadToGoogleDrive[] = "upload-drive";
-constexpr char kUserActionUploadToOneDrive[] = "upload-onedrive";
-constexpr char kUserActionConfirmOrUploadToGoogleDrive[] =
+inline constexpr char kUserActionCancel[] = "cancel";
+inline constexpr char kUserActionCancelGoogleDrive[] = "cancel-drive";
+inline constexpr char kUserActionCancelOneDrive[] = "cancel-onedrive";
+inline constexpr char kUserActionSetUpOneDrive[] = "setup-onedrive";
+inline constexpr char kUserActionUploadToGoogleDrive[] = "upload-drive";
+inline constexpr char kUserActionUploadToOneDrive[] = "upload-onedrive";
+inline constexpr char kUserActionConfirmOrUploadToGoogleDrive[] =
     "confirm-or-upload-google-drive";
-constexpr char kUserActionConfirmOrUploadToOneDrive[] =
+inline constexpr char kUserActionConfirmOrUploadToOneDrive[] =
     "confirm-or-upload-onedrive";
 
 // Options for which setup or move confirmation sub-page/flow we want to show.
@@ -154,6 +160,8 @@ class CloudOpenTask : public BrowserListObserver,
   FRIEND_TEST_ALL_PREFIXES(
       ::file_manager::file_tasks::OneDriveTest,
       FailToOpenFileFromAndroidOneDriveDirectoryNotAccessibleToODFS);
+  FRIEND_TEST_ALL_PREFIXES(::file_manager::file_tasks::OneDriveTest,
+                           FailToOpenFileFromODFSWhenMS365NotInstalled);
 
  private:
   friend class RefCounted<CloudOpenTask>;  // Allow destruction by RefCounted<>.
@@ -162,6 +170,7 @@ class CloudOpenTask : public BrowserListObserver,
   CloudOpenTask(Profile* profile,
                 std::vector<storage::FileSystemURL> file_urls,
                 const ::file_manager::file_tasks::TaskDescriptor& task,
+                const SourceType source_type,
                 const CloudProvider cloud_provider,
                 std::unique_ptr<CloudOpenMetrics> cloud_open_metrics);
 
@@ -241,6 +250,7 @@ class CloudOpenTask : public BrowserListObserver,
   // File being currently uploaded.
   size_t file_urls_idx_ = 0;
   const ::file_manager::file_tasks::TaskDescriptor task_;
+  SourceType source_type_;
   CloudProvider cloud_provider_;
   std::unique_ptr<CloudOpenMetrics> cloud_open_metrics_;
   std::unique_ptr<DriveUploadHandler> drive_upload_handler_;
@@ -254,7 +264,7 @@ class CloudOpenTask : public BrowserListObserver,
   OfficeFilesTransferRequired transfer_required_ =
       OfficeFilesTransferRequired::kNotRequired;
   bool need_new_files_app_ = false;
-  raw_ptr<Browser> files_app_browser_;
+  raw_ptr<BrowserDelegate> files_app_browser_;
   bool files_app_closed_ = false;
 };
 
@@ -308,7 +318,7 @@ class CloudUploadDialog : public SystemWebDialogDelegate {
 
  protected:
   ~CloudUploadDialog() override;
-  ui::ModalType GetDialogModalType() const override;
+  ui::mojom::ModalType GetDialogModalType() const override;
   bool ShouldCloseDialogOnEscape() const override;
   bool ShouldShowCloseButton() const override;
   void GetDialogSize(gfx::Size* size) const override;

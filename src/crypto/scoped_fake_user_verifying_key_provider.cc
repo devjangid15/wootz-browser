@@ -25,6 +25,9 @@ namespace {
 // can return false, allowing deletion to be tested.
 std::vector<UserVerifyingKeyLabel> g_deleted_keys_;
 
+// When true, fake UV signing keys indicate that they are hardware backed.
+bool g_fake_hardware_backing_ = false;
+
 // Wraps a software `UnexportableSigningKey`.
 class FakeUserVerifyingSigningKey : public UserVerifyingSigningKey {
  public:
@@ -36,9 +39,14 @@ class FakeUserVerifyingSigningKey : public UserVerifyingSigningKey {
   ~FakeUserVerifyingSigningKey() override = default;
 
   void Sign(base::span<const uint8_t> data,
-            base::OnceCallback<void(std::optional<std::vector<uint8_t>>)>
-                callback) override {
-    std::move(callback).Run(software_key_->SignSlowly(data));
+            UserVerifyingKeySignatureCallback callback) override {
+    auto opt_signature = software_key_->SignSlowly(data);
+    if (!opt_signature.has_value()) {
+      std::move(callback).Run(
+          base::unexpected(UserVerifyingKeySigningError::kUnknownError));
+      return;
+    }
+    std::move(callback).Run(base::ok(*opt_signature));
   }
 
   std::vector<uint8_t> GetPublicKey() const override {
@@ -46,6 +54,8 @@ class FakeUserVerifyingSigningKey : public UserVerifyingSigningKey {
   }
 
   const UserVerifyingKeyLabel& GetKeyLabel() const override { return label_; }
+
+  bool IsHardwareBacked() const override { return g_fake_hardware_backing_; }
 
  private:
   const UserVerifyingKeyLabel label_;
@@ -59,8 +69,7 @@ class FakeUserVerifyingKeyProvider : public UserVerifyingKeyProvider {
   void GenerateUserVerifyingSigningKey(
       base::span<const SignatureVerifier::SignatureAlgorithm>
           acceptable_algorithms,
-      base::OnceCallback<void(std::unique_ptr<UserVerifyingSigningKey>)>
-          callback) override {
+      UserVerifyingKeyCreationCallback callback) override {
     auto software_unexportable_key =
         GetSoftwareUnsecureUnexportableKeyProvider()->GenerateSigningKeySlowly(
             acceptable_algorithms);
@@ -72,11 +81,11 @@ class FakeUserVerifyingKeyProvider : public UserVerifyingKeyProvider {
 
   void GetUserVerifyingSigningKey(
       UserVerifyingKeyLabel key_label,
-      base::OnceCallback<void(std::unique_ptr<UserVerifyingSigningKey>)>
-          callback) override {
+      UserVerifyingKeyCreationCallback callback) override {
     for (auto deleted_key : g_deleted_keys_) {
       if (deleted_key == key_label) {
-        std::move(callback).Run(nullptr);
+        std::move(callback).Run(
+            base::unexpected(UserVerifyingKeyCreationError::kUnknownError));
         return;
       }
     }
@@ -89,8 +98,9 @@ class FakeUserVerifyingKeyProvider : public UserVerifyingKeyProvider {
         GetSoftwareUnsecureUnexportableKeyProvider()
             ->FromWrappedSigningKeySlowly(*wrapped_key);
     CHECK(software_unexportable_key);
-    std::move(callback).Run(std::make_unique<FakeUserVerifyingSigningKey>(
-        std::move(key_label), std::move(software_unexportable_key)));
+    std::move(callback).Run(
+        base::ok(std::make_unique<FakeUserVerifyingSigningKey>(
+            std::move(key_label), std::move(software_unexportable_key))));
   }
 
   void DeleteUserVerifyingKey(
@@ -103,13 +113,13 @@ class FakeUserVerifyingKeyProvider : public UserVerifyingKeyProvider {
 
 class FailingUserVerifyingSigningKey : public UserVerifyingSigningKey {
  public:
-  FailingUserVerifyingSigningKey() : label_("") {}
+  FailingUserVerifyingSigningKey() : label_("test") {}
   ~FailingUserVerifyingSigningKey() override = default;
 
   void Sign(base::span<const uint8_t> data,
-            base::OnceCallback<void(std::optional<std::vector<uint8_t>>)>
-                callback) override {
-    std::move(callback).Run(std::nullopt);
+            UserVerifyingKeySignatureCallback callback) override {
+    std::move(callback).Run(
+        base::unexpected(UserVerifyingKeySigningError::kUnknownError));
   }
 
   std::vector<uint8_t> GetPublicKey() const override { return {1, 2, 3, 4}; }
@@ -127,16 +137,16 @@ class FailingUserVerifyingKeyProvider : public UserVerifyingKeyProvider {
   void GenerateUserVerifyingSigningKey(
       base::span<const SignatureVerifier::SignatureAlgorithm>
           acceptable_algorithms,
-      base::OnceCallback<void(std::unique_ptr<UserVerifyingSigningKey>)>
-          callback) override {
-    std::move(callback).Run(std::make_unique<FailingUserVerifyingSigningKey>());
+      UserVerifyingKeyCreationCallback callback) override {
+    std::move(callback).Run(
+        base::ok(std::make_unique<FailingUserVerifyingSigningKey>()));
   }
 
   void GetUserVerifyingSigningKey(
       UserVerifyingKeyLabel key_label,
-      base::OnceCallback<void(std::unique_ptr<UserVerifyingSigningKey>)>
-          callback) override {
-    std::move(callback).Run(std::make_unique<FailingUserVerifyingSigningKey>());
+      UserVerifyingKeyCreationCallback callback) override {
+    std::move(callback).Run(
+        base::ok(std::make_unique<FailingUserVerifyingSigningKey>()));
   }
 
   void DeleteUserVerifyingKey(
@@ -158,12 +168,15 @@ std::unique_ptr<UserVerifyingKeyProvider> GetFailingUserVerifyingKeyProvider() {
 
 }  // namespace
 
-ScopedFakeUserVerifyingKeyProvider::ScopedFakeUserVerifyingKeyProvider() {
+ScopedFakeUserVerifyingKeyProvider::ScopedFakeUserVerifyingKeyProvider(
+    bool fake_hardware_backing) {
+  g_fake_hardware_backing_ = fake_hardware_backing;
   internal::SetUserVerifyingKeyProviderForTesting(
       GetMockUserVerifyingKeyProvider);
 }
 
 ScopedFakeUserVerifyingKeyProvider::~ScopedFakeUserVerifyingKeyProvider() {
+  g_fake_hardware_backing_ = false;
   internal::SetUserVerifyingKeyProviderForTesting(nullptr);
 }
 

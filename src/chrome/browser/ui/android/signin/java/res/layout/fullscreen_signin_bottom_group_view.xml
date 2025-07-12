@@ -13,11 +13,13 @@ found in the LICENSE file.
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:foreground="?attr/selectableItemBackground"
+        android:background="@drawable/account_row_background_rounded_all"
         android:gravity="center_vertical"
         android:orientation="horizontal"
-        android:paddingStart="24dp"
-        android:paddingEnd="24dp"
-        android:paddingBottom="8dp">
+        android:padding="16dp"
+        android:layout_marginHorizontal="24dp"
+        android:layout_marginBottom="16dp"
+        >
 
         <include layout="@layout/account_row" />
 
@@ -26,25 +28,22 @@ found in the LICENSE file.
             android:layout_width="24dp"
             android:layout_height="24dp"
             android:layout_marginStart="16dp"
-            app:srcCompat="@drawable/ic_expand_more_in_circle_24dp"
+            app:srcCompat="@drawable/ic_expand_more_black_24dp"
+            app:tint="?attr/colorOnSurfaceVariant"
             android:importantForAccessibility="no" />
     </LinearLayout>
 
     <include
         android:id="@+id/signin_fre_continue_button"
-        android:visibility="gone"
         layout="@layout/account_picker_bottom_sheet_continue_button" />
 
     <org.chromium.ui.widget.ButtonCompat
         android:id="@+id/signin_fre_dismiss_button"
-        android:visibility="visible"
-        style="@style/FilledButton.Flat"
+        style="@style/TextButton"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginStart="24dp"
         android:layout_marginEnd="24dp"
-        android:ellipsize="end"
-        android:singleLine="true"
         android:text="@string/signin_fre_dismiss_button" />
 
 </merge>

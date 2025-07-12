@@ -69,7 +69,28 @@ class V8DOMWrapper {
   static void SetNativeInfo(v8::Isolate* isolate,
                             v8::Local<v8::Object> wrapper,
                             ScriptWrappable* script_wrappable);
-  static void ClearNativeInfo(v8::Isolate*, v8::Local<v8::Object>);
+
+  static void ClearNativeInfo(v8::Isolate*,
+                              v8::Local<v8::Object>,
+                              const WrapperTypeInfo*);
+
+  // Same as above but for v8::Context::Global(). It sets native info
+  // on JSGlobalProxy and its hidden prototype.
+  static void SetNativeInfoForGlobal(v8::Isolate* isolate,
+                                     v8::Local<v8::Object> wrapper,
+                                     ScriptWrappable* script_wrappable);
+
+  // Same as above but for v8::Context::Global(). It clears native info
+  // on JSGlobalProxy and its hidden prototype.
+  static void ClearNativeInfoForGlobal(v8::Isolate*,
+                                       v8::Local<v8::Object>,
+                                       const WrapperTypeInfo*);
+
+  // Checks that native info set on JSGlobalProxy and its hidden prototype
+  // are the same.
+  static bool CheckNativeInfoForGlobal(v8::Isolate*,
+                                       v8::Local<v8::Object>,
+                                       const WrapperTypeInfo*);
 
   // HasInternalFieldsSet only checks if the value has the internal fields for
   // wrapper object and type, and does not check if it's valid or not. The value
@@ -85,12 +106,45 @@ inline void V8DOMWrapper::SetNativeInfo(
     ScriptWrappable* wrappable) {
   DCHECK(wrappable);
   DCHECK(!WrapperTypeInfo::HasLegacyInternalFieldsSet(wrapper));
-  v8::Object::Wrap<kDOMWrappersTag>(isolate, wrapper, wrappable);
+  v8::Object::Wrap(isolate, wrapper, wrappable,
+                   ToWrapperTypeInfo(wrappable)->this_tag);
 }
 
-inline void V8DOMWrapper::ClearNativeInfo(v8::Isolate* isolate,
-                                          v8::Local<v8::Object> wrapper) {
-  v8::Object::Wrap<kDOMWrappersTag>(isolate, wrapper, nullptr);
+inline void V8DOMWrapper::ClearNativeInfo(
+    v8::Isolate* isolate,
+    v8::Local<v8::Object> wrapper,
+    const WrapperTypeInfo* wrapper_type_info) {
+  v8::Object::Wrap(isolate, wrapper, static_cast<ScriptWrappable*>(nullptr),
+                   wrapper_type_info->this_tag);
+}
+
+inline void V8DOMWrapper::SetNativeInfoForGlobal(v8::Isolate* isolate,
+                                                 v8::Local<v8::Object> wrapper,
+                                                 ScriptWrappable* wrappable) {
+  DCHECK(wrappable);
+  DCHECK(!WrapperTypeInfo::HasLegacyInternalFieldsSet(wrapper));
+  const WrapperTypeInfo* wrapper_type_info = ToWrapperTypeInfo(wrappable);
+  v8::Object::WrapGlobal(isolate, wrapper, wrappable,
+                         wrapper_type_info->this_tag);
+}
+
+inline void V8DOMWrapper::ClearNativeInfoForGlobal(
+    v8::Isolate* isolate,
+    v8::Local<v8::Object> wrapper,
+    const WrapperTypeInfo* wrapper_type_info) {
+  v8::Object::WrapGlobal(isolate, wrapper,
+                         static_cast<ScriptWrappable*>(nullptr),
+                         wrapper_type_info->this_tag);
+}
+
+inline bool V8DOMWrapper::CheckNativeInfoForGlobal(
+    v8::Isolate* isolate,
+    v8::Local<v8::Object> wrapper,
+    const WrapperTypeInfo* wrapper_type_info) {
+  v8::CppHeapPointerTagRange tag_range(wrapper_type_info->this_tag,
+                                       wrapper_type_info->max_subclass_tag);
+
+  return v8::Object::CheckGlobalWrappable(isolate, wrapper, tag_range);
 }
 
 inline v8::Local<v8::Object> V8DOMWrapper::AssociateObjectWithWrapper(
@@ -104,7 +158,7 @@ inline v8::Local<v8::Object> V8DOMWrapper::AssociateObjectWithWrapper(
     SetNativeInfo(isolate, wrapper, impl);
     DCHECK(HasInternalFieldsSet(isolate, wrapper));
   }
-  SECURITY_CHECK(ToScriptWrappable(isolate, wrapper) == impl);
+  SECURITY_CHECK(ToAnyScriptWrappable(isolate, wrapper) == impl);
   return wrapper;
 }
 
@@ -118,7 +172,7 @@ class V8WrapperInstantiationScope final {
 
     // For performance, we enter the context only if the currently running
     // context is different from the context that we are about to enter.
-    if (LIKELY(context_for_wrapper == context_)) {
+    if (context_for_wrapper == context_) [[likely]] {
       return;
     }
 
@@ -128,7 +182,7 @@ class V8WrapperInstantiationScope final {
   }
 
   ~V8WrapperInstantiationScope() {
-    if (LIKELY(!did_enter_context_)) {
+    if (!did_enter_context_) [[likely]] {
       return;
     }
     context_->Exit();

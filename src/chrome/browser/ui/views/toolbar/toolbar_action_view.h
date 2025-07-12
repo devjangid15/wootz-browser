@@ -41,6 +41,13 @@ class ToolbarActionView : public views::MenuButton,
     // Returns the preferred size of the ToolbarActionView.
     virtual gfx::Size GetToolbarActionSize() = 0;
 
+    // Instructs the delegate to move this action (as indicated by `action_id`)
+    // by the specified `move_by` amount. It is the delegate's responsibility to
+    // handle if that would go out-of-bounds, since this class does not know its
+    // position.
+    virtual void MovePinnedActionBy(const std::string& action_id,
+                                    int move_by) = 0;
+
    protected:
     ~Delegate() override = default;
   };
@@ -66,9 +73,7 @@ class ToolbarActionView : public views::MenuButton,
   content::WebContents* GetCurrentWebContents() const override;
   void UpdateState() override;
 
-  ToolbarActionViewController* view_controller() {
-    return view_controller_;
-  }
+  ToolbarActionViewController* view_controller() { return view_controller_; }
 
   // Returns button icon so it can be accessed during tests.
   gfx::ImageSkia GetIconForTest();

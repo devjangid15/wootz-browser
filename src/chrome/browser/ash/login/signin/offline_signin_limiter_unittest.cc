@@ -10,6 +10,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/test/power_monitor_test.h"
 #include "base/test/task_environment.h"
+#include "base/time/clock.h"
 #include "base/time/time.h"
 #include "base/timer/wall_clock_timer.h"
 #include "chrome/browser/ash/login/login_constants.h"
@@ -24,8 +25,10 @@
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/testing_pref_service.h"
+#include "components/session_manager/core/session_manager.h"
 #include "components/user_manager/known_user.h"
 #include "components/user_manager/scoped_user_manager.h"
+#include "components/user_manager/test_helper.h"
 #include "content/public/test/browser_task_environment.h"
 #include "extensions/browser/quota_service.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -78,7 +81,7 @@ class OfflineSigninLimiterTest : public testing::Test {
 
   std::unique_ptr<TestingProfile> profile_;
 
-  std::unique_ptr<MockLockHandler> lock_handler_;
+  MockLockHandler lock_handler_;
 
   raw_ptr<base::WallClockTimer, DanglingUntriaged> timer_ = nullptr;
 
@@ -87,6 +90,7 @@ class OfflineSigninLimiterTest : public testing::Test {
 
   ScopedTestingLocalState local_state_{TestingBrowserProcess::GetGlobal()};
   std::unique_ptr<user_manager::KnownUser> known_user_;
+  std::optional<session_manager::SessionManager> session_manager_;
 };
 
 OfflineSigninLimiterTest::OfflineSigninLimiterTest() = default;
@@ -115,6 +119,7 @@ void OfflineSigninLimiterTest::CreateLimiter() {
 }
 
 void OfflineSigninLimiterTest::SetUp() {
+  session_manager_.emplace();
   fake_user_manager_.Reset(std::make_unique<ash::FakeChromeUserManager>());
   profile_ = std::make_unique<TestingProfile>();
   known_user_ = std::make_unique<user_manager::KnownUser>(local_state_.Get());
@@ -123,6 +128,8 @@ void OfflineSigninLimiterTest::SetUp() {
 void OfflineSigninLimiterTest::TearDown() {
   DestroyLimiter();
   profile_.reset();
+  session_manager_.reset();
+  fake_user_manager_.Reset();
 }
 
 FakeChromeUserManager* OfflineSigninLimiterTest::GetFakeChromeUserManager() {
@@ -132,54 +139,51 @@ FakeChromeUserManager* OfflineSigninLimiterTest::GetFakeChromeUserManager() {
 user_manager::User* OfflineSigninLimiterTest::AddGaiaUser() {
   auto* user = fake_user_manager_->AddUser(test_gaia_account_id_);
   profile_->set_profile_name(kTestGaiaUser);
-  fake_user_manager_->UserLoggedIn(user->GetAccountId(), user->username_hash(),
-                                   /*browser_restart=*/false,
-                                   /*is_child=*/false);
+  fake_user_manager_->UserLoggedIn(
+      user->GetAccountId(),
+      user_manager::TestHelper::GetFakeUsernameHash(user->GetAccountId()));
   return user;
 }
 
 user_manager::User* OfflineSigninLimiterTest::AddSAMLUser() {
   auto* user = fake_user_manager_->AddSamlUser(test_saml_account_id_);
   profile_->set_profile_name(kTestSAMLUser);
-  fake_user_manager_->UserLoggedIn(user->GetAccountId(), user->username_hash(),
-                                   /*browser_restart=*/false,
-                                   /*is_child=*/false);
+  fake_user_manager_->UserLoggedIn(
+      user->GetAccountId(),
+      user_manager::TestHelper::GetFakeUsernameHash(user->GetAccountId()));
   return user;
 }
 
 void OfflineSigninLimiterTest::LockScreen() {
-  lock_handler_ = std::make_unique<MockLockHandler>();
-  proximity_auth::ScreenlockBridge::Get()->SetLockHandler(lock_handler_.get());
+  proximity_auth::ScreenlockBridge::Get()->SetLockHandler(&lock_handler_);
+  session_manager::SessionManager::Get()->SetSessionState(
+      session_manager::SessionState::LOCKED);
 }
 
 void OfflineSigninLimiterTest::UnlockScreen() {
+  session_manager::SessionManager::Get()->SetSessionState(
+      session_manager::SessionState::ACTIVE);
   proximity_auth::ScreenlockBridge::Get()->SetLockHandler(nullptr);
 }
 
-// Check that correct auth type is set when the screen is locked. Ideally we
-// would test `limiter_->OnSessionStateChanged()` here, but these tests do not
-// support session manager, so we test private method `UpdateLockScreenLimit()`
-// instead.
-// TODO(b/270052429): add browser tests to be able to simulate lockscreen reauth
-// flow instead of having to call private function UpdateLockScreenLimit() in
-// unittests.
+// Check that correct auth type is set when the screen is locked.
 void OfflineSigninLimiterTest::CheckAuthTypeOnLock(AccountId account_id,
                                                    bool expect_online_auth) {
-  //  Lock the screen and call UpdateLockScreenLimit which is the function
-  //  called when the session state changes
-  LockScreen();
-
-  // When UpdateLockScreenLimit is called, it will check whether or not online
-  // reauthentication is required, if reauth is required then SetAuthType will
-  // be called and if reauth is not required SetAuthType will not be called
+  // Locking the screen will result in checking whether or not online
+  // reauth is required. `SetAuthType` will be called if and only if online
+  // reauth is required. Note that due to quirks of implementation it can be
+  // called more than once when its required (`OfflineSigninLimiter` and
+  // `LockScreenReauthManager` both monitor session state which can result in
+  // two calls).
   EXPECT_CALL(
-      *lock_handler_,
+      lock_handler_,
       SetAuthType(account_id, proximity_auth::mojom::AuthType::ONLINE_SIGN_IN,
                   std::u16string()))
-      .Times(expect_online_auth ? 1 : 0);
-  limiter_->UpdateLockScreenLimit();
+      .Times(expect_online_auth ? testing::AtLeast(1) : testing::Exactly(0));
 
-  // Unlock afterwards to clear lockhandler
+  LockScreen();
+  // Simulate unlock to allow calling tests to modify policies and call
+  // `CheckAuthTypeOnLock` again.
   UnlockScreen();
 }
 

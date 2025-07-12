@@ -238,7 +238,7 @@ class MODULES_EXPORT CachedStorageArea
   // dispatches them to this CachedStorageArea.
   mojo::Receiver<mojom::blink::StorageAreaObserver> receiver_{this};
 
-  Persistent<HeapHashMap<WeakMember<Source>, String>> areas_;
+  Persistent<GCedHeapHashMap<WeakMember<Source>, String>> areas_;
 };
 
 }  // namespace blink

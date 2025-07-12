@@ -5,6 +5,7 @@
 #include "ash/accelerometer/accel_gyro_samples_observer.h"
 
 #include <utility>
+#include <vector>
 
 #include "ash/accelerometer/accelerometer_constants.h"
 #include "base/functional/bind.h"
@@ -110,8 +111,8 @@ void AccelGyroSamplesObserver::OnErrorOccurred(
                  << ": Observer started with no channels enabled";
       if (sensor_device_remote_.is_bound()) {
         sensor_device_remote_->SetChannelsEnabled(
-            std::vector<int32_t>(channel_indices_,
-                                 channel_indices_ + kNumberOfAxes),
+            std::vector<int32_t>(channel_indices_.begin(),
+                                 channel_indices_.end()),
             /*enable=*/true,
             base::BindOnce(
                 &AccelGyroSamplesObserver::SetChannelsEnabledCallback,
@@ -188,7 +189,7 @@ void AccelGyroSamplesObserver::GetAllChannelIdsCallback(
   }
 
   sensor_device_remote_->SetChannelsEnabled(
-      std::vector<int32_t>(channel_indices_, channel_indices_ + kNumberOfAxes),
+      std::vector<int32_t>(channel_indices_.begin(), channel_indices_.end()),
       /*enable=*/true,
       base::BindOnce(&AccelGyroSamplesObserver::SetChannelsEnabledCallback,
                      weak_factory_.GetWeakPtr()));

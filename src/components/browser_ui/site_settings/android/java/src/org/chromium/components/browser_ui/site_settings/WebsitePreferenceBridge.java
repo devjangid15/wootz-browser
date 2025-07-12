@@ -4,10 +4,14 @@
 
 package org.chromium.components.browser_ui.site_settings;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import org.jni_zero.CalledByNative;
 import org.jni_zero.NativeMethods;
 
 import org.chromium.base.Callback;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.components.content_settings.ContentSettingSource;
 import org.chromium.components.content_settings.ContentSettingValues;
 import org.chromium.components.content_settings.ContentSettingsType;
 import org.chromium.components.content_settings.ProviderType;
@@ -22,6 +26,7 @@ import java.util.List;
 import java.util.Map;
 
 /** Utility class that interacts with native to retrieve and set website settings. */
+@NullMarked
 public class WebsitePreferenceBridge {
     public static final String SITE_WILDCARD = "*";
 
@@ -63,7 +68,8 @@ public class WebsitePreferenceBridge {
         if (type == ContentSettingsType.MEDIASTREAM_CAMERA
                 || type == ContentSettingsType.MEDIASTREAM_MIC) {
             for (PermissionInfo info : list) {
-                if (info.getOrigin().equals(origin) && info.getEmbedder().equals(embedder)) {
+                if (info.getOrigin().equals(origin)
+                        && assumeNonNull(info.getEmbedder()).equals(embedder)) {
                     return;
                 }
             }
@@ -73,18 +79,18 @@ public class WebsitePreferenceBridge {
 
     @CalledByNative
     private static void insertStorageInfoIntoList(
-            ArrayList<StorageInfo> list, String host, int type, long size) {
-        list.add(new StorageInfo(host, type, size));
+            ArrayList<StorageInfo> list, String host, long size) {
+        list.add(new StorageInfo(host, size));
     }
 
     @CalledByNative
     private static Object createStorageInfoList() {
-        return new ArrayList<StorageInfo>();
+        return new ArrayList<>();
     }
 
     @CalledByNative
     private static Object createLocalStorageInfoMap() {
-        return new HashMap<String, LocalStorageInfo>();
+        return new HashMap<>();
     }
 
     @SuppressWarnings("unchecked")
@@ -97,7 +103,7 @@ public class WebsitePreferenceBridge {
 
     @CalledByNative
     private static Object createSharedDictionaryInfoList() {
-        return new ArrayList<SharedDictionaryInfo>();
+        return new ArrayList<>();
     }
 
     @SuppressWarnings("unchecked")
@@ -109,7 +115,7 @@ public class WebsitePreferenceBridge {
 
     @CalledByNative
     private static Object createCookiesInfoMap() {
-        return new HashMap<String, CookiesInfo>();
+        return new HashMap<>();
     }
 
     @CalledByNative
@@ -133,7 +139,7 @@ public class WebsitePreferenceBridge {
             return exceptions;
         }
 
-        List<ContentSettingException> managedExceptions = new ArrayList<ContentSettingException>();
+        List<ContentSettingException> managedExceptions = new ArrayList<>();
         for (ContentSettingException exception : exceptions) {
             if (exception.getSource() == ProviderType.POLICY_PROVIDER) {
                 managedExceptions.add(exception);
@@ -179,7 +185,7 @@ public class WebsitePreferenceBridge {
     public List<ChosenObjectInfo> getChosenObjectInfo(
             BrowserContextHandle browserContextHandle,
             @ContentSettingsType.EnumType int contentSettingsType) {
-        ArrayList<ChosenObjectInfo> list = new ArrayList<ChosenObjectInfo>();
+        ArrayList<ChosenObjectInfo> list = new ArrayList<>();
         org.chromium.components.browser_ui.site_settings.WebsitePreferenceBridgeJni.get()
                 .getChosenObjects(browserContextHandle, contentSettingsType, list);
         return list;
@@ -255,8 +261,8 @@ public class WebsitePreferenceBridge {
     public static boolean isContentSettingManaged(
             BrowserContextHandle browserContextHandle,
             @ContentSettingsType.EnumType int contentSettingsType) {
-        return org.chromium.components.browser_ui.site_settings.WebsitePreferenceBridgeJni.get()
-                .isContentSettingManaged(browserContextHandle, contentSettingsType);
+        return getDefaultContentSettingProviderSource(browserContextHandle, contentSettingsType)
+                == ContentSettingSource.POLICY;
     }
 
     /**
@@ -266,8 +272,32 @@ public class WebsitePreferenceBridge {
     public static boolean isContentSettingManagedByCustodian(
             BrowserContextHandle browserContextHandle,
             @ContentSettingsType.EnumType int contentSettingsType) {
+        return getDefaultContentSettingProviderSource(browserContextHandle, contentSettingsType)
+                == ContentSettingSource.SUPERVISED;
+    }
+
+    /**
+     * @return Whether a particular content setting type is the JAVASCRIPT_OPTIMIZER content setting
+     *     and the content setting originates from an operating system permission.
+     * @param contentSettingsType The content setting type to check.
+     */
+    public static boolean isJavascriptOptimizerOsProvidedSetting(
+            BrowserContextHandle browserContextHandle,
+            @ContentSettingsType.EnumType int contentSettingsType) {
+        return contentSettingsType == ContentSettingsType.JAVASCRIPT_OPTIMIZER
+                && getDefaultContentSettingProviderSource(browserContextHandle, contentSettingsType)
+                        == ContentSettingSource.OS_JAVASCRIPT_OPTIMIZER;
+    }
+
+    /**
+     * Return the ContentSettingSource for the default content-setting for the passed-in
+     * content-setting type.
+     */
+    private static @ContentSettingSource int getDefaultContentSettingProviderSource(
+            BrowserContextHandle browserContextHandle,
+            @ContentSettingsType.EnumType int contentSettingsType) {
         return org.chromium.components.browser_ui.site_settings.WebsitePreferenceBridgeJni.get()
-                .isContentSettingManagedByCustodian(browserContextHandle, contentSettingsType);
+                .getDefaultContentSettingProviderSource(browserContextHandle, contentSettingsType);
     }
 
     /**
@@ -496,10 +526,7 @@ public class WebsitePreferenceBridge {
                 Object callback);
 
         void clearStorageData(
-                BrowserContextHandle browserContextHandle,
-                String origin,
-                int type,
-                Object callback);
+                BrowserContextHandle browserContextHandle, String origin, Object callback);
 
         void getChosenObjects(
                 BrowserContextHandle browserContextHandle,
@@ -562,9 +589,6 @@ public class WebsitePreferenceBridge {
         boolean isContentSettingEnabled(
                 BrowserContextHandle browserContextHandle, int contentSettingType);
 
-        boolean isContentSettingManaged(
-                BrowserContextHandle browserContextHandle, int contentSettingType);
-
         boolean isCookieDeletionDisabled(BrowserContextHandle browserContextHandle, String origin);
 
         void setContentSettingEnabled(
@@ -615,7 +639,8 @@ public class WebsitePreferenceBridge {
         boolean isContentSettingUserModifiable(
                 BrowserContextHandle browserContextHandle, int contentSettingType);
 
-        boolean isContentSettingManagedByCustodian(
+        @ContentSettingSource
+        int getDefaultContentSettingProviderSource(
                 BrowserContextHandle browserContextHandle, int contentSettingType);
 
         boolean getLocationAllowedByPolicy(BrowserContextHandle browserContextHandle);

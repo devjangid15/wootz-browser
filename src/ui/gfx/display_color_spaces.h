@@ -14,7 +14,6 @@
 #include "ui/gfx/buffer_types.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/color_space_export.h"
-#include "ui/gfx/hdr_static_metadata.h"
 
 namespace mojo {
 template <class T, class U>
@@ -96,6 +95,9 @@ class COLOR_SPACE_EXPORT DisplayColorSpaces {
     return hdr_max_luminance_relative_;
   }
 
+  // Returns log2 of GetHDRMaxLuminanceRelative.
+  float GetHdrHeadroom() const;
+
   // TODO(crbug.com/40144904): These helper functions exist temporarily
   // to handle the transition of display::ScreenInfo off of ColorSpace. All
   // calls to these functions are to be eliminated.
@@ -128,7 +130,6 @@ class COLOR_SPACE_EXPORT DisplayColorSpaces {
                  std::vector<gfx::BufferFormat>* out_buffer_formats) const;
 
   bool operator==(const DisplayColorSpaces& other) const;
-  bool operator!=(const DisplayColorSpaces& other) const;
 
   // Return true if the two parameters are equal except for their
   // `hdr_max_luminance_relative_` member.

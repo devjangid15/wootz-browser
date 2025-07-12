@@ -5,13 +5,14 @@
 package org.chromium.chrome.browser.ntp.search;
 
 import android.content.Context;
-import android.graphics.drawable.Drawable;
 import android.text.TextWatcher;
 import android.view.View;
 import android.view.View.OnClickListener;
 import android.view.View.OnDragListener;
 import android.view.ViewGroup;
 
+import org.chromium.build.annotations.Initializer;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.lens.LensEntryPoint;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
@@ -24,6 +25,7 @@ import org.chromium.ui.modelutil.PropertyModel;
  * coordinators, running most of the business logic associated with the fake search box component,
  * and updating the model accordingly.
  */
+@NullMarked
 public class SearchBoxCoordinator {
     private final PropertyModel mModel;
     private final ViewGroup mView;
@@ -38,6 +40,7 @@ public class SearchBoxCoordinator {
         mMediator = new SearchBoxMediator(context, mModel, mView);
     }
 
+    @Initializer
     public void initialize(
             ActivityLifecycleDispatcher activityLifecycleDispatcher,
             boolean isIncognito,
@@ -51,20 +54,12 @@ public class SearchBoxCoordinator {
         return mView;
     }
 
-    public View getVoiceSearchButton() {
-        return mView.findViewById(R.id.voice_search_button);
-    }
-
     public void destroy() {
         mMediator.onDestroy();
     }
 
     public void setAlpha(float alpha) {
         mModel.set(SearchBoxProperties.ALPHA, alpha);
-    }
-
-    public void setBackground(Drawable background) {
-        mModel.set(SearchBoxProperties.BACKGROUND, background);
     }
 
     public void setVisibility(boolean visible) {
@@ -87,10 +82,6 @@ public class SearchBoxCoordinator {
         mModel.set(SearchBoxProperties.SEARCH_BOX_TEXT_WATCHER, textWatcher);
     }
 
-    public void setSearchBoxHintColor(int hintTextColor) {
-        mModel.set(SearchBoxProperties.SEARCH_BOX_HINT_COLOR, hintTextColor);
-    }
-
     public void setVoiceSearchButtonVisibility(boolean visible) {
         mModel.set(SearchBoxProperties.VOICE_SEARCH_VISIBILITY, visible);
     }
@@ -105,6 +96,18 @@ public class SearchBoxCoordinator {
 
     public void addLensButtonClickListener(OnClickListener listener) {
         mMediator.addLensButtonClickListener(listener);
+    }
+
+    public void setComposeplateButtonVisibility(boolean visible) {
+        mModel.set(SearchBoxProperties.COMPOSEPLATE_BUTTON_VISIBILITY, visible);
+    }
+
+    public void setComposeplateButtonClickListener(OnClickListener listener) {
+        mMediator.setComposeplateButtonClickListener(listener);
+    }
+
+    public void setComposeplateButtonIconRawResId(int iconRawResId) {
+        mMediator.setComposeplateButtonIconRawResId(iconRawResId);
     }
 
     public boolean isLensEnabled(@LensEntryPoint int lensEntryPoint) {
@@ -134,18 +137,6 @@ public class SearchBoxCoordinator {
 
     public void setTextViewTranslationX(float translationX) {
         mMediator.setTextViewTranslationX(translationX);
-    }
-
-    public void setButtonsHeight(int height) {
-        mMediator.setButtonsHeight(height);
-    }
-
-    public void setButtonsWidth(int width) {
-        mMediator.setButtonsWidth(width);
-    }
-
-    public void setLensButtonLeftMargin(int leftMargin) {
-        mMediator.setLensButtonLeftMargin(leftMargin);
     }
 
     public void setSearchTextSize(float textSize) {

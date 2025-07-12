@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 #include "net/nqe/observation_buffer.h"
 
 #include <stddef.h>
@@ -288,8 +289,7 @@ TEST(NetworkQualityObservationBufferTest, RemoveObservations) {
   }
   EXPECT_EQ(200u, buffer.Size());
 
-  bool deleted_observation_sources[NETWORK_QUALITY_OBSERVATION_SOURCE_MAX] = {
-      false};
+  DeletedObservationSources deleted_observation_sources = {};
 
   // Since all entries in |deleted_observation_sources| are set to false, no
   // observations should be deleted.

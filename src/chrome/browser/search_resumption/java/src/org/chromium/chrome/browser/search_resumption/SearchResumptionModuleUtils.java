@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.search_resumption;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.text.TextUtils;
 import android.view.ViewGroup;
 
@@ -11,6 +13,8 @@ import androidx.annotation.IntDef;
 import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
 import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
@@ -23,13 +27,18 @@ import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelUtils;
 import org.chromium.components.signin.identitymanager.ConsentLevel;
+import org.chromium.components.sync.SyncService;
+import org.chromium.components.sync.UserSelectableType;
 import org.chromium.url.GURL;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
+import java.util.Collections;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /** This is a utility class for search resumption module. */
+@NullMarked
 public class SearchResumptionModuleUtils {
     @IntDef({ModuleShowStatus.EXPANDED, ModuleShowStatus.COLLAPSED, ModuleShowStatus.NUM_ENTRIES})
     @Retention(RetentionPolicy.SOURCE)
@@ -85,13 +94,15 @@ public class SearchResumptionModuleUtils {
     /**
      * Creates a {@link SearchResumptionModuleCoordinator} if we are currently allowed to and
      * dependencies are met:
-     * 1) Feature flags SHOW_SCROLLABLE_MVT_ON_NTP_ANDROID and SEARCH_RESUMPTION_MODULE_ANDROID are
-     *    both enabled;
-     * 2) The default search engine is Google;
-     * 3) The user has signed in;
-     * 4) The current Tab isn't shown due to such as tapping the back button.
-     * 5) The Tab to track is a regular Tab, not a native page, not with an empty URL;
-     * 6) The Tab to track was visited within an expiration time.
+     *
+     * <ol>
+     *   <li>Feature flag SEARCH_RESUMPTION_MODULE_ANDROID is enabled;
+     *   <li>The default search engine is Google;
+     *   <li>The user has signed in;
+     *   <li>The current Tab isn't shown due to such as tapping the back button.
+     *   <li>The Tab to track is a regular Tab, not a native page, not with an empty URL;
+     *   <li>The Tab to track was visited within an expiration time.
+     * </ol>
      *
      * @param parent The parent layout which the search resumption module lives.
      * @param tabModel The TabModel to find the Tab to track.
@@ -99,7 +110,7 @@ public class SearchResumptionModuleUtils {
      * @param profile The profile of the user.
      * @param moduleContainerStubId The id of the search resumption module on its parent view.
      */
-    public static SearchResumptionModuleCoordinator mayCreateSearchResumptionModule(
+    public static @Nullable SearchResumptionModuleCoordinator mayCreateSearchResumptionModule(
             ViewGroup parent,
             TabModel tabModel,
             Tab currentTab,
@@ -107,7 +118,8 @@ public class SearchResumptionModuleUtils {
             int moduleContainerStubId) {
         if (!shouldShowSearchResumptionModule(profile)) return null;
 
-        Tab tabToTrack = TabModelUtils.getMostRecentTab(tabModel, currentTab.getId());
+        Tab tabToTrack =
+                TabModelUtils.getMostRecentTab(tabModel, Collections.singletonList(currentTab));
         if (tabToTrack == null) {
             recordModuleNotShownReason(ModuleNotShownReason.NO_TAB_TO_TRACK);
             return null;
@@ -127,13 +139,17 @@ public class SearchResumptionModuleUtils {
     /**
      * Returns whether to show the search resumption module. Only shows the module if all of the
      * criteria meet:
-     * 1) Feature flags SHOW_SCROLLABLE_MVT_ON_NTP_ANDROID and SEARCH_RESUMPTION_MODULE_ANDROID are
-     *    both enabled;
-     * 2) The default search engine is Google;
-     * 3) The user has signed in;
-     * 4) The user has turned on sync.
+     *
+     * <ol>
+     *   <li>Feature flag SEARCH_RESUMPTION_MODULE_ANDROID is enabled;
+     *   <li>The default search engine is Google;
+     *   <li>The user has signed in;
+     *   <li>The user has turned on sync.
+     * </ol>
      */
     @VisibleForTesting
+    @SuppressWarnings("NullAway")
+    // TODO(crbug.com/389129271): Follow up on whether this profile is always non-OTR.
     static boolean shouldShowSearchResumptionModule(Profile profile) {
         if (!ChromeFeatureList.isEnabled(ChromeFeatureList.SEARCH_RESUMPTION_MODULE_ANDROID)) {
             recordModuleNotShownReason(ModuleNotShownReason.FEATURE_DISABLED);
@@ -147,12 +163,14 @@ public class SearchResumptionModuleUtils {
 
         if (!IdentityServicesProvider.get()
                 .getIdentityManager(profile)
-                .hasPrimaryAccount(ConsentLevel.SYNC)) {
+                .hasPrimaryAccount(ConsentLevel.SIGNIN)) {
             recordModuleNotShownReason(ModuleNotShownReason.NOT_SIGN_IN);
             return false;
         }
 
-        if (!SyncServiceFactory.getForProfile(profile).hasKeepEverythingSynced()) {
+        SyncService syncService = assumeNonNull(SyncServiceFactory.getForProfile(profile));
+        Set<Integer> selectedTypes = syncService.getSelectedTypes();
+        if (!selectedTypes.contains(UserSelectableType.HISTORY)) {
             recordModuleNotShownReason(ModuleNotShownReason.NOT_SYNC);
             return false;
         }
@@ -188,7 +206,7 @@ public class SearchResumptionModuleUtils {
     }
 
     @VisibleForTesting
-    static SuggestionResult mayGetCachedResults(Tab currentTab, Tab tabToTrack) {
+    static @Nullable SuggestionResult mayGetCachedResults(Tab currentTab, Tab tabToTrack) {
         SuggestionResult cachedSuggestions = null;
         if (currentTab.canGoForward()) {
             // If the NTP is created due to any back operation, i.e., its Tab has navigated before,

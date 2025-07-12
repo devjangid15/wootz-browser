@@ -14,16 +14,20 @@ import android.widget.TextView;
 import androidx.preference.Preference;
 import androidx.preference.PreferenceFragmentCompat;
 
+import org.chromium.base.supplier.ObservableSupplier;
+import org.chromium.base.supplier.ObservableSupplierImpl;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+import org.chromium.components.browser_ui.settings.EmbeddableSettingsPage;
 import org.chromium.components.browser_ui.settings.SettingsUtils;
 import org.chromium.ui.widget.ButtonCompat;
-import org.chromium.base.ContextUtils;
-import org.chromium.components.browser_ui.settings.TextMessagePreference;
 
 /** Settings fragment containing Safety check. This class represents a View in the MVC paradigm. */
-public class SafetyCheckSettingsFragment extends PreferenceFragmentCompat {
+@NullMarked
+public class SafetyCheckSettingsFragment extends PreferenceFragmentCompat
+        implements EmbeddableSettingsPage {
     private static final String SAFETY_CHECK_IMMEDIATE_RUN =
             "SafetyCheckSettingsFragment.safetyCheckImmediateRun";
-    private static final String SAFETY_CHECK_DESCRIPTION_KEY = "safety_check_description";
 
     /** The "Check" button at the bottom that needs to be added after the View is inflated. */
     private ButtonCompat mCheckButton;
@@ -34,15 +38,14 @@ public class SafetyCheckSettingsFragment extends PreferenceFragmentCompat {
 
     private SafetyCheckComponentUi mComponentDelegate;
 
+    private final ObservableSupplierImpl<String> mPageTitle = new ObservableSupplierImpl<>();
+
     /** Initializes all the objects related to the preferences page. */
     @Override
-    public void onCreatePreferences(Bundle bundle, String s) {
+    public void onCreatePreferences(@Nullable Bundle bundle, @Nullable String s) {
         // Add all preferences and set the title.
         SettingsUtils.addPreferencesFromResource(this, R.xml.safety_check_preferences);
-        getActivity().setTitle(getString(R.string.prefs_safety_check));
-
-        // Update safety check description with dynamic branding
-        updateSafetyCheckDescription();
+        mPageTitle.set(getString(R.string.prefs_safety_check));
 
         mRunSafetyCheckImmediately =
                 getArguments() != null
@@ -50,32 +53,16 @@ public class SafetyCheckSettingsFragment extends PreferenceFragmentCompat {
                         && getArguments().getBoolean(SAFETY_CHECK_IMMEDIATE_RUN);
     }
 
-    /**
-     * Updates the safety check description with dynamic branding.
-     */
-    private void updateSafetyCheckDescription() {
-        TextMessagePreference descriptionPreference = 
-                (TextMessagePreference) findPreference(SAFETY_CHECK_DESCRIPTION_KEY);
-        
-        if (descriptionPreference != null) {
-            // Get dynamic app name for branding
-            String appName = ContextUtils.getAppSharedPreferences().getString("app_name", "Browser");
-            boolean hasCustomBranding = !appName.equals("Browser");
-            
-            if (hasCustomBranding) {
-                // Get the original title text and replace WootzApp with custom app name
-                String titleText = getString(R.string.safety_check_description);
-                if (titleText.contains("WootzApp")) {
-                    titleText = titleText.replace("WootzApp", appName);
-                    descriptionPreference.setTitle(titleText);
-                }
-            }
-        }
+    @Override
+    public ObservableSupplier<String> getPageTitle() {
+        return mPageTitle;
     }
 
     @Override
     public View onCreateView(
-            LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
+            LayoutInflater inflater,
+            @Nullable ViewGroup container,
+            @Nullable Bundle savedInstanceState) {
         LinearLayout view =
                 (LinearLayout) super.onCreateView(inflater, container, savedInstanceState);
         // Add a button to the bottom of the preferences view.
@@ -169,5 +156,10 @@ public class SafetyCheckSettingsFragment extends PreferenceFragmentCompat {
     public void onPause() {
         super.onPause();
         mRunSafetyCheckImmediately = false;
+    }
+
+    @Override
+    public @AnimationType int getAnimationType() {
+        return AnimationType.PROPERTY;
     }
 }

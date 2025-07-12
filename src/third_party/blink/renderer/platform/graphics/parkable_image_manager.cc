@@ -178,7 +178,7 @@ void ParkableImageManager::Remove(ParkableImageImpl* image) {
   // Image could be on disk or unparked. Remove it in either case.
   auto* map = image->is_on_disk() ? &on_disk_images_ : &unparked_images_;
   auto it = map->find(image);
-  DCHECK(it != map->end());
+  CHECK(it != map->end());
   map->erase(it);
 }
 

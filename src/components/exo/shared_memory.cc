@@ -12,12 +12,11 @@
 #include "base/logging.h"
 #include "base/trace_event/trace_event.h"
 #include "components/exo/buffer.h"
-#include "gpu/ipc/common/gpu_memory_buffer_impl_shared_memory.h"
 #include "third_party/khronos/GLES2/gl2.h"
 #include "ui/compositor/compositor.h"
 #include "ui/gfx/buffer_format_util.h"
 #include "ui/gfx/geometry/size.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 
 namespace exo {
 namespace {
@@ -29,13 +28,6 @@ bool IsSupportedFormat(gfx::BufferFormat format) {
          format == gfx::BufferFormat::BGRA_8888;
 }
 
-// This flag allows Exo::SharedMemory to create Exo::Buffer using GMBHandle
-// instead of GMB. This is required for MappableSI which aims to remove all
-// usages of GMB directly by clients.
-BASE_FEATURE(kAlwaysUseGMBHandleForSHMExoBuffer,
-             "AlwaysUseGMBHandleForSHMExoBuffer",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
 }  // namespace
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -44,7 +36,7 @@ BASE_FEATURE(kAlwaysUseGMBHandleForSHMExoBuffer,
 SharedMemory::SharedMemory(base::UnsafeSharedMemoryRegion shared_memory_region)
     : shared_memory_region_(std::move(shared_memory_region)) {}
 
-SharedMemory::~SharedMemory() {}
+SharedMemory::~SharedMemory() = default;
 
 std::unique_ptr<Buffer> SharedMemory::CreateBuffer(const gfx::Size& size,
                                                    gfx::BufferFormat format,
@@ -66,9 +58,7 @@ std::unique_ptr<Buffer> SharedMemory::CreateBuffer(const gfx::Size& size,
     return nullptr;
   }
 
-  gfx::GpuMemoryBufferHandle handle;
-  handle.type = gfx::SHARED_MEMORY_BUFFER;
-  handle.region = shared_memory_region_.Duplicate();
+  gfx::GpuMemoryBufferHandle handle(shared_memory_region_.Duplicate());
   handle.offset = offset;
   handle.stride = stride;
 
@@ -87,22 +77,9 @@ std::unique_ptr<Buffer> SharedMemory::CreateBuffer(const gfx::Size& size,
   const bool is_overlay_candidate = false;
   const bool y_invert = false;
 
-  if (base::FeatureList::IsEnabled(kAlwaysUseGMBHandleForSHMExoBuffer)) {
     return Buffer::CreateBufferFromGMBHandle(
         std::move(handle), size, format, buffer_usage, query_type,
         use_zero_copy, is_overlay_candidate, y_invert);
-  }
-  std::unique_ptr<gfx::GpuMemoryBuffer> gpu_memory_buffer =
-      gpu::GpuMemoryBufferImplSharedMemory::CreateFromHandle(
-          std::move(handle), size, format, buffer_usage,
-          gpu::GpuMemoryBufferImpl::DestructionCallback());
-  if (!gpu_memory_buffer) {
-    LOG(ERROR) << "Failed to create GpuMemoryBuffer from handle";
-    return nullptr;
-  }
-  return base::WrapUnique(new Buffer(std::move(gpu_memory_buffer), query_type,
-                                     use_zero_copy, is_overlay_candidate,
-                                     y_invert));
 }
 
 size_t SharedMemory::GetSize() const {

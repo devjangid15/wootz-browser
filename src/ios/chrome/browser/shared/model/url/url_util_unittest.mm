@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #import "ios/chrome/browser/shared/model/url/url_util.h"
 
 #import "base/strings/sys_string_conversions.h"
@@ -23,6 +28,15 @@ TEST_F(ChromeURLUtilTest, TestIsExternalFileReference) {
   EXPECT_TRUE(UrlIsExternalFileReference(external_url));
   EXPECT_FALSE(UrlIsExternalFileReference(not_external_url));
   EXPECT_FALSE(UrlIsExternalFileReference(still_not_external_url));
+}
+
+TEST_F(ChromeURLUtilTest, TestUrlIsDownloadedFile) {
+  GURL downloaded_file_url("chrome://downloads/fileName");
+  GURL external_file_url("chrome://external-file/fileName");
+  GURL not_downloaded_file_url("http://downloads/fileName");
+  EXPECT_TRUE(UrlIsDownloadedFile(downloaded_file_url));
+  EXPECT_FALSE(UrlIsDownloadedFile(external_file_url));
+  EXPECT_FALSE(UrlIsDownloadedFile(not_downloaded_file_url));
 }
 
 const char* kSchemeTestData[] = {

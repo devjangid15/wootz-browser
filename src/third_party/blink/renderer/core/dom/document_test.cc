@@ -29,22 +29,21 @@
  */
 
 #include "third_party/blink/renderer/core/dom/document.h"
-#include "third_party/blink/public/common/features.h"
-#include "third_party/blink/renderer/core/page/page_animator.h"
 
 #include <algorithm>
 #include <memory>
 
+#include "base/strings/stringprintf.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/ukm/test_ukm_recorder.h"
 #include "services/network/public/mojom/referrer_policy.mojom-blink.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/permissions_policy/document_policy_features.h"
 #include "third_party/blink/public/common/privacy_budget/identifiable_surface.h"
-#include "third_party/blink/public/mojom/permissions_policy/permissions_policy_feature.mojom-blink.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/web/web_print_page_description.h"
 #include "third_party/blink/renderer/bindings/core/v8/isolated_world_csp.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_tester.h"
@@ -60,7 +59,6 @@
 #include "third_party/blink/renderer/core/dom/node_with_index.h"
 #include "third_party/blink/renderer/core/dom/range.h"
 #include "third_party/blink/renderer/core/dom/scripted_animation_controller.h"
-#include "third_party/blink/renderer/core/dom/synchronous_mutation_observer.h"
 #include "third_party/blink/renderer/core/dom/text.h"
 #include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
 #include "third_party/blink/renderer/core/frame/frame_test_helpers.h"
@@ -80,6 +78,7 @@
 #include "third_party/blink/renderer/core/layout/layout_box.h"
 #include "third_party/blink/renderer/core/loader/document_loader.h"
 #include "third_party/blink/renderer/core/page/page.h"
+#include "third_party/blink/renderer/core/page/page_animator.h"
 #include "third_party/blink/renderer/core/page/validation_message_client.h"
 #include "third_party/blink/renderer/core/testing/color_scheme_helper.h"
 #include "third_party/blink/renderer/core/testing/mock_policy_container_host.h"
@@ -101,6 +100,7 @@ namespace blink {
 
 using network::mojom::ContentSecurityPolicySource;
 using network::mojom::ContentSecurityPolicyType;
+using ::testing::_;
 using ::testing::ElementsAre;
 using ::testing::IsEmpty;
 
@@ -174,8 +174,7 @@ class DocumentTest : public PageTestBase {
   }
 
   void NavigateWithSandbox(const KURL& url) {
-    auto params = WebNavigationParams::CreateWithHTMLStringForTesting(
-        /*html=*/"", url);
+    auto params = WebNavigationParams::CreateWithEmptyHTMLForTesting(url);
     MockPolicyContainerHost mock_policy_container_host;
     params->policy_container = std::make_unique<blink::WebPolicyContainer>(
         blink::WebPolicyContainerPolicies(),
@@ -190,185 +189,14 @@ class DocumentTest : public PageTestBase {
 };
 
 void DocumentTest::SetHtmlInnerHTML(const char* html_content) {
-  GetDocument().documentElement()->setInnerHTML(String::FromUTF8(html_content));
+  GetDocument().documentElement()->SetInnerHTMLWithoutTrustedTypes(
+      String::FromUTF8(html_content));
   UpdateAllLifecyclePhasesForTest();
 }
 
 class DocumentSimTest : public SimTest {};
 
 namespace {
-
-class TestSynchronousMutationObserver
-    : public GarbageCollected<TestSynchronousMutationObserver>,
-      public SynchronousMutationObserver {
- public:
-  struct MergeTextNodesRecord : GarbageCollected<MergeTextNodesRecord> {
-    Member<const Text> node_;
-    Member<Node> node_to_be_removed_;
-    unsigned offset_ = 0;
-
-    MergeTextNodesRecord(const Text* node,
-                         const NodeWithIndex& node_with_index,
-                         unsigned offset)
-        : node_(node),
-          node_to_be_removed_(node_with_index.GetNode()),
-          offset_(offset) {}
-
-    void Trace(Visitor* visitor) const {
-      visitor->Trace(node_);
-      visitor->Trace(node_to_be_removed_);
-    }
-  };
-
-  struct UpdateCharacterDataRecord
-      : GarbageCollected<UpdateCharacterDataRecord> {
-    Member<CharacterData> node_;
-    unsigned offset_ = 0;
-    unsigned old_length_ = 0;
-    unsigned new_length_ = 0;
-
-    UpdateCharacterDataRecord(CharacterData* node,
-                              unsigned offset,
-                              unsigned old_length,
-                              unsigned new_length)
-        : node_(node),
-          offset_(offset),
-          old_length_(old_length),
-          new_length_(new_length) {}
-
-    void Trace(Visitor* visitor) const { visitor->Trace(node_); }
-  };
-
-  explicit TestSynchronousMutationObserver(Document&);
-  TestSynchronousMutationObserver(const TestSynchronousMutationObserver&) =
-      delete;
-  TestSynchronousMutationObserver& operator=(
-      const TestSynchronousMutationObserver&) = delete;
-  virtual ~TestSynchronousMutationObserver() = default;
-
-  int CountContextDestroyedCalled() const {
-    return on_document_shutdown_called_counter_;
-  }
-
-  const HeapVector<Member<const ContainerNode>>& ChildrenChangedNodes() const {
-    return children_changed_nodes_;
-  }
-
-  const HeapVector<Member<MergeTextNodesRecord>>& MergeTextNodesRecords()
-      const {
-    return merge_text_nodes_records_;
-  }
-
-  const HeapVector<Member<const Node>>& MoveTreeToNewDocumentNodes() const {
-    return move_tree_to_new_document_nodes_;
-  }
-
-  const HeapVector<Member<ContainerNode>>& RemovedChildrenNodes() const {
-    return removed_children_nodes_;
-  }
-
-  const HeapVector<Member<Node>>& RemovedNodes() const {
-    return removed_nodes_;
-  }
-
-  const HeapVector<Member<const Text>>& SplitTextNodes() const {
-    return split_text_nodes_;
-  }
-
-  const HeapVector<Member<UpdateCharacterDataRecord>>&
-  UpdatedCharacterDataRecords() const {
-    return updated_character_data_records_;
-  }
-
-  void Trace(Visitor*) const override;
-
- private:
-  // Implement |SynchronousMutationObserver| member functions.
-  void ContextDestroyed() final;
-  void DidChangeChildren(const ContainerNode&,
-                         const ContainerNode::ChildrenChange&) final;
-  void DidMergeTextNodes(const Text&, const NodeWithIndex&, unsigned) final;
-  void DidMoveTreeToNewDocument(const Node& root) final;
-  void DidSplitTextNode(const Text&) final;
-  void DidUpdateCharacterData(CharacterData*,
-                              unsigned offset,
-                              unsigned old_length,
-                              unsigned new_length) final;
-  void NodeChildrenWillBeRemoved(ContainerNode&) final;
-  void NodeWillBeRemoved(Node&) final;
-
-  int on_document_shutdown_called_counter_ = 0;
-  HeapVector<Member<const ContainerNode>> children_changed_nodes_;
-  HeapVector<Member<MergeTextNodesRecord>> merge_text_nodes_records_;
-  HeapVector<Member<const Node>> move_tree_to_new_document_nodes_;
-  HeapVector<Member<ContainerNode>> removed_children_nodes_;
-  HeapVector<Member<Node>> removed_nodes_;
-  HeapVector<Member<const Text>> split_text_nodes_;
-  HeapVector<Member<UpdateCharacterDataRecord>> updated_character_data_records_;
-};
-
-TestSynchronousMutationObserver::TestSynchronousMutationObserver(
-    Document& document) {
-  SetDocument(&document);
-}
-
-void TestSynchronousMutationObserver::ContextDestroyed() {
-  ++on_document_shutdown_called_counter_;
-}
-
-void TestSynchronousMutationObserver::DidChangeChildren(
-    const ContainerNode& container,
-    const ContainerNode::ChildrenChange&) {
-  children_changed_nodes_.push_back(&container);
-}
-
-void TestSynchronousMutationObserver::DidMergeTextNodes(
-    const Text& node,
-    const NodeWithIndex& node_with_index,
-    unsigned offset) {
-  merge_text_nodes_records_.push_back(
-      MakeGarbageCollected<MergeTextNodesRecord>(&node, node_with_index,
-                                                 offset));
-}
-
-void TestSynchronousMutationObserver::DidMoveTreeToNewDocument(
-    const Node& root) {
-  move_tree_to_new_document_nodes_.push_back(&root);
-}
-
-void TestSynchronousMutationObserver::DidSplitTextNode(const Text& node) {
-  split_text_nodes_.push_back(&node);
-}
-
-void TestSynchronousMutationObserver::DidUpdateCharacterData(
-    CharacterData* character_data,
-    unsigned offset,
-    unsigned old_length,
-    unsigned new_length) {
-  updated_character_data_records_.push_back(
-      MakeGarbageCollected<UpdateCharacterDataRecord>(character_data, offset,
-                                                      old_length, new_length));
-}
-
-void TestSynchronousMutationObserver::NodeChildrenWillBeRemoved(
-    ContainerNode& container) {
-  removed_children_nodes_.push_back(&container);
-}
-
-void TestSynchronousMutationObserver::NodeWillBeRemoved(Node& node) {
-  removed_nodes_.push_back(&node);
-}
-
-void TestSynchronousMutationObserver::Trace(Visitor* visitor) const {
-  visitor->Trace(children_changed_nodes_);
-  visitor->Trace(merge_text_nodes_records_);
-  visitor->Trace(move_tree_to_new_document_nodes_);
-  visitor->Trace(removed_children_nodes_);
-  visitor->Trace(removed_nodes_);
-  visitor->Trace(split_text_nodes_);
-  visitor->Trace(updated_character_data_records_);
-  SynchronousMutationObserver::Trace(visitor);
-}
 
 class MockDocumentValidationMessageClient
     : public GarbageCollected<MockDocumentValidationMessageClient>,
@@ -429,7 +257,8 @@ bool IsDOMException(ScriptState* script_state,
 }  // anonymous namespace
 
 TEST_F(DocumentTest, CreateRangeAdjustedToTreeScopeWithPositionInShadowTree) {
-  GetDocument().body()->setInnerHTML("<div><select><option>012</option></div>");
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(
+      "<div><select><option>012</option></div>");
   Element* const select_element =
       GetDocument().QuerySelector(AtomicString("select"));
   const Position& position =
@@ -497,7 +326,8 @@ TEST_F(DocumentTest, PrintRelayout) {
   gfx::SizeF page_size(400, 400);
   float maximum_shrink_ratio = 1.6;
 
-  GetDocument().GetFrame()->StartPrinting(page_size, maximum_shrink_ratio);
+  GetDocument().GetFrame()->StartPrinting(WebPrintParams(page_size),
+                                          maximum_shrink_ratio);
   EXPECT_EQ(GetDocument().documentElement()->OffsetWidth(), 400);
   GetDocument().GetFrame()->EndPrinting();
   EXPECT_EQ(GetDocument().documentElement()->OffsetWidth(), 800);
@@ -640,183 +470,6 @@ TEST_F(DocumentTest, StyleVersion) {
   EXPECT_NE(previous_style_version, GetDocument().StyleVersion());
 }
 
-TEST_F(DocumentTest, SynchronousMutationNotifier) {
-  auto& observer =
-      *MakeGarbageCollected<TestSynchronousMutationObserver>(GetDocument());
-
-  EXPECT_EQ(GetDocument(), observer.GetDocument());
-  EXPECT_EQ(0, observer.CountContextDestroyedCalled());
-
-  Element* div_node = GetDocument().CreateRawElement(html_names::kDivTag);
-  GetDocument().body()->AppendChild(div_node);
-
-  Element* bold_node = GetDocument().CreateRawElement(html_names::kBTag);
-  div_node->AppendChild(bold_node);
-
-  Element* italic_node = GetDocument().CreateRawElement(html_names::kITag);
-  div_node->AppendChild(italic_node);
-
-  Node* text_node = GetDocument().createTextNode("0123456789");
-  bold_node->AppendChild(text_node);
-  EXPECT_TRUE(observer.RemovedNodes().empty());
-
-  text_node->remove();
-  ASSERT_EQ(1u, observer.RemovedNodes().size());
-  EXPECT_EQ(text_node, observer.RemovedNodes()[0]);
-
-  div_node->RemoveChildren();
-  EXPECT_EQ(1u, observer.RemovedNodes().size())
-      << "ContainerNode::removeChildren() doesn't call nodeWillBeRemoved()";
-  ASSERT_EQ(1u, observer.RemovedChildrenNodes().size());
-  EXPECT_EQ(div_node, observer.RemovedChildrenNodes()[0]);
-
-  GetDocument().Shutdown();
-  EXPECT_EQ(nullptr, observer.GetDocument());
-  EXPECT_EQ(1, observer.CountContextDestroyedCalled());
-}
-
-TEST_F(DocumentTest, SynchronousMutationNotifieAppendChild) {
-  auto& observer =
-      *MakeGarbageCollected<TestSynchronousMutationObserver>(GetDocument());
-  GetDocument().body()->AppendChild(GetDocument().createTextNode("a123456789"));
-  ASSERT_EQ(1u, observer.ChildrenChangedNodes().size());
-  EXPECT_EQ(GetDocument().body(), observer.ChildrenChangedNodes()[0]);
-}
-
-TEST_F(DocumentTest, SynchronousMutationNotifieInsertBefore) {
-  auto& observer =
-      *MakeGarbageCollected<TestSynchronousMutationObserver>(GetDocument());
-  GetDocument().documentElement()->InsertBefore(
-      GetDocument().createTextNode("a123456789"), GetDocument().body());
-  ASSERT_EQ(1u, observer.ChildrenChangedNodes().size());
-  EXPECT_EQ(GetDocument().documentElement(),
-            observer.ChildrenChangedNodes()[0]);
-}
-
-TEST_F(DocumentTest, SynchronousMutationNotifierMergeTextNodes) {
-  auto& observer =
-      *MakeGarbageCollected<TestSynchronousMutationObserver>(GetDocument());
-
-  Text* merge_sample_a = GetDocument().createTextNode("a123456789");
-  GetDocument().body()->AppendChild(merge_sample_a);
-
-  Text* merge_sample_b = GetDocument().createTextNode("b123456789");
-  GetDocument().body()->AppendChild(merge_sample_b);
-
-  EXPECT_EQ(0u, observer.MergeTextNodesRecords().size());
-  GetDocument().body()->normalize();
-
-  ASSERT_EQ(1u, observer.MergeTextNodesRecords().size());
-  EXPECT_EQ(merge_sample_a, observer.MergeTextNodesRecords()[0]->node_);
-  EXPECT_EQ(merge_sample_b,
-            observer.MergeTextNodesRecords()[0]->node_to_be_removed_);
-  EXPECT_EQ(10u, observer.MergeTextNodesRecords()[0]->offset_);
-}
-
-TEST_F(DocumentTest, SynchronousMutationNotifierMoveTreeToNewDocument) {
-  auto& observer =
-      *MakeGarbageCollected<TestSynchronousMutationObserver>(GetDocument());
-
-  Node* move_sample = GetDocument().CreateRawElement(html_names::kDivTag);
-  move_sample->appendChild(GetDocument().createTextNode("a123"));
-  move_sample->appendChild(GetDocument().createTextNode("b456"));
-  GetDocument().body()->AppendChild(move_sample);
-
-  ScopedNullExecutionContext execution_context;
-  Document& another_document =
-      *Document::CreateForTest(execution_context.GetExecutionContext());
-  another_document.AppendChild(move_sample);
-
-  EXPECT_EQ(1u, observer.MoveTreeToNewDocumentNodes().size());
-  EXPECT_EQ(move_sample, observer.MoveTreeToNewDocumentNodes()[0]);
-}
-
-TEST_F(DocumentTest, SynchronousMutationNotifieRemoveChild) {
-  auto& observer =
-      *MakeGarbageCollected<TestSynchronousMutationObserver>(GetDocument());
-  GetDocument().documentElement()->RemoveChild(GetDocument().body());
-  ASSERT_EQ(1u, observer.ChildrenChangedNodes().size());
-  EXPECT_EQ(GetDocument().documentElement(),
-            observer.ChildrenChangedNodes()[0]);
-}
-
-TEST_F(DocumentTest, SynchronousMutationNotifieReplaceChild) {
-  auto& observer =
-      *MakeGarbageCollected<TestSynchronousMutationObserver>(GetDocument());
-  Element* const replaced_node = GetDocument().body();
-  GetDocument().documentElement()->ReplaceChild(
-      GetDocument().CreateRawElement(html_names::kDivTag),
-      GetDocument().body());
-  ASSERT_EQ(2u, observer.ChildrenChangedNodes().size());
-  EXPECT_EQ(GetDocument().documentElement(),
-            observer.ChildrenChangedNodes()[0]);
-  EXPECT_EQ(GetDocument().documentElement(),
-            observer.ChildrenChangedNodes()[1]);
-
-  ASSERT_EQ(1u, observer.RemovedNodes().size());
-  EXPECT_EQ(replaced_node, observer.RemovedNodes()[0]);
-}
-
-TEST_F(DocumentTest, SynchronousMutationNotifierSplitTextNode) {
-  V8TestingScope scope;
-  auto& observer =
-      *MakeGarbageCollected<TestSynchronousMutationObserver>(GetDocument());
-
-  Text* split_sample = GetDocument().createTextNode("0123456789");
-  GetDocument().body()->AppendChild(split_sample);
-
-  split_sample->splitText(4, ASSERT_NO_EXCEPTION);
-  ASSERT_EQ(1u, observer.SplitTextNodes().size());
-  EXPECT_EQ(split_sample, observer.SplitTextNodes()[0]);
-}
-
-TEST_F(DocumentTest, SynchronousMutationNotifierUpdateCharacterData) {
-  auto& observer =
-      *MakeGarbageCollected<TestSynchronousMutationObserver>(GetDocument());
-
-  Text* append_sample = GetDocument().createTextNode("a123456789");
-  GetDocument().body()->AppendChild(append_sample);
-
-  Text* delete_sample = GetDocument().createTextNode("b123456789");
-  GetDocument().body()->AppendChild(delete_sample);
-
-  Text* insert_sample = GetDocument().createTextNode("c123456789");
-  GetDocument().body()->AppendChild(insert_sample);
-
-  Text* replace_sample = GetDocument().createTextNode("c123456789");
-  GetDocument().body()->AppendChild(replace_sample);
-
-  EXPECT_EQ(0u, observer.UpdatedCharacterDataRecords().size());
-
-  append_sample->appendData("abc");
-  ASSERT_EQ(1u, observer.UpdatedCharacterDataRecords().size());
-  EXPECT_EQ(append_sample, observer.UpdatedCharacterDataRecords()[0]->node_);
-  EXPECT_EQ(10u, observer.UpdatedCharacterDataRecords()[0]->offset_);
-  EXPECT_EQ(0u, observer.UpdatedCharacterDataRecords()[0]->old_length_);
-  EXPECT_EQ(3u, observer.UpdatedCharacterDataRecords()[0]->new_length_);
-
-  delete_sample->deleteData(3, 4, ASSERT_NO_EXCEPTION);
-  ASSERT_EQ(2u, observer.UpdatedCharacterDataRecords().size());
-  EXPECT_EQ(delete_sample, observer.UpdatedCharacterDataRecords()[1]->node_);
-  EXPECT_EQ(3u, observer.UpdatedCharacterDataRecords()[1]->offset_);
-  EXPECT_EQ(4u, observer.UpdatedCharacterDataRecords()[1]->old_length_);
-  EXPECT_EQ(0u, observer.UpdatedCharacterDataRecords()[1]->new_length_);
-
-  insert_sample->insertData(3, "def", ASSERT_NO_EXCEPTION);
-  ASSERT_EQ(3u, observer.UpdatedCharacterDataRecords().size());
-  EXPECT_EQ(insert_sample, observer.UpdatedCharacterDataRecords()[2]->node_);
-  EXPECT_EQ(3u, observer.UpdatedCharacterDataRecords()[2]->offset_);
-  EXPECT_EQ(0u, observer.UpdatedCharacterDataRecords()[2]->old_length_);
-  EXPECT_EQ(3u, observer.UpdatedCharacterDataRecords()[2]->new_length_);
-
-  replace_sample->replaceData(6, 4, "ghi", ASSERT_NO_EXCEPTION);
-  ASSERT_EQ(4u, observer.UpdatedCharacterDataRecords().size());
-  EXPECT_EQ(replace_sample, observer.UpdatedCharacterDataRecords()[3]->node_);
-  EXPECT_EQ(6u, observer.UpdatedCharacterDataRecords()[3]->offset_);
-  EXPECT_EQ(4u, observer.UpdatedCharacterDataRecords()[3]->old_length_);
-  EXPECT_EQ(3u, observer.UpdatedCharacterDataRecords()[3]->new_length_);
-}
-
 // This tests that meta-theme-color can be found correctly
 TEST_F(DocumentTest, ThemeColor) {
   {
@@ -877,7 +530,7 @@ TEST_F(DocumentTest, ValidationMessageCleanup) {
 // as it is more expensive than just doing layout.
 TEST_F(DocumentTest,
        EnsurePaintLocationDataValidForNodeCompositingInputsOnlyWhenNecessary) {
-  GetDocument().body()->setInnerHTML(R"HTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div id='ancestor'>
       <div id='sticky' style='position:sticky;'>
         <div id='stickyChild'></div>
@@ -1116,7 +769,7 @@ TEST_F(DocumentTest, ElementFromPointWithPageZoom) {
   EXPECT_EQ(GetDocument().ElementFromPoint(1, 12), GetDocument().body());
 
   // Zoom the page by 2x,
-  GetDocument().GetFrame()->SetPageZoomFactor(2);
+  GetDocument().GetFrame()->SetLayoutZoomFactor(2);
 
   // A hit test on the content div should hit it.
   EXPECT_EQ(GetDocument().ElementFromPoint(1, 8), content);
@@ -1243,12 +896,12 @@ TEST_F(DocumentTest, FindInPageUkmInFrame) {
 }
 
 TEST_F(DocumentTest, AtPageMarginWithDeviceScaleFactor) {
-  GetDocument().GetFrame()->SetPageZoomFactor(2);
+  GetDocument().GetFrame()->SetLayoutZoomFactor(2);
   SetBodyInnerHTML("<style>@page { margin: 50px; size: 400px 10in; }</style>");
 
   constexpr gfx::SizeF initial_page_size(800, 600);
 
-  GetDocument().GetFrame()->StartPrinting(initial_page_size);
+  GetDocument().GetFrame()->StartPrinting(WebPrintParams(initial_page_size));
   GetDocument().View()->UpdateLifecyclePhasesForPrinting();
 
   WebPrintPageDescription description = GetDocument().GetPageDescription(0);
@@ -1286,9 +939,7 @@ TEST_F(DocumentTest, RejectsHasPrivateTokenCallFromNonHttpNonHttpsDocument) {
 
   Document& document = scope.GetDocument();
   ScriptState* script_state = scope.GetScriptState();
-  ExceptionState exception_state(script_state->GetIsolate(),
-                                 ExceptionContextType::kOperationInvoke,
-                                 "Document", "hasPrivateToken");
+  DummyExceptionStateForTesting exception_state;
 
   auto promise = document.hasPrivateToken(
       script_state, "https://issuer.example", exception_state);
@@ -1399,9 +1050,7 @@ TEST_F(DocumentTest, HasPrivateTokenSuccess) {
                          WTF::Unretained(&answerer)));
 
   ScriptState* script_state = scope.GetScriptState();
-  ExceptionState exception_state(script_state->GetIsolate(),
-                                 ExceptionContextType::kOperationInvoke,
-                                 "Document", "hasPrivateToken");
+  ExceptionState exception_state(script_state->GetIsolate());
 
   auto promise = document.hasPrivateToken(
       script_state, "https://issuer.example", exception_state);
@@ -1427,9 +1076,7 @@ TEST_F(DocumentTest, HasPrivateTokenSuccessWithFalseValue) {
                          WTF::Unretained(&answerer)));
 
   ScriptState* script_state = scope.GetScriptState();
-  ExceptionState exception_state(script_state->GetIsolate(),
-                                 ExceptionContextType::kOperationInvoke,
-                                 "Document", "hasPrivateToken");
+  ExceptionState exception_state(script_state->GetIsolate());
 
   auto promise = document.hasPrivateToken(
       script_state, "https://issuer.example", exception_state);
@@ -1455,9 +1102,7 @@ TEST_F(DocumentTest, HasPrivateTokenOperationError) {
                          WTF::Unretained(&answerer)));
 
   ScriptState* script_state = scope.GetScriptState();
-  ExceptionState exception_state(script_state->GetIsolate(),
-                                 ExceptionContextType::kOperationInvoke,
-                                 "Document", "hasPrivateToken");
+  ExceptionState exception_state(script_state->GetIsolate());
 
   auto promise = document.hasPrivateToken(
       script_state, "https://issuer.example", exception_state);
@@ -1485,9 +1130,7 @@ TEST_F(DocumentTest, HasPrivateTokenInvalidArgument) {
                          WTF::Unretained(&answerer)));
 
   ScriptState* script_state = scope.GetScriptState();
-  ExceptionState exception_state(script_state->GetIsolate(),
-                                 ExceptionContextType::kOperationInvoke,
-                                 "Document", "hasPrivateToken");
+  ExceptionState exception_state(script_state->GetIsolate());
 
   auto promise = document.hasPrivateToken(
       script_state, "https://issuer.example", exception_state);
@@ -1515,9 +1158,7 @@ TEST_F(DocumentTest, HasPrivateTokenResourceExhausted) {
                          WTF::Unretained(&answerer)));
 
   ScriptState* script_state = scope.GetScriptState();
-  ExceptionState exception_state(script_state->GetIsolate(),
-                                 ExceptionContextType::kOperationInvoke,
-                                 "Document", "hasPrivateToken");
+  ExceptionState exception_state(script_state->GetIsolate());
 
   auto promise = document.hasPrivateToken(
       script_state, "https://issuer.example", exception_state);
@@ -1544,9 +1185,7 @@ TEST_F(DocumentTest, HasRedemptionRecordSuccess) {
                          WTF::Unretained(&answerer)));
 
   ScriptState* script_state = scope.GetScriptState();
-  ExceptionState exception_state(script_state->GetIsolate(),
-                                 ExceptionContextType::kOperationInvoke,
-                                 "Document", "hasRedemptionRecord");
+  ExceptionState exception_state(script_state->GetIsolate());
 
   auto promise = document.hasRedemptionRecord(
       script_state, "https://issuer.example", exception_state);
@@ -1572,9 +1211,7 @@ TEST_F(DocumentTest, HasRedemptionRecordSuccessWithFalseValue) {
                          WTF::Unretained(&answerer)));
 
   ScriptState* script_state = scope.GetScriptState();
-  ExceptionState exception_state(script_state->GetIsolate(),
-                                 ExceptionContextType::kOperationInvoke,
-                                 "Document", "hasRedemptionRecord");
+  ExceptionState exception_state(script_state->GetIsolate());
 
   auto promise = document.hasRedemptionRecord(
       script_state, "https://issuer.example", exception_state);
@@ -1600,9 +1237,7 @@ TEST_F(DocumentTest, HasRedemptionRecordOperationError) {
                          WTF::Unretained(&answerer)));
 
   ScriptState* script_state = scope.GetScriptState();
-  ExceptionState exception_state(script_state->GetIsolate(),
-                                 ExceptionContextType::kOperationInvoke,
-                                 "Document", "hasRedemptionRecord");
+  ExceptionState exception_state(script_state->GetIsolate());
 
   auto promise = document.hasRedemptionRecord(
       script_state, "https://issuer.example", exception_state);
@@ -1630,9 +1265,7 @@ TEST_F(DocumentTest, HasRedemptionRecordInvalidArgument) {
                          WTF::Unretained(&answerer)));
 
   ScriptState* script_state = scope.GetScriptState();
-  ExceptionState exception_state(script_state->GetIsolate(),
-                                 ExceptionContextType::kOperationInvoke,
-                                 "Document", "hasRedemptionRecord");
+  ExceptionState exception_state(script_state->GetIsolate());
 
   auto promise = document.hasRedemptionRecord(
       script_state, "https://issuer.example", exception_state);
@@ -1674,18 +1307,14 @@ TEST_F(DocumentTest,
 
   Document& document = scope.GetDocument();
   ScriptState* script_state = scope.GetScriptState();
-  ExceptionState exception_state(script_state->GetIsolate(),
-                                 ExceptionContextType::kOperationInvoke,
-                                 "Document", "hasRedemptionRecord");
+  DummyExceptionStateForTesting exception_state;
 
   auto promise = document.hasRedemptionRecord(
       script_state, "https://issuer.example", exception_state);
-
-  ScriptPromiseTester promise_tester(script_state, promise);
-  promise_tester.WaitUntilSettled();
-  EXPECT_TRUE(promise_tester.IsRejected());
-  EXPECT_TRUE(IsDOMException(script_state, promise_tester.Value(),
-                             DOMExceptionCode::kNotAllowedError));
+  EXPECT_TRUE(promise.IsEmpty());
+  EXPECT_TRUE(exception_state.HadException());
+  EXPECT_EQ(exception_state.CodeAs<DOMExceptionCode>(),
+            DOMExceptionCode::kNotAllowedError);
 }
 
 /**
@@ -1749,7 +1378,8 @@ class ParameterizedViewportFitDocumentTest
       html.Append("'>");
     }
 
-    GetDocument().documentElement()->setInnerHTML(html.ReleaseString());
+    GetDocument().documentElement()->SetInnerHTMLWithoutTrustedTypes(
+        html.ReleaseString());
     UpdateAllLifecyclePhasesForTest();
   }
 };
@@ -1889,30 +1519,22 @@ TEST_F(UnassociatedListedElementTest, GetUnassociatedListedElements) {
   ASSERT_TRUE(
       GetDocument().getElementById(AtomicString("associated_custom_element")));
 
-  ListedElement::List expected_elements;
-  expected_elements.push_back(GetElement("unassociated_button"));
-  expected_elements.push_back(GetElement("unassociated_fieldset"));
-  expected_elements.push_back(GetElement("unassociated_input"));
-  expected_elements.push_back(GetElement("unassociated_textarea"));
-  expected_elements.push_back(GetElement("unassociated_output"));
-  expected_elements.push_back(GetElement("unassociated_select"));
-  expected_elements.push_back(GetElement("unassociated_object"));
-  expected_elements.push_back(GetElement("unassociated_custom_element"));
-
-  ListedElement::List listed_elements =
-      GetDocument().UnassociatedListedElements();
-  EXPECT_TRUE(std::equal(listed_elements.begin(), listed_elements.end(),
-                         expected_elements.begin(), expected_elements.end()));
+  auto expected_elements = [&] {
+    return ElementsAre(
+        GetElement("unassociated_button"), GetElement("unassociated_fieldset"),
+        GetElement("unassociated_input"), GetElement("unassociated_textarea"),
+        GetElement("unassociated_output"), GetElement("unassociated_select"),
+        /*Button inside <object> Shadow DOM*/ _,
+        GetElement("unassociated_custom_element"));
+  };
+  EXPECT_THAT(GetDocument().UnassociatedListedElements(), expected_elements());
 
   // Try getting the cached unassociated listed elements again (calling
   // UnassociatedListedElements() again will not re-extract them).
-  listed_elements = GetDocument().UnassociatedListedElements();
-  EXPECT_TRUE(std::equal(listed_elements.begin(), listed_elements.end(),
-                         expected_elements.begin(), expected_elements.end()));
+  EXPECT_THAT(GetDocument().UnassociatedListedElements(), expected_elements());
 }
 
-// We extract unassociated listed element in a shadow DOM iff
-// `kAutofillIncludeShadowDomInUnassociatedListedElements` is enabled.
+// We extract unassociated listed element in a shadow DOM.
 TEST_F(UnassociatedListedElementTest,
        GetUnassociatedListedElementsFromShadowTree) {
   ShadowRoot& shadow_root =
@@ -1923,16 +1545,9 @@ TEST_F(UnassociatedListedElementTest,
   shadow_root.AppendChild(input);
   ListedElement::List listed_elements =
       GetDocument().UnassociatedListedElements();
-
-  if (base::FeatureList::IsEnabled(
-          blink::features::
-              kAutofillIncludeShadowDomInUnassociatedListedElements)) {
-    EXPECT_THAT(listed_elements,
-                ElementsAre(ListedElement::From(*shadow_root.getElementById(
-                    AtomicString("unassociated_input")))));
-  } else {
-    EXPECT_THAT(listed_elements, IsEmpty());
-  }
+  EXPECT_THAT(listed_elements,
+              ElementsAre(ListedElement::From(*shadow_root.getElementById(
+                  AtomicString("unassociated_input")))));
 }
 
 // Check if the dynamically added unassociated listed element is properly
@@ -2153,7 +1768,7 @@ TEST_F(TopLevelFormsListTest, FormsInLightDomInsertionAndRemoval) {
 // Tests that top level forms inside shadow DOM are listed correctly and
 // insertion and removal updates the cache.
 TEST_F(TopLevelFormsListTest, FormsInShadowDomInsertionAndRemoval) {
-  GetDocument().body()->setHTMLUnsafe(R"HTML(
+  GetDocument().body()->SetHTMLUnsafeWithoutTrustedTypes(R"HTML(
     <form id="f1">
       <input type="text">
     </form>
@@ -2181,7 +1796,7 @@ TEST_F(TopLevelFormsListTest, FormsInShadowDomInsertionAndRemoval) {
 
 // Tests that nested forms across shadow DOM are ignored by `GetTopLevelForms`.
 TEST_F(TopLevelFormsListTest, GetTopLevelFormsIgnoresNestedChildren) {
-  GetDocument().body()->setHTMLUnsafe(R"HTML(
+  GetDocument().body()->SetHTMLUnsafeWithoutTrustedTypes(R"HTML(
     <form id="f1">
       <input type="text">
       <div id="d">
@@ -2312,6 +1927,82 @@ TEST_F(DocumentTest, LayoutReplacedUseCounterSvg) {
       WebFeature::kExplicitOverflowVisibleOnReplacedElementWithObjectProp));
 }
 
+class DocumentURLCacheTest : public DocumentTest {
+ public:
+  DocumentURLCacheTest() {
+    scoped_feature_list_.InitAndEnableFeatureWithParameters(
+        features::kOptimizeHTMLElementUrls, {{"cache_size", "5"}});
+    cache_ = new Document::URLCache();
+  }
+
+  ~DocumentURLCacheTest() override { delete cache_; }
+
+  Document::URLCache* Cache() { return cache_; }
+
+ protected:
+  const KURL& BaseUrl() {
+    static const KURL base_url(AtomicString("https://example.com"));
+    return base_url;
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+  Document::URLCache* cache_ = nullptr;
+};
+
+TEST_F(DocumentURLCacheTest, Get) {
+  KURL result = Cache()->Get(BaseUrl(), "hello");
+  EXPECT_TRUE(result.IsEmpty());
+}
+
+TEST_F(DocumentURLCacheTest, Put) {
+  KURL resolved_url("https://example.com/hello");
+  Cache()->Put(BaseUrl(), "hello", resolved_url);
+  KURL result = Cache()->Get(BaseUrl(), "hello");
+  EXPECT_FALSE(result.IsEmpty());
+  EXPECT_EQ(result, resolved_url);
+}
+
+TEST_F(DocumentURLCacheTest, ExceedsCacheSize) {
+  Cache()->Put(BaseUrl(), "hello1", KURL("https://example.com/hello1"));
+  Cache()->Put(BaseUrl(), "hello2", KURL("https://example.com/hello2"));
+  Cache()->Put(BaseUrl(), "hello3", KURL("https://example.com/hello3"));
+  Cache()->Put(BaseUrl(), "hello4", KURL("https://example.com/hello4"));
+  Cache()->Put(BaseUrl(), "hello5", KURL("https://example.com/hello5"));
+  EXPECT_EQ(Cache()->CacheSizeForTesting(), 5);
+
+  Cache()->Put(BaseUrl(), "hello6", KURL("https://example.com/hello6"));
+  EXPECT_EQ(Cache()->CacheSizeForTesting(), 5);
+
+  EXPECT_TRUE(Cache()->Get(BaseUrl(), "hello1").IsEmpty());
+  EXPECT_FALSE(Cache()->Get(BaseUrl(), "hello6").IsEmpty());
+}
+
+TEST_F(DocumentURLCacheTest, RemoveOldEntries) {
+  const KURL base2("https://test.com");
+  Cache()->Put(BaseUrl(), "hello1", KURL("https://example.com/hello1"));
+  Cache()->Put(base2, "hello2", KURL("https://example.com/hello2"));
+  Cache()->Put(base2, "hello3", KURL("https://example.com/hello3"));
+  Cache()->Put(base2, "hello4", KURL("https://example.com/hello4"));
+  Cache()->Put(BaseUrl(), "hello5", KURL("https://example.com/hello5"));
+
+  EXPECT_EQ(Cache()->CacheSizeForTesting(), 5);
+  EXPECT_FALSE(Cache()->Get(BaseUrl(), "hello1").IsEmpty());
+  EXPECT_FALSE(Cache()->Get(base2, "hello2").IsEmpty());
+  EXPECT_FALSE(Cache()->Get(base2, "hello3").IsEmpty());
+  EXPECT_FALSE(Cache()->Get(base2, "hello4").IsEmpty());
+  EXPECT_FALSE(Cache()->Get(BaseUrl(), "hello5").IsEmpty());
+
+  Cache()->RemoveOldEntries(base2);
+
+  EXPECT_EQ(Cache()->CacheSizeForTesting(), 2);
+  EXPECT_FALSE(Cache()->Get(BaseUrl(), "hello1").IsEmpty());
+  EXPECT_TRUE(Cache()->Get(base2, "hello2").IsEmpty());
+  EXPECT_TRUE(Cache()->Get(base2, "hello3").IsEmpty());
+  EXPECT_TRUE(Cache()->Get(base2, "hello4").IsEmpty());
+  EXPECT_FALSE(Cache()->Get(BaseUrl(), "hello5").IsEmpty());
+}
+
 // https://crbug.com/1311370
 TEST_F(DocumentSimTest, HeaderPreloadRemoveReaddClient) {
   SimRequest::Params main_params;
@@ -2387,5 +2078,120 @@ TEST_F(DocumentTest, LifecycleState_DirtyStyle_NoBody) {
   EXPECT_EQ(GetDocument().Lifecycle().GetState(),
             DocumentLifecycle::kVisualUpdatePending);
 }
+
+#if BUILDFLAG(IS_ANDROID)
+class TestPaymentLinkHandler
+    : public payments::facilitated::mojom::blink::PaymentLinkHandler {
+ public:
+  void HandlePaymentLink(const KURL& url) override {
+    ++payment_link_handled_counter_;
+    handled_url_ = url;
+    std::move(on_link_handled_callback_).Run();
+  }
+
+  int get_payment_link_handled_counter() const {
+    return payment_link_handled_counter_;
+  }
+
+  const KURL& get_handled_url() const { return handled_url_; }
+
+  void Bind(mojo::ScopedMessagePipeHandle handle) {
+    receiver_.Bind(mojo::PendingReceiver<
+                   payments::facilitated::mojom::blink::PaymentLinkHandler>(
+        std::move(handle)));
+  }
+
+  void set_on_link_handled_callback(
+      base::OnceClosure on_link_handled_callback) {
+    on_link_handled_callback_ = std::move(on_link_handled_callback);
+  }
+
+ private:
+  int payment_link_handled_counter_ = 0;
+  KURL handled_url_;
+  mojo::Receiver<payments::facilitated::mojom::blink::PaymentLinkHandler>
+      receiver_{this};
+  base::OnceClosure on_link_handled_callback_;
+};
+
+TEST_F(DocumentTest, PaymentLinkNotHandled_PaymentRel) {
+  TestPaymentLinkHandler test_payment_link_handler;
+
+  GetDocument().GetFrame()->GetBrowserInterfaceBroker().SetBinderForTesting(
+      payments::facilitated::mojom::blink::PaymentLinkHandler::Name_,
+      base::BindRepeating(&TestPaymentLinkHandler::Bind,
+                          base::Unretained(&test_payment_link_handler)));
+
+  ScopedPaymentLinkDetectionForTest payment_link_detection(true);
+
+  // Link elements with rel='payment' won't trigger payment link handling.
+  SetHtmlInnerHTML(R"HTML(
+    <head>
+      <link rel="payment" href="upi://payment_link_1">
+    </head>
+  )HTML");
+
+  // Check that the payment link was not handled.
+  EXPECT_EQ(test_payment_link_handler.get_payment_link_handled_counter(), 0);
+}
+
+TEST_F(DocumentTest, PaymentLinkHandling_SinglePaymentLink) {
+  TestPaymentLinkHandler test_payment_link_handler;
+  base::RunLoop run_loop;
+  test_payment_link_handler.set_on_link_handled_callback(
+      run_loop.QuitClosure());
+
+  GetDocument().GetFrame()->GetBrowserInterfaceBroker().SetBinderForTesting(
+      payments::facilitated::mojom::blink::PaymentLinkHandler::Name_,
+      base::BindRepeating(&TestPaymentLinkHandler::Bind,
+                          base::Unretained(&test_payment_link_handler)));
+
+  ScopedPaymentLinkDetectionForTest payment_link_detection(true);
+
+  SetHtmlInnerHTML(R"HTML(
+    <head>
+      <link rel="facilitated-payment" href="upi://payment_link_1">
+    </head>
+  )HTML");
+
+  // Run the message loop to ensure Mojo messages are dispatched.
+  run_loop.Run();
+
+  // Check if the correct payment link was handled.
+  EXPECT_EQ(test_payment_link_handler.get_payment_link_handled_counter(), 1);
+  EXPECT_EQ(test_payment_link_handler.get_handled_url(),
+            KURL("upi://payment_link_1"));
+}
+
+TEST_F(DocumentTest, PaymentLinkHandling_MultiplePaymentLink) {
+  TestPaymentLinkHandler test_payment_link_handler;
+  base::RunLoop run_loop;
+  test_payment_link_handler.set_on_link_handled_callback(
+      run_loop.QuitClosure());
+
+  GetDocument().GetFrame()->GetBrowserInterfaceBroker().SetBinderForTesting(
+      payments::facilitated::mojom::blink::PaymentLinkHandler::Name_,
+      base::BindRepeating(&TestPaymentLinkHandler::Bind,
+                          base::Unretained(&test_payment_link_handler)));
+
+  ScopedPaymentLinkDetectionForTest payment_link_detection(true);
+
+  SetHtmlInnerHTML(R"HTML(
+    <head>
+      <link rel="facilitated-payment" href="upi://payment_link_1">
+      <link rel="facilitated-payment" href="upi://payment_link_2">
+    </head>
+  )HTML");
+
+  // Run the message loop to ensure Mojo messages are dispatched.
+  run_loop.Run();
+
+  // Check if the correct payment link was handled and the payment link handling
+  // was invoked only once.
+  EXPECT_EQ(test_payment_link_handler.get_payment_link_handled_counter(), 1);
+  EXPECT_EQ(test_payment_link_handler.get_handled_url(),
+            KURL("upi://payment_link_1"));
+}
+#endif  // BUILDFLAG(IS_ANDROID)
 
 }  // namespace blink

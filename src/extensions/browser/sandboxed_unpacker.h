@@ -15,9 +15,9 @@
 #include "base/memory/ref_counted_delete_on_sequence.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/types/expected.h"
 #include "base/values.h"
 #include "extensions/browser/api/declarative_net_request/install_index_helper.h"
-#include "extensions/browser/api/declarative_net_request/ruleset_install_pref.h"
 #include "extensions/browser/content_verifier/content_verifier_key.h"
 #include "extensions/browser/crx_file_info.h"
 #include "extensions/browser/image_sanitizer.h"
@@ -28,7 +28,6 @@
 #include "extensions/common/mojom/manifest.mojom-shared.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "services/data_decoder/public/cpp/data_decoder.h"
-#include "services/data_decoder/public/mojom/json_parser.mojom.h"
 
 class SkBitmap;
 
@@ -44,6 +43,7 @@ namespace extensions {
 class Extension;
 enum class SandboxedUnpackerFailureReason;
 enum class InstallationStage;
+struct RulesetParseResult;
 
 namespace declarative_net_request {
 struct IndexAndPersistJSONRulesetResult;
@@ -56,8 +56,8 @@ class SandboxedUnpackerClient
   // the constructor call must also happen on the UI thread.
   SandboxedUnpackerClient();
 
-  // Determines whether |extension| requires computing and storing
-  // computed_hashes.json and returns the result through |callback|.
+  // Determines whether `extension` requires computing and storing
+  // computed_hashes.json and returns the result through `callback`.
   // Currently we do this only for force-installed extensions outside of Chrome
   // Web Store, and that is reflected in method's name.
   virtual void ShouldComputeHashesForOffWebstoreExtension(
@@ -94,7 +94,7 @@ class SandboxedUnpackerClient
       std::unique_ptr<base::Value::Dict> original_manifest,
       const Extension* extension,
       const SkBitmap& install_icon,
-      declarative_net_request::RulesetInstallPrefs ruleset_install_prefs) = 0;
+      base::Value::Dict ruleset_install_prefs) = 0;
   virtual void OnUnpackFailure(const CrxInstallError& error) = 0;
 
   // Called after stage of installation is changed.
@@ -131,8 +131,8 @@ class SandboxedUnpacker : public ImageSanitizer::Client {
   };
 
   // Creates a SandboxedUnpacker that will do work to unpack an extension,
-  // passing the |location| and |creation_flags| to Extension::Create. The
-  // |extensions_dir| parameter should specify the directory under which we'll
+  // passing the `location` and `creation_flags` to Extension::Create. The
+  // `extensions_dir` parameter should specify the directory under which we'll
   // create a subdirectory to write the unpacked extension contents.
   // Note: Because this requires disk I/O, the task runner passed should use
   // TaskShutdownBehavior::SKIP_ON_SHUTDOWN to ensure that either the task is
@@ -165,7 +165,7 @@ class SandboxedUnpacker : public ImageSanitizer::Client {
 
   ~SandboxedUnpacker() override;
 
-  // Create |temp_dir_| used to unzip or unpack the extension in.
+  // Create `temp_dir_` used to unzip or unpack the extension in.
   bool CreateTempDirectory();
 
   // Helper functions to simplify calling ReportFailure.
@@ -174,7 +174,7 @@ class SandboxedUnpacker : public ImageSanitizer::Client {
   void FailWithPackageError(const SandboxedUnpackerFailureReason reason);
 
   // Validates the signature of the extension and extract the key to
-  // |public_key_|. True if the signature validates, false otherwise.
+  // `public_key_`. True if the signature validates, false otherwise.
   bool ValidateSignature(const base::FilePath& crx_path,
                          const std::string& expected_hash,
                          const crx_file::VerifierFormat required_format);
@@ -200,8 +200,7 @@ class SandboxedUnpacker : public ImageSanitizer::Client {
 
   // Unpacks the extension in directory and returns the manifest.
   void Unpack(const base::FilePath& directory);
-  void ReadManifestDone(std::optional<base::Value> manifest,
-                        const std::optional<std::string>& error);
+  void ReadManifestDone(base::expected<base::Value, std::string> result);
   void UnpackExtensionSucceeded(base::Value::Dict manifest);
 
   // Helper which calls ReportFailure.
@@ -218,8 +217,8 @@ class SandboxedUnpacker : public ImageSanitizer::Client {
   void SanitizeMessageCatalogs(
       const std::set<base::FilePath>& message_catalog_paths);
 
-  void MessageCatalogsSanitized(JsonFileSanitizer::Status status,
-                                const std::string& error_msg);
+  void MessageCatalogsSanitized(
+      base::expected<void, JsonFileSanitizer::Error> result);
 
   // Reports unpack success or failure, or unzip failure.
   void ReportSuccess();
@@ -242,8 +241,7 @@ class SandboxedUnpacker : public ImageSanitizer::Client {
   // rulesets.
   void IndexAndPersistJSONRulesetsIfNeeded();
 
-  void OnJSONRulesetsIndexed(
-      declarative_net_request::InstallIndexHelper::Result result);
+  void OnJSONRulesetsIndexed(RulesetParseResult result);
 
   // Computed hashes: if requested (via ShouldComputeHashes callback in
   // SandbloxedUnpackerClient), calculate hashes of all extensions' resources
@@ -253,14 +251,10 @@ class SandboxedUnpacker : public ImageSanitizer::Client {
 
   void MaybeComputeHashes(bool should_compute_hashes);
 
-  // Returns a JsonParser that can be used on the |unpacker_io_task_runner|.
-  data_decoder::mojom::JsonParser* GetJsonParserPtr();
-
-  // Parses the JSON file at |path| and invokes |callback| when done. |callback|
-  // is called with a null parameter if parsing failed.
-  // This must be called from the |unpacker_io_task_runner_|.
-  void ParseJsonFile(const base::FilePath& path,
-                     data_decoder::mojom::JsonParser::ParseCallback callback);
+  // Parses the JSON file at `path` and invokes `ReadManifestDone()` with the
+  // result.
+  // This must be called from the `unpacker_io_task_runner_`.
+  void ParseJsonFile(const base::FilePath& path);
 
   // If we unpacked a CRX file, we hold on to the path name for use
   // in various histograms.
@@ -284,7 +278,7 @@ class SandboxedUnpacker : public ImageSanitizer::Client {
   std::optional<base::Value::Dict> manifest_;
 
   // Install prefs needed for the Declarative Net Request API.
-  declarative_net_request::RulesetInstallPrefs ruleset_install_prefs_;
+  base::Value::Dict ruleset_install_prefs_;
 
   // Represents the extension we're unpacking.
   scoped_refptr<Extension> extension_;

@@ -9,16 +9,22 @@ import android.graphics.drawable.Drawable;
 
 import androidx.appcompat.content.res.AppCompatResources;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tabmodel.TabClosureParams;
 import org.chromium.chrome.browser.tasks.tab_management.TabUiMetricsHelper.TabListEditorActionMetricGroups;
 import org.chromium.chrome.tab_ui.R;
+import org.chromium.components.browser_ui.util.motion.MotionEventInfo;
 
 import java.util.List;
 
 /** Close action for the {@link TabListEditorMenu}. */
+@NullMarked
 public class TabListEditorCloseAction extends TabListEditorAction {
     /**
      * Create an action for closing tabs.
+     *
      * @param context for loading resources.
      * @param showMode whether to show an action view.
      * @param buttonType the type of the action view.
@@ -49,26 +55,33 @@ public class TabListEditorCloseAction extends TabListEditorAction {
     }
 
     @Override
-    public void onSelectionStateChange(List<Integer> tabIds) {
+    public void onSelectionStateChange(List<TabListEditorItemSelectionId> itemIds) {
         int size =
                 editorSupportsActionOnRelatedTabs()
-                        ? getTabCountIncludingRelatedTabs(getTabGroupModelFilter(), tabIds)
-                        : tabIds.size();
-        setEnabledAndItemCount(!tabIds.isEmpty(), size);
+                        ? getTabCountIncludingRelatedTabs(getTabGroupModelFilter(), itemIds)
+                        : itemIds.size();
+        setEnabledAndItemCount(!itemIds.isEmpty(), size);
     }
 
     @Override
-    public boolean performAction(List<Tab> tabs) {
+    public boolean performAction(
+            List<Tab> tabs,
+            List<String> tabGroupSyncIds,
+            @Nullable MotionEventInfo triggeringMotion) {
         assert !tabs.isEmpty() : "Close action should not be enabled for no tabs.";
 
         getTabGroupModelFilter()
-                .closeMultipleTabs(
-                        tabs,
-                        /* canUndo= */ true,
-                        /* hideTabGroups= */ editorSupportsActionOnRelatedTabs());
-
+                .getTabModel()
+                .getTabRemover()
+                .closeTabs(
+                        TabClosureParams.closeTabs(tabs)
+                                .allowUndo(true)
+                                .hideTabGroups(editorSupportsActionOnRelatedTabs())
+                                .build(),
+                        /* allowDialog= */ true);
         TabUiMetricsHelper.recordSelectionEditorActionMetrics(
                 TabListEditorActionMetricGroups.CLOSE);
+
         return true;
     }
 

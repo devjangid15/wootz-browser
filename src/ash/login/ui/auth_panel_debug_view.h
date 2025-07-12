@@ -12,7 +12,6 @@
 #include "chromeos/ash/components/cryptohome/auth_factor.h"
 #include "chromeos/ash/components/osauth/public/auth_attempt_consumer.h"
 #include "components/account_id/account_id.h"
-#include "ui/gfx/geometry/size.h"
 #include "ui/views/view.h"
 
 namespace ash {
@@ -22,7 +21,7 @@ class ASH_EXPORT AuthPanelDebugView : public views::View,
  public:
   // Creates local authentication request view that will enable the user to
   // authenticate with a local authentication.
-  AuthPanelDebugView(const AccountId& account_id);
+  AuthPanelDebugView(const AccountId& account_id, bool use_legacy_authpanel);
 
   AuthPanelDebugView(const AuthPanelDebugView&) = delete;
   AuthPanelDebugView& operator=(const AuthPanelDebugView&) = delete;
@@ -40,22 +39,15 @@ class ASH_EXPORT AuthPanelDebugView : public views::View,
   void OnUserAuthSuccess(AshAuthFactor factor,
                          const AuthProofToken& token) override;
 
-  gfx::Size CalculatePreferredSize(
-      const views::SizeBounds& available_size) const override;
-
  private:
   // Closes the view.
   void OnClose();
 
-  // Updates view's preferred size.
-  void UpdatePreferredSize();
+  void ChildPreferredSizeChanged(views::View* child) override;
 
   void OnEndAuthentication();
 
   void OnAuthPanelPreferredSizeChanged();
-
-  // Returns the view dimensions.
-  gfx::Size GetAuthPanelDebugViewSize() const;
 
   base::WeakPtrFactory<AuthPanelDebugView> weak_ptr_factory_{this};
 };

@@ -16,6 +16,7 @@
 #include "chrome/browser/safe_browsing/client_side_detection_service_factory.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/test/base/chrome_test_utils.h"
+#include "chrome/test/base/platform_browser_test.h"
 #include "components/prefs/pref_service.h"
 #include "components/safe_browsing/content/browser/client_side_phishing_model.h"
 #include "components/safe_browsing/content/common/safe_browsing.mojom.h"
@@ -23,6 +24,7 @@
 #include "components/safe_browsing/core/common/proto/client_model.pb.h"
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
 #include "content/public/browser/render_process_host.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "ipc/ipc_channel_proxy.h"
@@ -34,10 +36,8 @@
 #if BUILDFLAG(IS_ANDROID)
 #include "chrome/browser/ui/android/tab_model/tab_model.h"
 #include "chrome/browser/ui/android/tab_model/tab_model_list.h"
-#include "chrome/test/base/android/android_browser_test.h"
 #else
 #include "chrome/browser/ui/browser.h"
-#include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #endif  // defined (
 
@@ -171,17 +171,18 @@ IN_PROC_BROWSER_TEST_F(ClientSideDetectionServiceBrowserTest,
     mojom::PhishingDetectorResult result;
     std::optional<mojo_base::ProtoWrapper> verdict;
     phishing_detector->StartPhishingDetection(
-        url, base::BindOnce(
-                 [](base::RepeatingClosure quit_closure,
-                    mojom::PhishingDetectorResult* out_result,
-                    std::optional<mojo_base::ProtoWrapper>* out_verdict,
-                    mojom::PhishingDetectorResult result,
-                    std::optional<mojo_base::ProtoWrapper> verdict) {
-                   *out_result = result;
-                   *out_verdict = std::move(verdict);
-                   quit_closure.Run();
-                 },
-                 run_loop.QuitClosure(), &result, &verdict));
+        url, safe_browsing::mojom::ClientSideDetectionType::kTriggerModels,
+        base::BindOnce(
+            [](base::RepeatingClosure quit_closure,
+               mojom::PhishingDetectorResult* out_result,
+               std::optional<mojo_base::ProtoWrapper>* out_verdict,
+               mojom::PhishingDetectorResult result,
+               std::optional<mojo_base::ProtoWrapper> verdict) {
+              *out_result = result;
+              *out_verdict = std::move(verdict);
+              quit_closure.Run();
+            },
+            run_loop.QuitClosure(), &result, &verdict));
 
     run_loop.Run();
 
@@ -264,17 +265,18 @@ IN_PROC_BROWSER_TEST_F(ClientSideDetectionServiceBrowserTest,
     mojom::PhishingDetectorResult result;
     std::optional<mojo_base::ProtoWrapper> verdict;
     phishing_detector->StartPhishingDetection(
-        url, base::BindOnce(
-                 [](base::RepeatingClosure quit_closure,
-                    mojom::PhishingDetectorResult* out_result,
-                    std::optional<mojo_base::ProtoWrapper>* out_verdict,
-                    mojom::PhishingDetectorResult result,
-                    std::optional<mojo_base::ProtoWrapper> verdict) {
-                   *out_result = result;
-                   *out_verdict = std::move(verdict);
-                   quit_closure.Run();
-                 },
-                 run_loop.QuitClosure(), &result, &verdict));
+        url, safe_browsing::mojom::ClientSideDetectionType::kTriggerModels,
+        base::BindOnce(
+            [](base::RepeatingClosure quit_closure,
+               mojom::PhishingDetectorResult* out_result,
+               std::optional<mojo_base::ProtoWrapper>* out_verdict,
+               mojom::PhishingDetectorResult result,
+               std::optional<mojo_base::ProtoWrapper> verdict) {
+              *out_result = result;
+              *out_verdict = std::move(verdict);
+              quit_closure.Run();
+            },
+            run_loop.QuitClosure(), &result, &verdict));
 
     run_loop.Run();
 
@@ -405,17 +407,18 @@ IN_PROC_BROWSER_TEST_F(ClientSideDetectionServiceBrowserTest,
     mojom::PhishingDetectorResult result;
     std::optional<mojo_base::ProtoWrapper> verdict;
     phishing_detector->StartPhishingDetection(
-        url, base::BindOnce(
-                 [](base::RepeatingClosure quit_closure,
-                    mojom::PhishingDetectorResult* out_result,
-                    std::optional<mojo_base::ProtoWrapper>* out_verdict,
-                    mojom::PhishingDetectorResult result,
-                    std::optional<mojo_base::ProtoWrapper> verdict) {
-                   *out_result = result;
-                   *out_verdict = std::move(verdict);
-                   quit_closure.Run();
-                 },
-                 run_loop.QuitClosure(), &result, &verdict));
+        url, safe_browsing::mojom::ClientSideDetectionType::kTriggerModels,
+        base::BindOnce(
+            [](base::RepeatingClosure quit_closure,
+               mojom::PhishingDetectorResult* out_result,
+               std::optional<mojo_base::ProtoWrapper>* out_verdict,
+               mojom::PhishingDetectorResult result,
+               std::optional<mojo_base::ProtoWrapper> verdict) {
+              *out_result = result;
+              *out_verdict = std::move(verdict);
+              quit_closure.Run();
+            },
+            run_loop.QuitClosure(), &result, &verdict));
 
     run_loop.Run();
 

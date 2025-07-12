@@ -112,8 +112,11 @@ struct CredentialUIEntry {
   // The current password.
   std::u16string password;
 
+  // Recovery password for automatic password change.
+  std::optional<std::u16string> backup_password;
+
   // The origin of identity provider used for federated login.
-  url::Origin federation_origin;
+  url::SchemeHostPort federation_origin;
 
   // The creation time, if this is a passkey, nullopt otherwise.
   std::optional<base::Time> creation_time;
@@ -184,7 +187,6 @@ struct CredentialUIEntry {
 std::string CreateSortKey(const CredentialUIEntry& credential);
 
 bool operator==(const CredentialUIEntry& lhs, const CredentialUIEntry& rhs);
-bool operator!=(const CredentialUIEntry& lhs, const CredentialUIEntry& rhs);
 bool operator<(const CredentialUIEntry& lhs, const CredentialUIEntry& rhs);
 
 // Returns true when the credential is either leaked or phished.

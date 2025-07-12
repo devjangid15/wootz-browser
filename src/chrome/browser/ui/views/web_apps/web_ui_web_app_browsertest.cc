@@ -21,7 +21,7 @@
 
 namespace {
 
-constexpr char kWebUIScheme[] = "wootzapp://";
+constexpr char kWebUIScheme[] = "chrome://";
 
 }  // namespace
 

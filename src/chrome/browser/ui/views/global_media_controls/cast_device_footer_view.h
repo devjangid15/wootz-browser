@@ -5,11 +5,13 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_GLOBAL_MEDIA_CONTROLS_CAST_DEVICE_FOOTER_VIEW_H_
 #define CHROME_BROWSER_UI_VIEWS_GLOBAL_MEDIA_CONTROLS_CAST_DEVICE_FOOTER_VIEW_H_
 
+#include "base/memory/raw_ptr.h"
 #include "components/global_media_controls/public/views/media_item_ui_footer.h"
 #include "components/media_message_center/notification_theme.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 
 namespace views {
+class Button;
 class ImageView;
 class Label;
 class LabelButton;
@@ -25,6 +27,7 @@ class CastDeviceFooterView : public global_media_controls::MediaItemUIFooter {
 
  public:
   explicit CastDeviceFooterView(
+      std::optional<std::string> device_name,
       base::RepeatingClosure stop_casting_callback,
       media_message_center::MediaColorTheme media_color_theme);
   ~CastDeviceFooterView() override;
@@ -32,7 +35,9 @@ class CastDeviceFooterView : public global_media_controls::MediaItemUIFooter {
   // global_media_controls::MediaItemUIFooter:
   void OnColorsChanged(SkColor foreground, SkColor background) override {}
 
-  views::LabelButton* GetStopCastingButtonForTesting();
+  // Helper functions for testing:
+  views::Label* GetDeviceNameForTesting();
+  views::Button* GetStopCastingButtonForTesting();
 
  private:
   void StopCasting();

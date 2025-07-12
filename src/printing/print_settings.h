@@ -62,18 +62,18 @@ inline constexpr char kLinuxSystemPrintDialogDataPageSetup[] = "page_setup";
 
 // Convert from `color_mode` into a `color_model`.  An invalid `color_mode`
 // will give a result of `mojom::ColorModel::kUnknownColorModel`.
-COMPONENT_EXPORT(PRINTING)
+COMPONENT_EXPORT(PRINTING_SETTINGS)
 mojom::ColorModel ColorModeToColorModel(int color_mode);
 
 // Returns true if `color_model` is color and false if it is B&W.  Callers
 // are not supposed to pass in `mojom::ColorModel::kUnknownColorModel`, but
 // if they do then the result will be std::nullopt.
-COMPONENT_EXPORT(PRINTING)
+COMPONENT_EXPORT(PRINTING_SETTINGS)
 std::optional<bool> IsColorModelSelected(mojom::ColorModel color_model);
 
 #if BUILDFLAG(USE_CUPS)
 // Get the color model setting name and value for the `color_model`.
-COMPONENT_EXPORT(PRINTING)
+COMPONENT_EXPORT(PRINTING_SETTINGS)
 void GetColorModelForModel(mojom::ColorModel color_model,
                            std::string* color_setting_name,
                            std::string* color_value);
@@ -81,11 +81,11 @@ void GetColorModelForModel(mojom::ColorModel color_model,
 
 #if BUILDFLAG(USE_CUPS_IPP)
 // Convert from `color_model` to a print-color-mode value from PWG 5100.13.
-COMPONENT_EXPORT(PRINTING)
+COMPONENT_EXPORT(PRINTING_SETTINGS)
 std::string GetIppColorModelForModel(mojom::ColorModel color_model);
 #endif  // BUILDFLAG(USE_CUPS_IPP)
 
-class COMPONENT_EXPORT(PRINTING) PrintSettings {
+class COMPONENT_EXPORT(PRINTING_SETTINGS) PrintSettings {
  public:
   // Media properties requested by the user. Default instance represents
   // default media selection.
@@ -115,9 +115,9 @@ class COMPONENT_EXPORT(PRINTING) PrintSettings {
   // Reinitialize the settings to the default values.
   void Clear();
 
-  void SetCustomMargins(const PageMargins& requested_margins_in_points);
-  const PageMargins& requested_custom_margins_in_points() const {
-    return requested_custom_margins_in_points_;
+  void SetCustomMargins(const PageMargins& requested_margins_in_microns);
+  const PageMargins& requested_custom_margins_in_microns() const {
+    return requested_custom_margins_in_microns_;
   }
   void set_margin_type(mojom::MarginType margin_type) {
     margin_type_ = margin_type;
@@ -320,6 +320,14 @@ class COMPONENT_EXPORT(PRINTING) PrintSettings {
       const {
     return printer_status_reason_;
   }
+
+  void set_print_scaling(mojom::PrintScalingType print_scaling) {
+    print_scaling_ = print_scaling;
+  }
+  mojom::PrintScalingType print_scaling() const { return print_scaling_; }
+
+  void set_quality(mojom::Quality quality) { quality_ = quality; }
+  mojom::Quality quality() const { return quality_; }
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
 #if BUILDFLAG(ENABLE_OOP_PRINTING_NO_OOP_BASIC_PRINT_DIALOG)
@@ -424,7 +432,7 @@ class COMPONENT_EXPORT(PRINTING) PrintSettings {
   bool is_modifiable_;
 
   // If margin type is custom, this is what was requested.
-  PageMargins requested_custom_margins_in_points_;
+  PageMargins requested_custom_margins_in_microns_;
 
   // Number of pages per sheet.
   int pages_per_sheet_;
@@ -453,11 +461,18 @@ class COMPONENT_EXPORT(PRINTING) PrintSettings {
 
   // True if the user selects to print to a different printer than the original
   // destination shown when Print Preview opens.
-  bool printer_manually_selected_;
+  bool printer_manually_selected_ = false;
 
   // The printer status reason shown for the selected printer at the time print
   // is requested. Only local CrOS printers set printer statuses.
   std::optional<crosapi::mojom::StatusReason::Reason> printer_status_reason_;
+
+  // Print scaling type.
+  mojom::PrintScalingType print_scaling_ =
+      mojom::PrintScalingType::kUnknownPrintScalingType;
+
+  // Print qulity for the printer to use.
+  mojom::Quality quality_ = mojom::Quality::kUnknownQuality;
 #endif  // BUILDFLAG(IS_CHROMEOS)
 };
 

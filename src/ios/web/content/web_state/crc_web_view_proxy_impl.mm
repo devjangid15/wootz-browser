@@ -22,6 +22,7 @@
   CRWWebViewScrollViewProxy* _contentViewScrollViewProxy;
 }
 @synthesize contentView = _contentView;
+@synthesize allowsLinkPreview = _allowsLinkPreview;
 @dynamic keyboardVisible;
 
 - (instancetype)init {
@@ -113,9 +114,6 @@
 
 - (BOOL)becomeFirstResponder {
   return [_contentView becomeFirstResponder];
-}
-
-- (void)surfaceSizeChanged {
 }
 
 - (BOOL)isWebPageInFullscreenMode {

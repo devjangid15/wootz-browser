@@ -27,7 +27,7 @@ namespace nearby::chrome {
 
 namespace {
 
-const char kDeviceAddress[] = "DeviceAddress";
+const char kDeviceAddress[] = "11:12:13:14:15:16";
 const char kDeviceServiceData1Str[] = "Device_Advertisement1";
 const char kDeviceServiceData2Str[] = "Device_Advertisement2";
 const ByteArray kDeviceServiceData1ByteArray{
@@ -46,6 +46,7 @@ const device::BluetoothUUID kService2BluetoothUuid{base::span<const uint8_t>(
     kTestServiceUuid2.data().size())};
 const char kServiceId[] = "TestServiceId";
 const char kCharacteristicUuid[] = "1234";
+const uint64_t kUniqueId = 24279786918417;
 
 std::vector<uint8_t> GetByteVector(const std::string& str) {
   return std::vector<uint8_t>(str.begin(), str.end());
@@ -58,7 +59,7 @@ class FakeBleV2RemotePeripheral : public api::ble_v2::BlePeripheral {
 
   std::string GetAddress() const override { return kDeviceAddress; }
 
-  UniqueId GetUniqueId() const override { NOTREACHED_NORETURN(); }
+  UniqueId GetUniqueId() const override { return kUniqueId; }
 };
 
 }  // namespace
@@ -145,6 +146,9 @@ class BleV2MediumTest : public testing::Test {
         {kFastAdvertisementServiceUuid1, kDeviceServiceData1ByteArray});
 
     base::ScopedAllowBaseSyncPrimitivesForTesting allow_sync_primitives;
+
+    // GATT server advertisements are expected to be connectable; this behavior
+    // aligns with the Nearby SDK implementation.
     EXPECT_EQ(expected_success,
               ble_v2_medium_->StartAdvertising(
                   advertising_data,
@@ -156,7 +160,7 @@ class BleV2MediumTest : public testing::Test {
     base::ScopedAllowBaseSyncPrimitivesForTesting allow_sync_primitives;
     FakeBleV2RemotePeripheral peripheral;
     auto gatt_client = ble_v2_medium_->ConnectToGattServer(
-        peripheral, api::ble_v2::TxPowerLevel::kHigh,
+        peripheral.GetUniqueId(), api::ble_v2::TxPowerLevel::kHigh,
         /*callback=*/{});
     EXPECT_EQ(expected_success, (gatt_client != nullptr));
   }
@@ -174,6 +178,11 @@ class BleV2MediumTest : public testing::Test {
 };
 
 TEST_F(BleV2MediumTest, TestScanning_OneService) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeatures(
+      /*enabled_features=*/{::features::kEnableNearbyBleV2},
+      /*disabled_features=*/{});
+
   CountDownLatch scanning_started_latch(1);
   CountDownLatch found_advertisement_latch(1);
   api::ble_v2::BleMedium::ScanningCallback scanning_callback = {
@@ -183,9 +192,8 @@ TEST_F(BleV2MediumTest, TestScanning_OneService) {
           },
       .advertisement_found_cb =
           [this, &found_advertisement_latch](
-              api::ble_v2::BlePeripheral& peripheral,
+              api::ble_v2::BlePeripheral::UniqueId peripheral_id,
               const api::ble_v2::BleAdvertisementData& advertisement_data) {
-            EXPECT_EQ(peripheral.GetAddress(), kDeviceAddress);
             EXPECT_EQ(advertisement_data.service_data
                           .find(kFastAdvertisementServiceUuid1)
                           ->second,
@@ -218,6 +226,11 @@ TEST_F(BleV2MediumTest, TestScanning_OneService) {
 }
 
 TEST_F(BleV2MediumTest, TestScanning_MultipleSessions) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeatures(
+      /*enabled_features=*/{::features::kEnableNearbyBleV2},
+      /*disabled_features=*/{});
+
   // Expects session 1 found one advertisement.
   CountDownLatch session_1_found_advertisement_latch(1);
   // Expects session 2 found two advertisement.
@@ -232,7 +245,7 @@ TEST_F(BleV2MediumTest, TestScanning_MultipleSessions) {
           },
       .advertisement_found_cb =
           [this, &session_1_found_advertisement_latch](
-              api::ble_v2::BlePeripheral& peripheral,
+              api::ble_v2::BlePeripheral::UniqueId peripheral_id,
               const api::ble_v2::BleAdvertisementData& advertisement_data) {
             session_1_found_advertisement_latch.CountDown();
             OnPeripheralDiscovered();
@@ -244,7 +257,7 @@ TEST_F(BleV2MediumTest, TestScanning_MultipleSessions) {
           },
       .advertisement_found_cb =
           [this, &session_2_found_advertisement_latch](
-              api::ble_v2::BlePeripheral& peripheral,
+              api::ble_v2::BlePeripheral::UniqueId peripheral_id,
               const api::ble_v2::BleAdvertisementData& advertisement_data) {
             session_2_found_advertisement_latch.CountDown();
             OnPeripheralDiscovered();
@@ -289,6 +302,11 @@ TEST_F(BleV2MediumTest, TestScanning_MultipleSessions) {
 }
 
 TEST_F(BleV2MediumTest, TestScanning_IgnoreIrrelevantAdvertisement) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeatures(
+      /*enabled_features=*/{::features::kEnableNearbyBleV2},
+      /*disabled_features=*/{});
+
   CountDownLatch scanning_started_latch(1);
   api::ble_v2::BleMedium::ScanningCallback scanning_callback = {
       .start_scanning_result =
@@ -296,7 +314,7 @@ TEST_F(BleV2MediumTest, TestScanning_IgnoreIrrelevantAdvertisement) {
             scanning_started_latch.CountDown();
           },
       .advertisement_found_cb =
-          [](api::ble_v2::BlePeripheral& peripheral,
+          [](api::ble_v2::BlePeripheral::UniqueId peripheral_id,
              const api::ble_v2::BleAdvertisementData& advertisement_data) {
             // should not reached here for irrelavant advertisement.
             EXPECT_TRUE(false);
@@ -326,6 +344,11 @@ TEST_F(BleV2MediumTest, TestScanning_IgnoreIrrelevantAdvertisement) {
 }
 
 TEST_F(BleV2MediumTest, TestAdvertising_AdapterFails) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeatures(
+      /*enabled_features=*/{::features::kEnableNearbyBleV2},
+      /*disabled_features=*/{});
+
   fake_adapter_->SetShouldAdvertisementRegistrationSucceed(false);
   api::ble_v2::BleAdvertisementData advertising_data;
   advertising_data.is_extended_advertisement = false;
@@ -354,6 +377,11 @@ TEST_F(BleV2MediumTest, TestAdvertising_AdapterFails) {
 }
 
 TEST_F(BleV2MediumTest, TestAdvertising_AdapterFailsInAsyncStartAdvertising) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeatures(
+      /*enabled_features=*/{::features::kEnableNearbyBleV2},
+      /*disabled_features=*/{});
+
   fake_adapter_->SetShouldAdvertisementRegistrationSucceed(false);
   api::ble_v2::BleAdvertisementData advertising_data;
   advertising_data.is_extended_advertisement = false;
@@ -391,6 +419,11 @@ TEST_F(BleV2MediumTest, TestAdvertising_AdapterFailsInAsyncStartAdvertising) {
 }
 
 TEST_F(BleV2MediumTest, TestAdvertising_FastAdvertisementSuccess) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeatures(
+      /*enabled_features=*/{::features::kEnableNearbyBleV2},
+      /*disabled_features=*/{});
+
   fake_adapter_->SetShouldAdvertisementRegistrationSucceed(true);
   api::ble_v2::BleAdvertisementData advertising_data;
   advertising_data.is_extended_advertisement = false;
@@ -410,7 +443,7 @@ TEST_F(BleV2MediumTest, TestAdvertising_FastAdvertisementSuccess) {
 TEST_F(BleV2MediumTest, TestAdvertising_ExtendedAdvertisementNotSupported) {
   base::test::ScopedFeatureList feature_list;
   feature_list.InitWithFeatures(
-      /*enabled_features=*/{},
+      /*enabled_features=*/{::features::kEnableNearbyBleV2},
       /*disabled_features=*/{
           ::features::kEnableNearbyBleV2ExtendedAdvertising});
   EXPECT_FALSE(ble_v2_medium_->IsExtendedAdvertisementsAvailable());
@@ -443,7 +476,8 @@ TEST_F(BleV2MediumTest, TestAdvertising_ExtendedAdvertisementNotSupported) {
 TEST_F(BleV2MediumTest, TestAdvertising_ExtendedAdvertisementSupported) {
   base::test::ScopedFeatureList feature_list;
   feature_list.InitWithFeatures(
-      /*enabled_features=*/{::features::kEnableNearbyBleV2ExtendedAdvertising},
+      /*enabled_features=*/{::features::kEnableNearbyBleV2,
+                            ::features::kEnableNearbyBleV2ExtendedAdvertising},
       /*disabled_features=*/{});
   EXPECT_TRUE(ble_v2_medium_->IsExtendedAdvertisementsAvailable());
 
@@ -464,6 +498,11 @@ TEST_F(BleV2MediumTest, TestAdvertising_ExtendedAdvertisementSupported) {
 }
 
 TEST_F(BleV2MediumTest, TestAdvertising_EmptyAdvertisingData) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeatures(
+      /*enabled_features=*/{::features::kEnableNearbyBleV2},
+      /*disabled_features=*/{});
+
   fake_adapter_->SetShouldAdvertisementRegistrationSucceed(true);
   api::ble_v2::BleAdvertisementData advertising_data = {};
   // Passing in empty advertisement data is unexpected, but is still
@@ -480,7 +519,8 @@ TEST_F(BleV2MediumTest, TestAdvertising_EmptyAdvertisingData) {
 TEST_F(BleV2MediumTest, TestAdvertising_MultipleStartAdvertisingSuccess) {
   base::test::ScopedFeatureList feature_list;
   feature_list.InitWithFeatures(
-      /*enabled_features=*/{::features::kEnableNearbyBleV2ExtendedAdvertising},
+      /*enabled_features=*/{::features::kEnableNearbyBleV2,
+                            ::features::kEnableNearbyBleV2ExtendedAdvertising},
       /*disabled_features=*/{});
   EXPECT_TRUE(ble_v2_medium_->IsExtendedAdvertisementsAvailable());
   EXPECT_FALSE(fake_adapter_->GetRegisteredAdvertisementServiceData(
@@ -533,6 +573,11 @@ TEST_F(BleV2MediumTest, TestAdvertising_MultipleStartAdvertisingSuccess) {
 }
 
 TEST_F(BleV2MediumTest, TestAdvertising_MultipleAdvertisementDataSuccess) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeatures(
+      /*enabled_features=*/{::features::kEnableNearbyBleV2},
+      /*disabled_features=*/{});
+
   fake_adapter_->SetShouldAdvertisementRegistrationSucceed(true);
   api::ble_v2::BleAdvertisementData advertising_data;
   advertising_data.is_extended_advertisement = false;
@@ -564,6 +609,11 @@ TEST_F(BleV2MediumTest, TestAdvertising_MultipleAdvertisementDataSuccess) {
 }
 
 TEST_F(BleV2MediumTest, TestAdvertising_StopAdvertisingClearsRegistrationMap) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeatures(
+      /*enabled_features=*/{::features::kEnableNearbyBleV2},
+      /*disabled_features=*/{});
+
   fake_adapter_->SetShouldAdvertisementRegistrationSucceed(true);
   api::ble_v2::BleAdvertisementData advertising_data;
   advertising_data.is_extended_advertisement = false;
@@ -595,6 +645,11 @@ TEST_F(BleV2MediumTest, TestAdvertising_StopAdvertisingClearsRegistrationMap) {
 }
 
 TEST_F(BleV2MediumTest, TestAdvertising_StartAndStopAsyncAdvertising) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeatures(
+      /*enabled_features=*/{::features::kEnableNearbyBleV2},
+      /*disabled_features=*/{});
+
   fake_adapter_->SetShouldAdvertisementRegistrationSucceed(true);
   api::ble_v2::BleAdvertisementData advertising_data;
   advertising_data.is_extended_advertisement = false;
@@ -639,7 +694,7 @@ TEST_F(BleV2MediumTest, TestAdvertising_StartAndStopAsyncAdvertising) {
 TEST_F(BleV2MediumTest, IsExtendedAdvertisementsAvailable_FlagDisabled) {
   base::test::ScopedFeatureList feature_list;
   feature_list.InitWithFeatures(
-      /*enabled_features=*/{},
+      /*enabled_features=*/{::features::kEnableNearbyBleV2},
       /*disabled_features=*/{
           ::features::kEnableNearbyBleV2ExtendedAdvertising});
 
@@ -654,7 +709,8 @@ TEST_F(BleV2MediumTest, IsExtendedAdvertisementsAvailable_FlagDisabled) {
 TEST_F(BleV2MediumTest, IsExtendedAdvertisementsAvailable_FlagEnabled) {
   base::test::ScopedFeatureList feature_list;
   feature_list.InitWithFeatures(
-      /*enabled_features=*/{::features::kEnableNearbyBleV2ExtendedAdvertising},
+      /*enabled_features=*/{::features::kEnableNearbyBleV2,
+                            ::features::kEnableNearbyBleV2ExtendedAdvertising},
       /*disabled_features=*/{});
 
   // If the flag is enabled, return whether the device has hardware support.
@@ -668,7 +724,7 @@ TEST_F(BleV2MediumTest, IsExtendedAdvertisementsAvailable_FlagEnabled) {
 TEST_F(BleV2MediumTest, StartGattServer_DualRoleSupported_FlagDisabled) {
   base::test::ScopedFeatureList feature_list;
   feature_list.InitWithFeatures(
-      /*enabled_features=*/{},
+      /*enabled_features=*/{::features::kEnableNearbyBleV2},
       /*disabled_features=*/{::features::kEnableNearbyBleV2GattServer});
 
   fake_adapter_->is_dual_role_supported_ = true;
@@ -679,7 +735,8 @@ TEST_F(BleV2MediumTest, StartGattServer_DualRoleSupported_FlagDisabled) {
 TEST_F(BleV2MediumTest, StartGattServer_DualRoleSupported_FlagEnabled) {
   base::test::ScopedFeatureList feature_list;
   feature_list.InitWithFeatures(
-      /*enabled_features=*/{::features::kEnableNearbyBleV2GattServer},
+      /*enabled_features=*/{::features::kEnableNearbyBleV2,
+                            ::features::kEnableNearbyBleV2GattServer},
       /*disabled_features=*/{});
 
   fake_adapter_->is_dual_role_supported_ = true;
@@ -694,6 +751,12 @@ TEST_F(BleV2MediumTest, StartGattServer_DualRoleSupported_FlagEnabled) {
 }
 
 TEST_F(BleV2MediumTest, StartGattServer_DualRoleNotSupported) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeatures(
+      /*enabled_features=*/{::features::kEnableNearbyBleV2,
+                            ::features::kEnableNearbyBleV2GattServer},
+      /*disabled_features=*/{});
+
   fake_adapter_->is_dual_role_supported_ = false;
   auto gatt_server = ble_v2_medium_->StartGattServer({});
   EXPECT_FALSE(gatt_server);
@@ -703,6 +766,12 @@ TEST_F(BleV2MediumTest, StartGattServer_DualRoleNotSupported) {
 }
 
 TEST_F(BleV2MediumTest, StartAdvertising_RegisterGattServer_Success) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeatures(
+      /*enabled_features=*/{::features::kEnableNearbyBleV2,
+                            ::features::kEnableNearbyBleV2GattServer},
+      /*disabled_features=*/{});
+
   SetUpGattServerForAdvertising(/*should_register_succeed=*/true);
 
   base::RunLoop run_loop;
@@ -713,9 +782,21 @@ TEST_F(BleV2MediumTest, StartAdvertising_RegisterGattServer_Success) {
                          base::Unretained(this), /*expected_result=*/true),
           run_loop.QuitClosure());
   run_loop.Run();
+
+  histogram_tester_.ExpectBucketCount(
+      "Nearby.Connections.BleV2.StartAdvertising.Result",
+      /*bucket: Success=*/1, 1);
+  histogram_tester_.ExpectTotalCount(
+      "Nearby.Connections.BleV2.StartAdvertising.FailureReason", 0);
 }
 
 TEST_F(BleV2MediumTest, StartAdvertising_RegisterGattServer_Failure) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeatures(
+      /*enabled_features=*/{::features::kEnableNearbyBleV2,
+                            ::features::kEnableNearbyBleV2GattServer},
+      /*disabled_features=*/{});
+
   SetUpGattServerForAdvertising(/*should_register_succeed=*/false);
 
   base::RunLoop run_loop;
@@ -726,12 +807,66 @@ TEST_F(BleV2MediumTest, StartAdvertising_RegisterGattServer_Failure) {
                          base::Unretained(this), /*expected_result=*/false),
           run_loop.QuitClosure());
   run_loop.Run();
+
+  histogram_tester_.ExpectBucketCount(
+      "Nearby.Connections.BleV2.StartAdvertising.Result",
+      /*bucket: Failure=*/0, 1);
+  histogram_tester_.ExpectBucketCount(
+      "Nearby.Connections.BleV2.StartAdvertising.Result."
+      "RegularAdvertisement",
+      /*bucket: Failure=*/0, 1);
+  histogram_tester_.ExpectBucketCount(
+      "Nearby.Connections.BleV2.StartAdvertising.FailureReason",
+      metrics::StartAdvertisingFailureReason::kFailedToRegisterGattServices, 1);
 }
 
 TEST_F(BleV2MediumTest, ConnectToGattServer_Success) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeatures(
+      /*enabled_features=*/{::features::kEnableNearbyBleV2},
+      /*disabled_features=*/{});
+
+  CountDownLatch scanning_started_latch(1);
+  CountDownLatch found_advertisement_latch(1);
+  api::ble_v2::BleMedium::ScanningCallback scanning_callback = {
+      .start_scanning_result =
+          [&scanning_started_latch](absl::Status status) {
+            scanning_started_latch.CountDown();
+          },
+      .advertisement_found_cb =
+          [this, &found_advertisement_latch](
+              api::ble_v2::BlePeripheral::UniqueId peripheral_id,
+              const api::ble_v2::BleAdvertisementData& advertisement_data) {
+            EXPECT_EQ(advertisement_data.service_data
+                          .find(kFastAdvertisementServiceUuid1)
+                          ->second,
+                      kDeviceServiceData1ByteArray);
+            found_advertisement_latch.CountDown();
+            OnPeripheralDiscovered();
+          }};
+
+  auto scanning_session = ble_v2_medium_->StartScanning(
+      kFastAdvertisementServiceUuid1, {}, std::move(scanning_callback));
+
+  base::flat_map<device::BluetoothUUID, std::vector<uint8_t>> service_data_map;
+  service_data_map.insert_or_assign(kService1BluetoothUuid,
+                                    GetByteVector(kDeviceServiceData1Str));
+
   fake_adapter_->SetConnectToDeviceResult(
       bluetooth::mojom::ConnectResult::SUCCESS,
       std::make_unique<bluetooth::FakeDevice>());
+
+  EXPECT_TRUE(scanning_started_latch.Await().Ok());
+
+  base::RunLoop discovered_run_loop;
+  SetOnExpectedPeripheralsDiscoveredCallback(discovered_run_loop.QuitClosure());
+  fake_adapter_->NotifyDeviceAdded(
+      CreateDeviceInfo(kDeviceAddress, service_data_map));
+  discovered_run_loop.Run();
+
+  EXPECT_TRUE(found_advertisement_latch.Await().Ok());
+  EXPECT_TRUE(scanning_session->stop_scanning().ok());
+
   base::RunLoop run_loop;
   base::ThreadPool::CreateSequencedTaskRunner({base::MayBlock()})
       ->PostTaskAndReply(
@@ -740,11 +875,63 @@ TEST_F(BleV2MediumTest, ConnectToGattServer_Success) {
                          base::Unretained(this), /*expected_result=*/true),
           run_loop.QuitClosure());
   run_loop.Run();
+  histogram_tester_.ExpectBucketCount(
+      "Nearby.Connections.BleV2.ConnectToGattServer.Result",
+      /*bucket: success=*/1, 1);
+  histogram_tester_.ExpectTotalCount(
+      "Nearby.Connections.BleV2.ConnectToGattServer.Duration", 1);
 }
 
 TEST_F(BleV2MediumTest, ConnectToGattServer_Failure) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeatures(
+      /*enabled_features=*/{::features::kEnableNearbyBleV2},
+      /*disabled_features=*/{});
+
   fake_adapter_->SetConnectToDeviceResult(
       bluetooth::mojom::ConnectResult::FAILED, /*fake_device=*/nullptr);
+
+  CountDownLatch scanning_started_latch(1);
+  CountDownLatch found_advertisement_latch(1);
+  api::ble_v2::BleMedium::ScanningCallback scanning_callback = {
+      .start_scanning_result =
+          [&scanning_started_latch](absl::Status status) {
+            scanning_started_latch.CountDown();
+          },
+      .advertisement_found_cb =
+          [this, &found_advertisement_latch](
+              api::ble_v2::BlePeripheral::UniqueId peripheral_id,
+              const api::ble_v2::BleAdvertisementData& advertisement_data) {
+            EXPECT_EQ(advertisement_data.service_data
+                          .find(kFastAdvertisementServiceUuid1)
+                          ->second,
+                      kDeviceServiceData1ByteArray);
+            found_advertisement_latch.CountDown();
+            OnPeripheralDiscovered();
+          }};
+
+  auto scanning_session = ble_v2_medium_->StartScanning(
+      kFastAdvertisementServiceUuid1, {}, std::move(scanning_callback));
+
+  base::flat_map<device::BluetoothUUID, std::vector<uint8_t>> service_data_map;
+  service_data_map.insert_or_assign(kService1BluetoothUuid,
+                                    GetByteVector(kDeviceServiceData1Str));
+
+  fake_adapter_->SetConnectToDeviceResult(
+      bluetooth::mojom::ConnectResult::FAILED,
+      /*fake_device=*/nullptr);
+
+  EXPECT_TRUE(scanning_started_latch.Await().Ok());
+
+  base::RunLoop discovered_run_loop;
+  SetOnExpectedPeripheralsDiscoveredCallback(discovered_run_loop.QuitClosure());
+  fake_adapter_->NotifyDeviceAdded(
+      CreateDeviceInfo(kDeviceAddress, service_data_map));
+  discovered_run_loop.Run();
+
+  EXPECT_TRUE(found_advertisement_latch.Await().Ok());
+  EXPECT_TRUE(scanning_session->stop_scanning().ok());
+
   base::RunLoop run_loop;
   base::ThreadPool::CreateSequencedTaskRunner({base::MayBlock()})
       ->PostTaskAndReply(
@@ -753,6 +940,88 @@ TEST_F(BleV2MediumTest, ConnectToGattServer_Failure) {
                          base::Unretained(this), /*expected_result=*/false),
           run_loop.QuitClosure());
   run_loop.Run();
+  histogram_tester_.ExpectBucketCount(
+      "Nearby.Connections.BleV2.ConnectToGattServer.Result",
+      /*bucket: failure=*/0, 1);
+  histogram_tester_.ExpectBucketCount(
+      "Nearby.Connections.BleV2.ConnectToGattServer.FailureReason",
+      /*bucket: FAILED=*/5, 1);
+  histogram_tester_.ExpectTotalCount(
+      "Nearby.Connections.BleV2.ConnectToGattServer.Duration", 0);
+}
+
+// Regression test for crbug/392944686. All advertisements are expected to be
+// non-connectable.
+TEST_F(BleV2MediumTest, AdvertisementsAreNonConnectable_FastAdvertisement) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeatures(
+      /*enabled_features=*/{::features::kEnableNearbyBleV2},
+      /*disabled_features=*/{});
+
+  fake_adapter_->SetShouldAdvertisementRegistrationSucceed(true);
+  api::ble_v2::BleAdvertisementData advertising_data;
+  advertising_data.is_extended_advertisement = false;
+  advertising_data.service_data.insert(
+      {kFastAdvertisementServiceUuid1, kDeviceServiceData1ByteArray});
+
+  // Fast Advertisements are expected to be non-connectable; this behavior
+  // aligns with the Nearby SDK implementation.
+  EXPECT_TRUE(ble_v2_medium_->StartAdvertising(
+      advertising_data, {.tx_power_level = api::ble_v2::TxPowerLevel::kLow,
+                         .is_connectable = false}));
+  EXPECT_FALSE(
+      fake_adapter_
+          ->GetRegisteredAdvertisementConnectable(kService1BluetoothUuid)
+          .value());
+}
+
+TEST_F(BleV2MediumTest, AdvertisementsAreConnectable_ExtendedAdvertisement) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeatures(
+      /*enabled_features=*/{::features::kEnableNearbyBleV2,
+                            ::features::kEnableNearbyBleV2ExtendedAdvertising},
+      /*disabled_features=*/{});
+  EXPECT_TRUE(ble_v2_medium_->IsExtendedAdvertisementsAvailable());
+
+  fake_adapter_->SetShouldAdvertisementRegistrationSucceed(true);
+  api::ble_v2::BleAdvertisementData advertising_data;
+  advertising_data.is_extended_advertisement = true;
+  advertising_data.service_data.insert(
+      {kFastAdvertisementServiceUuid1, kDeviceServiceData1ByteArray});
+
+  // Extended advertisements are expected to be connectable; this behavior
+  // aligns with the Nearby SDK implementation.
+  EXPECT_TRUE(ble_v2_medium_->StartAdvertising(
+      advertising_data, {.tx_power_level = api::ble_v2::TxPowerLevel::kHigh,
+                         .is_connectable = true}));
+  EXPECT_TRUE(
+      fake_adapter_
+          ->GetRegisteredAdvertisementConnectable(kService1BluetoothUuid)
+          .value());
+}
+
+TEST_F(BleV2MediumTest, AdvertisementsAreConnectable_GattAdvertisement) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeatures(
+      /*enabled_features=*/{::features::kEnableNearbyBleV2,
+                            ::features::kEnableNearbyBleV2GattServer},
+      /*disabled_features=*/{});
+
+  SetUpGattServerForAdvertising(/*should_register_succeed=*/true);
+
+  base::RunLoop run_loop;
+  base::ThreadPool::CreateSequencedTaskRunner({base::MayBlock()})
+      ->PostTaskAndReply(
+          FROM_HERE,
+          base::BindOnce(&BleV2MediumTest::CallStartAdvertisingForGattService,
+                         base::Unretained(this), /*expected_result=*/true),
+          run_loop.QuitClosure());
+  run_loop.Run();
+
+  EXPECT_TRUE(
+      fake_adapter_
+          ->GetRegisteredAdvertisementConnectable(kService1BluetoothUuid)
+          .value());
 }
 
 }  // namespace nearby::chrome

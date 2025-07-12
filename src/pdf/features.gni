@@ -25,6 +25,6 @@ declare_args() {
   # `enable_ink` above.
   enable_pdf_ink2 = enable_pdf
 
-  # Enable Ink Stubs. Only applicable when `enable_pdf_ink2` is true.
-  enable_pdf_ink2_stubs = true
+  # Enable the ability to save PDF to Google Drive.
+  enable_pdf_save_to_drive = enable_pdf && !is_chromeos
 }

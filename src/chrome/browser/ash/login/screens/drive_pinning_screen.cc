@@ -2,15 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/ash/login/screens/drive_pinning_screen.h"
+
 #include <iomanip>
 
 #include "ash/constants/ash_features.h"
 #include "base/check_is_test.h"
 #include "base/metrics/histogram_functions.h"
 #include "chrome/browser/ash/drive/drive_integration_service.h"
+#include "chrome/browser/ash/drive/drive_integration_service_factory.h"
 #include "chrome/browser/ash/drive/file_system_util.h"
 #include "chrome/browser/ash/login/login_pref_names.h"
-#include "chrome/browser/ash/login/screens/drive_pinning_screen.h"
 #include "chrome/browser/ash/login/wizard_controller.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/webui/ash/login/drive_pinning_screen_handler.h"
@@ -122,6 +124,10 @@ bool DrivePinningScreen::ShouldBeSkipped(const WizardContext& context) const {
   if (features::IsOobeChoobeEnabled()) {
     auto* choobe_controller =
         WizardController::default_controller()->choobe_flow_controller();
+    if (!ignore_choobe_controller_state_for_tests_ && !choobe_controller) {
+      return true;
+    }
+
     if (choobe_controller && choobe_controller->ShouldScreenBeSkipped(
                                  DrivePinningScreenView::kScreenId)) {
       return true;

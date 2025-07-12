@@ -10,10 +10,12 @@ import static org.chromium.chrome.browser.customtabs.features.minimizedcustomtab
 
 import android.graphics.Bitmap;
 import android.graphics.drawable.Drawable;
+import android.text.TextUtils;
 import android.view.View;
 import android.widget.ImageView;
 import android.widget.TextView;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.R;
 import org.chromium.ui.UiUtils;
 import org.chromium.ui.base.ViewUtils;
@@ -21,14 +23,17 @@ import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
 
 /** View binder for the minimized card. */
+@NullMarked
 public class MinimizedCardViewBinder {
     public static void bind(PropertyModel model, View view, PropertyKey key) {
         if (TITLE == key) {
             TextView title = view.findViewById(R.id.title);
             title.setText(model.get(TITLE));
+            title.setVisibility(TextUtils.isEmpty(title.getText()) ? View.GONE : View.VISIBLE);
         } else if (URL == key) {
-            TextView title = view.findViewById(R.id.url);
-            title.setText(model.get(URL));
+            TextView url = view.findViewById(R.id.url);
+            url.setText(model.get(URL));
+            url.setVisibility(TextUtils.isEmpty(url.getText()) ? View.GONE : View.VISIBLE);
         } else if (FAVICON == key) {
             ImageView favicon = view.findViewById(R.id.favicon);
             Bitmap bitmap = model.get(FAVICON);

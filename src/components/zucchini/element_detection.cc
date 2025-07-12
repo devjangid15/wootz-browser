@@ -2,8 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "components/zucchini/element_detection.h"
 
+#include <algorithm>
 #include <utility>
 
 #include "components/zucchini/buildflags.h"
@@ -176,10 +182,14 @@ std::optional<Element> DetectElementFromDisassembler(ConstBufferView image) {
   return std::nullopt;
 }
 
-/******** ProgramScanner ********/
+/******** ElementFinder ********/
 
-ElementFinder::ElementFinder(ConstBufferView image, ElementDetector&& detector)
-    : image_(image), detector_(std::move(detector)) {}
+ElementFinder::ElementFinder(ConstBufferView image,
+                             ElementDetector&& detector,
+                             offset_t init_pos)
+    : image_(image),
+      detector_(std::move(detector)),
+      pos_(std::min(init_pos, static_cast<offset_t>(image.size()))) {}
 
 ElementFinder::~ElementFinder() = default;
 

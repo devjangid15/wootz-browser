@@ -5,15 +5,13 @@
 #include "base/unguessable_token.h"
 
 #include <ostream>
+#include <string_view>
 
 #include "base/check.h"
 #include "base/format_macros.h"
 #include "base/rand_util.h"
 #include "build/build_config.h"
-
-#if !BUILDFLAG(IS_NACL)
 #include "third_party/boringssl/src/include/openssl/mem.h"
-#endif
 
 namespace base {
 
@@ -47,7 +45,7 @@ std::optional<UnguessableToken> UnguessableToken::Deserialize(uint64_t high,
 
 // static
 std::optional<UnguessableToken> UnguessableToken::DeserializeFromString(
-    StringPiece string_representation) {
+    std::string_view string_representation) {
   auto token = Token::FromString(string_representation);
   // A zeroed out token means that it's not initialized via Create().
   if (!token.has_value() || token.value().is_zero()) {
@@ -57,14 +55,9 @@ std::optional<UnguessableToken> UnguessableToken::DeserializeFromString(
 }
 
 bool operator==(const UnguessableToken& lhs, const UnguessableToken& rhs) {
-#if BUILDFLAG(IS_NACL)
-  // BoringSSL is unavailable for NaCl builds so it remains timing dependent.
-  return lhs.token_ == rhs.token_;
-#else
   auto bytes = lhs.token_.AsBytes();
   auto other_bytes = rhs.token_.AsBytes();
   return CRYPTO_memcmp(bytes.data(), other_bytes.data(), bytes.size()) == 0;
-#endif
 }
 
 std::ostream& operator<<(std::ostream& out, const UnguessableToken& token) {

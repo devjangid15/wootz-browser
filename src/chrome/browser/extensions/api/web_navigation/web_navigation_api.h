@@ -15,12 +15,9 @@
 #include "base/memory/raw_ptr.h"
 #include "chrome/browser/extensions/api/web_navigation/frame_navigation_state.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/android/tab_model/tab_model_observer.h"
-#include "chrome/browser/ui/android/tab_model/tab_model_list.h"
-#include "chrome/browser/ui/android/tab_model/tab_model_list_observer.h"
-// #include "chrome/browser/ui/browser_tab_strip_tracker.h"
-// #include "chrome/browser/ui/browser_tab_strip_tracker_delegate.h"
-// #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/browser/ui/browser_tab_strip_tracker.h"
+#include "chrome/browser/ui/browser_tab_strip_tracker_delegate.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
 #include "extensions/browser/browser_context_keyed_api_factory.h"
@@ -93,23 +90,11 @@ class WebNavigationTabObserver
   WEB_CONTENTS_USER_DATA_KEY_DECL();
 };
 
-#if 0 // original
 // Tracks new tab navigations and routes them as events to the extension system.
 class WebNavigationEventRouter : public TabStripModelObserver,
                                  public BrowserTabStripTrackerDelegate {
  public:
   explicit WebNavigationEventRouter(Profile* profile);
-
-  WebNavigationEventRouter(const WebNavigationEventRouter&) = delete;
-  WebNavigationEventRouter& operator=(const WebNavigationEventRouter&) = delete;
-
-  ~WebNavigationEventRouter() override;
-#endif
-
-class WebNavigationEventRouter : public TabModelObserver,
-                                 public TabModelListObserver {
- public:
-  WebNavigationEventRouter();
 
   WebNavigationEventRouter(const WebNavigationEventRouter&) = delete;
   WebNavigationEventRouter& operator=(const WebNavigationEventRouter&) = delete;
@@ -169,7 +154,6 @@ class WebNavigationEventRouter : public TabModelObserver,
     base::OnceCallback<void(content::WebContents*)> on_destroy_;
   };
 
-#if 0
   // BrowserTabStripTrackerDelegate implementation.
   bool ShouldTrackBrowser(Browser* browser) override;
 
@@ -178,12 +162,6 @@ class WebNavigationEventRouter : public TabModelObserver,
       TabStripModel* tab_strip_model,
       const TabStripModelChange& change,
       const TabStripSelectionChange& selection) override;
-#endif
-
-  void OnTabModelAdded() override;
-  void OnTabModelRemoved() override;
-
-  void DidAddTab(TabAndroid* tab, TabModel::TabLaunchType type) override;
 
   // The method takes the details of such an event and creates a JSON formatted
   // extension event from it.
@@ -196,25 +174,22 @@ class WebNavigationEventRouter : public TabModelObserver,
   // created.
   std::map<content::WebContents*, PendingWebContents> pending_web_contents_;
 
-  // list of observed tab models
-  std::vector<TabModel*> observed_tab_models_;
-
   // The profile that owns us via ExtensionService.
-  // raw_ptr<Profile> profile_;
+  raw_ptr<Profile> profile_;
 
-  // BrowserTabStripTracker browser_tab_strip_tracker_;
+  BrowserTabStripTracker browser_tab_strip_tracker_;
 };
 
 // API function that returns the state of a given frame.
 class WebNavigationGetFrameFunction : public ExtensionFunction {
-  ~WebNavigationGetFrameFunction() override {}
+  ~WebNavigationGetFrameFunction() override = default;
   ResponseAction Run() override;
   DECLARE_EXTENSION_FUNCTION("webNavigation.getFrame", WEBNAVIGATION_GETFRAME)
 };
 
 // API function that returns the states of all frames in a given tab.
 class WebNavigationGetAllFramesFunction : public ExtensionFunction {
-  ~WebNavigationGetAllFramesFunction() override {}
+  ~WebNavigationGetAllFramesFunction() override = default;
   ResponseAction Run() override;
   DECLARE_EXTENSION_FUNCTION("webNavigation.getAllFrames",
                              WEBNAVIGATION_GETALLFRAMES)

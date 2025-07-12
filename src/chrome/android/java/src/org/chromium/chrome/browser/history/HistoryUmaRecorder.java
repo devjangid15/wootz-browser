@@ -6,9 +6,11 @@ package org.chromium.chrome.browser.history;
 
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.components.profile_metrics.BrowserProfileType;
 
 /** UMA/Histogram recorder for history UI. */
+@NullMarked
 public class HistoryUmaRecorder {
     private static final String METRICS_PREFIX = "Android.HistoryPage.";
 
@@ -88,7 +90,7 @@ public class HistoryUmaRecorder {
      * Record the action that the selected links are being opened to new tabs.
      *
      * @param isSearching Whether the UI is in search mode.
-     * @param incognito Whether the action is triggered for incognito tab.
+     * @param isIncognito Whether the action is triggered for incognito tab.
      */
     public void recordOpenInTabs(boolean isSearching, boolean isIncognito) {
         recordActionWithCorrectSearchPrefix(
@@ -112,7 +114,7 @@ public class HistoryUmaRecorder {
     /**
      * Record the action/histogram for clear browsing data.
      *
-     * @param incognito Whether the action is triggered for incognito tab.
+     * @param isIncognito Whether the action is triggered for incognito tab.
      */
     public void recordClearBrowsingData(boolean isIncognito) {
         recordUserAction("ClearBrowsingData");
@@ -125,15 +127,20 @@ public class HistoryUmaRecorder {
         RecordHistogram.recordEnumeratedHistogram(
                 getPrefix() + "ClearBrowsingData.PerProfileType",
                 type,
-                BrowserProfileType.MAX_VALUE + 1);
+                BrowserProfileType.MAX_VALUE);
     }
 
     /**
-     * Recrd the time taken to query app list to the local database.
+     * Record the time taken to query app list to the local database.
      *
      * @param timeMs Query time.
      */
     public void recordQueryAppDuration(long timeMs) {
         RecordHistogram.recordTimesHistogram("History.QueryAppDuration", timeMs);
+    }
+
+    /** Record the user action of opending the app filter sheet. */
+    public void recordAppFilterSheetOpened() {
+        recordUserAction("OpenAppFilterSheet");
     }
 }

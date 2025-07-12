@@ -5,7 +5,6 @@
 #include "base/callback_list.h"
 #include "base/run_loop.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/send_tab_to_self/send_tab_to_self_util.h"
 #include "chrome/browser/sync/device_info_sync_service_factory.h"
@@ -46,7 +45,7 @@ IN_PROC_BROWSER_TEST_F(TwoClientSendTabToSelfSyncTest,
   const std::string kTitle("example");
   const std::string kTargetDeviceSyncCacheGuid("target_device");
 
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+  ASSERT_TRUE(SetupSync());
 
   history::HistoryService* history_service =
       HistoryServiceFactory::GetForProfile(GetProfile(0),
@@ -84,7 +83,7 @@ IN_PROC_BROWSER_TEST_F(TwoClientSendTabToSelfSyncTest,
   const std::string kTitle2("example2");
   const std::string kTargetDeviceSyncCacheGuid2("target2");
 
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+  ASSERT_TRUE(SetupSync());
 
   send_tab_to_self::SendTabToSelfModel* model0 =
       SendTabToSelfSyncServiceFactory::GetForProfile(GetProfile(0))
@@ -205,7 +204,7 @@ IN_PROC_BROWSER_TEST_F(TwoClientSendTabToSelfSyncTest,
   const std::string kTitle("example");
   const std::string kTargetDeviceSyncCacheGuid("target_device");
 
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+  ASSERT_TRUE(SetupSync());
 
   history::HistoryService* history_service =
       HistoryServiceFactory::GetForProfile(GetProfile(0),
@@ -256,11 +255,11 @@ class TwoClientSendTabToSelfWithTransportModeSyncTest
 };
 
 // Non-primary accounts don't exist on ChromeOS.
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
 
 IN_PROC_BROWSER_TEST_F(TwoClientSendTabToSelfWithTransportModeSyncTest,
                        SignedInClientCanReceive) {
-  ASSERT_TRUE(SetupClients()) << "SetupClients() failed.";
+  ASSERT_TRUE(SetupClients());
 
   // Set up one client syncing and the other signed-in but not syncing.
   ASSERT_TRUE(GetClient(0)->SetupSync());
@@ -289,4 +288,4 @@ IN_PROC_BROWSER_TEST_F(TwoClientSendTabToSelfWithTransportModeSyncTest,
   EXPECT_TRUE(device_infos[1]->send_tab_to_self_receiving_enabled());
 }
 
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS)

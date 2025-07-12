@@ -10,16 +10,20 @@
 #include "ash/webui/personalization_app/proto/backdrop_wallpaper.pb.h"
 #include "base/time/time.h"
 #include "base/values.h"
+#include "components/account_id/account_id.h"
+#include "components/account_id/account_id_literal.h"
+#include "google_apis/gaia/gaia_id.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace ash {
 namespace {
 
-constexpr char kUser1[] = "user1@test.com";
-const AccountId kAccountId1 = AccountId::FromUserEmailGaiaId(kUser1, kUser1);
+constexpr AccountId::Literal kAccountId1 =
+    AccountId::Literal::FromUserEmailGaiaId("user1@test.com",
+                                            GaiaId::Literal("11111"));
 
-const uint64_t kAssetId = 1;
-const uint64_t kUnitId = 1;
+constexpr uint64_t kAssetId = 1;
+constexpr uint64_t kUnitId = 1;
 
 using WallpaperInfoTest = ::testing::Test;
 
@@ -57,24 +61,6 @@ TEST_F(WallpaperInfoTest, ToAndFromDict) {
     base::Value::Dict dict = actual_info.ToDict();
     std::optional<WallpaperInfo> expected_info = WallpaperInfo::FromDict(dict);
     EXPECT_TRUE(actual_info.MatchesAsset(expected_info.value()));
-    EXPECT_FALSE(expected_info->version.IsValid());
-  }
-  {
-    // WallpaperType::kOnline with version
-    OnlineWallpaperParams params = OnlineWallpaperParams(
-        kAccountId1,
-        /*collection_id=*/std::string(), WALLPAPER_LAYOUT_CENTER_CROPPED,
-        /*preview_mode=*/false, /*from_user=*/false,
-        /*daily_refresh_enabled=*/false, kUnitId,
-        /*variants=*/
-        {{kAssetId, GURL("https://example.com/image.png"),
-          backdrop::Image::IMAGE_TYPE_UNKNOWN}});
-    WallpaperInfo actual_info = WallpaperInfo(params, params.variants[0]);
-    actual_info.version = base::Version("1.0");
-    base::Value::Dict dict = actual_info.ToDict();
-    std::optional<WallpaperInfo> expected_info = WallpaperInfo::FromDict(dict);
-    EXPECT_TRUE(actual_info.MatchesAsset(expected_info.value()));
-    EXPECT_TRUE(expected_info->version.IsValid());
   }
   {
     // WallpaperType::kOnceGooglePhotos
@@ -85,7 +71,6 @@ TEST_F(WallpaperInfoTest, ToAndFromDict) {
     base::Value::Dict dict = actual_info.ToDict();
     std::optional<WallpaperInfo> expected_info = WallpaperInfo::FromDict(dict);
     EXPECT_TRUE(actual_info.MatchesAsset(expected_info.value()));
-    EXPECT_FALSE(expected_info->version.IsValid());
   }
   {
     // WallpaperType::kCustomized
@@ -95,7 +80,6 @@ TEST_F(WallpaperInfoTest, ToAndFromDict) {
     base::Value::Dict dict = actual_info.ToDict();
     std::optional<WallpaperInfo> expected_info = WallpaperInfo::FromDict(dict);
     EXPECT_TRUE(actual_info.MatchesAsset(expected_info.value()));
-    EXPECT_FALSE(expected_info->version.IsValid());
   }
 }
 

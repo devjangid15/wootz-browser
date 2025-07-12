@@ -24,7 +24,8 @@ class ExceptionHandler;
 // An object that exposes utility methods to the existing JS bindings, such as
 // sendRequest and registering event argument massagers. If/when we get rid of
 // some of our JS bindings, we can reduce or remove this class.
-class APIBindingJSUtil final : public gin::Wrappable<APIBindingJSUtil> {
+class APIBindingJSUtil final
+    : public gin::DeprecatedWrappable<APIBindingJSUtil> {
  public:
   APIBindingJSUtil(APITypeReferenceMap* type_refs,
                    APIRequestHandler* request_handler,
@@ -36,9 +37,9 @@ class APIBindingJSUtil final : public gin::Wrappable<APIBindingJSUtil> {
 
   ~APIBindingJSUtil() override;
 
-  static gin::WrapperInfo kWrapperInfo;
+  static gin::DeprecatedWrapperInfo kWrapperInfo;
 
-  // gin::Wrappable:
+  // gin::DeprecatedWrappable:
   gin::ObjectTemplateBuilder GetObjectTemplateBuilder(
       v8::Isolate* isolate) final;
 
@@ -94,7 +95,7 @@ class APIBindingJSUtil final : public gin::Wrappable<APIBindingJSUtil> {
                                 const std::string& error,
                                 v8::Local<v8::Function> callback);
 
-  // Handles an exception with the given |message| and |exception| value.
+  // Handles an exception with the given `message` and `exception` value.
   void HandleException(gin::Arguments* arguments,
                        const std::string& message,
                        v8::Local<v8::Value> exception);
@@ -104,23 +105,23 @@ class APIBindingJSUtil final : public gin::Wrappable<APIBindingJSUtil> {
   void SetExceptionHandler(gin::Arguments* arguments,
                            v8::Local<v8::Function> handler);
 
-  // Validates a given |value| against the specification for the type with
-  // |type_name|. Throws an error if the validation fails; otherwise returns
+  // Validates a given `value` against the specification for the type with
+  // `type_name`. Throws an error if the validation fails; otherwise returns
   // undefined.
   void ValidateType(gin::Arguments* arguments,
                     const std::string& type_name,
                     v8::Local<v8::Value> value);
 
   // Allows custom bindings to add a signature with the given
-  // |custom_signature_name| to use later in argument validation. The signature
+  // `custom_signature_name` to use later in argument validation. The signature
   // is expected to be an array of expected types, that can be passed to
   // construct an APISignature.
   void AddCustomSignature(gin::Arguments* arguments,
                           const std::string& custom_signature_name,
                           v8::Local<v8::Value> signature);
 
-  // Looks up the signature with the given |custom_signature_name| and validates
-  // |arguments_to_validate| against it, throwing an error if the arguments
+  // Looks up the signature with the given `custom_signature_name` and validates
+  // `arguments_to_validate` against it, throwing an error if the arguments
   // don't match.
   void ValidateCustomSignature(gin::Arguments* arguments,
                                const std::string& custom_signature_name,

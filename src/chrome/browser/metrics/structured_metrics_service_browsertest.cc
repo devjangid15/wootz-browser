@@ -9,7 +9,6 @@
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/metrics/chrome_metrics_service_accessor.h"
 #include "chrome/browser/metrics/structured/test/structured_metrics_mixin.h"
 #include "chrome/browser/metrics/testing/sync_metrics_test_utils.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -23,7 +22,6 @@
 #include "components/metrics/log_decoder.h"
 #include "components/metrics/metrics_service_client.h"
 #include "components/metrics/structured/structured_events.h"
-#include "components/metrics/structured/structured_metrics_features.h"
 #include "components/metrics/structured/structured_metrics_service.h"
 #include "components/metrics/unsent_log_store.h"
 #include "components/metrics_services_manager/metrics_services_manager.h"
@@ -110,10 +108,7 @@ class StructuredMetricsServiceTestBase : public MixinBasedInProcessBrowserTest {
 class TestStructuredMetricsService : public StructuredMetricsServiceTestBase {
  public:
   TestStructuredMetricsService() {
-    feature_list_.InitWithFeatures(
-        {metrics::structured::kEnabledStructuredMetricsService,
-         ::features::kChromeStructuredMetrics},
-        {});
+    feature_list_.InitAndEnableFeature(::features::kChromeStructuredMetrics);
   }
 
  private:
@@ -247,7 +242,7 @@ IN_PROC_BROWSER_TEST_F(TestStructuredMetricsService,
   EXPECT_EQ(sm_service->recorder()->event_storage()->RecordedEventsCount(), 0);
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 IN_PROC_BROWSER_TEST_F(TestStructuredMetricsService, SystemProfilePopulated) {
   auto* sm_service = GetSMService();
 
@@ -285,35 +280,7 @@ IN_PROC_BROWSER_TEST_F(TestStructuredMetricsService, SystemProfilePopulated) {
   EXPECT_EQ(system_profile.app_version(),
             GetSMService()->GetMetricsServiceClient()->GetVersionString());
 }
-#endif  //  BUILDFLAG(IS_CHROMEOS_ASH)
-
-class TestStructuredMetricsServiceDisabled
-    : public StructuredMetricsServiceTestBase {
- public:
-  TestStructuredMetricsServiceDisabled() {
-    feature_list_.InitWithFeatures(
-        {::features::kChromeStructuredMetrics},
-        {metrics::structured::kEnabledStructuredMetricsService});
-  }
-
- private:
-  base::test::ScopedFeatureList feature_list_;
-};
-
-IN_PROC_BROWSER_TEST_F(TestStructuredMetricsServiceDisabled,
-                       ValidStateWhenDisabled) {
-  auto* sm_service = GetSMService();
-
-  // Enable consent for profile.
-  structured_metrics_mixin_.UpdateRecordingState(true);
-
-  // Everything should be null expect the recorder. The recorder is used by
-  // StructuredMetricsProvider when the service is disabled; therefore, it
-  // cannot be null.
-  EXPECT_THAT(sm_service->recorder(), testing::NotNull());
-  EXPECT_THAT(sm_service->reporting_service_.get(), testing::IsNull());
-  EXPECT_THAT(sm_service->scheduler_.get(), testing::IsNull());
-}
+#endif  //  BUILDFLAG(IS_CHROMEOS)
 
 // TODO(crbug.com/41485716): Flaky on linux-chromeos-rel.
 IN_PROC_BROWSER_TEST_F(TestStructuredMetricsService,
@@ -338,6 +305,34 @@ IN_PROC_BROWSER_TEST_F(TestStructuredMetricsService,
   EXPECT_FALSE(HasUnsentLogs());
   EXPECT_FALSE(HasStagedLog());
   EXPECT_EQ(sm_service->recorder()->event_storage()->RecordedEventsCount(), 0);
+}
+
+IN_PROC_BROWSER_TEST_F(TestStructuredMetricsService, CreateLogs) {
+  auto* sm_service = GetSMService();
+  structured_metrics_mixin_.UpdateRecordingState(true);
+  WaitForConsentChanges();
+
+  structured::StructuredMetricsClient::Record(
+      structured::events::v2::test_project_seven::TestEventEight());
+
+  structured_metrics_mixin_.WaitUntilEventRecorded(kProjectSevenHash,
+                                                   kEventEightHash);
+
+  // Makes sure that the logs are created without issues.
+  // Disable upload, CreateLogs: creates the logs and starts the upload process.
+  base::RunLoop run_loop;
+  sm_service->SetCreateLogsCallbackInTests(run_loop.QuitClosure());
+  sm_service->CreateLogs(
+      metrics::MetricsLogsEventManager::CreateReason::kUnknown,
+      /*notify_scheduler=*/false);
+  run_loop.Run();
+
+  EXPECT_TRUE(HasUnsentLogs());
+
+  std::unique_ptr<ChromeUserMetricsExtension> uma_proto = GetStagedLog();
+  EXPECT_NE(uma_proto.get(), nullptr);
+
+  EXPECT_EQ(uma_proto->structured_data().events_size(), 1);
 }
 
 }  // namespace metrics

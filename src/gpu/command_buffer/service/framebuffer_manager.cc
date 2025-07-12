@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "gpu/command_buffer/service/framebuffer_manager.h"
 
 #include <stddef.h>
@@ -9,6 +14,7 @@
 
 #include "base/check_op.h"
 #include "base/containers/contains.h"
+#include "base/containers/heap_array.h"
 #include "base/notreached.h"
 #include "gpu/command_buffer/common/gles2_cmd_utils.h"
 #include "gpu/command_buffer/service/framebuffer_completeness_cache.h"
@@ -54,10 +60,7 @@ class RenderbufferAttachment
 
   GLuint object_name() const override { return renderbuffer_->client_id(); }
 
-  GLint level() const override {
-    NOTREACHED_IN_MIGRATION();
-    return -1;
-  }
+  GLint level() const override { NOTREACHED(); }
 
   bool cleared() const override { return renderbuffer_->cleared(); }
 
@@ -500,7 +503,8 @@ bool Framebuffer::HasSRGBAttachments() const {
 
 bool Framebuffer::PrepareDrawBuffersForClearingUninitializedAttachments(
     ) const {
-  std::unique_ptr<GLenum[]> buffers(new GLenum[manager_->max_draw_buffers_]);
+  base::HeapArray<GLenum> buffers =
+      base::HeapArray<GLenum>::Uninit(manager_->max_draw_buffers_);
   for (uint32_t i = 0; i < manager_->max_draw_buffers_; ++i)
     buffers[i] = GL_NONE;
   for (auto const& it : attachments_) {
@@ -524,7 +528,7 @@ bool Framebuffer::PrepareDrawBuffersForClearingUninitializedAttachments(
     }
   }
   if (different)
-    glDrawBuffersARB(manager_->max_draw_buffers_, buffers.get());
+    glDrawBuffersARB(manager_->max_draw_buffers_, buffers.data());
   return different;
 }
 
@@ -725,7 +729,7 @@ GLenum Framebuffer::IsPossiblyComplete(const FeatureInfo* feature_info) const {
       // even though ES3 allows it, it is still forbidden to ensure consistent
       // behaviors across platforms.
       // Note: Framebuffer::GetFramebufferValidSize relies on this behavior.
-      return GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS_EXT;
+      return GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS;
     }
 
     if (samples < 0) {
@@ -863,8 +867,7 @@ bool Framebuffer::IsCleared() const {
 }
 
 GLenum Framebuffer::GetDrawBuffer(GLenum draw_buffer) const {
-  GLsizei index = static_cast<GLsizei>(
-      draw_buffer - GL_DRAW_BUFFER0_ARB);
+  GLsizei index = static_cast<GLsizei>(draw_buffer - GL_DRAW_BUFFER0);
   CHECK(index >= 0 &&
         index < static_cast<GLsizei>(manager_->max_draw_buffers_));
   return draw_buffers_[index];
@@ -1109,7 +1112,7 @@ gfx::Size Framebuffer::GetFramebufferValidSize() const {
   // all of the attachments have the same dimensions. So it's okay to just pick
   // any arbitrary attachment and return it as the min size.
   auto it = attachments_.begin();
-  DCHECK(it != attachments_.end());
+  CHECK(it != attachments_.end());
   const auto& attachment = it->second;
   return gfx::Size(attachment->width(), attachment->height());
 }

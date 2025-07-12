@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#import "chrome/services/mac_notifications/mac_notification_service_un.h"
+
 #import <UserNotifications/UserNotifications.h>
 
 #include <string>
@@ -10,6 +12,7 @@
 
 #include "base/apple/bundle_locations.h"
 #include "base/run_loop.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
@@ -17,7 +20,6 @@
 #include "base/test/test_future.h"
 #include "chrome/common/notifications/notification_constants.h"
 #include "chrome/common/notifications/notification_operation.h"
-#import "chrome/services/mac_notifications/mac_notification_service_un.h"
 #import "chrome/services/mac_notifications/mac_notification_service_utils.h"
 #import "chrome/services/mac_notifications/notification_test_utils_mac.h"
 #include "chrome/services/mac_notifications/public/mojom/mac_notifications.mojom.h"
@@ -652,7 +654,13 @@ TEST_F(MacNotificationServiceUNTest, CloseProfileNotifications) {
 
   auto profile_identifier =
       mojom::ProfileIdentifier::New("profileId", /*incognito=*/true);
-  service_remote_->CloseNotificationsForProfile(std::move(profile_identifier));
+  service_->CloseNotificationsForProfile(std::move(profile_identifier));
+
+  // Reset `service_` to verify that this still works if `service_` gets
+  // destroyed while waiting for UNUserNotificationCenter to reply back with
+  // the currently displaying notifications.
+  ExpectAndUpdateUNUserNotificationCenterDelegate(/*expect_not_nil=*/false);
+  service_.reset();
 
   run_loop.Run();
   EXPECT_OCMOCK_VERIFY(mock_notification_center_);

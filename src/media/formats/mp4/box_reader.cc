@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/formats/mp4/box_reader.h"
 
 #include <stddef.h>
@@ -18,15 +23,25 @@ namespace mp4 {
 
 Box::~Box() = default;
 
+BufferReader::BufferReader(const uint8_t* buf, const size_t buf_size)
+    :  // TODO(crbug.com/40284755): BufferReader should be receiving a span,
+       // the construction of the span here is unsound as there's no way to
+       // tell the size is correct from here.
+      UNSAFE_TODO(buf_(buf, buf_size)) {}
+
+BufferReader::~BufferReader() = default;
+
+BufferReader::BufferReader(const BufferReader& other) = default;
+
 bool BufferReader::Read1(uint8_t* v) {
   RCHECK(HasBytes(1));
-  *v = base::numerics::U8FromBigEndian(buf_.subspan(pos_).first<1u>());
+  *v = base::U8FromBigEndian(buf_.subspan(pos_).first<1>());
   pos_ += 1u;
   return true;
 }
 bool BufferReader::Read2(uint16_t* v) {
   RCHECK(HasBytes(2));
-  *v = base::numerics::U16FromBigEndian(buf_.subspan(pos_).first<2u>());
+  *v = base::U16FromBigEndian(buf_.subspan(pos_).first<2>());
   pos_ += 2u;
   return true;
 }
@@ -38,7 +53,7 @@ bool BufferReader::Read2s(int16_t* v) {
 }
 bool BufferReader::Read4(uint32_t* v) {
   RCHECK(HasBytes(4));
-  *v = base::numerics::U32FromBigEndian(buf_.subspan(pos_).first<4u>());
+  *v = base::U32FromBigEndian(buf_.subspan(pos_).first<4>());
   pos_ += 4u;
   return true;
 }
@@ -50,7 +65,7 @@ bool BufferReader::Read4s(int32_t* v) {
 }
 bool BufferReader::Read8(uint64_t* v) {
   RCHECK(HasBytes(8));
-  *v = base::numerics::U64FromBigEndian(buf_.subspan(pos_).first<8u>());
+  *v = base::U64FromBigEndian(buf_.subspan(pos_).first<8>());
   pos_ += 8u;
   return true;
 }
@@ -68,7 +83,7 @@ bool BufferReader::ReadFourCC(FourCC* v) {
   return true;
 }
 
-bool BufferReader::ReadVec(std::vector<uint8_t>* vec, uint64_t count) {
+bool BufferReader::ReadVec(std::vector<uint8_t>* vec, size_t count) {
   RCHECK(HasBytes(count));
   vec->clear();
   auto range = buf_.subspan(pos_, count);
@@ -123,13 +138,12 @@ BoxReader::~BoxReader() {
 }
 
 // static
-ParseResult BoxReader::ReadTopLevelBox(const uint8_t* buf,
-                                       const size_t buf_size,
+ParseResult BoxReader::ReadTopLevelBox(base::span<const uint8_t> buf,
                                        MediaLog* media_log,
                                        std::unique_ptr<BoxReader>* out_reader) {
   DCHECK(out_reader);
   std::unique_ptr<BoxReader> reader(
-      new BoxReader(buf, buf_size, media_log, false));
+      new BoxReader(buf.data(), buf.size(), media_log, false));
   RCHECK_OK_PARSE_RESULT(reader->ReadHeader());
   if (!IsValidTopLevelBox(reader->type(), media_log))
     return ParseResult::kError;
@@ -138,13 +152,12 @@ ParseResult BoxReader::ReadTopLevelBox(const uint8_t* buf,
 }
 
 // static
-ParseResult BoxReader::StartTopLevelBox(const uint8_t* buf,
-                                        const size_t buf_size,
+ParseResult BoxReader::StartTopLevelBox(base::span<const uint8_t> buf,
                                         MediaLog* media_log,
                                         FourCC* out_type,
                                         size_t* out_box_size) {
   std::unique_ptr<BoxReader> reader;
-  RCHECK_OK_PARSE_RESULT(ReadTopLevelBox(buf, buf_size, media_log, &reader));
+  RCHECK_OK_PARSE_RESULT(ReadTopLevelBox(buf, media_log, &reader));
   *out_type = reader->type();
   *out_box_size = reader->box_size();
   return ParseResult::kOk;

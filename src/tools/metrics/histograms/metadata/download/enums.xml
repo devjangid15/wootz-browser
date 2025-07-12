@@ -26,9 +26,21 @@ chromium-metrics-reviews@google.com.
 
 <enums>
 
+<enum name="AndroidDownloadWarningBypassDialogEvent">
+  <int value="0" label="Dialog shown"/>
+  <int value="1" label="User validated download"/>
+  <int value="2" label="User tapped Learn More"/>
+  <int value="3" label="Dialog dismissed"/>
+</enum>
+
 <enum name="BooleanOpenFromDuplicates">
   <int value="0" label="Created New file"/>
   <int value="1" label="Opened existing duplicate"/>
+</enum>
+
+<enum name="BooleanOpenInline">
+  <int value="0" label="Open in external app"/>
+  <int value="1" label="Open inline"/>
 </enum>
 
 <enum name="BooleanReplaced">
@@ -121,6 +133,15 @@ chromium-metrics-reviews@google.com.
   <int value="3" label="NOT_ADDED_EXCEED_MAX_LENGTH"/>
   <int value="4" label="ADDED_WARNING_FIRST_SHOWN"/>
   <int value="5" label="ADDED_WARNING_ACTION"/>
+  <int value="6" label="NOT_ADDED_DOWNLOAD_NOT_DANGEROUS"/>
+</enum>
+
+<enum name="DownloadAppleWalletOrderFileUI">
+  <int value="0" label="Warning alert is presented"/>
+  <int value="1"
+      label="Warning alert is dismissed without presenting a SFSafariView"/>
+  <int value="2"
+      label="Warning alert is dismissed with presenting a SFSafariView"/>
 </enum>
 
 <enum name="DownloadARModelState">
@@ -269,7 +290,7 @@ chromium-metrics-reviews@google.com.
   <int value="0" label="GetDownloads"/>
   <int value="1" label="OpenFile"/>
   <int value="2" label="Drag"/>
-  <int value="3" label="SaveDangerous"/>
+  <int value="3" label="SaveDangerous (obsolete)"/>
   <int value="4" label="DiscardDangerous"/>
   <int value="5" label="Show"/>
   <int value="6" label="Pause"/>
@@ -287,6 +308,7 @@ chromium-metrics-reviews@google.com.
   <int value="18" label="OpenBypassWarningPrompt"/>
   <int value="19" label="SaveDangerousFromPrompt"/>
   <int value="20" label="CancelBypassWarningPrompt"/>
+  <int value="21" label="OpenSurveyOnDangerousInterstitial"/>
 </enum>
 
 <enum name="DownloadedFileAction">
@@ -391,6 +413,8 @@ chromium-metrics-reviews@google.com.
   <int value="9" label="Multiple downloads pending"/>
   <int value="10" label="Scheduled"/>
   <int value="11" label="Multiple downloads scheduled"/>
+  <int value="12" label="Dangerous"/>
+  <int value="13" label="Multiple downloads dangerous"/>
 </enum>
 
 <enum name="DownloadInputStreamReadErrorType">
@@ -693,6 +717,19 @@ chromium-metrics-reviews@google.com.
   <int value="7" label="Failed to parse media file"/>
   <int value="8" label="Successfully parsed media file"/>
   <int value="9" label="Timeout and failed"/>
+</enum>
+
+<enum name="NotificationAttachEvent">
+  <int value="0" label="Attached on job start"/>
+  <int value="1" label="Attached after job start"/>
+  <int value="2" label="Never attached before job complete"/>
+  <int value="3" label="Resumption job started"/>
+</enum>
+
+<enum name="OpenDownloadWithExternalAppsSource">
+  <int value="0" label="Open file"/>
+  <int value="1" label="Download progress message"/>
+  <int value="2" label="App menu"/>
 </enum>
 
 <enum name="PresentAddPassesDialogResult">

@@ -18,9 +18,7 @@ namespace base {
 
 namespace {
 
-// Note: pointers are 32 bits on all architectures in NaCl. See
-// https://bugs.chromium.org/p/nativeclient/issues/detail?id=1162
-#if defined(ARCH_CPU_32_BITS) || BUILDFLAG(IS_NACL)
+#if defined(ARCH_CPU_32_BITS)
 // No effective limit on 32-bit, since there simply isn't enough address space
 // for ASLR to be particularly effective.
 constexpr size_t kTotalMappedSizeLimit = std::numeric_limits<size_t>::max();
@@ -44,8 +42,9 @@ std::optional<size_t> AlignWithPageSize(size_t size) {
   size_t rounded_size = bits::AlignUp(size, page_size);
 
   // Fail on overflow.
-  if (rounded_size < size)
+  if (rounded_size < size) {
     return std::nullopt;
+  }
 
   return rounded_size;
 }
@@ -60,8 +59,9 @@ bool SharedMemorySecurityPolicy::AcquireReservationForMapping(size_t size) {
 
   std::optional<size_t> page_aligned_size = AlignWithPageSize(size);
 
-  if (!page_aligned_size)
+  if (!page_aligned_size) {
     return false;
+  }
 
   // Relaxed memory ordering is all that's needed since all atomicity is all
   // that's required. If the value is stale, compare_exchange_weak() will fail
@@ -71,8 +71,9 @@ bool SharedMemorySecurityPolicy::AcquireReservationForMapping(size_t size) {
              .AssignIfValid(&total_mapped_size)) {
       return false;
     }
-    if (total_mapped_size >= kTotalMappedSizeLimit)
+    if (total_mapped_size >= kTotalMappedSizeLimit) {
       return false;
+    }
   } while (!total_mapped_size_.compare_exchange_weak(
       previous_mapped_size, total_mapped_size, std::memory_order_relaxed,
       std::memory_order_relaxed));

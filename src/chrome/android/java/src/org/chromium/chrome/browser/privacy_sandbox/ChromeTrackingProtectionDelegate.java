@@ -17,18 +17,20 @@ import org.chromium.content_public.browser.BrowserContextHandle;
 
 public class ChromeTrackingProtectionDelegate implements TrackingProtectionDelegate {
     private final Profile mProfile;
+    private final TrackingProtectionSettingsBridge mTrackingProtectionSettingsBridge;
 
     public ChromeTrackingProtectionDelegate(Profile profile) {
         mProfile = profile;
+        mTrackingProtectionSettingsBridge = new TrackingProtectionSettingsBridge(profile);
     }
 
     @Override
-    public boolean isBlockAll3PCDEnabled() {
+    public boolean isBlockAll3pcEnabled() {
         return UserPrefs.get(mProfile).getBoolean(Pref.BLOCK_ALL3PC_TOGGLE_ENABLED);
     }
 
     @Override
-    public void setBlockAll3PCD(boolean enabled) {
+    public void setBlockAll3pc(boolean enabled) {
         UserPrefs.get(mProfile).setBoolean(Pref.BLOCK_ALL3PC_TOGGLE_ENABLED, enabled);
     }
 
@@ -43,40 +45,53 @@ public class ChromeTrackingProtectionDelegate implements TrackingProtectionDeleg
     }
 
     @Override
-    public boolean shouldDisplayIpProtection() {
-        return ChromeFeatureList.isEnabled(ChromeFeatureList.TRACKING_PROTECTION_SETTINGS_LAUNCH)
-                && ChromeFeatureList.isEnabled(ChromeFeatureList.IP_PROTECTION_V1);
+    public boolean isIpProtectionUxEnabled() {
+        return ChromeFeatureList.isEnabled(ChromeFeatureList.IP_PROTECTION_UX);
     }
 
     @Override
     public boolean isIpProtectionEnabled() {
-        return UserPrefs.get(mProfile).getBoolean(Pref.IP_PROTECTION_ENABLED)
-                && ChromeFeatureList.isEnabled(ChromeFeatureList.IP_PROTECTION_V1);
+        return UserPrefs.get(mProfile).getBoolean(Pref.IP_PROTECTION_ENABLED);
+    }
+
+    @Override
+    public boolean isIpProtectionManaged() {
+        return UserPrefs.get(mProfile).isManagedPreference(Pref.IP_PROTECTION_ENABLED);
+    }
+
+    @Override
+    public boolean isFingerprintingProtectionManaged() {
+        return UserPrefs.get(mProfile).isManagedPreference(Pref.FINGERPRINTING_PROTECTION_ENABLED);
     }
 
     @Override
     public void setIpProtection(boolean enabled) {
-        if (!ChromeFeatureList.isEnabled(ChromeFeatureList.IP_PROTECTION_V1)) return;
         UserPrefs.get(mProfile).setBoolean(Pref.IP_PROTECTION_ENABLED, enabled);
     }
 
     @Override
-    public boolean shouldDisplayFingerprintingProtection() {
-        return ChromeFeatureList.isEnabled(ChromeFeatureList.TRACKING_PROTECTION_SETTINGS_LAUNCH)
-                && ChromeFeatureList.isEnabled(ChromeFeatureList.FINGERPRINTING_PROTECTION_SETTING);
+    public boolean isIpProtectionDisabledForEnterprise() {
+        return mTrackingProtectionSettingsBridge.isIpProtectionDisabledForEnterprise();
+    }
+
+    @Override
+    public boolean isFingerprintingProtectionUxEnabled() {
+        return ChromeFeatureList.isEnabled(ChromeFeatureList.FINGERPRINTING_PROTECTION_UX);
     }
 
     @Override
     public boolean isFingerprintingProtectionEnabled() {
-        return UserPrefs.get(mProfile).getBoolean(Pref.FINGERPRINTING_PROTECTION_ENABLED)
-                && ChromeFeatureList.isEnabled(ChromeFeatureList.FINGERPRINTING_PROTECTION_SETTING);
+        return UserPrefs.get(mProfile).getBoolean(Pref.FINGERPRINTING_PROTECTION_ENABLED);
     }
 
     @Override
     public void setFingerprintingProtection(boolean enabled) {
-        if (!ChromeFeatureList.isEnabled(ChromeFeatureList.FINGERPRINTING_PROTECTION_SETTING))
-            return;
         UserPrefs.get(mProfile).setBoolean(Pref.FINGERPRINTING_PROTECTION_ENABLED, enabled);
+    }
+
+    @Override
+    public boolean isDisplayWildcardInContentSettingsEnabled() {
+        return ChromeFeatureList.isEnabled(ChromeFeatureList.DISPLAY_WILDCARD_CONTENT_SETTINGS);
     }
 
     @Override

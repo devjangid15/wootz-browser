@@ -63,7 +63,7 @@ WebScopedVirtualTimePauser CreateWebScopedVirtualTimePauser(
 // about IsInDocumentWrite() use here.
 PendingScript::PendingScript(ScriptElementBase* element,
                              const TextPosition& starting_position,
-                             scheduler::TaskAttributionInfo* parent_task)
+                             scheduler::TaskAttributionInfo* task_state)
     : element_(element),
       starting_position_(starting_position),
       virtual_time_pauser_(CreateWebScopedVirtualTimePauser(element)),
@@ -72,7 +72,7 @@ PendingScript::PendingScript(ScriptElementBase* element,
       original_execution_context_(element->GetExecutionContext()),
       created_during_document_write_(
           element->GetDocument().IsInDocumentWrite()),
-      parent_task_(parent_task) {}
+      task_state_(task_state) {}
 
 PendingScript::~PendingScript() {}
 
@@ -169,7 +169,7 @@ void PendingScript::ExecuteScriptBlock() {
     if (auto* tracker = scheduler::TaskAttributionTracker::From(
             script_state->GetIsolate())) {
       task_attribution_scope = tracker->CreateTaskScope(
-          script_state, parent_task_,
+          script_state, task_state_,
           scheduler::TaskAttributionTracker::TaskScopeType::kScriptExecution);
     }
   }
@@ -324,29 +324,29 @@ void PendingScript::Trace(Visitor* visitor) const {
   visitor->Trace(client_);
   visitor->Trace(original_execution_context_);
   visitor->Trace(original_element_document_);
-  visitor->Trace(parent_task_);
+  visitor->Trace(task_state_);
 }
 
 bool PendingScript::IsControlledByScriptRunner() const {
   switch (scheduling_type_) {
     case ScriptSchedulingType::kNotSet:
-      NOTREACHED_IN_MIGRATION();
-      return false;
+      NOTREACHED();
 
     case ScriptSchedulingType::kDefer:
     case ScriptSchedulingType::kParserBlocking:
     case ScriptSchedulingType::kParserBlockingInline:
     case ScriptSchedulingType::kImmediate:
-    case ScriptSchedulingType::kForceDefer:
       return false;
+
+    case ScriptSchedulingType::kDeprecatedForceDefer:
+      NOTREACHED()
+          << "kDeprecatedForceDefer is deprecated and should not be in use";
 
     case ScriptSchedulingType::kInOrder:
     case ScriptSchedulingType::kAsync:
     case ScriptSchedulingType::kForceInOrder:
       return true;
   }
-  NOTREACHED_IN_MIGRATION();
-  return false;
 }
 
 }  // namespace blink

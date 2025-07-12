@@ -10,8 +10,10 @@
 #include "base/containers/heap_array.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/browser/web_contents/web_contents_view_android.h"
-#include "content/public/android/content_jni_headers/SelectPopup_jni.h"
 #include "ui/gfx/geometry/rect_f.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "content/public/android/content_jni_headers/SelectPopup_jni.h"
 
 using base::android::AttachCurrentThread;
 using base::android::JavaParamRef;
@@ -136,7 +138,6 @@ void SelectPopup::HideMenu() {
 }
 
 void SelectPopup::SelectMenuItems(JNIEnv* env,
-                                  const JavaParamRef<jobject>& obj,
                                   jlong selectPopupDelegate,
                                   const JavaParamRef<jintArray>& indices) {
   blink::mojom::PopupMenuClient* popup_client_raw_ptr =

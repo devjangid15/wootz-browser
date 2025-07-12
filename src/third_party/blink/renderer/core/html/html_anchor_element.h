@@ -27,6 +27,9 @@
 #include "base/time/time.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/document.h"
+#include "third_party/blink/renderer/core/execution_context/security_context.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
+#include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/html/rel_list.h"
 #include "third_party/blink/renderer/core/html_names.h"
@@ -34,7 +37,6 @@
 #include "third_party/blink/renderer/core/url/dom_url_utils.h"
 #include "third_party/blink/renderer/platform/link_hash.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_request.h"
-#include "base/android/action_spec_json.h"
 
 namespace blink {
 
@@ -67,13 +69,14 @@ enum {
   kRelationTermsOfService = 0x00200000,
 };
 
-class CORE_EXPORT HTMLAnchorElement : public HTMLElement, public DOMURLUtils {
-  DEFINE_WRAPPERTYPEINFO();
-
+// Base class for <a> and <area> (HTMLAnchorElement and HTMLAreaElement).
+// Note: If a new element needs to use this as a base, existing callsites and
+// features that use this class should be audited (to see if the new element
+// should also support these features).
+class CORE_EXPORT HTMLAnchorElementBase : public HTMLElement,
+                                          public DOMURLUtils {
  public:
-  HTMLAnchorElement(Document& document);
-  HTMLAnchorElement(const QualifiedName&, Document&);
-  ~HTMLAnchorElement() override;
+  ~HTMLAnchorElementBase() override;
 
   KURL Href() const;
   void SetHref(const AtomicString&);
@@ -101,36 +104,29 @@ class CORE_EXPORT HTMLAnchorElement : public HTMLElement, public DOMURLUtils {
   }
 
   LinkHash VisitedLinkHash() const;
+  LinkHash PartitionedVisitedLinkFingerprint() const;
   void InvalidateCachedVisitedLinkHash() { cached_visited_link_hash_ = 0; }
 
   void SendPings(const KURL& destination_url) const;
 
-  // Element overrides:
-  void SetHovered(bool hovered) override;
-
-  Element* interestTargetElement() override;
-
-  AtomicString interestAction() const override;
+  Element* InterestForElement() const override;
 
   void Trace(Visitor*) const override;
 
-  void ReplaceWithActionEelement(base::ActionSpecJson action_spec,
-                                 base::OnceCallback<void()> callback);
-
  protected:
+  HTMLAnchorElementBase(const QualifiedName& tag_name, Document&);
+
   void ParseAttribute(const AttributeModificationParams&) override;
-  bool SupportsFocus(UpdateBehavior update_behavior =
-                         UpdateBehavior::kStyleAndLayout) const override;
+  FocusableState SupportsFocus(UpdateBehavior update_behavior) const override;
 
   void FinishParsingChildren() final;
 
  private:
   void AttributeChanged(const AttributeModificationParams&) override;
   bool ShouldHaveFocusAppearance() const final;
-  bool IsFocusable(UpdateBehavior update_behavior =
-                       UpdateBehavior::kStyleAndLayout) const override;
-  bool IsKeyboardFocusable(UpdateBehavior update_behavior =
-                               UpdateBehavior::kStyleAndLayout) const override;
+  FocusableState IsFocusableState(
+      UpdateBehavior update_behavior) const override;
+  bool IsKeyboardFocusableSlow(UpdateBehavior update_behavior) const override;
   void DefaultEventHandler(Event&) final;
   bool HasActivationBehavior() const override;
   void SetActive(bool active) final;
@@ -154,10 +150,54 @@ class CORE_EXPORT HTMLAnchorElement : public HTMLElement, public DOMURLUtils {
   Member<RelList> rel_list_;
 };
 
-inline LinkHash HTMLAnchorElement::VisitedLinkHash() const {
+class CORE_EXPORT HTMLAnchorElement : public HTMLAnchorElementBase {
+  DEFINE_WRAPPERTYPEINFO();
+
+ public:
+  explicit HTMLAnchorElement(Document& document);
+
+  void AttachLayoutTree(AttachContext& context) override;
+  void DetachLayoutTree(bool performing_reattach) override;
+
+  // Gets the element which is referenced by this anchor fragment
+  // (#scroll-target), or nullptr if not found.
+  Element* ScrollTargetElement() const;
+  // Gets the closest ancestor scrollable area of this anchors scroll target
+  // element.
+  PaintLayerScrollableArea* AncestorScrollableAreaOfScrollTargetElement() const;
+};
+
+template <>
+struct DowncastTraits<HTMLAnchorElementBase> {
+  static bool AllowFrom(const Element& element) {
+    return element.HasTagName(html_names::kATag) ||
+           element.HasTagName(html_names::kAreaTag);
+  }
+
+  static bool AllowFrom(const Node& node) {
+    return node.IsHTMLElement() &&
+           IsA<HTMLAnchorElementBase>(UnsafeTo<HTMLElement>(node));
+  }
+};
+
+inline LinkHash HTMLAnchorElementBase::VisitedLinkHash() const {
   if (!cached_visited_link_hash_) {
     cached_visited_link_hash_ = blink::VisitedLinkHash(
         GetDocument().BaseURL(), FastGetAttribute(html_names::kHrefAttr));
+  }
+  return cached_visited_link_hash_;
+}
+
+inline LinkHash HTMLAnchorElementBase::PartitionedVisitedLinkFingerprint()
+    const {
+  if (!cached_visited_link_hash_) {
+    // Obtain all the elements of the partition key.
+    cached_visited_link_hash_ = blink::PartitionedVisitedLinkFingerprint(
+        /*base_link_url=*/GetDocument().BaseURL(),
+        /*relative_link_url=*/FastGetAttribute(html_names::kHrefAttr),
+        /*top_level_site=*/
+        GetDocument().GetCachedTopFrameSite(Document::VisitedLinkPassKey()),
+        /*frame_origin=*/GetDocument().domWindow()->GetSecurityOrigin());
   }
   return cached_visited_link_hash_;
 }

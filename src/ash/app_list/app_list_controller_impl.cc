@@ -4,6 +4,8 @@
 
 #include "ash/app_list/app_list_controller_impl.h"
 
+#include <memory>
+#include <optional>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -14,8 +16,14 @@
 #include "ash/app_list/app_list_presenter_impl.h"
 #include "ash/app_list/app_list_view_delegate.h"
 #include "ash/app_list/apps_collections_controller.h"
+#include "ash/app_list/model/app_list_item.h"
+#include "ash/app_list/model/app_list_item_observer.h"
+#include "ash/app_list/model/app_list_model.h"
+#include "ash/app_list/model/app_list_model_observer.h"
 #include "ash/app_list/model/search/search_box_model.h"
+#include "ash/app_list/model/search/search_model.h"
 #include "ash/app_list/quick_app_access_model.h"
+#include "ash/app_list/views/app_list_bubble_view.h"
 #include "ash/app_list/views/app_list_item_view.h"
 #include "ash/app_list/views/app_list_main_view.h"
 #include "ash/app_list/views/app_list_toast_container_view.h"
@@ -23,14 +31,17 @@
 #include "ash/app_list/views/app_list_view.h"
 #include "ash/app_list/views/contents_view.h"
 #include "ash/app_list/views/search_box_view.h"
-#include "ash/app_list/views/search_notifier_controller.h"
 #include "ash/assistant/assistant_controller_impl.h"
 #include "ash/assistant/model/assistant_ui_model.h"
 #include "ash/assistant/ui/assistant_view_delegate.h"
 #include "ash/assistant/util/assistant_util.h"
 #include "ash/assistant/util/deep_link_util.h"
+#include "ash/capture_mode/capture_mode_constants.h"
+#include "ash/capture_mode/sunfish_scanner_feature_watcher.h"
 #include "ash/constants/ash_features.h"
 #include "ash/constants/ash_pref_names.h"
+#include "ash/constants/ash_switches.h"
+#include "ash/constants/web_app_id_constants.h"
 #include "ash/keyboard/ui/keyboard_ui_controller.h"
 #include "ash/public/cpp/app_list/app_list_client.h"
 #include "ash/public/cpp/app_list/app_list_controller_observer.h"
@@ -39,19 +50,23 @@
 #include "ash/public/cpp/app_list/app_list_types.h"
 #include "ash/public/cpp/assistant/controller/assistant_controller.h"
 #include "ash/public/cpp/assistant/controller/assistant_ui_controller.h"
+#include "ash/public/cpp/capture_mode/capture_mode_api.h"
 #include "ash/public/cpp/feature_discovery_duration_reporter.h"
 #include "ash/public/cpp/feature_discovery_metric_util.h"
 #include "ash/public/cpp/shelf_config.h"
 #include "ash/public/cpp/shelf_types.h"
 #include "ash/public/cpp/shell_window_ids.h"
+#include "ash/public/cpp/wallpaper/wallpaper_controller.h"
 #include "ash/root_window_controller.h"
+#include "ash/scanner/scanner_controller.h"
+#include "ash/scanner/scanner_metrics.h"
 #include "ash/screen_util.h"
 #include "ash/session/session_controller_impl.h"
 #include "ash/shelf/home_button.h"
 #include "ash/shelf/shelf_navigation_widget.h"
 #include "ash/shell.h"
+#include "ash/system/toast/anchored_nudge_manager_impl.h"
 #include "ash/user_education/welcome_tour/welcome_tour_metrics.h"
-#include "ash/wallpaper/wallpaper_controller_impl.h"
 #include "ash/wm/float/float_controller.h"
 #include "ash/wm/mru_window_tracker.h"
 #include "ash/wm/overview/overview_controller.h"
@@ -61,6 +76,8 @@
 #include "ash/wm/window_util.h"
 #include "base/barrier_closure.h"
 #include "base/callback_list.h"
+#include "base/check.h"
+#include "base/command_line.h"
 #include "base/containers/adapters.h"
 #include "base/containers/contains.h"
 #include "base/functional/bind.h"
@@ -69,10 +86,20 @@
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
+#include "base/scoped_observation.h"
+#include "base/strings/string_util.h"
 #include "base/trace_event/trace_event.h"
+#include "chromeos/ash/services/assistant/public/cpp/assistant_browser_delegate.h"
 #include "chromeos/ash/services/assistant/public/cpp/assistant_enums.h"
+#include "chromeos/ash/services/assistant/public/cpp/features.h"
+#include "components/account_id/account_id.h"
 #include "components/pref_registry/pref_registry_syncable.h"
+#include "components/prefs/pref_member.h"
 #include "components/prefs/pref_registry_simple.h"
+#include "components/services/app_service/public/cpp/app_registry_cache.h"
+#include "components/services/app_service/public/cpp/app_registry_cache_wrapper.h"
+#include "ui/base/models/image_model.h"
+#include "ui/base/mojom/menu_source_type.mojom-forward.h"
 #include "ui/compositor/compositor.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/layer_animation_sequence.h"
@@ -104,8 +131,7 @@ constexpr float kOverviewFadeAnimationScale = 0.92f;
 constexpr base::TimeDelta kOverviewFadeAnimationDuration =
     base::Milliseconds(350);
 
-// The app id for the settings app used for testing quick app access.
-constexpr char kOsSettingsAppId[] = "odknhmnlageboeamepcngndbggdpaobj";
+bool g_sunfish_nudge_disabled_for_test = false;
 
 // Update layer animation settings for launcher scale and opacity animation that
 // runs on overview mode change.
@@ -258,6 +284,7 @@ void MaybeLogWelcomeTourInteraction(AppListShowSource show_source) {
   if (features::IsWelcomeTourEnabled() &&
       IsAppListShowSourceUserTriggered(show_source)) {
     welcome_tour_metrics::RecordInteraction(
+        GetLastActiveUserPrefService(),
         welcome_tour_metrics::Interaction::kLauncher);
   }
 }
@@ -271,6 +298,19 @@ bool IsAssistantExitPointInsideLauncher(
     std::optional<assistant::AssistantExitPoint> exit_point) {
   return exit_point == AssistantExitPoint::kBackInLauncher ||
          exit_point == AssistantExitPoint::kLauncherSearchIphChip;
+}
+
+SearchBoxModel::SunfishButtonVisibility GetSunfishButtonVisibility(
+    const SunfishScannerFeatureWatcher& feature_watcher) {
+  if (feature_watcher.CanShowSunfishUi()) {
+    return SearchBoxModel::SunfishButtonVisibility::kShownWithSunfishIcon;
+  }
+
+  if (feature_watcher.CanShowScannerUi()) {
+    return SearchBoxModel::SunfishButtonVisibility::kShownWithScannerIcon;
+  }
+
+  return SearchBoxModel::SunfishButtonVisibility::kHidden;
 }
 
 }  // namespace
@@ -292,13 +332,18 @@ AppListControllerImpl::AppListControllerImpl()
   OnSessionStateChanged(session_controller->GetSessionState());
 
   Shell* shell = Shell::Get();
-  shell->wallpaper_controller()->AddObserver(this);
+  sunfish_scanner_feature_observation_.Observe(
+      shell->sunfish_scanner_feature_watcher());
+  // Get the initial Sunfish-session button state.
+  OnSunfishScannerFeatureStatesChanged(
+      *sunfish_scanner_feature_observation_.GetSource());
+  WallpaperController::Get()->AddObserver(this);
   shell->AddShellObserver(this);
   shell->overview_controller()->AddObserver(this);
   display::Screen::GetScreen()->AddObserver(this);
   keyboard::KeyboardUIController::Get()->AddObserver(this);
   AssistantState::Get()->AddObserver(this);
-  shell->window_tree_host_manager()->AddObserver(this);
+  shell->display_manager()->AddDisplayManagerObserver(this);
   AssistantController::Get()->AddObserver(this);
   AssistantUiController::Get()->GetModel()->AddObserver(this);
   FeatureDiscoveryDurationReporter::GetInstance()->AddObserver(this);
@@ -342,6 +387,17 @@ void AppListControllerImpl::RegisterProfilePrefs(PrefRegistrySimple* registry) {
   registry->RegisterDictionaryPref(prefs::kLauncherSearchCategoryControlStatus);
 
   registry->RegisterTimePref(prefs::kLauncherSearchLastFileScanLogTime,
+                             base::Time());
+
+  // The prefs for apps collections experiment.
+  registry->RegisterIntegerPref(
+      prefs::kLauncherAppsCollectionsExperimentArm,
+      static_cast<int>(
+          AppsCollectionsController::ExperimentalArm::kDefaultValue));
+
+  // The prefs for the Sunfish launcher nudge.
+  registry->RegisterIntegerPref(prefs::kSunfishLauncherNudgeShownCount, 0);
+  registry->RegisterTimePref(prefs::kSunfishLauncherNudgeLastShown,
                              base::Time());
 }
 
@@ -433,8 +489,11 @@ bool AppListControllerImpl::IsVisible() {
 
 void AppListControllerImpl::OnActiveUserPrefServiceChanged(
     PrefService* pref_service) {
-  if (IsKioskSession())
+  if (IsKioskSession()) {
     return;
+  }
+
+  UpdateSearchBoxUiVisibilities();
 
   if (!IsInTabletMode()) {
     DismissAppList();
@@ -494,8 +553,13 @@ void AppListControllerImpl::OnUserSessionAdded(const AccountId& account_id) {
       Shell::Get()->session_controller()->GetUserPrefServiceForUser(account_id);
   if (features::IsLauncherNudgeSessionResetEnabled()) {
     AppListNudgeController::ResetPrefsForNewUserSession(prefs);
-    SearchNotifierController::ResetPrefsForNewUserSession(prefs);
   }
+}
+
+void AppListControllerImpl::OnSunfishScannerFeatureStatesChanged(
+    SunfishScannerFeatureWatcher& source) {
+  GetSearchModel()->search_box()->SetSunfishButtonVisibility(
+      GetSunfishButtonVisibility(source));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -957,7 +1021,7 @@ void AppListControllerImpl::OnAssistantFeatureAllowedChanged(
   UpdateSearchBoxUiVisibilities();
 }
 
-void AppListControllerImpl::OnDisplayConfigurationChanged() {
+void AppListControllerImpl::OnDidApplyDisplayChanges() {
   // Entering tablet mode triggers a display configuration change when we
   // automatically switch to mirror mode. Switching to mirror mode happens
   // asynchronously (see DisplayConfigurationObserver::OnTabletModeStarted()).
@@ -1152,8 +1216,7 @@ void AppListControllerImpl::SetKeyboardTraversalMode(bool engaged) {
     // TODO(https://crbug.com/1262236): class name comparision and static cast
     // should be avoided in the production code. Find a better way to guarantee
     // the item's selection status.
-    if (std::string_view(focused_view->GetClassName()) ==
-        std::string_view(AppListItemView::kViewClassName)) {
+    if (focused_view->GetClassName() == AppListItemView::kViewClassName) {
       static_cast<AppListItemView*>(focused_view)->EnsureSelected();
     }
 
@@ -1244,9 +1307,10 @@ void AppListControllerImpl::OpenSearchResult(const std::string& result_id,
       case AppListLaunchedFrom::kLaunchedFromQuickAppAccess:
       case AppListLaunchedFrom::kLaunchedFromAppsCollections:
       case AppListLaunchedFrom::kLaunchedFromDiscoveryChip:
+      case AppListLaunchedFrom::kLaunchedFromSearchBoxIcon:
         break;
       case AppListLaunchedFrom::DEPRECATED_kLaunchedFromSuggestionChip:
-        NOTREACHED_IN_MIGRATION();
+        NOTREACHED();
     }
   }
 
@@ -1263,8 +1327,7 @@ void AppListControllerImpl::OpenSearchResult(const std::string& result_id,
                                         is_tablet_mode, last_show_timestamp_);
           break;
         case AppListLaunchType::kApp:
-          NOTREACHED_IN_MIGRATION();
-          break;
+          NOTREACHED();
       }
       break;
     case AppListLaunchedFrom::kLaunchedFromContinueTask:
@@ -1278,8 +1341,8 @@ void AppListControllerImpl::OpenSearchResult(const std::string& result_id,
     case AppListLaunchedFrom::kLaunchedFromQuickAppAccess:
     case AppListLaunchedFrom::kLaunchedFromAppsCollections:
     case AppListLaunchedFrom::kLaunchedFromDiscoveryChip:
-      NOTREACHED_IN_MIGRATION();
-      break;
+    case AppListLaunchedFrom::kLaunchedFromSearchBoxIcon:
+      NOTREACHED();
   }
 
   base::RecordAction(base::UserMetricsAction("AppList_OpenSearchResult"));
@@ -1348,12 +1411,16 @@ void AppListControllerImpl::ActivateItem(const std::string& id,
     case AppListLaunchedFrom::kLaunchedFromDiscoveryChip:
       // Metrics for discovery chip already recorded at RecordApplaunched().
       break;
-    case AppListLaunchedFrom::kLaunchedFromContinueTask:
+    case AppListLaunchedFrom::kLaunchedFromSearchBoxIcon:
+      // Metrics for launching an app from an icon in search box is recorded via
+      // `Apps.AppList.GeminiSearchBoxIcon`. This is currently used only for a
+      // Gemini icon.
+      break;
     case AppListLaunchedFrom::kLaunchedFromSearchBox:
+    case AppListLaunchedFrom::kLaunchedFromContinueTask:
     case AppListLaunchedFrom::kLaunchedFromShelf:
     case AppListLaunchedFrom::DEPRECATED_kLaunchedFromSuggestionChip:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
 
   if (client_)
@@ -1374,7 +1441,7 @@ void AppListControllerImpl::GetContextMenuModel(
 
 void AppListControllerImpl::ShowWallpaperContextMenu(
     const gfx::Point& onscreen_location,
-    ui::MenuSourceType source_type) {
+    ui::mojom::MenuSourceType source_type) {
   Shell::Get()->ShowContextMenu(onscreen_location, source_type);
 }
 
@@ -1672,15 +1739,34 @@ void AppListControllerImpl::OnVisibilityChanged(bool visible,
     last_visible_ = real_visibility;
 
     // Updates AppsContainerView in `fullscreen_presenter_`.
-    if (app_list_view)
+    if (app_list_view) {
       app_list_view->OnAppListVisibilityChanged(real_visibility);
+
+      // Only handle the tablet mode visibility changes, and let clamshell mode
+      // handle the nudge and button visibility metrics separately.
+      if (real_visibility && IsInTabletMode()) {
+        views::ImageButton* sunfish_button =
+            app_list_view->search_box_view()->sunfish_button();
+        // `sunfish_button` is always initialised in `SearchBoxView`'s
+        // constructor.
+        CHECK(sunfish_button);
+        MaybeShowSunfishLauncherNudge(sunfish_button);
+      }
+    }
 
     for (auto& observer : observers_)
       observer.OnAppListVisibilityChanged(real_visibility, display_id);
 
-    // Record whether the continue section is hidden by the user.
-    if (real_visibility)
+    if (real_visibility) {
+      // Record whether the continue section is hidden by the user.
       RecordHideContinueSectionMetric();
+
+      SearchBoxModel::SunfishButtonVisibility visibility =
+          GetSearchModel()->search_box()->sunfish_button_visibility();
+      RecordSunfishSessionButtonVisibilityOnLauncherShown(
+          /*is_visible=*/visibility !=
+          SearchBoxModel::SunfishButtonVisibility::kHidden);
+    }
 
     if (!home_launcher_animation_callback_.is_null())
       home_launcher_animation_callback_.Run(real_visibility);
@@ -1741,10 +1827,15 @@ void AppListControllerImpl::OnVisibilityWillChange(bool visible,
                                              display_id);
     }
 
-    // The virtual keyboard should be hidden before the bubble launcher
-    // calculating the work area.
     if (real_target_visibility) {
+      // The virtual keyboard should be hidden before the bubble launcher
+      // calculating the work area.
       keyboard::KeyboardUIController::Get()->HideKeyboardExplicitlyBySystem();
+
+      // Recalculate the Sunfish-session button visibility every time the
+      // launcher will be shown, as there are too many variables that can
+      // control it and not all of them can be observed for changes.
+      sunfish_scanner_feature_observation_.GetSource()->UpdateFeatureStates();
     }
   }
 }
@@ -1761,14 +1852,26 @@ SearchModel* AppListControllerImpl::GetSearchModel() {
 }
 
 void AppListControllerImpl::UpdateSearchBoxUiVisibilities() {
-  GetSearchModel()->search_box()->SetShowAssistantButton(
-      IsAssistantAllowedAndEnabled());
+  OnSunfishScannerFeatureStatesChanged(
+      *sunfish_scanner_feature_observation_.GetSource());
+
+  // Hide Gemini button first until we are sure that Gemini app list item
+  // exists.
+  HideGeminiButton();
 
   if (!client_) {
     return;
   }
 
   client_->RecalculateWouldTriggerLauncherSearchIph();
+
+  // Gemini app icon is loaded via `client_` for a dependency reason. This must
+  // be after `client_` non-nullptr check.
+  gemini_app_waiter_.emplace(
+      Shell::Get()->session_controller()->GetActiveAccountId(),
+      base::BindOnce(&AppListControllerImpl::ShowGeminiButton,
+                     base::Unretained(this)),
+      kGeminiAppId);
 }
 
 int64_t AppListControllerImpl::GetDisplayIdToShowAppListOn() {
@@ -1948,13 +2051,13 @@ void AppListControllerImpl::Shutdown() {
   Shell* shell = Shell::Get();
   AssistantController::Get()->RemoveObserver(this);
   AssistantUiController::Get()->GetModel()->RemoveObserver(this);
-  shell->window_tree_host_manager()->RemoveObserver(this);
+  shell->display_manager()->RemoveDisplayManagerObserver(this);
   AssistantState::Get()->RemoveObserver(this);
   keyboard::KeyboardUIController::Get()->RemoveObserver(this);
   display::Screen::GetScreen()->RemoveObserver(this);
   shell->overview_controller()->RemoveObserver(this);
   shell->RemoveShellObserver(this);
-  shell->wallpaper_controller()->RemoveObserver(this);
+  WallpaperController::Get()->RemoveObserver(this);
   shell->session_controller()->RemoveObserver(this);
   FeatureDiscoveryDurationReporter::GetInstance()->RemoveObserver(this);
 
@@ -2004,7 +2107,7 @@ void AppListControllerImpl::StartTrackingAnimationSmoothness(
     int64_t display_id) {
   auto* root_window = Shell::GetRootWindowForDisplayId(display_id);
   auto* compositor = root_window->layer()->GetCompositor();
-  smoothness_tracker_ = compositor->RequestNewThroughputTracker();
+  smoothness_tracker_ = compositor->RequestNewCompositorMetricsTracker();
   smoothness_tracker_->Start(
       metrics_util::ForSmoothnessV3(base::BindRepeating([](int smoothness) {
         UMA_HISTOGRAM_PERCENTAGE(kHomescreenAnimationHistogram, smoothness);
@@ -2036,6 +2139,21 @@ int AppListControllerImpl::GetFullscreenLauncherContainerId() const {
                                  : kShellWindowId_AppListContainer;
 }
 
+void AppListControllerImpl::ShowGeminiButton(std::string app_name) {
+  CHECK(client_);
+
+  GetSearchModel()->search_box()->SetGeminiButtonVisibility(
+      SearchBoxModel::SearchBoxIconButton({
+          .display_name = app_name,
+          .icon = client_->GetGeminiIcon(),
+      }));
+}
+
+void AppListControllerImpl::HideGeminiButton() {
+  gemini_app_waiter_.reset();
+  GetSearchModel()->search_box()->SetGeminiButtonVisibility(std::nullopt);
+}
+
 int AppListControllerImpl::GetPreferredBubbleWidth(
     aura::Window* root_window) const {
   DCHECK(bubble_presenter_);
@@ -2048,6 +2166,65 @@ bool AppListControllerImpl::SetHomeButtonQuickApp(const std::string& app_id) {
     return false;
   }
   return model_provider_->quick_app_access_model()->SetQuickApp(app_id);
+}
+
+// static
+void AppListControllerImpl::SetSunfishNudgeDisabledForTest(bool is_disabled) {
+  g_sunfish_nudge_disabled_for_test = is_disabled;
+}
+
+void AppListControllerImpl::MaybeShowSunfishLauncherNudge(
+    views::View* launcher_button) {
+  if (g_sunfish_nudge_disabled_for_test) {
+    return;
+  }
+
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kAshNoNudges)) {
+    return;
+  }
+
+  if (!CanShowSunfishOrScannerUi()) {
+    return;
+  }
+
+  // We don't want to show the nudge if the user is not signed in yet.
+  auto* session_controller = Shell::Get()->session_controller();
+  if (!session_controller || session_controller->IsUserSessionBlocked()) {
+    return;
+  }
+
+  auto* pref_service = session_controller->GetActivePrefService();
+  CHECK(pref_service);
+  CHECK(launcher_button);
+
+  const int shown_count =
+      pref_service->GetInteger(prefs::kSunfishLauncherNudgeShownCount);
+  const base::Time last_shown_time =
+      pref_service->GetTime(prefs::kSunfishLauncherNudgeLastShown);
+
+  // Do not show the nudge more than three times, or if it has already been
+  // shown in the past 24 hours.
+  const base::Time now = base::Time::Now();
+  if ((shown_count >= capture_mode::kSunfishNudgeMaxShownCount) ||
+      ((now - last_shown_time) < capture_mode::kSunfishNudgeTimeBetweenShown)) {
+    return;
+  }
+
+  // Update the preferences.
+  pref_service->SetInteger(prefs::kSunfishLauncherNudgeShownCount,
+                           shown_count + 1);
+  pref_service->SetTime(prefs::kSunfishLauncherNudgeLastShown, now);
+
+  // TODO(hewer): Upload string for translation.
+  AnchoredNudgeData nudge_data = AnchoredNudgeData(
+      capture_mode::kSunfishLauncherNudgeId,
+      NudgeCatalogName::kSunfishLauncherNudge,
+      u"Select anything on your screen and let your Chromebook suggest best "
+      u"actions from there",
+      launcher_button);
+
+  AnchoredNudgeManager::Get()->Show(nudge_data);
 }
 
 }  // namespace ash

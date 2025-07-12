@@ -13,7 +13,6 @@
 #include <optional>
 #include <set>
 #include <string>
-#include <unordered_set>
 #include <vector>
 
 #include "base/containers/flat_set.h"
@@ -22,6 +21,7 @@
 #include "base/memory/memory_pressure_monitor.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/power_monitor/power_observer.h"
 #include "base/threading/thread_checker.h"
 #include "base/values.h"
 #include "build/buildflag.h"
@@ -37,7 +37,7 @@
 #include "net/socket/websocket_endpoint_lock_manager.h"
 #include "net/spdy/spdy_session_pool.h"
 #include "net/ssl/ssl_client_session_cache.h"
-#include "net/third_party/quiche/src/quiche/spdy/core/spdy_protocol.h"
+#include "net/third_party/quiche/src/quiche/http2/core/spdy_protocol.h"
 
 namespace base {
 class Value;
@@ -54,6 +54,7 @@ class HttpAuthHandlerFactory;
 class HttpNetworkSessionPeer;
 class HttpResponseBodyDrainer;
 class HttpServerProperties;
+class HttpStreamPool;
 class HttpUserAgentSettings;
 class NetLog;
 #if BUILDFLAG(ENABLE_REPORTING)
@@ -172,7 +173,7 @@ struct NET_EXPORT HttpNetworkSessionParams {
   bool ignore_ip_address_changes = false;
 
   // Whether to use the ALPN information in the DNS HTTPS record.
-  bool use_dns_https_svcb_alpn = false;
+  bool use_dns_https_svcb_alpn = true;
 };
 
 // Structure with pointers to the dependencies of the HttpNetworkSession.
@@ -207,7 +208,7 @@ struct NET_EXPORT HttpNetworkSessionContext {
 };
 
 // This class holds session objects used by HttpNetworkTransaction objects.
-class NET_EXPORT HttpNetworkSession {
+class NET_EXPORT HttpNetworkSession : public base::PowerSuspendObserver {
  public:
   enum SocketPoolType {
     NORMAL_SOCKET_POOL,
@@ -217,7 +218,11 @@ class NET_EXPORT HttpNetworkSession {
 
   HttpNetworkSession(const HttpNetworkSessionParams& params,
                      const HttpNetworkSessionContext& context);
-  ~HttpNetworkSession();
+  ~HttpNetworkSession() override;
+
+  // base::PowerSuspendObserver methods:
+  void OnSuspend() override;
+  void OnResume() override;
 
   HttpAuthCache* http_auth_cache() { return &http_auth_cache_; }
   SSLClientContext* ssl_client_context() { return &ssl_client_context_; }
@@ -249,6 +254,7 @@ class NET_EXPORT HttpNetworkSession {
   HttpServerProperties* http_server_properties() {
     return http_server_properties_;
   }
+  HttpStreamPool* http_stream_pool() { return http_stream_pool_.get(); }
   HttpStreamFactory* http_stream_factory() {
     return http_stream_factory_.get();
   }
@@ -288,11 +294,18 @@ class NET_EXPORT HttpNetworkSession {
     return application_settings_;
   }
 
+  void SetTLS13EarlyDataEnabled(bool enabled);
+
   // Evaluates if QUIC is enabled for new streams.
   bool IsQuicEnabled() const;
 
   // Disable QUIC for new streams.
   void DisableQuic();
+
+  // Returns true when QUIC is forcibly used for `destination`.
+  bool ShouldForceQuic(const url::SchemeHostPort& destination,
+                       const ProxyInfo& proxy_info,
+                       bool is_websocket);
 
   // Ignores certificate errors on new connection attempts.
   void IgnoreCertificateErrorsForTesting();
@@ -306,6 +319,11 @@ class NET_EXPORT HttpNetworkSession {
   // will be nullptr.
   CommonConnectJobParams CreateCommonConnectJobParams(
       bool for_websockets = false);
+
+  // Rewrite the port of `endpoint` when testing fixed port is specified.
+  void ApplyTestingFixedPort(url::SchemeHostPort& endpoint) const;
+
+  bool power_suspended() const { return power_suspended_; }
 
  private:
   friend class HttpNetworkSessionPeer;
@@ -336,6 +354,14 @@ class NET_EXPORT HttpNetworkSession {
   std::unique_ptr<ClientSocketPoolManager> normal_socket_pool_manager_;
   std::unique_ptr<ClientSocketPoolManager> websocket_socket_pool_manager_;
   QuicSessionPool quic_session_pool_;
+  // `http_stream_pool_` needs to outlive `spdy_session_pool_` because it owns
+  // SpdySessions, which own HttpStreamHandle and handles are owned by
+  // `http_stream_pool_`.
+  // `http_stream_pool_` needs to be destroyed before `quic_session_pool_`
+  // because an HttpStreamPool::QuicTask, which is owned by `http_stream_pool_`,
+  // may have a QuicSessionAttempt that must be destroyed before
+  // `quic_session_pool_`.
+  std::unique_ptr<HttpStreamPool> http_stream_pool_;
   SpdySessionPool spdy_session_pool_;
   std::unique_ptr<HttpStreamFactory> http_stream_factory_;
   std::set<std::unique_ptr<HttpResponseBodyDrainer>, base::UniquePtrComparator>
@@ -347,6 +373,8 @@ class NET_EXPORT HttpNetworkSession {
   HttpNetworkSessionContext context_;
 
   std::unique_ptr<base::MemoryPressureListener> memory_pressure_listener_;
+
+  bool power_suspended_ = false;
 
   THREAD_CHECKER(thread_checker_);
 };

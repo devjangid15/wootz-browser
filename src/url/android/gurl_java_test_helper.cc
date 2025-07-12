@@ -4,11 +4,15 @@
 
 #include <stddef.h>
 
+#include <sstream>
+
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "base/test/icu_test_util.h"
 #include "url/android/gurl_android.h"
 #include "url/gurl.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
 #include "url/j_test_jni_headers/GURLJavaTestHelper_jni.h"
 
 using base::android::AttachCurrentThread;

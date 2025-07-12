@@ -20,11 +20,11 @@ namespace extensions {
 
 class ExtensionError {
  public:
-  enum Type {
-    MANIFEST_ERROR = 0,
-    RUNTIME_ERROR,
-    INTERNAL_ERROR,
-    NUM_ERROR_TYPES,  // Put new values above this.
+  enum class Type {
+    kManifestError = 0,
+    kRuntimeError,
+    kInternalError,
+    kNumErrorTypes,  // Put new values above this.
   };
 
   ExtensionError(const ExtensionError&) = delete;
@@ -34,7 +34,7 @@ class ExtensionError {
 
   virtual std::string GetDebugString() const;
 
-  // Return true if this error and |rhs| are considered equal, and should be
+  // Return true if this error and `rhs` are considered equal, and should be
   // grouped together.
   bool IsEqual(const ExtensionError* rhs) const;
 

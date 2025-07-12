@@ -5,12 +5,15 @@
 #ifndef THIRD_PARTY_BLINK_PUBLIC_COMMON_WEB_PREFERENCES_WEB_PREFERENCES_MOJOM_TRAITS_H_
 #define THIRD_PARTY_BLINK_PUBLIC_COMMON_WEB_PREFERENCES_WEB_PREFERENCES_MOJOM_TRAITS_H_
 
+#include <optional>
+
 #include "build/build_config.h"
 #include "mojo/public/cpp/bindings/struct_traits.h"
 #include "net/nqe/effective_connection_type.h"
 #include "third_party/blink/public/common/common_export.h"
 #include "third_party/blink/public/common/web_preferences/web_preferences.h"
 #include "third_party/blink/public/mojom/webpreferences/web_preferences.mojom.h"
+#include "third_party/skia/include/core/SkColor.h"
 
 namespace mojo {
 
@@ -80,6 +83,11 @@ struct BLINK_COMMON_EXPORT StructTraits<blink::mojom::WebPreferencesDataView,
     return r.context_menu_on_mouse_up;
   }
 
+  static bool always_show_context_menu_on_touch(
+      const blink::web_pref::WebPreferences& r) {
+    return r.always_show_context_menu_on_touch;
+  }
+
   static bool javascript_enabled(const blink::web_pref::WebPreferences& r) {
     return r.javascript_enabled;
   }
@@ -142,10 +150,6 @@ struct BLINK_COMMON_EXPORT StructTraits<blink::mojom::WebPreferencesDataView,
     return r.local_storage_enabled;
   }
 
-  static bool databases_enabled(const blink::web_pref::WebPreferences& r) {
-    return r.databases_enabled;
-  }
-
   static bool tabs_to_links(const blink::web_pref::WebPreferences& r) {
     return r.tabs_to_links;
   }
@@ -176,10 +180,6 @@ struct BLINK_COMMON_EXPORT StructTraits<blink::mojom::WebPreferencesDataView,
 
   static bool webgl2_enabled(const blink::web_pref::WebPreferences& r) {
     return r.webgl2_enabled;
-  }
-
-  static bool pepper_3d_enabled(const blink::web_pref::WebPreferences& r) {
-    return r.pepper_3d_enabled;
   }
 
   static bool privileged_webgl_extensions_enabled(
@@ -352,9 +352,9 @@ struct BLINK_COMMON_EXPORT StructTraits<blink::mojom::WebPreferencesDataView,
     return r.target_blank_implies_no_opener_enabled_will_be_removed;
   }
 
-  static bool allow_non_empty_navigator_plugins(
+  static bool ignore_permission_for_device_changed_event(
       const blink::web_pref::WebPreferences& r) {
-    return r.allow_non_empty_navigator_plugins;
+    return r.ignore_permission_for_device_changed_event;
   }
 
   static uint32_t number_of_cpu_cores(
@@ -644,6 +644,11 @@ struct BLINK_COMMON_EXPORT StructTraits<blink::mojom::WebPreferencesDataView,
       const blink::web_pref::WebPreferences& r) {
     return r.disable_accelerated_small_canvases;
   }
+
+  static bool long_press_link_select_text(
+      const blink::web_pref::WebPreferences& r) {
+    return r.long_press_link_select_text;
+  }
 #endif  // BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_FUCHSIA)
@@ -699,13 +704,18 @@ struct BLINK_COMMON_EXPORT StructTraits<blink::mojom::WebPreferencesDataView,
     return r.require_transient_activation_for_show_file_or_directory_picker;
   }
 
-  static bool require_transient_activation_for_html_fullscreen(
-      const blink::web_pref::WebPreferences& r) {
-    return r.require_transient_activation_for_html_fullscreen;
-  }
-
   static bool in_forced_colors(const blink::web_pref::WebPreferences& r) {
     return r.in_forced_colors;
+  }
+
+  static bool is_forced_colors_disabled(
+      const blink::web_pref::WebPreferences& r) {
+    return r.is_forced_colors_disabled;
+  }
+
+  static std::optional<SkColor> root_scrollbar_theme_color(
+      const blink::web_pref::WebPreferences& r) {
+    return r.root_scrollbar_theme_color;
   }
 
   static blink::mojom::PreferredColorScheme
@@ -763,6 +773,11 @@ struct BLINK_COMMON_EXPORT StructTraits<blink::mojom::WebPreferencesDataView,
     return r.touch_drag_drop_enabled;
   }
 
+  static bool touch_dragend_context_menu(
+      const blink::web_pref::WebPreferences& r) {
+    return r.touch_dragend_context_menu;
+  }
+
   static bool webxr_immersive_ar_allowed(
       const blink::web_pref::WebPreferences& r) {
     return r.webxr_immersive_ar_allowed;
@@ -782,10 +797,25 @@ struct BLINK_COMMON_EXPORT StructTraits<blink::mojom::WebPreferencesDataView,
     return r.modal_context_menu;
   }
 
+  static bool dynamic_safe_area_insets_enabled(
+      const blink::web_pref::WebPreferences& r) {
+    return r.dynamic_safe_area_insets_enabled;
+  }
+
   static bool
   require_transient_activation_and_user_confirmation_for_subapps_api(
       const blink::web_pref::WebPreferences& r) {
     return r.subapps_apis_require_user_gesture_and_authorization;
+  }
+
+  static bool payment_request_enabled(
+      const blink::web_pref::WebPreferences& r) {
+    return r.payment_request_enabled;
+  }
+
+  static bool api_based_fingerprinting_interventions_enabled(
+      const blink::web_pref::WebPreferences& r) {
+    return r.api_based_fingerprinting_interventions_enabled;
   }
 
   static bool Read(blink::mojom::WebPreferencesDataView r,

@@ -4,17 +4,25 @@
 
 """Library for defining chromium_tests_builder_config properties."""
 
-load("@stdlib//internal/graph.star", "graph")
-load("@stdlib//internal/luci/common.star", "keys", "kinds", "triggerer")
+load("@stdlib//internal/luci/common.star", "kinds")
 load("//project.star", "settings")
 load("./args.star", "args")
-load("./builder_url.star", "linkify_builder")
+load("./branches.star", "branches")
+load(
+    "./builder_exemptions.star",
+    "exempted_gardened_mirrors_in_cq_builders",
+    "mega_cq_excluded_builders",
+    "mega_cq_excluded_gardener_rotations",
+    "standalone_trybot_excluded_builder_groups",
+    "standalone_trybot_excluded_builders",
+)
 load("./chrome_settings.star", "per_builder_outputs_config")
 load("./enums.star", "enums")
+load("./html.star", "linkify_builder")
 load("./nodes.star", "nodes")
-load("./sheriff_rotations.star", "get_sheriff_rotations")
+load("./sheriff_rotations.star", "get_gardener_rotations")
 load("./structs.star", "structs")
-load("./targets.star", "get_targets_spec_generator", "register_targets")
+load("./targets-internal/targets-specs-generation.star", "get_targets_spec_generator", "register_targets")
 
 _execution_mode = enums.enum(
     # The builder will perform compilation of any targets configured in the
@@ -69,10 +77,17 @@ _target_platform = enums.enum(
     FUCHSIA = "fuchsia",
 )
 
+_host_platform = enums.enum(
+    LINUX = "linux",
+    WIN = "win",
+    MAC = "mac",
+)
+
 def _chromium_config(
         *,
         config,
         target_platform,
+        host_platform = None,
         apply_configs = None,
         build_config = None,
         target_arch = None,
@@ -110,6 +125,8 @@ def _chromium_config(
         fail("unknown target_arch: {}".format(target_arch))
     if target_bits != None and target_bits not in (32, 64):
         fail("unknown target_bits: {}".format(target_bits))
+    if host_platform != None and host_platform not in _host_platform.values:
+        fail("unknown host_platform: {}".format(host_platform))
     if target_platform not in _target_platform.values:
         fail("unknown target_platform: {}".format(target_platform))
     if ((target_cros_boards or cros_boards_with_qemu_images) and
@@ -124,6 +141,7 @@ def _chromium_config(
         target_arch = target_arch,
         target_bits = target_bits,
         target_platform = target_platform,
+        host_platform = host_platform,
         target_cros_boards = args.listify(target_cros_boards),
         cros_boards_with_qemu_images = args.listify(cros_boards_with_qemu_images),
     )
@@ -145,7 +163,7 @@ def _android_config(*, config, apply_configs = None):
         fail("config must be provided")
     return struct(
         config = config,
-        apply_configs = args.listify(apply_configs),
+        apply_configs = apply_configs,
     )
 
 def _skylab_upload_location(*, gs_bucket, gs_extra = None):
@@ -301,19 +319,24 @@ def _builder_spec(
 
 def _ci_settings(
         *,
-        retry_failed_shards = None):
+        retry_failed_shards = None,
+        retry_invalid_shards = None):
     """Settings specific to CI builders.
 
     Args:
         retry_failed_shards: (bool) Whether or not failing shards of a test will
             be retried. If retries for all failed shards of a test succeed, the
             test will be considered to have passed.
+        retry_invalid_shards: (bool) Whether or not infra failed shards of tests
+            should be retried. If retries for all failed shards of a test
+            succeed, the test will be considered to have passed.
 
     Returns:
         A struct that can be passed to the `ci_settings` argument of the builder.
     """
     return struct(
         retry_failed_shards = retry_failed_shards,
+        retry_invalid_shards = retry_invalid_shards,
     )
 
 def _try_settings(
@@ -379,9 +402,10 @@ def _copy_from(builder, modifier_fn = None):
     )
 
 builder_config = struct(
-    # Function for expressing builder spec or mirrors in terms of another
+    # Functions for expressing builder spec or mirrors in terms of another
     # builder's
     copy_from = _copy_from,
+    is_copy_from = _is_copy_from,
 
     # Functions and associated constants for defining builder spec
     builder_spec = _builder_spec,
@@ -399,6 +423,7 @@ builder_config = struct(
     build_config = _build_config,
     target_arch = _target_arch,
     target_platform = _target_platform,
+    host_platform = _host_platform,
 
     # Function for defining android recipe module config
     android_config = _android_config,
@@ -412,6 +437,12 @@ builder_config = struct(
 
 # Nodes containing the builder config details for a builder
 _BUILDER_CONFIG = nodes.create_node_type_with_builder_ref("builder_config")
+
+_BUILDER_CONFIG_PARENT = nodes.create_link_node_type(
+    "builder_config_parent",
+    _BUILDER_CONFIG,
+    _BUILDER_CONFIG,
+)
 
 # Nodes representing a link to a mirrored builder
 _BUILDER_CONFIG_MIRROR = nodes.create_link_node_type(
@@ -437,11 +468,13 @@ def register_builder_config(
         name,
         builder_group,
         builder_spec,
+        parent,
         mirrors,
-        settings,
+        bc_settings,
         targets,
         targets_settings,
-        additional_exclusions):
+        additional_exclusions,
+        description_html):
     """Registers the builder config so the properties can be computed.
 
     At most one of builder_spec or mirrors can be set. If neither builder_spec
@@ -452,8 +485,9 @@ def register_builder_config(
         name: The name of the builder.
         builder_group: The name of the group the builder belongs to.
         builder_spec: The spec describing the configuration for the builder.
+        parent: Reference to the parent builder of the builder.
         mirrors: References to the builders that the builder should mirror.
-        settings: The object determining the additional settings applied to
+        bc_settings: The object determining the additional settings applied to
             builder_config.
         targets: The targets to be built/run by the builder.
         targets_settings: The settings to use when expanding the targets for the
@@ -461,11 +495,18 @@ def register_builder_config(
         additional_exclusions: A list of paths that are excluded when analyzing
             the change to determine affected targets. The paths should be
             relative to the per-builder output root dir.
+        description_html: A string of html representing the description of the builder.
     """
     if not builder_spec and not mirrors:
+        if bc_settings:
+            fail("bc_settings specified without builder_spec or mirrors")
+
         # TODO(gbeaty) Eventually make this a failure for the chromium
         # family of recipes
         return
+
+    if not builder_spec and parent:
+        fail("parent can't be specified without builder_spec")
 
     if not builder_group:
         fail("builder_group must be set to use chromium_tests_builder_config")
@@ -476,8 +517,8 @@ def register_builder_config(
 
     include_all_triggered_testers = None
     settings_fields = {}
-    if settings:
-        settings_fields = structs.to_proto_properties(settings)
+    if bc_settings:
+        settings_fields = structs.to_proto_properties(bc_settings)
         include_all_triggered_testers = settings_fields.pop(
             "include_all_triggered_testers",
             None,
@@ -492,16 +533,23 @@ def register_builder_config(
         include_all_triggered_testers = include_all_triggered_testers,
         settings_fields = settings_fields,
         additional_exclusions = additional_exclusions,
+        description_html = description_html,
     ))
 
     if _is_copy_from(builder_spec):
         _BUILDER_SPEC_COPY_FROM.link(builder_config_key, builder_spec.builder)
+
+    if parent:
+        _BUILDER_CONFIG_PARENT.link(builder_config_key, parent)
 
     if _is_copy_from(mirrors):
         _MIRRORS_COPY_FROM.link(builder_config_key, mirrors.builder)
     else:
         for m in mirrors or []:
             _BUILDER_CONFIG_MIRROR.link(builder_config_key, m)
+
+    if targets and settings.project.startswith("chrome"):
+        fail("Defining targets in starlark is not yet supported in src-internal")
 
     if targets:
         # Register the bundle under the qualified builder name, this allows for
@@ -515,8 +563,6 @@ def register_builder_config(
             builder_group = builder_group,
             builder_name = name,
         )
-
-    graph.add_edge(builder_config_key, keys.builder(bucket, name))
 
 def _builder_name(node):
     key = node.key
@@ -623,6 +669,14 @@ def _check_specs_for_consistency(bucket_name, builder_name, entries):
                 ),
             ))
 
+def _get_builder_owner_description(description, contact_email):
+    if not contact_email:
+        return description
+
+    if description:
+        description += "<br/>"
+    return "{}Builder owner: <a href=mailto:{}>{}</a>".format(description, contact_email, contact_email)
+
 def _get_builder_mirror_description(bucket_name, builder, bc_state):
     node = _BUILDER_CONFIG.get(bucket_name, builder.name)
     if not node:
@@ -637,6 +691,11 @@ def _get_builder_mirror_description(bucket_name, builder, bc_state):
         fail("A builder can't both mirror and be mirrored:", builder.name)
 
     description = builder.description_html
+    if not description and len(mirrored_builders) == 1:
+        m_id = _builder_id(mirrored_builders[0])
+        mirror_node = _BUILDER_CONFIG.get(m_id["bucket"], m_id["builder"])
+        if mirror_node.props.description_html:
+            description += "<br>%s<br/>" % mirror_node.props.description_html
     if description:
         description += "<br/>"
     if mirrored_builders:
@@ -687,6 +746,7 @@ def _set_builder_config_property(ctx):
 
     bc_state = _bc_state()
     needs_mega_cq_mode = set()
+    trybot_ungardened_mirrors = {}
 
     for bucket in cfg.buckets:
         if not proto.has(bucket, "swarming"):
@@ -694,6 +754,10 @@ def _set_builder_config_property(ctx):
         bucket_name = bucket.name
         for builder in bucket.swarming.builders:
             builder_name = builder.name
+
+            mirror_description = _get_builder_mirror_description(bucket_name, builder, bc_state)
+            builder.description_html = _get_builder_owner_description(mirror_description, builder.contact_team_email)
+
             node = _BUILDER_CONFIG.get(bucket_name, builder_name)
             if not node:
                 continue
@@ -709,6 +773,14 @@ def _set_builder_config_property(ctx):
                 parent = bc_state.parent(node)
                 if parent:
                     entries.append(_entry(bc_state, parent))
+
+                    # Check that the parent builder has a gardener rotation
+                    # configured, if the current builder does.
+                    parent_builder_id = _builder_id(parent)
+                    rotations = get_gardener_rotations(bucket_name, builder_name)
+                    parent_rotations = get_gardener_rotations(parent_builder_id["bucket"], parent_builder_id["builder"])
+                    if rotations and not parent_rotations:
+                        fail("parent builder {}/{} does not have a gardener rotation but child builder {}/{} does".format(parent_builder_id["bucket"], parent_builder_id["builder"], bucket_name, builder_name))
                 entries.append(_entry(bc_state, node, parent))
                 targets_spec_nodes.append(node)
                 builder_ids.append(_builder_id(node))
@@ -788,9 +860,20 @@ def _set_builder_config_property(ctx):
 
             targets_spec = _targets_spec(bc_state, targets_spec_nodes)
             if targets_spec:
-                builder_config["targets_spec_directory"] = "src/infra/config/generated/builders/{}/{}/targets".format(bucket_name, builder_name)
+                builder_config["targets_spec_directory"] = (
+                    "src/infra/config/generated/{}/{}/{}/targets".format(
+                        per_builder_outputs_config().root_dir,
+                        bucket_name,
+                        builder_name,
+                    )
+                )
                 for builder_group, contents in targets_spec.items():
-                    json_file = "builders/{}/{}/targets/{}.json".format(bucket_name, builder_name, builder_group)
+                    json_file = "{}/{}/{}/targets/{}.json".format(
+                        per_builder_outputs_config().root_dir,
+                        bucket_name,
+                        builder_name,
+                        builder_group,
+                    )
                     ctx.output[json_file] = json.indent(json.encode(contents), indent = "  ")
 
             builder_properties = json.decode(builder.properties)
@@ -799,39 +882,36 @@ def _set_builder_config_property(ctx):
             )
             builder.properties = json.encode(builder_properties)
 
-            builder.description_html = _get_builder_mirror_description(bucket_name, builder, bc_state)
-
             # Enforce that most gardened CI bots have a matching trybot.
-            rotations = get_sheriff_rotations(bucket_name, builder.name)
-            excluded_rotations = [
-                # Most/all the clang bots build using clang built from HEAD.
-                # Failures on them hopefully/rarely lead to reverts of random
-                # CLs on the Chromium-side. So trybots for these aren't as
-                # critical.
-                "chromium.clang",
-                # Some GPU trybots share the same limited pool of bots, so can't
-                # handle more than a few builds at a time. Keep them out of the
-                # mega CQ for now.
-                "chromium.gpu",
-                # "cft" builders are very red.
-                "cft",
-            ]
-            excluded_builders = [
-                # TODO(crbug.com/40282196): Remove the following as trybots are
-                # created for them.
-                "android-arm64-archive-rel",
-                "lacros-arm-archive-rel",
-                "lacros64-archive-rel",
-                "linux-chromeos-archive-rel",
-                "mac-arm64-dbg",
-            ]
+            rotations = get_gardener_rotations(bucket_name, builder.name)
             is_excluded = (
                 bucket_name != "ci" or
-                builder.name in excluded_builders or
-                any([s.key.id in excluded_rotations for s in rotations])
+                builder.name in mega_cq_excluded_builders or
+                any([s.key.id in mega_cq_excluded_gardener_rotations for s in rotations])
             )
             if rotations and not mirroring_builders and not is_excluded:
                 fail("{} is on a sheriff/gardener rotation, but lacks a matching trybot".format(builder.name))
+
+            # If the builder is part of CQ it must have gardeners for the builders it mirrors
+            if branches.matches(branches.selector.MAIN) and bucket_name == "try":
+                for m in mirrors:
+                    mirror_id = _builder_id(m)
+                    mirror_rotations = get_gardener_rotations(mirror_id["bucket"], mirror_id["builder"])
+                    mirror = "{}/{}".format(mirror_id["bucket"], mirror_id["builder"])
+                    if len(mirror_rotations) == 0 and mirror not in exempted_gardened_mirrors_in_cq_builders:
+                        cq_identifier = "{}/{}/{}".format(
+                            settings.project,
+                            bucket_name,
+                            builder.name,
+                        )
+                        if cq_identifier not in trybot_ungardened_mirrors:
+                            trybot_ungardened_mirrors[cq_identifier] = set()
+                        trybot_ungardened_mirrors[cq_identifier] = trybot_ungardened_mirrors[cq_identifier].union([mirror])
+
+            if (bucket_name == "try" and not mirrors and
+                builder_properties.get("builder_group") not in standalone_trybot_excluded_builder_groups and
+                builder.name not in standalone_trybot_excluded_builders):
+                fail(builder.name + " must not be a stand-alone trybot. Please add a corresponding CI bot for it to mirror.")
 
             # Put most gardened CI bots' trybots onto the mega CQ. We skip a
             # trybot if any of the following are true:
@@ -846,23 +926,24 @@ def _set_builder_config_property(ctx):
             allowed_trybot_recipes = [
                 "chromium_trybot",
                 "chromium_trybot_internal",
+                "chromium/fuzz",
                 "chromium/orchestrator",
             ]
             is_excluded = False
             all_mirror_rotations = []
             for m in mirrors:
                 mirror_id = _builder_id(m)
-                mirror_rotations = get_sheriff_rotations(mirror_id["bucket"], mirror_id["builder"])
+                mirror_rotations = get_gardener_rotations(mirror_id["bucket"], mirror_id["builder"])
                 all_mirror_rotations += mirror_rotations
                 if not mirror_rotations:
                     is_excluded = True
-                if json.decode(builder.properties)["recipe"] not in allowed_trybot_recipes:
+                if builder_properties["recipe"] not in allowed_trybot_recipes:
                     is_excluded = True
-                if mirror_id["builder"] in excluded_builders:
+                if mirror_id["builder"] in mega_cq_excluded_builders:
                     is_excluded = True
                 if is_excluded:
                     break
-            if all([r.key.id in excluded_rotations for r in all_mirror_rotations]):
+            if all([r.key.id in mega_cq_excluded_gardener_rotations for r in all_mirror_rotations]):
                 is_excluded = True
             if not is_excluded:
                 cq_identifier = "{}/{}/{}".format(
@@ -880,6 +961,9 @@ def _set_builder_config_property(ctx):
     for cq_group in cq_config_groups:
         if cq_group.name != "cq":
             continue
+        for b in cq_group.verifiers.tryjob.builders:
+            if b.name in trybot_ungardened_mirrors and not b.includable_only and b.experiment_percentage == 0:
+                fail("{} is being added to the CQ but it is mirroring an ungardened and unexempted builder(s): {}".format(b.name, ", ".join(trybot_ungardened_mirrors[b.name])))
         for b in cq_group.verifiers.tryjob.builders:
             if b.name not in needs_mega_cq_mode:
                 continue
@@ -917,38 +1001,7 @@ def _bc_state():
         if node.key.kind != _BUILDER_CONFIG.kind:
             fail("Expected {} node, got {}".format(_BUILDER_CONFIG.kind, node))
 
-        builder_nodes = graph.children(node.key, kinds.BUILDER)
-        if len(builder_nodes) != 1:
-            fail(
-                "internal error: builder_config node should have edge to exactly 1 builder node",
-                node.trace,
-            )
-
-        # To find the builder config of the parent builder, we need to find the
-        # builder that triggers the builder we're looking at, then the builder
-        # config node will be the parent node of that builder.
-        #
-        # To find the parent builder, we traverse parent nodes of the builder
-        # node. The builder node will have builder_ref nodes as parents, which
-        # abstract being able to refer to a builder by bucket-qualified name
-        # (ci/foo-builder) or simple name (foo-builder). The builder_ref nodes
-        # will have triggerer nodes as parents, which abstract things that can
-        # trigger builders (pollers or builders). Finally, the triggerer nodes
-        # for builders will have a builder node as a parent.
-        triggerers = set()
-        parents = set()
-        for ref in graph.parents(builder_nodes[0].key, kinds.BUILDER_REF):
-            for t in graph.parents(ref.key, kinds.TRIGGERER):
-                triggerers = triggerers.union([t])
-                for b in graph.parents(t.key, kinds.BUILDER):
-                    builder_configs = graph.parents(b.key, _BUILDER_CONFIG.kind)
-                    if len(builder_configs) > 1:
-                        fail(
-                            "internal error: multiple builder_config parents for {}: {}"
-                                .format(b, builder_configs),
-                            b.trace,
-                        )
-                    parents = parents.union(builder_configs)
+        parents = _BUILDER_CONFIG_PARENT.children(node.key)
 
         if len(parents) > 1:
             fail("{} has multiple parents: {}".format(
@@ -961,22 +1014,10 @@ def _bc_state():
         execution_mode = bc_state.builder_spec(node).execution_mode
 
         if execution_mode == _execution_mode.TEST:
-            if len(triggerers) > 1:
+            if not parent:
                 fail(
-                    "builder {} has multiple triggerers: {}"
-                        .format(_builder_name(node), [t.key.id for t in triggerers]),
-                    node.trace,
-                )
-            elif not triggerers:
-                fail(
-                    "builder {} has execution_mode {} and has no parent"
-                        .format(_builder_name(node), execution_mode),
-                    node.trace,
-                )
-            elif not parent:
-                fail(
-                    "builder {} is triggered by {} which does not have a builder spec"
-                        .format(_builder_name(node), list(triggerers)[0]),
+                    "test-only builder {} does not have a parent"
+                        .format(_builder_name(node)),
                     node.trace,
                 )
         elif execution_mode == _execution_mode.COMPILE_AND_TEST:
@@ -993,28 +1034,7 @@ def _bc_state():
         if node.key.kind != _BUILDER_CONFIG.kind:
             fail("Expected {} node, got {}".format(_BUILDER_CONFIG.kind, node))
 
-        builder_nodes = graph.children(node.key, kinds.BUILDER)
-        if len(builder_nodes) != 1:
-            fail(
-                "internal error: builder_config node should have edge to exactly 1 builder node",
-                node.trace,
-            )
-
-        children = set()
-        for b in triggerer.targets(builder_nodes[0]):
-            b_children = graph.parents(b.key, _BUILDER_CONFIG.kind)
-            if not b_children:
-                fail(
-                    "{} is triggered by {}, but does not have a builder spec"
-                        .format(_builder_name(b), _builder_name(node)),
-                    b.trace,
-                )
-            if len(b_children) > 1:
-                fail(
-                    "internal error: builder node should be the target of exactly 1 edge from a builder_config node",
-                    b.trace,
-                )
-            children = children.union(b_children)
+        children = _BUILDER_CONFIG_PARENT.parents(node.key)
 
         execution_mode = bc_state.builder_spec(node).execution_mode
 

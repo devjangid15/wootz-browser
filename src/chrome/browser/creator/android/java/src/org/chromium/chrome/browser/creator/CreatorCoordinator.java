@@ -4,6 +4,9 @@
 
 package org.chromium.chrome.browser.creator;
 
+import static org.chromium.build.NullUtil.assertNonNull;
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.app.Activity;
 import android.content.Context;
 import android.graphics.drawable.Drawable;
@@ -14,7 +17,6 @@ import android.view.ViewGroup;
 import android.view.ViewGroup.LayoutParams;
 import android.widget.FrameLayout;
 
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.recyclerview.widget.RecyclerView.OnScrollListener;
@@ -23,6 +25,9 @@ import org.chromium.base.Callback;
 import org.chromium.base.supplier.Supplier;
 import org.chromium.base.supplier.UnownedUserDataSupplier;
 import org.chromium.base.version_info.VersionInfo;
+import org.chromium.build.annotations.MonotonicNonNull;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.feed.FeedActionDelegate;
 import org.chromium.chrome.browser.feed.FeedContentFirstLoadWatcher;
 import org.chromium.chrome.browser.feed.FeedListContentManager;
@@ -41,7 +46,6 @@ import org.chromium.chrome.browser.feed.webfeed.WebFeedBridge;
 import org.chromium.chrome.browser.feed.webfeed.WebFeedBridge.QueryResult;
 import org.chromium.chrome.browser.feed.webfeed.WebFeedBridge.WebFeedMetadata;
 import org.chromium.chrome.browser.feed.webfeed.WebFeedSubscriptionStatus;
-import org.chromium.chrome.browser.feedback.HelpAndFeedbackLauncher;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.share.ShareDelegate;
 import org.chromium.chrome.browser.ui.favicon.FaviconHelper;
@@ -56,9 +60,9 @@ import org.chromium.components.browser_ui.bottomsheet.BottomSheetController.Stat
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetControllerFactory;
 import org.chromium.components.browser_ui.bottomsheet.EmptyBottomSheetObserver;
 import org.chromium.components.browser_ui.styles.SemanticColorUtils;
-import org.chromium.components.browser_ui.widget.RoundedIconGenerator;
 import org.chromium.components.browser_ui.widget.displaystyle.UiConfig;
-import org.chromium.components.browser_ui.widget.scrim.ScrimCoordinator;
+import org.chromium.components.browser_ui.widget.scrim.ScrimManager;
+import org.chromium.components.browser_ui.widget.scrim.ScrimManager.ScrimClient;
 import org.chromium.components.embedder_support.view.ContentView;
 import org.chromium.components.url_formatter.UrlFormatter;
 import org.chromium.content_public.browser.LoadUrlParams;
@@ -68,7 +72,6 @@ import org.chromium.ui.UiUtils;
 import org.chromium.ui.base.IntentRequestTracker;
 import org.chromium.ui.base.ViewAndroidDelegate;
 import org.chromium.ui.base.WindowAndroid;
-import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
 import org.chromium.ui.util.ColorUtils;
@@ -81,51 +84,45 @@ import java.util.List;
  * Sets up the Coordinator for Cormorant Creator surface.  It is based on the doc at
  * https://chromium.googlesource.com/chromium/src/+/HEAD/docs/ui/android/mvc_simple_list_tutorial.md
  */
+@NullMarked
 public class CreatorCoordinator
         implements FeedContentFirstLoadWatcher, View.OnLayoutChangeListener {
     private final ViewGroup mCreatorViewGroup;
-    private CreatorMediator mMediator;
-    private CreatorTabMediator mTabMediator;
-    private Activity mActivity;
-    private FeedListContentManager mContentManager;
-    private UiConfig mUiConfig;
-    private RecyclerView mRecyclerView;
-    private View mProfileView;
-    private ViewGroup mLayoutView;
-    private HybridListRenderer mHybridListRenderer;
-    private FeedSurfaceScope mSurfaceScope;
-    private FeedSurfaceScopeDependencyProviderImpl mDependencyProvider;
-    private PropertyModel mCreatorModel;
-    private PropertyModelChangeProcessor<PropertyModel, CreatorProfileView, PropertyKey>
-            mCreatorProfileModelChangeProcessor;
-    private PropertyModelChangeProcessor<PropertyModel, CreatorToolbarView, PropertyKey>
-            mCreatorToolbarModelChangeProcessor;
+    private final CreatorMediator mMediator;
+    private @MonotonicNonNull CreatorTabMediator mTabMediator;
+    private final Activity mActivity;
+    private final FeedListContentManager mContentManager;
+    private final UiConfig mUiConfig;
+    private final RecyclerView mRecyclerView;
+    private final View mProfileView;
+    private final ViewGroup mLayoutView;
+    private @Nullable HybridListRenderer mHybridListRenderer;
+    private @Nullable FeedSurfaceScope mSurfaceScope;
+    private @Nullable FeedSurfaceScopeDependencyProviderImpl mDependencyProvider;
+    private final PropertyModel mCreatorModel;
 
     private final SnackbarManager mSnackbarManager;
     private final CreatorSnackbarController mCreatorSnackbarController;
     private final WindowAndroid mWindowAndroid;
     private BottomSheetController mBottomSheetController;
-    private ScrimCoordinator mScrim;
+    private ScrimManager mScrimManager;
     private ViewGroup mBottomSheetContainer;
-    private ViewGroup mLayout;
-    private Profile mProfile;
-    private Stream mStream;
+    private final Profile mProfile;
+    private @MonotonicNonNull Stream mStream;
     private int mHeaderCount;
 
-    private EmptyBottomSheetObserver mSheetObserver;
-    private ContentView mContentView;
-    private WebContents mWebContents;
+    private @Nullable EmptyBottomSheetObserver mSheetObserver;
+    private @Nullable ContentView mContentView;
+    private @Nullable WebContents mWebContents;
     private int mCurrentMaxViewHeight;
-    private CreatorTabSheetContent mSheetContent;
+    private @Nullable CreatorTabSheetContent mSheetContent;
     private boolean mPeeked;
     private boolean mFullyOpened;
-    private WebContentsCreator mCreatorWebContents;
-    private NewTabCreator mCreatorOpenTab;
+    private final WebContentsCreator mCreatorWebContents;
+    private final NewTabCreator mCreatorOpenTab;
     private final UnownedUserDataSupplier<ShareDelegate> mBottomsheetShareDelegateSupplier;
-    private GURL mBottomSheetUrl;
-    private int mEntryPoint;
-
-    private @Nullable FeedStreamViewResizer mStreamViewResizer;
+    private @MonotonicNonNull GURL mBottomSheetUrl;
+    private final int mEntryPoint;
 
     private static final String CREATOR_PROFILE_ID = "CreatorProfileView";
     private static final String CREATOR_PRIVACY_ID = "CreatorPrivacyId";
@@ -163,6 +160,7 @@ public class CreatorCoordinator
         mProfile = profile;
         mSnackbarManager = snackbarManager;
         mWindowAndroid = windowAndroid;
+        mContentManager = new FeedListContentManager();
         mRecyclerView = setUpView();
         mCreatorWebContents = creatorWebContents;
         mCreatorOpenTab = creatorOpenTab;
@@ -184,8 +182,7 @@ public class CreatorCoordinator
                 (ViewGroup) LayoutInflater.from(mActivity).inflate(R.layout.creator_activity, null);
         mLayoutView = mCreatorViewGroup.findViewById(R.id.creator_layout);
         mUiConfig = new UiConfig(mLayoutView);
-        mStreamViewResizer =
-                FeedStreamViewResizer.createAndAttach(mActivity, mRecyclerView, mUiConfig);
+        FeedStreamViewResizer.createAndAttach(mActivity, mRecyclerView, mUiConfig);
         mLayoutView.addView(mRecyclerView);
 
         // Generate Creator Model
@@ -196,16 +193,10 @@ public class CreatorCoordinator
         }
         initBottomSheet();
 
-        mCreatorProfileModelChangeProcessor =
-                PropertyModelChangeProcessor.create(
-                        mCreatorModel,
-                        (CreatorProfileView) mProfileView,
-                        CreatorProfileViewBinder::bind);
-        mCreatorToolbarModelChangeProcessor =
-                PropertyModelChangeProcessor.create(
-                        mCreatorModel,
-                        (CreatorToolbarView) mLayoutView,
-                        CreatorToolbarViewBinder::bind);
+        PropertyModelChangeProcessor.create(
+                mCreatorModel, (CreatorProfileView) mProfileView, CreatorProfileViewBinder::bind);
+        PropertyModelChangeProcessor.create(
+                mCreatorModel, (CreatorToolbarView) mLayoutView, CreatorToolbarViewBinder::bind);
         setUpToolbarListener();
 
         mMediator =
@@ -219,14 +210,10 @@ public class CreatorCoordinator
     /**
      * Query for webfeedId if we don't have it, and then create the FeedStream.
      *
-     * @param FeedActionDelegate Interface for Feed actions implemented by the Browser.
-     * @param HelpAndFeedbackLauncher Interface for launching a help and feedback page.
-     * @param Supplier<ShareDelegate> Supplier of the interface to expose sharing.
+     * @param feedActionDelegate Interface for Feed actions implemented by the Browser.
      */
     public void queryFeedStream(
-            FeedActionDelegate feedActionDelegate,
-            HelpAndFeedbackLauncher helpAndFeedbackLauncher,
-            Supplier<ShareDelegate> shareDelegateSupplier) {
+            FeedActionDelegate feedActionDelegate, Supplier<ShareDelegate> shareDelegateSupplier) {
         if (mCreatorModel.get(CreatorProperties.WEB_FEED_ID_KEY) == null) {
             Callback<QueryResult> queryWebFeedIdCallback =
                     result -> {
@@ -241,8 +228,7 @@ public class CreatorCoordinator
                                             .formatUrlForDisplayOmitSchemePathAndTrivialSubdomains(
                                                     new GURL(result.url)));
                         }
-                        initFeedStream(
-                                feedActionDelegate, helpAndFeedbackLauncher, shareDelegateSupplier);
+                        initFeedStream(feedActionDelegate, shareDelegateSupplier);
                     };
             WebFeedBridge.queryWebFeed(
                     mCreatorModel.get(CreatorProperties.URL_KEY), queryWebFeedIdCallback);
@@ -260,31 +246,27 @@ public class CreatorCoordinator
             WebFeedBridge.queryWebFeedId(
                     new String(mCreatorModel.get(CreatorProperties.WEB_FEED_ID_KEY)),
                     queryWebFeedIdCallback);
-            initFeedStream(feedActionDelegate, helpAndFeedbackLauncher, shareDelegateSupplier);
+            initFeedStream(feedActionDelegate, shareDelegateSupplier);
         }
     }
 
     /**
      * Create the FeedStream and bind it to the RecyclerView.
      *
-     * @param FeedActionDelegate Interface for Feed actions implemented by the Browser.
-     * @param HelpAndFeedbackLauncher Interface for launching a help and feedback page.
-     * @param Supplier<ShareDelegate> Supplier of the interface to expose sharing.
+     * @param feedActionDelegate Interface for Feed actions implemented by the Browser.
      */
     private void initFeedStream(
-            FeedActionDelegate feedActionDelegate,
-            HelpAndFeedbackLauncher helpAndFeedbackLauncher,
-            Supplier<ShareDelegate> shareDelegateSupplier) {
+            FeedActionDelegate feedActionDelegate, Supplier<ShareDelegate> shareDelegateSupplier) {
         mStream =
                 new FeedStream(
                         mActivity,
+                        mProfile,
                         mSnackbarManager,
                         mBottomSheetController,
                         mWindowAndroid,
-                        /* shareSupplier= */ shareDelegateSupplier,
+                        /* shareDelegateSupplier= */ shareDelegateSupplier,
                         StreamKind.SINGLE_WEB_FEED,
                         feedActionDelegate,
-                        helpAndFeedbackLauncher,
                         /* feedContentFirstLoadWatcher= */ this,
                         /* streamsMediator= */ new StreamsMediatorImpl(),
                         new SingleWebFeedParameters(
@@ -298,9 +280,9 @@ public class CreatorCoordinator
         mStream.bind(
                 mRecyclerView,
                 mContentManager,
-                /* feedScrollState= */ null,
+                /* savedInstanceState= */ null,
                 mSurfaceScope,
-                mHybridListRenderer,
+                assertNonNull(mHybridListRenderer),
                 null,
                 mHeaderCount);
     }
@@ -332,7 +314,6 @@ public class CreatorCoordinator
 
     private RecyclerView setUpView() {
         // TODO(crbug.com/40872531): Refactor NTP naming out of the general Feed code.
-        mContentManager = new FeedListContentManager();
         ProcessScope processScope = FeedSurfaceTracker.getInstance().getXSurfaceProcessScope();
 
         if (processScope != null) {
@@ -352,20 +333,20 @@ public class CreatorCoordinator
         }
 
         RecyclerView view;
-        if (mHybridListRenderer != null) {
-            view =
-                    (RecyclerView)
-                            mHybridListRenderer.bind(
-                                    mContentManager,
-                                    /* mViewportView= */ null,
-                                    /* useStaggeredLayout= */ false);
-            view.setId(R.id.creator_feed_stream_recycler_view);
-            view.setClipToPadding(false);
-            view.setBackgroundColor(SemanticColorUtils.getDefaultBgColor(mActivity));
-            view.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-        } else {
-            view = null;
-        }
+        // The returned RecyclerView cannot be null; otherwise
+        // CreatorCoordinator#setUpToolbarListener will crash.
+        assert mHybridListRenderer != null;
+        view =
+                (RecyclerView)
+                        mHybridListRenderer.bind(
+                                mContentManager,
+                                /* viewport= */ null,
+                                /* shouldUseStaggeredLayout= */ false);
+        assert view != null;
+        view.setId(R.id.creator_feed_stream_recycler_view);
+        view.setClipToPadding(false);
+        view.setBackgroundColor(SemanticColorUtils.getDefaultBgColor(mActivity));
+        view.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
 
         return view;
     }
@@ -421,18 +402,8 @@ public class CreatorCoordinator
 
     /** Set up the bottom sheet for this activity. */
     private void initBottomSheet() {
-        mScrim =
-                new ScrimCoordinator(
-                        mActivity,
-                        new ScrimCoordinator.SystemUiScrimDelegate() {
-                            @Override
-                            public void setStatusBarScrimFraction(float scrimFraction) {}
-
-                            @Override
-                            public void setNavigationBarScrimFraction(float scrimFraction) {}
-                        },
-                        mCreatorViewGroup,
-                        mActivity.getColor(R.color.default_scrim_color));
+        mScrimManager =
+                new ScrimManager(mActivity, mCreatorViewGroup, ScrimClient.CREATOR_COORDINATOR);
 
         mBottomSheetContainer = new FrameLayout(mActivity);
         mBottomSheetContainer.setId(R.id.creator_content_preview_bottom_sheet);
@@ -441,12 +412,13 @@ public class CreatorCoordinator
         mCreatorViewGroup.addView(mBottomSheetContainer);
         mBottomSheetController =
                 BottomSheetControllerFactory.createBottomSheetController(
-                        () -> mScrim,
+                        () -> mScrimManager,
                         (sheet) -> {},
                         mActivity.getWindow(),
                         KeyboardVisibilityDelegate.getInstance(),
                         () -> mBottomSheetContainer,
-                        () -> 0);
+                        () -> 0,
+                        /* desktopWindowStateManager= */ null);
     }
 
     private void setUpToolbarListener() {
@@ -488,7 +460,7 @@ public class CreatorCoordinator
             mSheetObserver =
                     new EmptyBottomSheetObserver() {
                         @Override
-                        public void onSheetContentChanged(BottomSheetContent newContent) {
+                        public void onSheetContentChanged(@Nullable BottomSheetContent newContent) {
                             if (newContent != mSheetContent) {
                                 mPeeked = false;
                                 destroyWebContents();
@@ -531,7 +503,11 @@ public class CreatorCoordinator
                             getMaxViewHeight(),
                             intentRequestTracker,
                             mBottomsheetShareDelegateSupplier);
-            mTabMediator.init(mWebContents, mContentView, mSheetContent, mProfile);
+            mTabMediator.init(
+                    assertNonNull(mWebContents),
+                    assertNonNull(mContentView),
+                    mSheetContent,
+                    mProfile);
             mLayoutView.addOnLayoutChangeListener(this);
         }
 
@@ -564,7 +540,7 @@ public class CreatorCoordinator
 
     /**
      * @return The maximum base view height for sheet content view.
-     * */
+     */
     private int getMaxViewHeight() {
         return mCreatorViewGroup.getHeight();
     }
@@ -576,7 +552,7 @@ public class CreatorCoordinator
 
     private void openInNewTab() {
         String url =
-                mBottomSheetUrl.isValid()
+                assumeNonNull(mBottomSheetUrl).isValid()
                         ? mBottomSheetUrl.getSpec()
                         : mCreatorModel.get(CreatorProperties.URL_KEY);
         mBottomSheetController.hideContent(
@@ -599,9 +575,7 @@ public class CreatorCoordinator
         // Creates an initially hidden WebContents which gets shown when the panel is opened.
         mWebContents = mCreatorWebContents.createWebContents();
 
-        mContentView =
-                ContentView.createContentView(
-                        mActivity, /* eventOffsetHandler= */ null, mWebContents);
+        mContentView = ContentView.createContentView(mActivity, mWebContents);
 
         mWebContents.setDelegates(
                 VersionInfo.getProductVersion(),
@@ -623,7 +597,7 @@ public class CreatorCoordinator
             mContentView = null;
         }
 
-        if (mMediator != null) mTabMediator.destroyContent();
+        if (mMediator != null) assumeNonNull(mTabMediator).destroyContent();
 
         mLayoutView.removeOnLayoutChangeListener(this);
         if (mSheetObserver != null) mBottomSheetController.removeObserver(mSheetObserver);
@@ -635,8 +609,9 @@ public class CreatorCoordinator
 
     class ContentChangedListener implements Stream.ContentChangedListener {
         @Override
-        public void onContentChanged(List<FeedContent> feedContents) {
+        public void onContentChanged(@Nullable List<FeedContent> feedContents) {
             if (feedContents == null) return;
+            assert mStream != null;
             boolean hasError = false;
             // Assume native cards beyond the header are errors.
             for (int i = mHeaderCount; i < feedContents.size(); i++) {
@@ -677,17 +652,16 @@ public class CreatorCoordinator
     static class FaviconLoader {
         private final Context mContext;
         private final FaviconHelper mFaviconHelper;
-        private final RoundedIconGenerator mIconGenerator;
         private final int mFaviconSize;
 
         /**
          * The FaviconLoader constructor.
+         *
          * @param context The context where the Favicon will be loaded.
          */
         public FaviconLoader(Context context) {
             mContext = context;
             mFaviconHelper = new FaviconHelper();
-            mIconGenerator = FaviconUtils.createCircularIconGenerator(mContext);
             mFaviconSize =
                     mContext.getResources().getDimensionPixelSize(R.dimen.preview_tab_favicon_size);
         }
@@ -700,7 +674,8 @@ public class CreatorCoordinator
          * @param callback The callback to be invoked to display the final image.
          * @param profile The profile for which favicon service is used.
          */
-        public void loadFavicon(final GURL url, Callback<Drawable> callback, Profile profile) {
+        public void loadFavicon(
+                final GURL url, Callback<Drawable> callback, @Nullable Profile profile) {
             assert profile != null;
             FaviconHelper.FaviconImageCallback imageCallback =
                     (bitmap, iconUrl) -> {

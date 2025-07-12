@@ -7,9 +7,9 @@
 
 #include <algorithm>
 
-#include "base/allocator/partition_allocator/src/partition_alloc/oom.h"
 #include "base/compiler_specific.h"
 #include "base/containers/span.h"
+#include "partition_alloc/oom.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/typed_arrays/array_buffer/array_buffer_contents.h"
 #include "third_party/blink/renderer/core/typed_arrays/dom_array_buffer_base.h"
@@ -28,28 +28,21 @@ class CORE_EXPORT DOMArrayBuffer : public DOMArrayBufferBase {
     return MakeGarbageCollected<DOMArrayBuffer>(std::move(contents));
   }
   static DOMArrayBuffer* Create(size_t num_elements, size_t element_byte_size) {
-    ArrayBufferContents contents(num_elements, element_byte_size,
-                                 ArrayBufferContents::kNotShared,
-                                 ArrayBufferContents::kZeroInitialize);
-    if (UNLIKELY(!contents.Data())) {
-      OOM_CRASH(num_elements * element_byte_size);
-    }
+    ArrayBufferContents contents(
+        num_elements, element_byte_size, ArrayBufferContents::kNotShared,
+        ArrayBufferContents::kZeroInitialize,
+        ArrayBufferContents::AllocationFailureBehavior::kCrash);
+    CHECK(contents.IsValid());
     return Create(std::move(contents));
   }
   static DOMArrayBuffer* Create(base::span<const uint8_t> source) {
-    ArrayBufferContents contents(source.size(), 1,
-                                 ArrayBufferContents::kNotShared,
-                                 ArrayBufferContents::kDontInitialize);
-    if (UNLIKELY(!contents.Data())) {
-      OOM_CRASH(source.size());
-    }
+    ArrayBufferContents contents(
+        source.size(), 1, ArrayBufferContents::kNotShared,
+        ArrayBufferContents::kDontInitialize,
+        ArrayBufferContents::AllocationFailureBehavior::kCrash);
+    CHECK(contents.IsValid());
     contents.ByteSpan().copy_from(source);
     return Create(std::move(contents));
-  }
-  static DOMArrayBuffer* Create(const void* source, size_t byte_length) {
-    // SAFETY: Caller guarantees that `source` contains `byte_length` bytes.
-    return Create(UNSAFE_BUFFERS(
-        base::span(static_cast<const uint8_t*>(source), byte_length)));
   }
 
   static DOMArrayBuffer* Create(scoped_refptr<SharedBuffer>);
@@ -58,12 +51,10 @@ class CORE_EXPORT DOMArrayBuffer : public DOMArrayBufferBase {
   static DOMArrayBuffer* CreateOrNull(size_t num_elements,
                                       size_t element_byte_size);
   static DOMArrayBuffer* CreateOrNull(base::span<const uint8_t> source);
-  static DOMArrayBuffer* CreateOrNull(const void* source, size_t byte_length) {
-    // SAFETY: Caller guarantees that `source` contains `byte_length` bytes.
-    return CreateOrNull(UNSAFE_BUFFERS(
-        base::span(static_cast<const uint8_t*>(source), byte_length)));
-  }
 
+  // For use by DOMTypedArray.
+  static DOMArrayBuffer* CreateUninitialized(size_t num_elements,
+                                             size_t element_byte_size);
   // Only for use by XMLHttpRequest::responseArrayBuffer,
   // Internals::serializeObject, and
   // FetchDataLoaderAsArrayBuffer::OnStateChange.

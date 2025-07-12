@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "device/fido/fido_parsing_utils.h"
 
 #include "base/check_op.h"
@@ -20,8 +25,6 @@ constexpr bool AreSpansDisjoint(base::span<const uint8_t> lhs,
 }
 
 }  // namespace
-
-const char kEs256[] = "ES256";
 
 std::vector<uint8_t> Materialize(base::span<const uint8_t> span) {
   return std::vector<uint8_t>(span.begin(), span.end());
@@ -75,17 +78,6 @@ std::vector<base::span<const uint8_t>> SplitSpan(base::span<const uint8_t> span,
   }
 
   return chunks;
-}
-
-std::array<uint8_t, crypto::kSHA256Length> CreateSHA256Hash(
-    std::string_view data) {
-  std::array<uint8_t, crypto::kSHA256Length> hashed_data;
-  crypto::SHA256HashString(data, hashed_data.data(), hashed_data.size());
-  return hashed_data;
-}
-
-std::string_view ConvertToStringView(base::span<const uint8_t> data) {
-  return {reinterpret_cast<const char*>(data.data()), data.size()};
 }
 
 std::string ConvertBytesToUuid(base::span<const uint8_t, 16> bytes) {

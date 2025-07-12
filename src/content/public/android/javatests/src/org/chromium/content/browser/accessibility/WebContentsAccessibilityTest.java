@@ -39,6 +39,7 @@ import static androidx.core.view.accessibility.AccessibilityNodeInfoCompat.Acces
 import static androidx.core.view.accessibility.AccessibilityNodeInfoCompat.AccessibilityActionCompat.ACTION_SHOW_ON_SCREEN;
 import static androidx.core.view.accessibility.AccessibilityNodeInfoCompat.EXTRA_DATA_TEXT_CHARACTER_LOCATION_ARG_LENGTH;
 import static androidx.core.view.accessibility.AccessibilityNodeInfoCompat.EXTRA_DATA_TEXT_CHARACTER_LOCATION_ARG_START_INDEX;
+import static androidx.core.view.accessibility.AccessibilityNodeInfoCompat.EXTRA_DATA_TEXT_CHARACTER_LOCATION_IN_WINDOW_KEY;
 import static androidx.core.view.accessibility.AccessibilityNodeInfoCompat.EXTRA_DATA_TEXT_CHARACTER_LOCATION_KEY;
 import static androidx.core.view.accessibility.AccessibilityNodeInfoCompat.MOVEMENT_GRANULARITY_CHARACTER;
 import static androidx.core.view.accessibility.AccessibilityNodeInfoCompat.MOVEMENT_GRANULARITY_PARAGRAPH;
@@ -50,6 +51,10 @@ import static org.chromium.content.browser.accessibility.AccessibilityContentShe
 import static org.chromium.content.browser.accessibility.AccessibilityContentShellTestUtils.sRangeInfoMatcher;
 import static org.chromium.content.browser.accessibility.AccessibilityContentShellTestUtils.sTextMatcher;
 import static org.chromium.content.browser.accessibility.AccessibilityContentShellTestUtils.sViewIdResourceNameMatcher;
+import static org.chromium.content.browser.accessibility.AccessibilityHistogramRecorder.ACCESSIBILITY_CREATE_ACCESSIBILITY_NODE_INFO_TOTAL_TIME;
+import static org.chromium.content.browser.accessibility.AccessibilityHistogramRecorder.ACCESSIBILITY_INLINE_TEXT_BOXES_BUNDLE;
+import static org.chromium.content.browser.accessibility.AccessibilityHistogramRecorder.ACCESSIBILITY_INLINE_TEXT_BOXES_COUNT;
+import static org.chromium.content.browser.accessibility.AccessibilityHistogramRecorder.ACCESSIBILITY_TIME_UNTIL_FIRST_ACCESSIBILITY_FOCUS;
 import static org.chromium.content.browser.accessibility.AccessibilityHistogramRecorder.AUTO_DISABLE_ACCESSIBILITY_DISABLED_TIME_INITIAL;
 import static org.chromium.content.browser.accessibility.AccessibilityHistogramRecorder.AUTO_DISABLE_ACCESSIBILITY_DISABLED_TIME_SUCCESSIVE;
 import static org.chromium.content.browser.accessibility.AccessibilityHistogramRecorder.AUTO_DISABLE_ACCESSIBILITY_DISABLE_METHOD_CALLED_INITIAL;
@@ -79,6 +84,7 @@ import static org.chromium.content.browser.accessibility.AccessibilityNodeInfoBu
 import static org.chromium.content.browser.accessibility.AccessibilityNodeInfoBuilder.EXTRAS_KEY_UNCLIPPED_BOTTOM;
 import static org.chromium.content.browser.accessibility.AccessibilityNodeInfoBuilder.EXTRAS_KEY_UNCLIPPED_TOP;
 import static org.chromium.ui.accessibility.AccessibilityState.EVENT_TYPE_MASK_NONE;
+import static org.chromium.ui.accessibility.AccessibilityState.KNOWN_SCREEN_READER_SERVICE_IDS;
 import static org.chromium.ui.accessibility.AccessibilityState.StateIdentifierForTesting.EVENT_TYPE_MASK;
 
 import android.annotation.SuppressLint;
@@ -86,14 +92,31 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.graphics.Rect;
 import android.graphics.RectF;
+import android.graphics.Typeface;
+import android.os.Build;
 import android.os.Bundle;
 import android.text.InputType;
+import android.text.ParcelableSpan;
 import android.text.Spannable;
+import android.text.SpannableString;
+import android.text.style.AbsoluteSizeSpan;
+import android.text.style.BackgroundColorSpan;
+import android.text.style.ForegroundColorSpan;
+import android.text.style.LocaleSpan;
+import android.text.style.StrikethroughSpan;
+import android.text.style.StyleSpan;
+import android.text.style.SubscriptSpan;
 import android.text.style.SuggestionSpan;
+import android.text.style.SuperscriptSpan;
+import android.text.style.TypefaceSpan;
+import android.text.style.UnderlineSpan;
+import android.view.View;
 
 import androidx.core.view.accessibility.AccessibilityNodeInfoCompat;
 import androidx.test.filters.LargeTest;
 import androidx.test.filters.SmallTest;
+
+import com.google.common.truth.Expect;
 
 import org.hamcrest.Matchers;
 import org.junit.Assert;
@@ -101,22 +124,33 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.FeatureList;
-import org.chromium.base.test.util.Batch;
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Criteria;
 import org.chromium.base.test.util.CriteriaHelper;
+import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.DisabledTest;
+import org.chromium.base.test.util.Features.DisableFeatures;
+import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.base.test.util.Restriction;
+import org.chromium.base.test.util.TestAnimations;
 import org.chromium.base.test.util.UrlUtils;
 import org.chromium.content_public.browser.ContentFeatureList;
 import org.chromium.content_public.browser.test.ContentJUnit4ClassRunner;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
+import org.chromium.content_public.common.ContentFeatures;
+import org.chromium.ui.accessibility.AccessibilityFeatures;
 import org.chromium.ui.accessibility.AccessibilityState;
+import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.test.util.DeviceRestriction;
-import org.chromium.ui.test.util.UiRestriction;
 
+import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 
@@ -125,9 +159,10 @@ import java.util.concurrent.ExecutionException;
  * the interface.
  */
 @RunWith(ContentJUnit4ClassRunner.class)
-@Batch(Batch.PER_CLASS)
+// TODO(crbug.com/344676953): Failing when batched, batch this again.
 @SuppressLint("VisibleForTests")
 @Restriction(DeviceRestriction.RESTRICTION_TYPE_NON_AUTO)
+@TestAnimations.EnableAnimations
 public class WebContentsAccessibilityTest {
     // Test output error messages
     private static final String DISABLED_COMBOBOX_ERROR =
@@ -163,12 +198,6 @@ public class WebContentsAccessibilityTest {
     private static final String FOCUSING_ERROR =
             "Expected focus to be on a different node than it is.";
 
-    // ContentFeatureList maps used for various tests.
-    private static final Map<String, Boolean> INCLUDE_LONG_CLICK_ENABLED =
-            Map.of(ContentFeatureList.ACCESSIBILITY_INCLUDE_LONG_CLICK_ACTION, true);
-    private static final Map<String, Boolean> INCLUDE_LONG_CLICK_DISABLED =
-            Map.of(ContentFeatureList.ACCESSIBILITY_INCLUDE_LONG_CLICK_ACTION, false);
-
     // Constant values for unit tests
     private static final int UNSUPPRESSED_EXPECTED_COUNT = 15;
 
@@ -179,13 +208,15 @@ public class WebContentsAccessibilityTest {
     public AccessibilityContentShellActivityTestRule mActivityTestRule =
             new AccessibilityContentShellActivityTestRule();
 
+    @Rule public final Expect expect = Expect.create();
+
     /**
      * Helper methods for setup of a basic web contents accessibility unit test.
      *
-     * These methods replace the usual setUp() method annotated with @Before because we wish to
+     * <p>These methods replace the usual setUp() method annotated with @Before because we wish to
      * load different data with each test, but the process is the same for all tests.
      *
-     * Leaving a commented @Before annotation on each method as a reminder/context clue.
+     * <p>Leaving a commented @Before annotation on each method as a reminder/context clue.
      */
     /* @Before */
     protected void setupTestWithHTML(String html) {
@@ -201,10 +232,11 @@ public class WebContentsAccessibilityTest {
         mActivityTestRule.sendReadyForTestSignal();
     }
 
-    protected void setupTestWithHTMLForFormControlsMode(String html) {
+    protected void setupTestWithHTMLForFormControlsMode(
+            String html, boolean includeEventMaskByDefault) {
         mActivityTestRule.launchContentShellWithUrl(UrlUtils.encodeHtmlDataUri(html));
         mActivityTestRule.waitForActiveShellToBeDoneLoading();
-        mActivityTestRule.setupTestFrameworkForFormControlsMode();
+        mActivityTestRule.setupTestFrameworkForFormControlsMode(includeEventMaskByDefault);
         mActivityTestRule.setAccessibilityDelegate();
 
         // To prevent flakes, do not disable accessibility mid tests.
@@ -214,10 +246,24 @@ public class WebContentsAccessibilityTest {
         mActivityTestRule.sendReadyForTestSignal();
     }
 
-    protected void setupTestWithHTMLForBasicMode(String html) {
+    protected void setupTestWithHTMLForBasicMode(String html, boolean includeEventMaskByDefault) {
         mActivityTestRule.launchContentShellWithUrl(UrlUtils.encodeHtmlDataUri(html));
         mActivityTestRule.waitForActiveShellToBeDoneLoading();
-        mActivityTestRule.setupTestFrameworkForBasicMode();
+        mActivityTestRule.setupTestFrameworkForBasicMode(includeEventMaskByDefault);
+        mActivityTestRule.setAccessibilityDelegate();
+
+        // To prevent flakes, do not disable accessibility mid tests.
+        mActivityTestRule.mWcax.setIsAutoDisableAccessibilityCandidateForTesting(false);
+
+        mTestData = AccessibilityContentShellTestData.getInstance();
+        mActivityTestRule.sendReadyForTestSignal();
+    }
+
+    protected void setupTestWithHTMLForCompleteMode(
+            String html, boolean includeEventMaskByDefault) {
+        mActivityTestRule.launchContentShellWithUrl(UrlUtils.encodeHtmlDataUri(html));
+        mActivityTestRule.waitForActiveShellToBeDoneLoading();
+        mActivityTestRule.setupTestFrameworkForCompleteMode(includeEventMaskByDefault);
         mActivityTestRule.setAccessibilityDelegate();
 
         // To prevent flakes, do not disable accessibility mid tests.
@@ -271,18 +317,23 @@ public class WebContentsAccessibilityTest {
     }
 
     public AccessibilityNodeInfoCompat createAccessibilityNodeInfo(int virtualViewId) {
-        return TestThreadUtils.runOnUiThreadBlockingNoException(
+        return ThreadUtils.runOnUiThreadBlocking(
                 () -> mActivityTestRule.mNodeProvider.createAccessibilityNodeInfo(virtualViewId));
+    }
+
+    private void clearNodeInfoCacheForGivenId(int virtualViewId) {
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> mActivityTestRule.mWcax.clearNodeInfoCacheForGivenId(virtualViewId));
     }
 
     /**
      * Helper method for sending text related events and confirming that the associated text
      * selection and traversal events have been dispatched before continuing with test.
      *
-     * @param viewId            int virtualViewId of the text field
-     * @param action            AccessibilityActionCompat action to perform
-     * @param args              Bundle optional arguments
-     * @throws ExecutionException   Error
+     * @param viewId int virtualViewId of the text field
+     * @param action AccessibilityActionCompat action to perform
+     * @param args Bundle optional arguments
+     * @throws ExecutionException Error
      */
     private void performTextActionOnUiThread(
             int viewId, AccessibilityNodeInfoCompat.AccessibilityActionCompat action, Bundle args)
@@ -308,19 +359,20 @@ public class WebContentsAccessibilityTest {
     /** Ensure we throttle TYPE_WINDOW_CONTENT_CHANGED events for large tree updates. */
     @Test
     @SmallTest
-    @Restriction(UiRestriction.RESTRICTION_TYPE_PHONE)
+    @Restriction(DeviceFormFactor.PHONE)
+    @DisabledTest(message = "https://crbug.com/406871375")
     public void testMaxContentChangedEventsFired_default() throws Throwable {
         // Build a simple web page with complex visibility change.
         setupTestFromFile("content/test/data/android/type_window_content_changed_events.html");
 
-        // Determine the current max events to fire
+        // Determine the current max events to fire.
         int maxEvents = mActivityTestRule.mWcax.getMaxContentChangedEventsToFireForTesting();
 
         // Find the button node.
         int vvid = waitForNodeMatching(sClassNameMatcher, "android.widget.Button");
         mNodeInfo = createAccessibilityNodeInfo(vvid);
         Assert.assertNotNull(NODE_TIMEOUT_ERROR, mNodeInfo);
-        Assert.assertEquals(NODE_TIMEOUT_ERROR, "Expand All", mNodeInfo.getText());
+        Assert.assertEquals(NODE_TIMEOUT_ERROR, "Expand All", mNodeInfo.getText().toString());
 
         // Run JS code to expand comboboxes.
         executeJS("expandComboboxes()");
@@ -345,7 +397,7 @@ public class WebContentsAccessibilityTest {
      */
     @Test
     @SmallTest
-    @Restriction(UiRestriction.RESTRICTION_TYPE_PHONE)
+    @Restriction(DeviceFormFactor.PHONE)
     public void testMaxContentChangedEventsFired_largeLimit() throws Throwable {
         // Build a simple web page with complex visibility change.
         setupTestFromFile("content/test/data/android/type_window_content_changed_events.html");
@@ -357,7 +409,7 @@ public class WebContentsAccessibilityTest {
         int vvid = waitForNodeMatching(sClassNameMatcher, "android.widget.Button");
         mNodeInfo = createAccessibilityNodeInfo(vvid);
         Assert.assertNotNull(NODE_TIMEOUT_ERROR, mNodeInfo);
-        Assert.assertEquals(NODE_TIMEOUT_ERROR, "Expand All", mNodeInfo.getText());
+        Assert.assertEquals(NODE_TIMEOUT_ERROR, "Expand All", mNodeInfo.getText().toString());
 
         // Run JS code to expand comboboxes.
         executeJS("expandComboboxes()");
@@ -382,15 +434,16 @@ public class WebContentsAccessibilityTest {
     @SmallTest
     public void testUMAHistograms_AXModeComplete() throws Throwable {
         // Build a simple web page with a few nodes to traverse.
-        setupTestWithHTML(
+        setupTestWithHTMLForCompleteMode(
                 "<p>This is a test 1</p>\n"
                         + "<p>This is a test 2</p>\n"
-                        + "<p>This is a test 3</p>");
+                        + "<p>This is a test 3</p>",
+                true);
 
         // Set the relevant features and accessibility state.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    AccessibilityState.setIsScreenReaderEnabledForTesting(true);
+                    AccessibilityState.setIsComplexUserInteractionServiceEnabledForTesting(true);
                     AccessibilityState.setIsOnlyPasswordManagersEnabledForTesting(false);
                 });
 
@@ -419,12 +472,13 @@ public class WebContentsAccessibilityTest {
         setupTestWithHTMLForFormControlsMode(
                 "<p>This is a test 1</p>\n"
                         + "<p>This is a test 2</p>\n"
-                        + "<p>This is a test 3</p>");
+                        + "<p>This is a test 3</p>",
+                true);
 
         // Set the relevant features and accessibility state.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    AccessibilityState.setIsScreenReaderEnabledForTesting(false);
+                    AccessibilityState.setIsComplexUserInteractionServiceEnabledForTesting(false);
                     AccessibilityState.setIsOnlyPasswordManagersEnabledForTesting(true);
                 });
 
@@ -454,12 +508,13 @@ public class WebContentsAccessibilityTest {
         setupTestWithHTMLForBasicMode(
                 "<p>This is a test 1</p>\n"
                         + "<p>This is a test 2</p>\n"
-                        + "<p>This is a test 3</p>");
+                        + "<p>This is a test 3</p>",
+                true);
 
         // Set the relevant features and screen reader state.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    AccessibilityState.setIsScreenReaderEnabledForTesting(false);
+                    AccessibilityState.setIsComplexUserInteractionServiceEnabledForTesting(false);
                     AccessibilityState.setIsOnlyPasswordManagersEnabledForTesting(false);
                 });
 
@@ -488,17 +543,18 @@ public class WebContentsAccessibilityTest {
     @SmallTest
     public void testUMAHistograms_AXModeComplete_100Percent() throws Throwable {
         // Build a simple web page with a few nodes to traverse.
-        setupTestWithHTML(
+        setupTestWithHTMLForCompleteMode(
                 "<p>This is a test 1</p>\n"
                         + "<p>This is a test 2</p>\n"
-                        + "<p>This is a test 3</p>");
+                        + "<p>This is a test 3</p>",
+                false);
 
         // Set the relevant features and screen reader state, set event type masks to empty.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     AccessibilityState.setStateMaskForTesting(
                             EVENT_TYPE_MASK, EVENT_TYPE_MASK_NONE);
-                    AccessibilityState.setIsScreenReaderEnabledForTesting(true);
+                    AccessibilityState.setIsComplexUserInteractionServiceEnabledForTesting(true);
                     AccessibilityState.setIsOnlyPasswordManagersEnabledForTesting(false);
                 });
 
@@ -531,14 +587,15 @@ public class WebContentsAccessibilityTest {
         setupTestWithHTMLForFormControlsMode(
                 "<p>This is a test 1</p>\n"
                         + "<p>This is a test 2</p>\n"
-                        + "<p>This is a test 3</p>");
+                        + "<p>This is a test 3</p>",
+                false);
 
         // Set the relevant features and screen reader state, set event type masks to empty.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     AccessibilityState.setStateMaskForTesting(
                             EVENT_TYPE_MASK, EVENT_TYPE_MASK_NONE);
-                    AccessibilityState.setIsScreenReaderEnabledForTesting(false);
+                    AccessibilityState.setIsComplexUserInteractionServiceEnabledForTesting(false);
                     AccessibilityState.setIsOnlyPasswordManagersEnabledForTesting(true);
                 });
 
@@ -568,14 +625,15 @@ public class WebContentsAccessibilityTest {
         setupTestWithHTMLForBasicMode(
                 "<p>This is a test 1</p>\n"
                         + "<p>This is a test 2</p>\n"
-                        + "<p>This is a test 3</p>");
+                        + "<p>This is a test 3</p>",
+                false);
 
         // Set the relevant features and screen reader state, set event type masks to empty.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     AccessibilityState.setStateMaskForTesting(
                             EVENT_TYPE_MASK, EVENT_TYPE_MASK_NONE);
-                    AccessibilityState.setIsScreenReaderEnabledForTesting(false);
+                    AccessibilityState.setIsComplexUserInteractionServiceEnabledForTesting(false);
                     AccessibilityState.setIsOnlyPasswordManagersEnabledForTesting(false);
                 });
 
@@ -603,6 +661,7 @@ public class WebContentsAccessibilityTest {
      */
     @Test
     @SmallTest
+    @DisableFeatures(ContentFeatures.ACCESSIBILITY_DEPRECATE_JAVA_NODE_CACHE)
     public void testUMAHistograms_Cache() throws Throwable {
         // Build a simple web page with a few nodes to traverse.
         setupTestWithHTML(
@@ -649,11 +708,11 @@ public class WebContentsAccessibilityTest {
 
         // The test suite always initializes native, so mock a call to disable accessibility. We
         // must update AccessibilityState to ensure the AXMode is propagated through to C++.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mActivityTestRule.mWcax.forceAutoDisableAccessibilityForTesting();
                     AccessibilityState.setIsAnyAccessibilityServiceEnabledForTesting(false);
-                    AccessibilityState.setIsScreenReaderEnabledForTesting(false);
+                    AccessibilityState.setIsComplexUserInteractionServiceEnabledForTesting(false);
                 });
 
         // Assert that we record initial enabled time and that disabled was called once.
@@ -672,9 +731,9 @@ public class WebContentsAccessibilityTest {
                         .build();
 
         // To re-enable native accessibility, we need to make a request from the framework.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    AccessibilityState.setIsScreenReaderEnabledForTesting(true);
+                    AccessibilityState.setIsComplexUserInteractionServiceEnabledForTesting(true);
                     AccessibilityState.setIsAnyAccessibilityServiceEnabledForTesting(true);
                     mActivityTestRule.mWcax.getAccessibilityNodeProvider();
                 });
@@ -694,10 +753,10 @@ public class WebContentsAccessibilityTest {
                                 AUTO_DISABLE_ACCESSIBILITY_DISABLE_METHOD_CALLED_SUCCESSIVE)
                         .expectNoRecords(USAGE_FOREGROUND_TIME)
                         .build();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mActivityTestRule.mWcax.forceAutoDisableAccessibilityForTesting();
-                    AccessibilityState.setIsScreenReaderEnabledForTesting(false);
+                    AccessibilityState.setIsComplexUserInteractionServiceEnabledForTesting(false);
                     AccessibilityState.setIsAnyAccessibilityServiceEnabledForTesting(false);
                 });
         histogramWatcher.assertExpected();
@@ -714,12 +773,127 @@ public class WebContentsAccessibilityTest {
                         .expectAnyRecord(
                                 AUTO_DISABLE_ACCESSIBILITY_REENABLE_METHOD_CALLED_SUCCESSIVE)
                         .build();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    AccessibilityState.setIsScreenReaderEnabledForTesting(true);
+                    AccessibilityState.setIsComplexUserInteractionServiceEnabledForTesting(true);
                     AccessibilityState.setIsAnyAccessibilityServiceEnabledForTesting(true);
                     mActivityTestRule.mWcax.getAccessibilityNodeProvider();
                 });
+        histogramWatcher.assertExpected();
+    }
+
+    /**
+     * Test that UMA histograms are recorded when a node receives accessibility focus, and that
+     * there are text boxes included in the resulting AXTreeUpdates.
+     */
+    @Test
+    @SmallTest
+    public void testUMAHistograms_InlineTextBoxes() throws Throwable {
+        setupTestWithHTML("<p>This is a test</p>");
+
+        int paragraphId = waitForNodeMatching(sTextMatcher, "This is a test");
+        mNodeInfo = createAccessibilityNodeInfo(paragraphId);
+        Assert.assertNotNull(NODE_TIMEOUT_ERROR, mNodeInfo);
+        Assert.assertEquals(NODE_TIMEOUT_ERROR, "This is a test", mNodeInfo.getText().toString());
+
+        // Set the relevant features and accessibility state.
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    AccessibilityState.setIsComplexUserInteractionServiceEnabledForTesting(true);
+                    AccessibilityState.setIsOnlyPasswordManagersEnabledForTesting(false);
+                });
+
+        var histogramWatcher =
+                HistogramWatcher.newBuilder()
+                        .expectIntRecord(ACCESSIBILITY_INLINE_TEXT_BOXES_BUNDLE, 3)
+                        .expectIntRecord(ACCESSIBILITY_INLINE_TEXT_BOXES_COUNT, 1)
+                        .build();
+
+        performActionOnUiThread(paragraphId, ACTION_ACCESSIBILITY_FOCUS, new Bundle());
+
+        // Send end of test signal.
+        mActivityTestRule.sendEndOfTestSignal();
+
+        // Assert that we recorded histograms and there was a count present.
+        histogramWatcher.assertExpected();
+    }
+
+    /**
+     * Test that UMA histograms are recorded for the total time an instance spends construction
+     * nodes in the createAccessibilityNodeInfo method.
+     */
+    @Test
+    @SmallTest
+    public void testUMAHistograms_createAccessibilityNodeInfoTotalTime() throws Throwable {
+        setupTestWithHTML("<p>This is a test</p><input type='text'/><div>Generic node</div>");
+
+        int paragraphId = waitForNodeMatching(sTextMatcher, "This is a test");
+        int inputId = waitForNodeMatching(sInputTypeMatcher, InputType.TYPE_CLASS_TEXT);
+        int divId = waitForNodeMatching(sTextMatcher, "Generic node");
+        mNodeInfo = createAccessibilityNodeInfo(paragraphId);
+        Assert.assertNotNull(NODE_TIMEOUT_ERROR, mNodeInfo);
+        Assert.assertEquals(NODE_TIMEOUT_ERROR, "This is a test", mNodeInfo.getText().toString());
+
+        // Set the relevant features and accessibility state.
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    AccessibilityState.setIsComplexUserInteractionServiceEnabledForTesting(true);
+                    AccessibilityState.setIsOnlyPasswordManagersEnabledForTesting(false);
+                });
+
+        var histogramWatcher =
+                HistogramWatcher.newBuilder()
+                        .expectAnyRecordTimes(
+                                ACCESSIBILITY_CREATE_ACCESSIBILITY_NODE_INFO_TOTAL_TIME, 1)
+                        .build();
+
+        mNodeInfo = createAccessibilityNodeInfo(paragraphId);
+        mNodeInfo = createAccessibilityNodeInfo(inputId);
+        mNodeInfo = createAccessibilityNodeInfo(divId);
+
+        // Send end of test signal.
+        mActivityTestRule.sendEndOfTestSignal();
+
+        mActivityTestRule.mWcax
+                .forceRecordCreateAccessibilityNodeInfoTotalTimeHistogramsForTesting();
+
+        // Assert that we recorded histograms and there was a count present.
+        histogramWatcher.assertExpected();
+    }
+
+    /**
+     * Test that UMA histograms are recorded for the time it takes for a node to receive
+     * accessibility focus.
+     */
+    @Test
+    @SmallTest
+    public void testUMAHistograms_timeToFirstAccessibilityFocus() throws Throwable {
+        setupTestWithHTML("<p>This is a test</p>");
+
+        int paragraphId = waitForNodeMatching(sTextMatcher, "This is a test");
+        mNodeInfo = createAccessibilityNodeInfo(paragraphId);
+        Assert.assertNotNull(NODE_TIMEOUT_ERROR, mNodeInfo);
+        Assert.assertEquals(NODE_TIMEOUT_ERROR, "This is a test", mNodeInfo.getText().toString());
+
+        // Set the relevant features and accessibility state.
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    AccessibilityState.setIsKnownScreenReaderEnabledForTesting(true);
+                    AccessibilityState.setIsOnlyPasswordManagersEnabledForTesting(false);
+                    AccessibilityState.setServiceIdsForTesting(KNOWN_SCREEN_READER_SERVICE_IDS);
+                });
+
+        var histogramWatcher =
+                HistogramWatcher.newBuilder()
+                        .expectAnyRecordTimes(ACCESSIBILITY_TIME_UNTIL_FIRST_ACCESSIBILITY_FOCUS, 1)
+                        .build();
+
+        focusNode(paragraphId);
+
+        // Send end of test signal.
+        mActivityTestRule.sendEndOfTestSignal();
+
+        // Assert that we recorded histograms and there was a count present.
         histogramWatcher.assertExpected();
     }
 
@@ -746,7 +920,7 @@ public class WebContentsAccessibilityTest {
         Assert.assertTrue(FOCUSING_ERROR, mNodeInfo.isAccessibilityFocused());
 
         // Use the public {resetFocus} method and verify focus has been removed.
-        TestThreadUtils.runOnUiThreadBlocking(() -> mActivityTestRule.mWcax.resetFocus());
+        ThreadUtils.runOnUiThreadBlocking(() -> mActivityTestRule.mWcax.resetFocus());
         CriteriaHelper.pollUiThread(
                 () -> !createAccessibilityNodeInfo(vvid).isAccessibilityFocused());
         rootNodeInfo = createAccessibilityNodeInfo(rootVvid);
@@ -777,12 +951,12 @@ public class WebContentsAccessibilityTest {
         focusNode(vvid1);
 
         // Reset focus explicitly.
-        TestThreadUtils.runOnUiThreadBlocking(() -> mActivityTestRule.mWcax.resetFocus());
+        ThreadUtils.runOnUiThreadBlocking(() -> mActivityTestRule.mWcax.resetFocus());
         CriteriaHelper.pollUiThread(
                 () -> !createAccessibilityNodeInfo(vvid1).isAccessibilityFocused());
 
         // Restore focus, verify that it gets back.
-        TestThreadUtils.runOnUiThreadBlocking(() -> mActivityTestRule.mWcax.restoreFocus());
+        ThreadUtils.runOnUiThreadBlocking(() -> mActivityTestRule.mWcax.restoreFocus());
         CriteriaHelper.pollUiThread(
                 () -> createAccessibilityNodeInfo(vvid1).isAccessibilityFocused());
 
@@ -798,7 +972,7 @@ public class WebContentsAccessibilityTest {
                         () -> !createAccessibilityNodeInfo(vvid2).isAccessibilityFocused()));
 
         // Restore focus, verify that the second (latest focused) element gets focus.
-        TestThreadUtils.runOnUiThreadBlocking(() -> mActivityTestRule.mWcax.restoreFocus());
+        ThreadUtils.runOnUiThreadBlocking(() -> mActivityTestRule.mWcax.restoreFocus());
         CriteriaHelper.pollUiThread(
                 () -> createAccessibilityNodeInfo(vvid2).isAccessibilityFocused());
     }
@@ -817,7 +991,7 @@ public class WebContentsAccessibilityTest {
         mActivityTestRule.mWcax.setIsAutoDisableAccessibilityCandidateForTesting(false);
 
         // Changing the accessibility state will refresh the native state.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     AccessibilityState.setIsTextShowPasswordEnabledForTesting(true);
                 });
@@ -894,7 +1068,7 @@ public class WebContentsAccessibilityTest {
         int vvIdDiv = waitForNodeMatching(sViewIdResourceNameMatcher, "test");
         mNodeInfo = createAccessibilityNodeInfo(vvIdDiv);
         Assert.assertNotNull(NODE_TIMEOUT_ERROR, mNodeInfo);
-        Assert.assertEquals(NODE_TIMEOUT_ERROR, "Example text 1", mNodeInfo.getText());
+        Assert.assertEquals(NODE_TIMEOUT_ERROR, "Example text 1", mNodeInfo.getText().toString());
 
         // Focus the encompassing node.
         focusNode(vvIdDiv);
@@ -907,12 +1081,12 @@ public class WebContentsAccessibilityTest {
 
         // Check whether the text of the encompassing node has been updated.
         mNodeInfo = createAccessibilityNodeInfo(vvIdDiv);
-        Assert.assertEquals(CACHING_ERROR, "Example text 2", mNodeInfo.getText());
+        Assert.assertEquals(CACHING_ERROR, "Example text 2", mNodeInfo.getText().toString());
     }
 
     /**
-     * Test our internal cache of |AccessibilityNodeInfo| objects for updates to the
-     * bounding boxes of nodes during window resizes.
+     * Test our internal cache of |AccessibilityNodeInfo| objects for updates to the bounding boxes
+     * of nodes during window resizes.
      */
     @Test
     @SmallTest
@@ -933,13 +1107,13 @@ public class WebContentsAccessibilityTest {
         int buttonvvId = waitForNodeMatching(sClassNameMatcher, "android.widget.Button");
         mNodeInfo = createAccessibilityNodeInfo(buttonvvId);
         Assert.assertNotNull(NODE_TIMEOUT_ERROR, mNodeInfo);
-        Assert.assertEquals(NODE_TIMEOUT_ERROR, "Next", mNodeInfo.getText());
+        Assert.assertEquals(NODE_TIMEOUT_ERROR, "Next", mNodeInfo.getText().toString());
 
         Rect beforeBounds = new Rect();
         mNodeInfo.getBoundsInScreen(beforeBounds);
 
         // Resize the web contents.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> mActivityTestRule.getWebContents().setSize(1080, beforeBounds.top / 3));
 
         // Send end of test signal.
@@ -1544,23 +1718,26 @@ public class WebContentsAccessibilityTest {
     }
 
     /**
-     * Test |AccessibilityNodeInfo| object for node with spelling error, and ensure the
-     * spelling error is encoded as a Spannable.
-     **/
+     * Test |AccessibilityNodeInfo| object for node with spelling error, and ensure the spelling
+     * error is encoded as a Spannable.
+     */
     @Test
     @SmallTest
-    public void testNodeInfo_spellingError() {
+    public void testNodeInfo_spellingError() throws Throwable {
         setupTestWithHTML("<input type='text' value='one wordd has an error'>");
 
         // Call a test API to explicitly add a spelling error in the same format as
         // would be generated if spelling correction was enabled. Clear our cache for this node.
         int textNodeVirtualViewId =
                 waitForNodeMatching(sClassNameMatcher, "android.widget.EditText");
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mActivityTestRule.mWcax.addSpellingErrorForTesting(textNodeVirtualViewId, 4, 9);
                 });
-        mActivityTestRule.mWcax.clearNodeInfoCacheForGivenId(textNodeVirtualViewId);
+        clearNodeInfoCacheForGivenId(textNodeVirtualViewId);
+
+        // Focus on the node so the suggestions get populated.
+        focusNode(textNodeVirtualViewId);
 
         // Get |AccessibilityNodeInfo| object and confirm it is not null.
         mNodeInfo = createAccessibilityNodeInfo(textNodeVirtualViewId);
@@ -1596,7 +1773,7 @@ public class WebContentsAccessibilityTest {
 
         // addExtraDataToAccessibilityNodeInfo() will end up calling RenderFrameHostImpl's method
         // AccessibilityPerformAction() in the C++ code, which needs to be run from the UI thread.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mActivityTestRule.mNodeProvider.addExtraDataToAccessibilityNodeInfo(
                             textNodeVirtualViewId,
@@ -1611,7 +1788,7 @@ public class WebContentsAccessibilityTest {
         RectF[] result =
                 (RectF[]) extras.getParcelableArray(EXTRA_DATA_TEXT_CHARACTER_LOCATION_KEY);
         Assert.assertNotEquals(result, null);
-        Assert.assertEquals(result.length, 4);
+        Assert.assertEquals(4, result.length);
         Assert.assertEquals(result[0], result[1]);
         Assert.assertEquals(result[0], result[2]);
         Assert.assertEquals(result[0], result[3]);
@@ -1642,7 +1819,7 @@ public class WebContentsAccessibilityTest {
 
         // The final result should be the separate bounding box of all four characters.
         mNodeInfo = createAccessibilityNodeInfo(textNodeVirtualViewId);
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mActivityTestRule.mNodeProvider.addExtraDataToAccessibilityNodeInfo(
                             textNodeVirtualViewId,
@@ -1669,6 +1846,62 @@ public class WebContentsAccessibilityTest {
         Assert.assertTrue(result[0].left < result[1].left);
         Assert.assertTrue(result[1].left < result[2].left);
         Assert.assertTrue(result[2].left < result[3].left);
+    }
+
+    /**
+     * Test |AccessibilityNodeInfo| object for character bounds in screen coordinates should be
+     * different in window coordinates.
+     */
+    @Test
+    @SmallTest
+    public void testNodeInfo_extraDataAdded_characterLocationsInScreenDiffersFromInWindow() {
+        setupTestWithHTML("<h1>Simple test page</h1><section><p>Text</p></section>");
+
+        // Wait until we find a node in the accessibility tree with the text "Text".
+        int textNodeVirtualViewId = waitForNodeMatching(sTextMatcher, "Text");
+        mNodeInfo = createAccessibilityNodeInfo(textNodeVirtualViewId);
+        Assert.assertNotNull(NODE_TIMEOUT_ERROR, mNodeInfo);
+
+        // Call the API we want to test - addExtraDataToAccessibilityNodeInfo.
+        final Bundle arguments = new Bundle();
+        arguments.putInt(EXTRA_DATA_TEXT_CHARACTER_LOCATION_ARG_START_INDEX, 0);
+        arguments.putInt(EXTRA_DATA_TEXT_CHARACTER_LOCATION_ARG_LENGTH, 4);
+
+        // Load bounds in screen coordinates.
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    mActivityTestRule.mNodeProvider.addExtraDataToAccessibilityNodeInfo(
+                            textNodeVirtualViewId,
+                            mNodeInfo,
+                            EXTRA_DATA_TEXT_CHARACTER_LOCATION_KEY,
+                            arguments);
+                });
+
+        Bundle extrasInScreen = mNodeInfo.getExtras();
+        RectF[] resultInScreen =
+                (RectF[]) extrasInScreen.getParcelableArray(EXTRA_DATA_TEXT_CHARACTER_LOCATION_KEY);
+        RectF boundsInScreen = resultInScreen[0];
+
+        // Load bounds in window coordinates.
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    mActivityTestRule.mNodeProvider.addExtraDataToAccessibilityNodeInfo(
+                            textNodeVirtualViewId,
+                            mNodeInfo,
+                            EXTRA_DATA_TEXT_CHARACTER_LOCATION_IN_WINDOW_KEY,
+                            arguments);
+                });
+        Bundle extrasInWindow = mNodeInfo.getExtras();
+        RectF[] resultInWindow =
+                (RectF[])
+                        extrasInWindow.getParcelableArray(
+                                EXTRA_DATA_TEXT_CHARACTER_LOCATION_IN_WINDOW_KEY);
+        RectF boundsInWindow = resultInWindow[0];
+
+        // Bounds in window should be no larger than bounds in screen, since coordinates in screen
+        // is the coordinates in window plus the location of the window.
+        Assert.assertTrue(boundsInWindow.left <= boundsInScreen.left);
+        Assert.assertTrue(boundsInWindow.top <= boundsInScreen.top);
     }
 
     /** Test |AccessibilityNodeInfo| object for image data for a node in Android O. */
@@ -1772,7 +2005,8 @@ public class WebContentsAccessibilityTest {
     public void testNodeInfo_Actions_OverflowHidden() throws Throwable {
         // Build a simple web page with a div and overflow:hidden
         setupTestWithHTML(
-                "<div title='1234' style='overflow:hidden; width: 200px; height:50px'>\n"
+                "<div role='group' title='1234' "
+                        + "style='overflow:hidden; width: 200px; height:50px'>\n"
                         + "  <p>Example Paragraph 1</p>\n"
                         + "  <p>Example Paragraph 2</p>\n"
                         + "</div>");
@@ -1904,10 +2138,9 @@ public class WebContentsAccessibilityTest {
     /** Test that ACTION_LONG_CLICK is included when experiment is running. */
     @Test
     @SmallTest
+    @EnableFeatures(ContentFeatureList.ACCESSIBILITY_INCLUDE_LONG_CLICK_ACTION)
     public void testNodeInfo_Actions_longClickIncluded() throws Throwable {
         setupTestWithHTML("<p id='id1'>Example</p>");
-
-        FeatureList.setTestFeatures(INCLUDE_LONG_CLICK_ENABLED);
 
         int vvId = waitForNodeMatching(sViewIdResourceNameMatcher, "id1");
         mNodeInfo = createAccessibilityNodeInfo(vvId);
@@ -1919,10 +2152,9 @@ public class WebContentsAccessibilityTest {
     /** Test that ACTION_LONG_CLICK is excluded when experiment is paused. */
     @Test
     @SmallTest
+    @DisableFeatures(ContentFeatureList.ACCESSIBILITY_INCLUDE_LONG_CLICK_ACTION)
     public void testNodeInfo_Actions_longClickExcluded() throws Throwable {
         setupTestWithHTML("<p id='id1'>Example</p>");
-
-        FeatureList.setTestFeatures(INCLUDE_LONG_CLICK_DISABLED);
 
         int vvId = waitForNodeMatching(sViewIdResourceNameMatcher, "id1");
         mNodeInfo = createAccessibilityNodeInfo(vvId);
@@ -2016,6 +2248,11 @@ public class WebContentsAccessibilityTest {
     /** Test that the performAction for ACTION_CUT works properly with accessibility. */
     @Test
     @SmallTest
+    @DisableIf.Build(sdk_equals = Build.VERSION_CODES.S, message = "crbug.com/40213937")
+    @DisableIf.Build(sdk_equals = Build.VERSION_CODES.S_V2, message = "crbug.com/40213937")
+    @DisableIf.Build(
+            sdk_is_greater_than = Build.VERSION_CODES.TIRAMISU,
+            message = "crbug.com/40213937")
     public void testPerformAction_cut() throws Throwable {
         // Build a simple web page with an input field.
         setupTestWithHTML("<input type='text' value='test text'>");
@@ -2041,7 +2278,7 @@ public class WebContentsAccessibilityTest {
 
         // Perform the "cut" action, and poll for clipboard to be non-null.
         ClipboardManager clipboardManager =
-                TestThreadUtils.runOnUiThreadBlockingNoException(
+                ThreadUtils.runOnUiThreadBlocking(
                         () -> {
                             return (ClipboardManager)
                                     mActivityTestRule
@@ -2072,6 +2309,11 @@ public class WebContentsAccessibilityTest {
     /** Test that the performAction for ACTION_COPY works properly with accessibility. */
     @Test
     @SmallTest
+    @DisableIf.Build(sdk_equals = Build.VERSION_CODES.S, message = "crbug.com/40213937")
+    @DisableIf.Build(sdk_equals = Build.VERSION_CODES.S_V2, message = "crbug.com/40213937")
+    @DisableIf.Build(
+            sdk_is_greater_than = Build.VERSION_CODES.TIRAMISU,
+            message = "crbug.com/40213937")
     public void testPerformAction_copy() throws Throwable {
         // Build a simple web page with an input field.
         setupTestWithHTML("<input type='text' value='test text'>");
@@ -2097,7 +2339,7 @@ public class WebContentsAccessibilityTest {
 
         // Perform the "copy" action, and poll for clipboard to be non-null.
         ClipboardManager clipboardManager =
-                TestThreadUtils.runOnUiThreadBlockingNoException(
+                ThreadUtils.runOnUiThreadBlocking(
                         () -> {
                             return (ClipboardManager)
                                     mActivityTestRule
@@ -2128,6 +2370,7 @@ public class WebContentsAccessibilityTest {
     /** Test that the performAction for ACTION_PASTE works properly with accessibility. */
     @Test
     @SmallTest
+    @DisabledTest(message = "crbug.com/40213937")
     public void testPerformAction_paste() throws Throwable {
         // Build a simple web page with an input field.
         setupTestWithHTML("<input type='text'>");
@@ -2138,7 +2381,7 @@ public class WebContentsAccessibilityTest {
         Assert.assertNotNull(NODE_TIMEOUT_ERROR, mNodeInfo);
 
         // Add some ClipData to the ClipboardManager to paste.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     ClipboardManager clipboardManager =
                             (ClipboardManager)
@@ -2544,6 +2787,534 @@ public class WebContentsAccessibilityTest {
         Assert.assertFalse(
                 OFFSCREEN_BUNDLE_EXTRA_ERROR,
                 mNodeInfo.getExtras().containsKey(EXTRAS_KEY_OFFSCREEN));
+    }
+
+    // ------------------ Misc tests that cannot be done as tree/event tests ------------------ //
+
+    /** Container class to hold a span and its range over a spannable text. */
+    private static class SpanRange {
+        // Placeholder value for the end of a range.
+        // This should be replaced with the actual text's length before using.
+        public static final int UNSPECIFIED_RANGE = -1;
+
+        public final ParcelableSpan span;
+        public final int start;
+        public int end;
+
+        public SpanRange(ParcelableSpan span) {
+            this(span, 0, UNSPECIFIED_RANGE);
+        }
+
+        public SpanRange(ParcelableSpan span, int start, int end) {
+            this.span = span;
+            this.start = start;
+            this.end = end;
+        }
+
+        @Override
+        public String toString() {
+            StringBuilder sb = new StringBuilder(getClass().getSimpleName());
+            sb.append("{");
+            sb.append("from=");
+            sb.append(start);
+            sb.append(", to=");
+            sb.append(end);
+            sb.append(", span=");
+            if (span != null) {
+                sb.append(span.toString());
+            } else {
+                sb.append("null");
+            }
+            sb.append("}");
+            return sb.toString();
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            return obj instanceof SpanRange && compareSpanRanges((SpanRange) obj, this);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(span, start, end);
+        }
+    }
+
+    private static boolean compareSpanRanges(SpanRange actual, SpanRange expected) {
+        if (actual == null && expected == null) {
+            return true;
+        }
+        if (actual == null || expected == null) {
+            return false;
+        }
+        if (actual.start != expected.start || actual.end != expected.end) {
+            return false;
+        }
+        return compareSpans(actual.span, expected.span);
+    }
+
+    /** Compares subclasses of ParcelableSpans using the attributes that are actually used. */
+    private static boolean compareSpans(ParcelableSpan actual, ParcelableSpan expected) {
+        if (actual == null && expected == null) {
+            return true;
+        }
+        if (actual == null || expected == null) {
+            return false;
+        }
+        if (!expected.getClass().isInstance(actual)) {
+            return false;
+        }
+
+        if (expected instanceof StyleSpan) {
+            StyleSpan actualSpan = (StyleSpan) actual;
+            StyleSpan expectedSpan = (StyleSpan) expected;
+            return actualSpan.getStyle() == expectedSpan.getStyle();
+        }
+        for (Class<?> cls :
+                List.of(
+                        UnderlineSpan.class,
+                        StrikethroughSpan.class,
+                        SubscriptSpan.class,
+                        SuperscriptSpan.class)) {
+            if (cls.isInstance(expected)) {
+                return true;
+            }
+        }
+        if (expected instanceof TypefaceSpan) {
+            TypefaceSpan actualSpan = (TypefaceSpan) actual;
+            TypefaceSpan expectedSpan = (TypefaceSpan) expected;
+            return actualSpan.getFamily().startsWith(expectedSpan.getFamily());
+        }
+        if (expected instanceof ForegroundColorSpan) {
+            ForegroundColorSpan actualSpan = (ForegroundColorSpan) actual;
+            ForegroundColorSpan expectedSpan = (ForegroundColorSpan) expected;
+            return actualSpan.getForegroundColor() == expectedSpan.getForegroundColor();
+        }
+        if (expected instanceof BackgroundColorSpan) {
+            BackgroundColorSpan actualSpan = (BackgroundColorSpan) actual;
+            BackgroundColorSpan expectedSpan = (BackgroundColorSpan) expected;
+            return actualSpan.getBackgroundColor() == expectedSpan.getBackgroundColor();
+        }
+        if (expected instanceof AbsoluteSizeSpan) {
+            AbsoluteSizeSpan actualSpan = (AbsoluteSizeSpan) actual;
+            AbsoluteSizeSpan expectedSpan = (AbsoluteSizeSpan) expected;
+            return actualSpan.getSize() == expectedSpan.getSize();
+        }
+        if (expected instanceof LocaleSpan) {
+            LocaleSpan actualSpan = (LocaleSpan) actual;
+            LocaleSpan expectedSpan = (LocaleSpan) expected;
+            return actualSpan.getLocale().equals(expectedSpan.getLocale());
+        }
+
+        return actual.equals(expected);
+    }
+
+    private static <T> void addSpansToList(
+            List<SpanRange> spanRanges, SpannableString spannableString, Class<T> spanClass) {
+        Arrays.asList(spannableString.getSpans(0, spannableString.length(), spanClass))
+                .forEach(
+                        (span) -> {
+                            spanRanges.add(
+                                    new SpanRange(
+                                            (ParcelableSpan) span,
+                                            spannableString.getSpanStart(span),
+                                            spannableString.getSpanEnd(span)));
+                        });
+    }
+
+    @Test
+    @SmallTest
+    @EnableFeatures(AccessibilityFeatures.ACCESSIBILITY_TEXT_FORMATTING)
+    public void testAccessibilityNodeInfo_textFormatting() throws Throwable {
+        // Build a simple web page with a variety of text formatting options.
+        setupTestFromFile("content/test/data/android/accessibility_text_formatting_examples.html");
+
+        String serifFont = "Noto Serif";
+        String sansSerifFont = "Roboto";
+        String monospaceFont = "Droid Sans Mono";
+
+        // Define test cases
+        Map<String, List<SpanRange>> testCases = new LinkedHashMap<>();
+        testCases.put(
+                "Example Text - Serif Font", List.of(new SpanRange(new TypefaceSpan(serifFont))));
+        testCases.put(
+                "Example Text - Sans-Serif Font",
+                List.of(new SpanRange(new TypefaceSpan(sansSerifFont))));
+        testCases.put(
+                "Example Text - Monospace Font",
+                List.of(new SpanRange(new TypefaceSpan(monospaceFont))));
+
+        testCases.put(
+                "Example Text - Small Font Size", List.of(new SpanRange(new AbsoluteSizeSpan(13))));
+        testCases.put(
+                "Example Text - Large Font Size", List.of(new SpanRange(new AbsoluteSizeSpan(24))));
+        testCases.put(
+                "Example Text - Font Size in Pixels",
+                List.of(new SpanRange(new AbsoluteSizeSpan(20))));
+
+        testCases.put(
+                "Example Text - Red Text Color",
+                List.of(new SpanRange(new ForegroundColorSpan(0xFFFF0000))));
+        testCases.put(
+                "Example Text - Hex Code Text Color",
+                List.of(new SpanRange(new ForegroundColorSpan(0xFF008000))));
+        testCases.put(
+                "Example Text - RGBA Text Color",
+                // Expect the final blended color.
+                List.of(new SpanRange(new ForegroundColorSpan(0xFF0000E8))));
+
+        testCases.put(
+                "Example Text - Yellow Background Color",
+                List.of(new SpanRange(new BackgroundColorSpan(0xFFFFFF00))));
+        testCases.put(
+                "Example Text - Yellow Background Color (Hex)",
+                List.of(new SpanRange(new BackgroundColorSpan(0xFFFFFF00))));
+
+        testCases.put(
+                "Example Text - Bold Text", List.of(new SpanRange(new StyleSpan(Typeface.BOLD))));
+        testCases.put(
+                "Example Text - Italic Text",
+                List.of(new SpanRange(new StyleSpan(Typeface.ITALIC))));
+
+        testCases.put(
+                "Example Text - Underlined Text", List.of(new SpanRange(new UnderlineSpan())));
+        testCases.put(
+                "Example Text - Strikethrough Text",
+                List.of(new SpanRange(new StrikethroughSpan())));
+        testCases.put("Superscripted Text", List.of(new SpanRange(new SuperscriptSpan())));
+        testCases.put("Subscripted Text", List.of(new SpanRange(new SubscriptSpan())));
+        // TODO: aluh - Super/Sub-scripted nodes are not being merged yet.
+        // testCases.put(
+        //         "Example Text - Superscripted Text",
+        //         List.of(new SpanRange(new SuperscriptSpan(), 15, 33)));
+        // testCases.put(
+        //         "Example Text - Subscripted Text",
+        //         List.of(new SpanRange(new SuperscriptSpan(), 15, 31)));
+
+        testCases.put(
+                "Example Text - Bold and Italic",
+                List.of(
+                        new SpanRange(new StyleSpan(Typeface.BOLD)),
+                        new SpanRange(new StyleSpan(Typeface.ITALIC))));
+        testCases.put(
+                "Example Text - Underline and Strikethrough",
+                List.of(
+                        new SpanRange(new UnderlineSpan()),
+                        new SpanRange(new StrikethroughSpan())));
+        testCases.put(
+                "Example Text - Red and Bold",
+                List.of(
+                        new SpanRange(new ForegroundColorSpan(0xFFFF0000)),
+                        new SpanRange(new StyleSpan(Typeface.BOLD))));
+        testCases.put(
+                "Example Text - Sans-Serif, Large, Blue",
+                List.of(
+                        new SpanRange(new TypefaceSpan(sansSerifFont)),
+                        new SpanRange(new ForegroundColorSpan(0xFF0000FF))));
+        testCases.put(
+                "Example Text - Yellow Background, Bold, Italic",
+                List.of(
+                        new SpanRange(new BackgroundColorSpan(0xFFFFFF00)),
+                        new SpanRange(new StyleSpan(Typeface.BOLD)),
+                        new SpanRange(new StyleSpan(Typeface.ITALIC))));
+        testCases.put(
+                "Example Text - Monospace, RGBA, BG Hex, Bold",
+                List.of(
+                        new SpanRange(new TypefaceSpan(monospaceFont)),
+                        new SpanRange(new ForegroundColorSpan(0xFF0000E8)),
+                        new SpanRange(new BackgroundColorSpan(0xFFFFFF00)),
+                        new SpanRange(new StyleSpan(Typeface.BOLD))));
+        // TODO: aluh - URL nodes are not being merged yet.
+        // testCases.put(
+        //         "Example Text - An example link",
+        //         List.of(new SpanRange(new URLSpan("https://www.example.com/"), 18, 25)));
+        testCases.put(
+                "Example Text - Nested bolded text",
+                List.of(new SpanRange(new StyleSpan(Typeface.BOLD), 22, 28)));
+        testCases.put(
+                "Example Text - Overlapping text styling",
+                List.of(
+                        new SpanRange(new StyleSpan(Typeface.ITALIC), 15, 27),
+                        new SpanRange(new StyleSpan(Typeface.BOLD), 27, 31),
+                        new SpanRange(new StyleSpan(Typeface.ITALIC), 27, 31),
+                        new SpanRange(new StyleSpan(Typeface.ITALIC), 31, 39)));
+        testCases.put(
+                "Example Text - Same style multiple times",
+                List.of(
+                        new SpanRange(new StyleSpan(Typeface.ITALIC), 15, 19),
+                        new SpanRange(new StyleSpan(Typeface.ITALIC), 26, 34)));
+        testCases.put(
+                "Example Text - Consecutive same style not merged",
+                List.of(
+                        new SpanRange(new StyleSpan(Typeface.ITALIC), 27, 31),
+                        new SpanRange(new StyleSpan(Typeface.ITALIC), 31, 37)));
+        testCases.put(
+                "Example Text - Mixed italic, underline, and strikethrough styles",
+                List.of(
+                        new SpanRange(new StyleSpan(Typeface.ITALIC), 21, 29),
+                        new SpanRange(new StyleSpan(Typeface.ITALIC), 29, 44),
+                        new SpanRange(new StyleSpan(Typeface.ITALIC), 44, 57),
+                        new SpanRange(new UnderlineSpan(), 29, 44),
+                        new SpanRange(new UnderlineSpan(), 44, 57),
+                        new SpanRange(new StrikethroughSpan(), 44, 57)));
+        testCases.put(
+                "Example Text - Nested monospace font text",
+                List.of(new SpanRange(new TypefaceSpan(monospaceFont), 22, 36)));
+        testCases.put(
+                "Example Text - Nested pixel font size text",
+                List.of(new SpanRange(new AbsoluteSizeSpan(20), 22, 37)));
+        testCases.put(
+                "Example Text - Nested red color text",
+                List.of(new SpanRange(new ForegroundColorSpan(0xFFFF0000), 22, 31)));
+        testCases.put(
+                "Example Text - Nested yellow background color text",
+                List.of(new SpanRange(new BackgroundColorSpan(0xFFFFFF00), 22, 45)));
+
+        testCases.put(
+                "Example Text - Nested 繁體中文 text",
+                List.of(new SpanRange(new LocaleSpan(Locale.TRADITIONAL_CHINESE), 22, 26)));
+
+        // TODO: crbug.com/421462039 - Update wrong background color span after fix.
+        testCases.put(
+                "Example Text - Nested foreground and background colors with font sizes and styles",
+                List.of(
+                        new SpanRange(new ForegroundColorSpan(0xFF000000), 0, 22),
+                        new SpanRange(new ForegroundColorSpan(0xFFFF0000), 22, 37),
+                        new SpanRange(new ForegroundColorSpan(0xFFFF0000), 37, 48),
+                        new SpanRange(new ForegroundColorSpan(0xFFFF0000), 48, 55),
+                        new SpanRange(new ForegroundColorSpan(0xFFFF0000), 55, 59),
+                        new SpanRange(new ForegroundColorSpan(0xFFFF0000), 59, 64),
+                        new SpanRange(new ForegroundColorSpan(0xFFFF0000), 64, 65),
+                        new SpanRange(new ForegroundColorSpan(0xFFFF0000), 65, 70),
+                        new SpanRange(new ForegroundColorSpan(0xFFFF0000), 70, 81),
+                        new SpanRange(new BackgroundColorSpan(0xFFFFFFFF), 0, 22),
+                        new SpanRange(new BackgroundColorSpan(0xFFFFFFFF), 22, 37),
+                        new SpanRange(new BackgroundColorSpan(0xFFFFFF00), 37, 48),
+                        new SpanRange(new BackgroundColorSpan(0xFFFFFFFF), 48, 55),
+                        new SpanRange(new BackgroundColorSpan(0xFFFFFFFF), 55, 59),
+                        new SpanRange(new BackgroundColorSpan(0xFFFFFF00), 59, 64),
+                        new SpanRange(new BackgroundColorSpan(0xFFFFFFFF), 64, 65),
+                        new SpanRange(new BackgroundColorSpan(0xFFFFFFFF), 65, 70),
+                        new SpanRange(new BackgroundColorSpan(0xFFFFFFFF), 70, 81),
+                        new SpanRange(new AbsoluteSizeSpan(16), 0, 22),
+                        new SpanRange(new AbsoluteSizeSpan(16), 22, 37),
+                        new SpanRange(new AbsoluteSizeSpan(16), 37, 48),
+                        new SpanRange(new AbsoluteSizeSpan(16), 48, 55),
+                        new SpanRange(new AbsoluteSizeSpan(20), 55, 59),
+                        new SpanRange(new AbsoluteSizeSpan(16), 59, 64),
+                        new SpanRange(new AbsoluteSizeSpan(16), 64, 65),
+                        new SpanRange(new AbsoluteSizeSpan(16), 65, 70),
+                        new SpanRange(new AbsoluteSizeSpan(16), 70, 81),
+                        new SpanRange(new StyleSpan(Typeface.ITALIC), 48, 55),
+                        new SpanRange(new StyleSpan(Typeface.ITALIC), 55, 59),
+                        new SpanRange(new StyleSpan(Typeface.BOLD), 65, 70)));
+
+        // TODO: crbug.com/421462039 - Update wrong background color span after fix.
+        testCases.put(
+                "Example Text - Some background color and italic text",
+                List.of(
+                        new SpanRange(new BackgroundColorSpan(0xFFFFFFFF), 0, 20),
+                        new SpanRange(new BackgroundColorSpan(0xFFFFFF00), 20, 41),
+                        new SpanRange(new BackgroundColorSpan(0xFFFFFFFF), 41, 47),
+                        new SpanRange(new BackgroundColorSpan(0xFFFFFF00), 47, 52),
+                        new SpanRange(new StyleSpan(Typeface.ITALIC), 41, 47)));
+
+        // TODO: crbug.com/426007976 - Add back missing span once zero font size nodes are fixed.
+        testCases.put(
+                "Example Text - Nested invisible text",
+                List.of(
+                        new SpanRange(new AbsoluteSizeSpan(16), 0, 22),
+                        // new SpanRange(new AbsoluteSizeSpan(0), 22, 31),
+                        new SpanRange(new AbsoluteSizeSpan(16), 31, 36)));
+
+        // TODO: crbug.com/399652531 - Add contenteditable test cases.
+
+        // Iterate over test cases
+        for (Entry<String, List<SpanRange>> entry : testCases.entrySet()) {
+            String testString = entry.getKey();
+            List<SpanRange> expectedSpans = entry.getValue();
+            expectedSpans.forEach(
+                    (spanRange) -> {
+                        if (spanRange != null && spanRange.end == SpanRange.UNSPECIFIED_RANGE) {
+                            spanRange.end = testString.length();
+                        }
+                    });
+
+            // Find node matching test string for this test case
+            int vvid = waitForNodeMatching(sTextMatcher, testString);
+            expect.withMessage("Could not find node for: " + testString)
+                    .that(vvid)
+                    .isNotEqualTo(View.NO_ID);
+            if (vvid == View.NO_ID) {
+                // Don't stop other test cases.
+                continue;
+            }
+            focusNode(vvid);
+            mNodeInfo = createAccessibilityNodeInfo(vvid);
+            expect.withMessage("Could not create ANI for: " + testString)
+                    .that(mNodeInfo)
+                    .isNotNull();
+            if (mNodeInfo == null) {
+                // Don't stop other test cases.
+                continue;
+            }
+            SpannableString spannableUnderTest = new SpannableString(mNodeInfo.getText());
+
+            // Get all the spans we care about.
+            List<SpanRange> actualSpans = new LinkedList<>();
+            addSpansToList(actualSpans, spannableUnderTest, StyleSpan.class);
+            addSpansToList(actualSpans, spannableUnderTest, UnderlineSpan.class);
+            addSpansToList(actualSpans, spannableUnderTest, StrikethroughSpan.class);
+            addSpansToList(actualSpans, spannableUnderTest, SubscriptSpan.class);
+            addSpansToList(actualSpans, spannableUnderTest, SuperscriptSpan.class);
+            addSpansToList(actualSpans, spannableUnderTest, TypefaceSpan.class);
+            addSpansToList(actualSpans, spannableUnderTest, ForegroundColorSpan.class);
+            addSpansToList(actualSpans, spannableUnderTest, BackgroundColorSpan.class);
+            addSpansToList(actualSpans, spannableUnderTest, AbsoluteSizeSpan.class);
+            addSpansToList(actualSpans, spannableUnderTest, LocaleSpan.class);
+
+            expect.withMessage("Verify spans on text: " + testString)
+                    .that(actualSpans)
+                    .containsAtLeastElementsIn(expectedSpans);
+            expect.withMessage("Duplicate spans on text: " + testString)
+                    .that(actualSpans)
+                    .containsNoDuplicates();
+        }
+    }
+
+    @Test
+    @SmallTest
+    @EnableFeatures(AccessibilityFeatures.ACCESSIBILITY_TEXT_FORMATTING)
+    public void testAccessibilityNodeInfo_textFormatting_histogramsWithStyleData()
+            throws Throwable {
+        setupTestWithHTML("<div>Some text with <b>bold</b> styling.</div>");
+        String expectedString = "Some text with bold styling.";
+        int expectedRangeCount = 16;
+
+        int vvid = waitForNodeMatching(sTextMatcher, expectedString);
+        focusNode(vvid);
+        clearNodeInfoCacheForGivenId(vvid);
+
+        var histogramWatcher =
+                HistogramWatcher.newBuilder()
+                        .expectAnyRecord(
+                                "Accessibility.Android.TextFormatting.Performance.TotalDuration")
+                        .expectNoRecords(
+                                "Accessibility.Android.TextFormatting.Performance.TotalDuration.NoStyleData")
+                        .expectAnyRecord(
+                                "Accessibility.Android.TextFormatting.Performance.GetTextContentDuration")
+                        .expectNoRecords(
+                                "Accessibility.Android.TextFormatting.Performance.GetTextContentDuration.NoStyleData")
+                        .expectAnyRecord(
+                                "Accessibility.Android.TextFormatting.Performance.ToJavaDataDuration")
+                        .expectNoRecords(
+                                "Accessibility.Android.TextFormatting.Performance.ToJavaDataDuration.NoStyleData")
+                        .expectAnyRecord(
+                                "Accessibility.Android.TextFormatting.Performance.SetAniTextDuration")
+                        .expectNoRecords(
+                                "Accessibility.Android.TextFormatting.Performance.SetAniTextDuration.NoStyleData")
+                        .expectAnyRecord(
+                                "Accessibility.Android.TextFormatting.Performance.DurationForRangeCount.11To20")
+                        .expectIntRecord(
+                                "Accessibility.Android.TextFormatting.Ranges.TotalCount",
+                                expectedRangeCount)
+                        .expectIntRecord(
+                                "Accessibility.Android.TextFormatting.Ranges.CountForTextLength.26To50",
+                                expectedRangeCount)
+                        .expectIntRecord(
+                                "Accessibility.Android.TextFormatting.TextLength",
+                                expectedString.length())
+                        .expectNoRecords(
+                                "Accessibility.Android.TextFormatting.TextLength.NoStyleData")
+                        .build();
+
+        mNodeInfo = createAccessibilityNodeInfo(vvid);
+        Assert.assertNotNull(NODE_TIMEOUT_ERROR, mNodeInfo);
+
+        histogramWatcher.assertExpected();
+    }
+
+    @Test
+    @SmallTest
+    @EnableFeatures(AccessibilityFeatures.ACCESSIBILITY_TEXT_FORMATTING)
+    public void testAccessibilityNodeInfo_textFormatting_histogramsWithoutStyleData() {
+        setupTestWithHTML("<p>Example Text</p>");
+        String expectedText = "Example Text";
+
+        int vvid = waitForNodeMatching(sTextMatcher, expectedText);
+        clearNodeInfoCacheForGivenId(vvid);
+
+        var histogramWatcher =
+                HistogramWatcher.newBuilder()
+                        .expectNoRecords(
+                                "Accessibility.Android.TextFormatting.Performance.TotalDuration")
+                        .expectAnyRecord(
+                                "Accessibility.Android.TextFormatting.Performance.TotalDuration.NoStyleData")
+                        .expectNoRecords(
+                                "Accessibility.Android.TextFormatting.Performance.GetTextContentDuration")
+                        .expectAnyRecord(
+                                "Accessibility.Android.TextFormatting.Performance.GetTextContentDuration.NoStyleData")
+                        .expectNoRecords(
+                                "Accessibility.Android.TextFormatting.Performance.ToJavaDataDuration")
+                        .expectAnyRecord(
+                                "Accessibility.Android.TextFormatting.Performance.ToJavaDataDuration.NoStyleData")
+                        .expectNoRecords(
+                                "Accessibility.Android.TextFormatting.Performance.SetAniTextDuration")
+                        .expectAnyRecord(
+                                "Accessibility.Android.TextFormatting.Performance.SetAniTextDuration.NoStyleData")
+                        .expectNoRecords("Accessibility.Android.TextFormatting.TextLength")
+                        .expectIntRecord(
+                                "Accessibility.Android.TextFormatting.TextLength.NoStyleData",
+                                expectedText.length())
+                        .build();
+
+        mNodeInfo = createAccessibilityNodeInfo(vvid);
+        Assert.assertNotNull(NODE_TIMEOUT_ERROR, mNodeInfo);
+
+        histogramWatcher.assertExpected();
+    }
+
+    @Test
+    @SmallTest
+    @DisableFeatures(AccessibilityFeatures.ACCESSIBILITY_TEXT_FORMATTING)
+    public void testAccessibilityNodeInfo_textFormatting_histogramsWithFeatureOff()
+            throws Throwable {
+        setupTestWithHTML("<p>Example <b>bold</b> text</p>");
+        String expectedText = "Example bold text";
+
+        int vvid = waitForNodeMatching(sTextMatcher, expectedText);
+        focusNode(vvid);
+        clearNodeInfoCacheForGivenId(vvid);
+
+        var histogramWatcher =
+                HistogramWatcher.newBuilder()
+                        .expectAnyRecord(
+                                "Accessibility.Android.TextFormatting.Performance.TotalDuration")
+                        .expectNoRecords(
+                                "Accessibility.Android.TextFormatting.Performance.TotalDuration.NoStyleData")
+                        .expectAnyRecord(
+                                "Accessibility.Android.TextFormatting.Performance.ToJavaDataDuration")
+                        .expectNoRecords(
+                                "Accessibility.Android.TextFormatting.Performance.GetTextContentDuration.NoStyleData")
+                        .expectAnyRecord(
+                                "Accessibility.Android.TextFormatting.Performance.GetTextContentDuration")
+                        .expectNoRecords(
+                                "Accessibility.Android.TextFormatting.Performance.ToJavaDataDuration.NoStyleData")
+                        .expectAnyRecord(
+                                "Accessibility.Android.TextFormatting.Performance.SetAniTextDuration")
+                        .expectNoRecords(
+                                "Accessibility.Android.TextFormatting.Performance.SetAniTextDuration.NoStyleData")
+                        .expectIntRecord(
+                                "Accessibility.Android.TextFormatting.TextLength",
+                                expectedText.length())
+                        .expectNoRecords(
+                                "Accessibility.Android.TextFormatting.TextLength.NoStyleData")
+                        .build();
+
+        mNodeInfo = createAccessibilityNodeInfo(vvid);
+        Assert.assertNotNull(NODE_TIMEOUT_ERROR, mNodeInfo);
+
+        histogramWatcher.assertExpected();
     }
 
     private void assertActionsContainNoScrolls(AccessibilityNodeInfoCompat nodeInfo) {

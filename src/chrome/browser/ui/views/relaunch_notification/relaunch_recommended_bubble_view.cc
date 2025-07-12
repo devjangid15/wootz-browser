@@ -24,6 +24,7 @@
 #include "ui/base/buildflags.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/models/image_model.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/paint_vector_icon.h"
@@ -89,7 +90,7 @@ ui::ImageModel RelaunchRecommendedBubbleView::GetWindowIcon() {
   return ui::ImageModel::FromVectorIcon(
       vector_icons::kBusinessIcon, ui::kColorIcon,
       ChromeLayoutProvider::Get()->GetDistanceMetric(
-          DISTANCE_BUBBLE_HEADER_VECTOR_ICON_SIZE));
+          views::DISTANCE_BUBBLE_HEADER_VECTOR_ICON_SIZE));
 }
 
 void RelaunchRecommendedBubbleView::Init() {
@@ -104,12 +105,13 @@ void RelaunchRecommendedBubbleView::Init() {
 
   // Align the body label with the left edge of the bubble's title.
   // TODO(bsep): Remove this when fixing https://crbug.com/810970.
-  // Note: BubleFrameView applies INSETS_DIALOG_TITLE either side of the icon.
+  // Note: BubbleDialogDelegate applies INSETS_DIALOG_TITLE either side of the
+  // icon.
   const int title_offset = 2 * views::LayoutProvider::Get()
                                    ->GetInsetsMetric(views::INSETS_DIALOG_TITLE)
                                    .left() +
                            ChromeLayoutProvider::Get()->GetDistanceMetric(
-                               DISTANCE_BUBBLE_HEADER_VECTOR_ICON_SIZE);
+                               views::DISTANCE_BUBBLE_HEADER_VECTOR_ICON_SIZE);
   label->SetBorder(views::CreateEmptyBorder(
       gfx::Insets::TLBR(0, title_offset - margins().left(), 0, 0)));
 
@@ -139,8 +141,8 @@ RelaunchRecommendedBubbleView::RelaunchRecommendedBubbleView(
           detection_time,
           base::BindRepeating(&RelaunchRecommendedBubbleView::UpdateWindowTitle,
                               base::Unretained(this))) {
-  SetButtons(ui::DIALOG_BUTTON_OK);
-  SetButtonLabel(ui::DIALOG_BUTTON_OK,
+  SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk));
+  SetButtonLabel(ui::mojom::DialogButton::kOk,
                  l10n_util::GetStringUTF16(IDS_RELAUNCH_ACCEPT_BUTTON));
   SetShowIcon(true);
 

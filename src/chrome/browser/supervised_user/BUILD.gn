@@ -2,8 +2,19 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//extensions/buildflags/buildflags.gni")
 import("//third_party/jni_zero/jni_zero.gni")
 import("//tools/grit/grit_rule.gni")
+
+source_set("supervised_user") {
+  sources = []
+  public_deps = []
+
+  if (enable_extensions_core) {
+    sources += [ "supervised_user_extensions_metrics_recorder.h" ]
+    public_deps += [ "//extensions/browser" ]
+  }
+}
 
 static_library("test_support") {
   testonly = true
@@ -13,17 +24,31 @@ static_library("test_support") {
   ]
   deps = [
     "//chrome/browser",
+    "//chrome/browser/content_settings:content_settings_factory",
     "//chrome/browser/profiles:profile",
+    "//chrome/browser/sync",
     "//chrome/common:constants",
+    "//components/content_settings/core/browser",
     "//components/prefs",
+    "//components/signin/public/identity_manager",
+    "//components/signin/public/identity_manager:test_support",
     "//components/supervised_user/core/browser",
+    "//components/supervised_user/core/browser:test_support",
     "//components/supervised_user/core/common",
+    "//components/supervised_user/test_support",
+    "//testing/gmock",
+    "//testing/gtest",
   ]
   if (is_android) {
-    sources += [ "android/supervised_user_settings_test_bridge.cc" ]
+    sources += [
+      "android/supervised_user_service_test_bridge.cc",
+      "android/supervised_user_settings_test_bridge.cc",
+    ]
     deps += [
       ":test_support_jni_headers",
+      "//components/safe_search_api:test_support",
       "//components/signin/public/identity_manager:test_support",
+      "//components/supervised_user/core/browser/android:content_filters_observer_bridge",
       "//services/network:test_support",
     ]
   }
@@ -39,19 +64,12 @@ if (is_android) {
   }
 
   android_library("parent_auth_delegate_java") {
-    sources = [
-      "android/java/src/org/chromium/chrome/browser/supervised_user/ParentAuthDelegate.java",
-      "android/java/src/org/chromium/chrome/browser/supervised_user/ParentAuthDelegateImpl.java",
-    ]
+    sources = [ "android/java/src/org/chromium/chrome/browser/supervised_user/ParentAuthDelegate.java" ]
     deps = [
       "//base:base_java",
       "//ui/android:ui_no_recycler_view_java",
       "//url:gurl_java",
     ]
-
-    # Add the actual implementation where necessary so that downstream targets
-    # can provide their own implementations.
-    jar_excluded_patterns = [ "*/ParentAuthDelegateImpl.class" ]
   }
 
   android_library("supervised_user_metrics_java") {
@@ -59,16 +77,6 @@ if (is_android) {
     deps = [
       "//base:base_java",
       "//third_party/androidx:androidx_annotation_annotation_java",
-    ]
-  }
-
-  android_library("parent_auth_delegate_impl_java") {
-    sources = [ "android/java/src/org/chromium/chrome/browser/supervised_user/ParentAuthDelegateImpl.java" ]
-    deps = [
-      ":parent_auth_delegate_java",
-      "//base:base_java",
-      "//ui/android:ui_no_recycler_view_java",
-      "//url:gurl_java",
     ]
   }
 
@@ -83,6 +91,7 @@ if (is_android) {
       ":parent_auth_delegate_java",
       ":supervised_user_metrics_java",
       "//base:base_java",
+      "//base:service_loader_java",
       "//build/android:build_java",
       "//chrome/browser/profiles/android:java",
       "//chrome/browser/signin/services/android:java",
@@ -137,15 +146,37 @@ if (is_android) {
     sources = [ "android/java/src/org/chromium/chrome/browser/supervised_user/SupervisedUserServicePlatformDelegate.java" ]
   }
 
+  generate_jni("supervised_user_service_bridge_jni_headers") {
+    sources = [ "android/java/src/org/chromium/chrome/browser/supervised_user/SupervisedUserServiceBridge.java" ]
+  }
+
+  android_library("supervised_user_service_bridge_java") {
+    srcjar_deps = [ ":supervised_user_service_bridge_jni_headers" ]
+    sources = [ "android/java/src/org/chromium/chrome/browser/supervised_user/SupervisedUserServiceBridge.java" ]
+    deps = [
+      "//base:base_java",
+      "//build/android:build_java",
+      "//chrome/browser/profiles/android:java",
+      "//third_party/androidx:androidx_annotation_annotation_java",
+      "//third_party/jni_zero:jni_zero_java",
+    ]
+  }
+
   generate_jni("test_support_jni_headers") {
     testonly = true
-    sources = [ "android/java/src/org/chromium/chrome/browser/supervised_user/SupervisedUserSettingsTestBridge.java" ]
+    sources = [
+      "android/java/src/org/chromium/chrome/browser/supervised_user/SupervisedUserServiceTestBridge.java",
+      "android/java/src/org/chromium/chrome/browser/supervised_user/SupervisedUserSettingsTestBridge.java",
+    ]
   }
 
   android_library("test_support_java") {
     testonly = true
     srcjar_deps = [ ":test_support_jni_headers" ]
-    sources = [ "android/java/src/org/chromium/chrome/browser/supervised_user/SupervisedUserSettingsTestBridge.java" ]
+    sources = [
+      "android/java/src/org/chromium/chrome/browser/supervised_user/SupervisedUserServiceTestBridge.java",
+      "android/java/src/org/chromium/chrome/browser/supervised_user/SupervisedUserSettingsTestBridge.java",
+    ]
     deps = [
       ":test_support_jni_headers",
       "//build/android:build_java",
@@ -161,7 +192,7 @@ if (is_android) {
     testonly = true
     resources_package = "org.chromium.chrome.browser.supervised_user"
     sources = [
-      "android/javatests/src/org/chromium/chrome/browser/supervised_user/IncognitoSignInInteractionTest.java",
+      "android/javatests/src/org/chromium/chrome/browser/supervised_user/IncognitoInteractionTest.java",
       "android/javatests/src/org/chromium/chrome/browser/supervised_user/SupervisedUserCriticalJourneysIntegrationTest.java",
       "android/javatests/src/org/chromium/chrome/browser/supervised_user/SupervisedUserSettingsTestUtils.java",
       "android/javatests/src/org/chromium/chrome/browser/supervised_user/WebsiteParentApprovalNativesTest.java",
@@ -221,5 +252,26 @@ if (is_android) {
       "//third_party/androidx:androidx_test_runner_java",
       "//third_party/junit:junit",
     ]
+  }
+
+  if (is_android) {
+    source_set("android_browser_tests") {
+      testonly = true
+      defines = [ "HAS_OUT_OF_PROC_TEST_RUNNER" ]
+      sources = [ "supervised_user_navigation_observer_android_browsertest.cc" ]
+      deps = [
+        "//base",
+        "//chrome/browser/profiles:profile",
+        "//chrome/browser/sync:sync",
+        "//chrome/test:test_support",
+        "//components/messages/android/test:test_support_cpp",
+        "//components/safe_search_api:test_support",
+        "//components/supervised_user/core/browser:test_support",
+        "//components/supervised_user/core/browser/android:content_filters_observer_bridge",
+        "//content/test:test_support",
+        "//net:test_support",
+        "//net/android:net_java_test_support_enums_srcjar",
+      ]
+    }
   }
 }

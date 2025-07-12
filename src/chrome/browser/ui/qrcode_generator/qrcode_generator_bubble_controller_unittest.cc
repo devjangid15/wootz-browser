@@ -5,7 +5,7 @@
 #include "chrome/browser/ui/qrcode_generator/qrcode_generator_bubble_controller.h"
 
 #include "base/test/scoped_feature_list.h"
-#include "chrome/browser/sharing/features.h"
+#include "components/sharing_message/features.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -37,9 +37,9 @@ TEST_F(QRCodeGeneratorBubbleControllerTest, AllowedURLs) {
   ASSERT_FALSE(QRCodeGeneratorBubbleController::IsGeneratorAvailable(
       GURL("about:blank")));
   ASSERT_FALSE(QRCodeGeneratorBubbleController::IsGeneratorAvailable(
-      GURL("wootzapp://newtab")));
+      GURL("chrome://newtab")));
   ASSERT_FALSE(QRCodeGeneratorBubbleController::IsGeneratorAvailable(
-      GURL("wootzapp://settings")));
+      GURL("chrome://settings")));
 
   // Disallow invalid URLs.
   ASSERT_FALSE(QRCodeGeneratorBubbleController::IsGeneratorAvailable(GURL("")));

@@ -53,13 +53,10 @@ std::string ToString(network::mojom::CrossOriginOpenerPolicyValue coop_value) {
       return "same-origin";
     case network::mojom::CrossOriginOpenerPolicyValue::kSameOriginAllowPopups:
       return "same-origin-allow-popups";
-    case network::mojom::CrossOriginOpenerPolicyValue::kRestrictProperties:
-      return "restrict-properties";
     case network::mojom::CrossOriginOpenerPolicyValue::kSameOriginPlusCoep:
       return "same-origin-plus-coep";
-    case network::mojom::CrossOriginOpenerPolicyValue::
-        kRestrictPropertiesPlusCoep:
-      return "restrict-properties-plus-coep";
+    case network::mojom::CrossOriginOpenerPolicyValue::kNoopenerAllowPopups:
+      return "noopener-allow-popups";
   }
 }
 
@@ -279,7 +276,7 @@ void CrossOriginOpenerPolicyReporter::QueueAccessReport(
 
   storage_partition_->GetNetworkContext()->QueueReport(
       "coop", endpoint, context_url_, reporting_source_,
-      network_anonymization_key_, std::nullopt, std::move(body));
+      network_anonymization_key_, std::move(body));
 }
 
 void CrossOriginOpenerPolicyReporter::QueueNavigationReport(
@@ -292,8 +289,7 @@ void CrossOriginOpenerPolicyReporter::QueueNavigationReport(
            ToString(is_report_only ? coop_.report_only_value : coop_.value));
   storage_partition_->GetNetworkContext()->QueueReport(
       "coop", endpoint, context_url_, reporting_source_,
-      network_anonymization_key_,
-      /*user_agent=*/std::nullopt, std::move(body));
+      network_anonymization_key_, std::move(body));
 }
 
 }  // namespace content

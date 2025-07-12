@@ -10,6 +10,7 @@
 #include <string_view>
 
 #include "base/component_export.h"
+#include "build/build_config.h"
 #include "printing/backend/cups_deleters.h"
 
 class GURL;
@@ -31,6 +32,7 @@ constexpr int kCupsTimeoutMs = 3000;
 constexpr cups_ptype_t kDestinationsFilterMask =
     CUPS_PRINTER_FAX | CUPS_PRINTER_SCANNER | CUPS_PRINTER_DISCOVERED;
 
+#if BUILDFLAG(IS_LINUX)
 // Helper wrapper around http_t structure, with connection and cleanup
 // functionality.
 class COMPONENT_EXPORT(PRINT_BACKEND) HttpConnectionCUPS {
@@ -53,6 +55,16 @@ bool ParsePpdCapabilities(cups_dest_t* dest,
                           std::string_view locale,
                           std::string_view printer_capabilities,
                           PrinterSemanticCapsAndDefaults* printer_info);
+#endif  // BUILDFLAG(IS_LINUX)
+
+ScopedHttpPtr HttpConnect2(const char* host,
+                           int port,
+                           http_addrlist_t* addrlist,
+                           int family,
+                           http_encryption_t encryption,
+                           int blocking,
+                           int msec,
+                           int* cancel);
 
 }  // namespace printing
 

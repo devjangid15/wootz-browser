@@ -15,6 +15,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
@@ -469,7 +470,7 @@ bool TestingLegacySessionStorageDatabase::LazyOpen(bool create_if_needed) {
                                   SESSION_STORAGE_UMA_RECREATE_IO_ERROR,
                                   SESSION_STORAGE_UMA_MAX);
       } else {
-        NOTREACHED_IN_MIGRATION();
+        NOTREACHED();
       }
 
       db_error_ = true;

@@ -21,7 +21,6 @@ import android.content.res.Resources;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.Mockito;
@@ -33,7 +32,6 @@ import org.robolectric.RuntimeEnvironment;
 
 import org.chromium.base.Callback;
 import org.chromium.base.test.BaseRobolectricTestRule;
-import org.chromium.base.test.util.Features;
 import org.chromium.ui.modaldialog.ModalDialogProperties;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.test.util.modaldialog.FakeModalDialogManager;
@@ -58,11 +56,9 @@ public class PasswordEditDialogControllerTest {
 
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
 
-    @Rule public TestRule mProcessor = new Features.JUnitProcessor();
-
     @Mock private PasswordEditDialogCoordinator.Delegate mDelegateMock;
 
-    private FakeModalDialogManager mModalDialogManager = new FakeModalDialogManager(0);
+    private final FakeModalDialogManager mModalDialogManager = new FakeModalDialogManager(0);
 
     @Mock private PasswordEditDialogView mDialogViewMock;
 
@@ -70,7 +66,7 @@ public class PasswordEditDialogControllerTest {
     private PropertyModel mModalDialogModel;
 
     private PasswordEditDialogCoordinator mDialogCoordinator;
-    private boolean mIsSignedIn;
+    private final boolean mIsSignedIn;
 
     @Parameters
     public static Collection<Object> data() {

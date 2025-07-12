@@ -8,7 +8,6 @@
 #include <string>
 #include <utility>
 
-#include "ash/constants/ash_features.h"
 #include "base/check.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
@@ -58,7 +57,9 @@ CryptohomeRecoverySetupScreen::CryptohomeRecoverySetupScreen(
       view_(std::move(view)),
       exit_callback_(std::move(exit_callback)),
       auth_performer_(UserDataAuthClient::Get()),
-      cryptohome_pin_engine_(&auth_performer_) {}
+      // TODO(crbug.com/404133029): Remove g_browser_process usage.
+      cryptohome_pin_engine_(g_browser_process->local_state(),
+                             &auth_performer_) {}
 
 CryptohomeRecoverySetupScreen::~CryptohomeRecoverySetupScreen() = default;
 
@@ -118,20 +119,6 @@ void CryptohomeRecoverySetupScreen::SetupRecovery() {
 void CryptohomeRecoverySetupScreen::ExitScreen(
     WizardContext& wizard_context,
     CryptohomeRecoverySetupScreen::Result result) {
-  // Clear the auth session if it's not needed for PIN setup.
-  if (wizard_context.extra_factors_token.has_value()) {
-    auto& token = wizard_context.extra_factors_token.value();
-    auto* storage = ash::AuthSessionStorage::Get();
-    const bool authsession_required =
-        ash::features::AreLocalPasswordsEnabledForConsumers();
-    if (storage->IsValid(token) && !authsession_required &&
-        cryptohome_pin_engine_.ShouldSkipSetupBecauseOfPolicy(
-            storage->Peek(token)->GetAccountId())) {
-      storage->Invalidate(token, base::DoNothing());
-      wizard_context.extra_factors_token = std::nullopt;
-    }
-  }
-
   exit_callback_.Run(result);
 }
 

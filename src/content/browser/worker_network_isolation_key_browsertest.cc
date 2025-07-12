@@ -4,9 +4,11 @@
 
 #include "base/path_service.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/common/content_paths.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
@@ -149,19 +151,6 @@ class WorkerImportScriptsAndFetchRequestNetworkIsolationKeyBrowserTest
     : public WorkerNetworkIsolationKeyBrowserTest,
       public ::testing::WithParamInterface<
           std::tuple<bool /* test_same_network_isolation_key */, WorkerType>> {
- public:
-  WorkerImportScriptsAndFetchRequestNetworkIsolationKeyBrowserTest() {
-    // This test was written assuming that iframes/workers corresponding to
-    // different cross-origin frames (same top-level site) would not share an
-    // HTTP cache partition, but this is not the case when the experiment to
-    // replace the frame origin with an "is-cross-site" bit in the Network
-    // Isolation Key is active. Therefore, disable it for this test.
-    feature_list_.InitAndDisableFeature(
-        net::features::kEnableCrossSiteFlagNetworkIsolationKey);
-  }
-
- private:
-  base::test::ScopedFeatureList feature_list_;
 };
 
 // Test that network isolation key is filled in correctly for service/shared
@@ -205,7 +194,7 @@ IN_PROC_BROWSER_TEST_P(
                 EXPECT_EQ(status.exists_in_cache,
                           test_same_network_isolation_key);
               } else {
-                NOTREACHED_IN_MIGRATION();
+                NOTREACHED();
               }
             }
             if (request_completed_count[import_script_url] == 2 &&
@@ -298,7 +287,7 @@ IN_PROC_BROWSER_TEST_F(
                 EXPECT_TRUE(status.exists_in_cache);
                 cache_status_waiter.Quit();
               } else {
-                NOTREACHED_IN_MIGRATION();
+                NOTREACHED();
               }
             }
           }),
@@ -366,7 +355,7 @@ IN_PROC_BROWSER_TEST_F(
                 EXPECT_FALSE(status.exists_in_cache);
                 cache_status_waiter.Quit();
               } else {
-                NOTREACHED_IN_MIGRATION();
+                NOTREACHED();
               }
             }
           }),

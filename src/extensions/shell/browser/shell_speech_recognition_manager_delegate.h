@@ -24,12 +24,12 @@ class ShellSpeechRecognitionManagerDelegate
 
   ~ShellSpeechRecognitionManagerDelegate() override;
 
-#if !BUILDFLAG(IS_FUCHSIA) && !BUILDFLAG(IS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   // It is empty in this delegate.
   void BindSpeechRecognitionContext(
       mojo::PendingReceiver<media::mojom::SpeechRecognitionContext> receiver)
       override;
-#endif  // !BUILDFLAG(IS_FUCHSIA) && !BUILDFLAG(IS_ANDROID)
+#endif  // !BUILDFLAG(IS_ANDROID)
 
  private:
   // SpeechRecognitionEventListener methods.
@@ -56,7 +56,6 @@ class ShellSpeechRecognitionManagerDelegate
       base::OnceCallback<void(bool ask_user, bool is_allowed)> callback)
       override;
   content::SpeechRecognitionEventListener* GetEventListener() override;
-  bool FilterProfanities(int render_process_id) override;
 
   static void CheckRenderFrameType(
       base::OnceCallback<void(bool ask_user, bool is_allowed)> callback,

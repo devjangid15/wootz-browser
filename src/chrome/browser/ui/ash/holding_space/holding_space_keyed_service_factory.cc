@@ -7,6 +7,7 @@
 #include "base/no_destructor.h"
 #include "chrome/browser/ash/arc/fileapi/arc_file_system_bridge.h"
 #include "chrome/browser/ash/drive/drive_integration_service.h"
+#include "chrome/browser/ash/drive/drive_integration_service_factory.h"
 #include "chrome/browser/ash/file_manager/volume_manager_factory.h"
 #include "chrome/browser/ash/fileapi/file_change_service_factory.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
@@ -19,8 +20,9 @@
 namespace ash {
 namespace {
 
-BrowserContextKeyedServiceFactory::TestingFactory* GetTestingFactory() {
-  static base::NoDestructor<BrowserContextKeyedServiceFactory::TestingFactory>
+HoldingSpaceKeyedServiceFactory::GlobalTestingFactory* GetTestingFactory() {
+  static base::NoDestructor<
+      HoldingSpaceKeyedServiceFactory::GlobalTestingFactory>
       testing_factory_;
   return testing_factory_.get();
 }
@@ -44,7 +46,7 @@ HoldingSpaceKeyedServiceFactory::GetDefaultTestingFactory() {
 
 // static
 void HoldingSpaceKeyedServiceFactory::SetTestingFactory(
-    BrowserContextKeyedServiceFactory::TestingFactory testing_factory) {
+    GlobalTestingFactory testing_factory) {
   *GetTestingFactory() = std::move(testing_factory);
 }
 
@@ -70,8 +72,9 @@ HoldingSpaceKeyedServiceFactory::GetBrowserContextToUse(
   Profile* const profile = Profile::FromBrowserContext(context);
 
   // Guest sessions are supported but redirect to the primary OTR profile.
-  if (profile->IsGuestSession())
+  if (profile->IsGuestSession()) {
     return profile->GetPrimaryOTRProfile(/*create_if_needed=*/true);
+  }
 
   // Don't create the service for OTR profiles outside of guest sessions.
   return profile->IsOffTheRecord() ? nullptr : context;
@@ -80,7 +83,7 @@ HoldingSpaceKeyedServiceFactory::GetBrowserContextToUse(
 std::unique_ptr<KeyedService>
 HoldingSpaceKeyedServiceFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* context) const {
-  TestingFactory* testing_factory = GetTestingFactory();
+  GlobalTestingFactory* testing_factory = GetTestingFactory();
   return testing_factory->is_null() ? BuildServiceInstanceForInternal(context)
                                     : testing_factory->Run(context);
 }
@@ -93,10 +96,11 @@ HoldingSpaceKeyedServiceFactory::BuildServiceInstanceForInternal(
   DCHECK_EQ(profile->IsGuestSession(), profile->IsOffTheRecord());
 
   user_manager::User* user = ProfileHelper::Get()->GetUserByProfile(profile);
-  if (!user)
+  if (!user) {
     return nullptr;
+  }
 
-  if (user->GetType() == user_manager::UserType::kKioskApp) {
+  if (user->GetType() == user_manager::UserType::kKioskChromeApp) {
     return nullptr;
   }
 

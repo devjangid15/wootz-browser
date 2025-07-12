@@ -4,12 +4,13 @@
 
 package org.chromium.android_webview.test.services;
 
+import static org.chromium.android_webview.test.OnlyRunIn.ProcessMode.EITHER_PROCESS;
+
 import android.content.Context;
 import android.content.SharedPreferences;
 
 import androidx.test.filters.SmallTest;
 
-import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -18,6 +19,7 @@ import org.junit.runner.RunWith;
 import org.chromium.android_webview.nonembedded.AwComponentUpdateService;
 import org.chromium.android_webview.nonembedded.AwNonembeddedUmaRecorder;
 import org.chromium.android_webview.test.AwJUnit4ClassRunner;
+import org.chromium.android_webview.test.OnlyRunIn;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.metrics.UmaRecorderHolder;
@@ -27,9 +29,10 @@ import org.chromium.base.test.util.Feature;
 
 /** Tests for {@link org.chromium.android_webview.nonembedded.AwComponentUpdateService}. */
 @RunWith(AwJUnit4ClassRunner.class)
+@OnlyRunIn(EITHER_PROCESS) // These tests don't use the renderer process
 @Batch(Batch.PER_CLASS)
 public class AwComponentUpdateServiceTest {
-    private CallbackHelper mCallbackHelper = new CallbackHelper();
+    private final CallbackHelper mCallbackHelper = new CallbackHelper();
 
     private class AwNonembeddedUmaRecorderForTest extends AwNonembeddedUmaRecorder {
         @Override
@@ -39,7 +42,8 @@ public class AwComponentUpdateServiceTest {
         }
     }
 
-    private AwNonembeddedUmaRecorderForTest mUmaRecorder = new AwNonembeddedUmaRecorderForTest();
+    private final AwNonembeddedUmaRecorderForTest mUmaRecorder =
+            new AwNonembeddedUmaRecorderForTest();
 
     @Before
     public void setup() {
@@ -54,9 +58,6 @@ public class AwComponentUpdateServiceTest {
                 .apply();
     }
 
-    @After
-    public void tearDown() {}
-
     @Test
     @SmallTest
     @Feature({"AndroidWebView"})
@@ -69,7 +70,7 @@ public class AwComponentUpdateServiceTest {
         AwComponentUpdateService svc = new AwComponentUpdateService();
         int cbCount = mCallbackHelper.getCallCount();
         boolean success =
-                ThreadUtils.runOnUiThreadBlockingNoException(
+                ThreadUtils.runOnUiThreadBlocking(
                         () -> {
                             return svc.maybeStartUpdates(false);
                         });

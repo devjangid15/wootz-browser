@@ -8,6 +8,7 @@
 #include <sstream>
 #include <utility>
 
+#include "base/check_deref.h"
 #include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/json/json_writer.h"
@@ -16,7 +17,6 @@
 #include "base/memory/raw_ptr.h"
 #include "base/test/bind.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/sync/sync_service_factory.h"
@@ -32,6 +32,7 @@
 #include "components/sync/engine/traffic_logger.h"
 #include "components/sync/protocol/sync.pb.h"
 #include "components/sync/service/glue/sync_transport_data_prefs.h"
+#include "components/sync/service/local_data_description.h"
 #include "components/sync/service/sync_internals_util.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/test/simple_url_loader_test_helper.h"
@@ -44,18 +45,12 @@
 #include "services/network/public/mojom/fetch_api.mojom-shared.h"
 #include "third_party/zlib/google/compression_utils.h"
 
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-#include "chrome/browser/signin/chrome_signin_client.h"
-#include "chrome/browser/signin/chrome_signin_client_factory.h"
-#include "components/signin/public/base/signin_client.h"
-#endif
+namespace {
 
 using syncer::SyncCycleSnapshot;
 using syncer::SyncServiceImpl;
 
-const char* kSyncUrlClearServerDataKey = "sync-url-clear-server-data";
-
-namespace {
+constexpr char kSyncUrlClearServerDataKey[] = "sync-url-clear-server-data";
 
 bool HasAuthError(SyncServiceImpl* service) {
   return service->GetAuthError().state() ==
@@ -72,7 +67,13 @@ class EngineInitializeChecker : public SingleClientStatusChangeChecker {
       : SingleClientStatusChangeChecker(service) {}
 
   bool IsExitConditionSatisfied(std::ostream* os) override {
-    *os << "Waiting for sync engine initialization to complete";
+    *os << "Waiting for sync engine initialization to complete; actual "
+           "transport state: "
+        << syncer::sync_ui_util::TransportStateStringToDebugString(
+               service()->GetTransportState())
+        << ", disable reasons: "
+        << syncer::sync_ui_util::GetDisableReasonsDebugString(
+               service()->GetDisableReasons());
     if (service()->IsEngineInitialized()) {
       return true;
     }
@@ -123,10 +124,25 @@ class SyncSetupChecker : public SingleClientStatusChangeChecker {
   const State wait_for_state_;
 };
 
+class SyncTransportStateChecker : public SingleClientStatusChangeChecker {
+ public:
+  SyncTransportStateChecker(SyncServiceImpl* service,
+                            syncer::SyncService::TransportState state)
+      : SingleClientStatusChangeChecker(service), state_(state) {}
+
+  bool IsExitConditionSatisfied(std::ostream* os) override {
+    *os << "Waiting for sync transport state to change";
+    return service()->GetTransportState() == state_;
+  }
+
+ private:
+  const syncer::SyncService::TransportState state_;
+};
+
 // Same as reset on chrome.google.com/sync.
 // This function will wait until the reset is done. If error occurs,
 // it will log error messages.
-void ResetAccount(network::SharedURLLoaderFactory* url_loader_factory,
+bool ResetAccount(network::SharedURLLoaderFactory* url_loader_factory,
                   const std::string& access_token,
                   const GURL& url,
                   const std::string& username,
@@ -166,7 +182,22 @@ void ResetAccount(network::SharedURLLoaderFactory* url_loader_factory,
     LOG(ERROR) << "Reset account failed with error "
                << net::ErrorToString(simple_loader->NetError())
                << ". The account will remain dirty and may cause test fail.";
+    return false;
   }
+  return true;
+}
+
+std::unique_ptr<SyncSigninDelegate> CreateSyncSigninDelegateForType(
+    SyncServiceImplHarness::SigninType signin_type,
+    Profile* profile) {
+  CHECK(profile);
+  switch (signin_type) {
+    case SyncServiceImplHarness::SigninType::UI_SIGNIN:
+      return CreateSyncSigninDelegateWithLiveSignin(profile);
+    case SyncServiceImplHarness::SigninType::FAKE_SIGNIN:
+      return CreateSyncSigninDelegateWithFakeSignin(profile);
+  }
+  NOTREACHED();
 }
 
 }  // namespace
@@ -174,88 +205,62 @@ void ResetAccount(network::SharedURLLoaderFactory* url_loader_factory,
 // static
 std::unique_ptr<SyncServiceImplHarness> SyncServiceImplHarness::Create(
     Profile* profile,
-    const std::string& username,
-    const std::string& password,
     SigninType signin_type) {
-  return base::WrapUnique(
-      new SyncServiceImplHarness(profile, username, password, signin_type));
+  CHECK(profile);
+  return base::WrapUnique(new SyncServiceImplHarness(
+      profile, CreateSyncSigninDelegateForType(signin_type, profile)));
 }
 
-SyncServiceImplHarness::SyncServiceImplHarness(Profile* profile,
-                                               const std::string& username,
-                                               const std::string& password,
-                                               SigninType signin_type)
-    : profile_(profile),
+SyncServiceImplHarness::SyncServiceImplHarness(
+    Profile* profile,
+    std::unique_ptr<SyncSigninDelegate> signin_delegate)
+    : profile_(CHECK_DEREF(profile).GetWeakPtr()),
       service_(SyncServiceFactory::GetAsSyncServiceImplForProfileForTesting(
           profile)),
-      username_(username),
-      password_(password),
-      signin_type_(signin_type),
       profile_debug_name_(profile->GetDebugName()),
-      signin_delegate_(CreateSyncSigninDelegate()) {
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  // The Main profile already has a primary account that cannot be changed.
-  // Allow changing it for test purposes only.
-  if (profile_->IsMainProfile()) {
-    ChromeSigninClientFactory::GetForProfile(profile_)
-        ->set_is_clear_primary_account_allowed_for_testing(
-            SigninClient::SignoutDecision::ALLOW);
-  }
-#endif
+      signin_delegate_(std::move(signin_delegate)) {
+  CHECK(profile_);
+  CHECK(service_);
+  CHECK(signin_delegate_);
 }
 
 SyncServiceImplHarness::~SyncServiceImplHarness() = default;
 
-void SyncServiceImplHarness::SetUsernameForFutureSignins(
-    const std::string& username) {
-  CHECK(!username.empty());
-  CHECK(!IdentityManagerFactory::GetForProfile(profile_)->HasPrimaryAccount(
-      signin::ConsentLevel::kSignin));
-
-  username_ = username;
-}
-
 signin::GaiaIdHash SyncServiceImplHarness::GetGaiaIdHashForPrimaryAccount()
     const {
   signin::IdentityManager* identity_manager =
-      IdentityManagerFactory::GetForProfile(profile_);
+      IdentityManagerFactory::GetForProfile(profile_.get());
   return signin::GaiaIdHash::FromGaiaId(
       identity_manager->GetPrimaryAccountInfo(signin::ConsentLevel::kSignin)
           .gaia);
 }
 
-bool SyncServiceImplHarness::SignInPrimaryAccount(
-    signin::ConsentLevel consent_level) {
-  DCHECK(!username_.empty());
+GaiaId SyncServiceImplHarness::GetGaiaIdForAccount(
+    SyncTestAccount account) const {
+  return signin_delegate_->GetGaiaIdForAccount(account);
+}
 
-  switch (signin_type_) {
-    case SigninType::UI_SIGNIN: {
-      if (!signin_delegate_->SigninUI(profile_, username_, password_,
-                                      consent_level)) {
-        return false;
-      }
-      break;
-    }
+std::string SyncServiceImplHarness::GetEmailForAccount(
+    SyncTestAccount account) const {
+  return signin_delegate_->GetEmailForAccount(account);
+}
 
-    case SigninType::FAKE_SIGNIN: {
-      signin_delegate_->SigninFake(profile_, username_, consent_level);
-
-      // TODO(b/1523197): The below checks should also be satisfied for the
-      // above case.
-      signin::IdentityManager* identity_manager =
-          IdentityManagerFactory::GetForProfile(profile_);
-      CHECK(identity_manager->HasPrimaryAccount(consent_level));
-      CHECK(identity_manager->HasPrimaryAccountWithRefreshToken(consent_level));
-      CHECK(!service()->GetAccountInfo().IsEmpty());
-
-      break;
-    }
+bool SyncServiceImplHarness::SignInPrimaryAccount(SyncTestAccount account) {
+  if (!signin_delegate_->SignIn(account, signin::ConsentLevel::kSignin)) {
+    return false;
   }
+
+  signin::IdentityManager* identity_manager =
+      IdentityManagerFactory::GetForProfile(profile_.get());
+  CHECK(identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSignin));
+  CHECK(identity_manager->HasPrimaryAccountWithRefreshToken(
+      signin::ConsentLevel::kSignin));
+  CHECK(!service()->GetAccountInfo().IsEmpty());
 
   return true;
 }
 
-void SyncServiceImplHarness::ResetSyncForPrimaryAccount() {
+bool SyncServiceImplHarness::ResetSyncForPrimaryAccount() {
   syncer::SyncTransportDataPrefs transport_data_prefs(
       profile_->GetPrefs(), GetGaiaIdHashForPrimaryAccount());
   // Generate the https url.
@@ -273,39 +278,73 @@ void SyncServiceImplHarness::ResetSyncForPrimaryAccount() {
                                            transport_data_prefs.GetCacheGuid());
 
   // Call sync server to clear sync data.
-  std::string access_token = service()->GetAccessTokenForTest();
-  DCHECK(access_token.size()) << "Access token is not available.";
-  ResetAccount(profile_->GetURLLoaderFactory().get(), access_token, url,
-               username_, transport_data_prefs.GetBirthday());
+  const std::string access_token = service()->GetAccessTokenForTest();
+  if (access_token.empty()) {
+    LOG(ERROR) << "Access token is not available.";
+    return false;
+  }
+  return ResetAccount(profile_->GetURLLoaderFactory().get(), access_token, url,
+                      service()->GetAccountInfo().email,
+                      transport_data_prefs.GetBirthday());
 }
 
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
 void SyncServiceImplHarness::SignOutPrimaryAccount() {
-  DCHECK(!username_.empty());
-  signin_delegate_->SignOutPrimaryAccount(profile_);
+  signin_delegate_->SignOut();
 }
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
 #if !BUILDFLAG(IS_ANDROID)
 void SyncServiceImplHarness::EnterSyncPausedStateForPrimaryAccount() {
   DCHECK(service_->IsSyncFeatureActive());
   signin::SetInvalidRefreshTokenForPrimaryAccount(
-      IdentityManagerFactory::GetForProfile(profile_));
+      IdentityManagerFactory::GetForProfile(profile_.get()));
 }
 
 bool SyncServiceImplHarness::ExitSyncPausedStateForPrimaryAccount() {
   signin::SetRefreshTokenForPrimaryAccount(
-      IdentityManagerFactory::GetForProfile(profile_));
+      IdentityManagerFactory::GetForProfile(profile_.get()));
   // The engine was off in the sync-paused state, so wait for it to start.
   return AwaitSyncSetupCompletion();
 }
+
+bool SyncServiceImplHarness::EnterSignInPendingStateForPrimaryAccount() {
+  CHECK_EQ(service_->GetTransportState(),
+           syncer::SyncServiceImpl::TransportState::ACTIVE);
+  signin::IdentityManager* identity_manager =
+      IdentityManagerFactory::GetForProfile(profile_.get());
+  CHECK(identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSignin));
+  signin::SetInvalidRefreshTokenForPrimaryAccount(identity_manager);
+  return AwaitSyncTransportPaused();
+}
+
+bool SyncServiceImplHarness::ExitSignInPendingStateForPrimaryAccount() {
+  CHECK_EQ(service_->GetTransportState(),
+           syncer::SyncService::TransportState::PAUSED);
+  signin::SetRefreshTokenForPrimaryAccount(
+      IdentityManagerFactory::GetForProfile(profile_.get()));
+  return AwaitSyncTransportActive();
+}
 #endif  // !BUILDFLAG(IS_ANDROID)
 
-bool SyncServiceImplHarness::SetupSync(
-    SetUserSettingsCallback user_settings_callback) {
+bool SyncServiceImplHarness::SetupSync(SyncTestAccount account) {
   bool result =
-      SetupSyncNoWaitForCompletion(std::move(user_settings_callback)) &&
-      AwaitSyncSetupCompletion();
+      SetupSyncNoWaitForCompletion(account) && AwaitSyncSetupCompletion();
+  if (!result) {
+    LOG(ERROR) << profile_debug_name_ << ": SetupSync failed. Syncer status:\n"
+               << GetServiceStatus();
+  } else {
+    DVLOG(1) << profile_debug_name_ << ": SetupSync successful.";
+  }
+  return result;
+}
+
+bool SyncServiceImplHarness::SetupSyncWithCustomSettings(
+    SetUserSettingsCallback user_settings_callback,
+    SyncTestAccount account) {
+  bool result = SetupSyncWithCustomSettingsNoWaitForCompletion(
+                    std::move(user_settings_callback), account) &&
+                AwaitSyncSetupCompletion();
   if (!result) {
     LOG(ERROR) << profile_debug_name_ << ": SetupSync failed. Syncer status:\n"
                << GetServiceStatus();
@@ -316,7 +355,21 @@ bool SyncServiceImplHarness::SetupSync(
 }
 
 bool SyncServiceImplHarness::SetupSyncNoWaitForCompletion(
-    SetUserSettingsCallback user_settings_callback) {
+    SyncTestAccount account) {
+  // By default, mimic the user confirming the default settings.
+  return SetupSyncWithCustomSettingsNoWaitForCompletion(
+      base::BindLambdaForTesting([](syncer::SyncUserSettings* user_settings) {
+#if !BUILDFLAG(IS_CHROMEOS)
+        user_settings->SetInitialSyncFeatureSetupComplete(
+            syncer::SyncFirstSetupCompleteSource::BASIC_FLOW);
+#endif  // !BUILDFLAG(IS_CHROMEOS)
+      }),
+      account);
+}
+
+bool SyncServiceImplHarness::SetupSyncWithCustomSettingsNoWaitForCompletion(
+    SetUserSettingsCallback user_settings_callback,
+    SyncTestAccount account) {
   if (service() == nullptr) {
     LOG(ERROR) << "SetupSync(): service() is null.";
     return false;
@@ -326,38 +379,48 @@ bool SyncServiceImplHarness::SetupSyncNoWaitForCompletion(
   // until we've finished configuration.
   sync_blocker_ = service()->GetSetupInProgressHandle();
 
-  if (!SignInPrimaryAccount(signin::ConsentLevel::kSync)) {
+  if (!signin_delegate_->SignIn(account, signin::ConsentLevel::kSync)) {
     return false;
   }
 
-  // Now that auth is completed, request that sync actually start.
-  service()->SetSyncFeatureRequested();
+  signin::IdentityManager* identity_manager =
+      IdentityManagerFactory::GetForProfile(profile_.get());
+  // Note that `ConsentLevel::kSync` is not actually guaranteed at this stage.
+  // Namely, live tests require closing the sync confirmation dialog before
+  // `ConsentLevel::kSync` is granted. This is achieved later below with
+  // `ConfirmSyncUI()`.
+  CHECK(identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSignin));
 
   if (!AwaitEngineInitialization()) {
     return false;
   }
 
   // Now give the caller a chance to configure settings (in particular, the
-  // selected data types) before actually starting to sync.
-  if (user_settings_callback) {
-    std::move(user_settings_callback).Run(service()->GetUserSettings());
-  }
+  // selected data types) before actually starting to sync. This callback
+  // usually (but not necessarily) invokes SetInitialSyncFeatureSetupComplete().
+  std::move(user_settings_callback).Run(service()->GetUserSettings());
 
   // Notify SyncServiceImpl that we are done with configuration.
-  FinishSyncSetup();
+  sync_blocker_.reset();
 
-  if (signin_type_ == SigninType::UI_SIGNIN) {
-    return signin_delegate_->ConfirmSyncUI(profile_);
+  if (!signin_delegate_->ConfirmSync()) {
+    return false;
   }
+
+  CHECK(identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSync));
+  CHECK(identity_manager->HasPrimaryAccountWithRefreshToken(
+      signin::ConsentLevel::kSync));
+  CHECK(!service()->GetAccountInfo().IsEmpty());
+
   return true;
 }
 
 void SyncServiceImplHarness::FinishSyncSetup() {
-  sync_blocker_.reset();
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
   service()->GetUserSettings()->SetInitialSyncFeatureSetupComplete(
       syncer::SyncFirstSetupCompleteSource::BASIC_FLOW);
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
+  sync_blocker_.reset();
 }
 
 bool SyncServiceImplHarness::AwaitMutualSyncCycleCompletion(
@@ -439,6 +502,16 @@ bool SyncServiceImplHarness::AwaitSyncTransportActive() {
   return true;
 }
 
+bool SyncServiceImplHarness::AwaitSyncTransportPaused() {
+  if (!SyncTransportStateChecker(service(),
+                                 syncer::SyncService::TransportState::PAUSED)
+           .Wait()) {
+    LOG(ERROR) << "SyncTransportStateChecker timed out.";
+    return false;
+  }
+  return true;
+}
+
 bool SyncServiceImplHarness::AwaitInvalidationsStatus(bool expected_status) {
   return InvalidationsStatusChecker(service(), expected_status).Wait();
 }
@@ -450,9 +523,13 @@ bool SyncServiceImplHarness::EnableSyncForType(
       std::string(syncer::GetUserSelectableTypeName(type)) + ")");
 
   if (!IsSyncEnabledByUser()) {
-    bool result = SetupSync(base::BindLambdaForTesting(
+    bool result = SetupSyncWithCustomSettings(base::BindLambdaForTesting(
         [type](syncer::SyncUserSettings* user_settings) {
           user_settings->SetSelectedTypes(false, {type});
+#if !BUILDFLAG(IS_CHROMEOS)
+          user_settings->SetInitialSyncFeatureSetupComplete(
+              syncer::SyncFirstSetupCompleteSource::ADVANCED_FLOW_CONFIRM);
+#endif  // !BUILDFLAG(IS_CHROMEOS)
         }));
     // If SetupSync() succeeded, then Sync must now be enabled.
     DCHECK(!result || IsSyncEnabledByUser());
@@ -571,6 +648,40 @@ SyncCycleSnapshot SyncServiceImplHarness::GetLastCycleSnapshot() const {
     return service()->GetLastCycleSnapshotForDebugging();
   }
   return SyncCycleSnapshot();
+}
+
+absl::flat_hash_map<syncer::DataType, size_t>
+SyncServiceImplHarness::GetTypesWithUnsyncedDataAndWait(
+    syncer::DataTypeSet requested_types) const {
+  base::test::TestFuture<absl::flat_hash_map<syncer::DataType, size_t>> future;
+  service()->GetTypesWithUnsyncedData(requested_types, future.GetCallback());
+  return future.Get();
+}
+
+syncer::LocalDataDescription
+SyncServiceImplHarness::GetLocalDataDescriptionAndWait(
+    syncer::DataType data_type) {
+  base::test::TestFuture<
+      std::map<syncer::DataType, syncer::LocalDataDescription>>
+      descriptions;
+  service()->GetLocalDataDescriptions({data_type}, descriptions.GetCallback());
+
+  if (descriptions.Get().size() != 1u) {
+    ADD_FAILURE()
+        << "The expected size of local data description map is 1. Found "
+        << descriptions.Get().size() << '.';
+    return syncer::LocalDataDescription();
+  }
+
+  if (descriptions.Get().begin()->first != data_type) {
+    ADD_FAILURE()
+        << DataTypeToDebugString(data_type)
+        << " is the only expected key in the local data description map. Found "
+        << DataTypeToDebugString(descriptions.Get().begin()->first) << '.';
+    return syncer::LocalDataDescription();
+  }
+
+  return descriptions.Get().begin()->second;
 }
 
 std::string SyncServiceImplHarness::GetServiceStatus() {

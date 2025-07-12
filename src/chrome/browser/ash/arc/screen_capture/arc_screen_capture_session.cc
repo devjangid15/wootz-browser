@@ -6,13 +6,13 @@
 
 #include <utility>
 
-#include "ash/components/arc/mojom/screen_capture.mojom.h"
 #include "ash/shell.h"
 #include "base/functional/bind.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ash/notifications/screen_capture_notification_ui_ash.h"
 #include "chrome/browser/media/webrtc/desktop_capture_access_handler.h"
 #include "chrome/grit/generated_resources.h"
+#include "chromeos/ash/experiences/arc/mojom/screen_capture.mojom.h"
 #include "components/viz/common/frame_sinks/copy_output_request.h"
 #include "components/viz/common/frame_sinks/copy_output_result.h"
 #include "components/viz/common/gpu/raster_context_provider.h"
@@ -36,7 +36,7 @@
 #include "ui/display/display.h"
 #include "ui/display/manager/display_manager.h"
 #include "ui/display/screen.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 #include "ui/gfx/linux/client_native_pixmap_factory_dmabuf.h"
 
 namespace arc {
@@ -122,6 +122,7 @@ ArcScreenCaptureSession::Initialize(content::DesktopMediaID desktop_id,
   display::Display display =
       display::Screen::GetScreen()->GetDisplayNearestWindow(
           display_root_window_);
+  display_id_ = display.id();
 
   display_root_window_->GetHost()->compositor()->AddAnimationObserver(this);
 
@@ -155,6 +156,9 @@ void ArcScreenCaptureSession::Close() {
 }
 
 ArcScreenCaptureSession::~ArcScreenCaptureSession() {
+  // This needs to be done because |buffer_queue_| might own a mojo callback and
+  // the message pipe must be closed before those callbacks are destroyed.
+  receiver_.reset();
   GetContextProvider()->RemoveObserver(this);
 
   if (!display_root_window_) {
@@ -206,9 +210,8 @@ void ArcScreenCaptureSession::SetOutputBuffer(
     return;
   }
 
-  gfx::GpuMemoryBufferHandle handle;
-  handle.type = gfx::NATIVE_PIXMAP;
-  handle.native_pixmap_handle.modifier = buffer_format_modifier;
+  gfx::NativePixmapHandle native_pixmap_handle;
+  native_pixmap_handle.modifier = buffer_format_modifier;
   base::ScopedPlatformFile platform_file;
   MojoResult mojo_result =
       mojo::UnwrapPlatformFile(std::move(graphics_buffer), &platform_file);
@@ -217,13 +220,11 @@ void ArcScreenCaptureSession::SetOutputBuffer(
     std::move(callback).Run();
     return;
   }
-  handle.native_pixmap_handle.planes.emplace_back(
+  native_pixmap_handle.planes.emplace_back(
       stride * kBytesPerPixel, 0, stride * kBytesPerPixel * size_.height(),
       std::move(platform_file));
 
-  viz::SharedImageFormat si_format =
-      viz::GetSinglePlaneSharedImageFormat(buffer_format);
-  CHECK(!si_format.IsLegacyMultiplanar());
+  viz::SharedImageFormat si_format = viz::GetSharedImageFormat(buffer_format);
 
   auto client_shared_image = sii->CreateSharedImage(
       {si_format, size_, gfx::ColorSpace(),
@@ -233,9 +234,8 @@ void ArcScreenCaptureSession::SetOutputBuffer(
        // RasterImplementation (and not RasterImplementationGLES) as its
        // implementation, GLES2_WRITE usage is not needed.
        gpu::SHARED_IMAGE_USAGE_RASTER_WRITE, "ArcScreenCapture"},
-      std::move(handle));
+      gfx::GpuMemoryBufferHandle(std::move(native_pixmap_handle)));
   CHECK(client_shared_image);
-  ri->WaitSyncTokenCHROMIUM(sii->GenUnverifiedSyncToken().GetConstData());
 
   std::unique_ptr<PendingBuffer> pending_buffer =
       std::make_unique<PendingBuffer>(std::move(callback),
@@ -304,7 +304,7 @@ void ArcScreenCaptureSession::OnDesktopCaptured(
 
   DCHECK_EQ(result->format(), viz::CopyOutputResult::Format::RGBA);
   DCHECK_EQ(result->destination(),
-            viz::CopyOutputResult::Destination::kNativeTextures);
+            viz::CopyOutputResult::Destination::kSharedImage);
 
   auto* ri = GetContextProvider()->RasterInterface();
   if (!ri) {
@@ -313,16 +313,15 @@ void ArcScreenCaptureSession::OnDesktopCaptured(
   }
   // Get the source texture - RGBA format is guaranteed to have 1 valid texture
   // if the CopyOutputRequest succeeded:
-  gpu::MailboxHolder mailbox_holder =
-      result->GetTextureResult()->mailbox_holders[0];
-  ri->WaitSyncTokenCHROMIUM(mailbox_holder.sync_token.GetConstData());
+  gpu::Mailbox result_mailbox = result->GetSharedImage()->mailbox();
+  CHECK(!result_mailbox.IsZero());
 
   viz::CopyOutputResult::ReleaseCallbacks release_callbacks =
-      result->TakeTextureOwnership();
+      result->TakeSharedImageOwnership();
   CHECK_EQ(1u, release_callbacks.size());
 
   std::unique_ptr<DesktopTexture> desktop_texture =
-      std::make_unique<DesktopTexture>(mailbox_holder.mailbox,
+      std::make_unique<DesktopTexture>(result_mailbox,
                                        std::move(release_callbacks[0]));
   if (buffer_queue_.empty()) {
     // We don't have a GPU buffer to render to, so put this in a queue to use
@@ -349,11 +348,13 @@ void ArcScreenCaptureSession::CopyDesktopTextureToGpuBuffer(
   uint32_t query_id;
   ri->GenQueriesEXT(1, &query_id);
   ri->BeginQueryEXT(GL_COMMANDS_COMPLETED_CHROMIUM, query_id);
+  scoped_refptr<gpu::ClientSharedImage> si = pending_buffer->shared_image_;
+  std::unique_ptr<gpu::RasterScopedAccess> ri_access =
+      si->BeginRasterAccess(ri, si->creation_sync_token(), /*readonly=*/false);
   ri->CopySharedImage(desktop_texture->mailbox_,
-                      pending_buffer->shared_image_->mailbox(), GL_TEXTURE_2D,
-                      0, 0, 0, 0, size_.width(), size_.height(),
-                      /*unpack_flip_y=*/false,
-                      /*unpack_premultiply_alpha=*/false);
+                      pending_buffer->shared_image_->mailbox(), 0, 0, 0, 0,
+                      size_.width(), size_.height());
+  gpu::RasterScopedAccess::EndAccess(std::move(ri_access));
   ri->EndQueryEXT(GL_COMMANDS_COMPLETED_CHROMIUM);
 
   // The query will be signalled after the copy operation has finished on the
@@ -393,18 +394,25 @@ void ArcScreenCaptureSession::OnAnimationStep(base::TimeTicks timestamp) {
   std::unique_ptr<viz::CopyOutputRequest> request =
       std::make_unique<viz::CopyOutputRequest>(
           viz::CopyOutputRequest::ResultFormat::RGBA,
-          viz::CopyOutputRequest::ResultDestination::kNativeTextures,
+          viz::CopyOutputRequest::ResultDestination::kSharedImage,
           base::BindOnce(&ArcScreenCaptureSession::OnDesktopCaptured,
                          weak_ptr_factory_.GetWeakPtr()));
   // Clip the requested area to the desktop area. See b/118675936.
   gfx::Size desktop_size = display_root_window_->bounds().size();
   request->set_area(gfx::Rect(desktop_size));
-  if (desktop_size != size_) {
-    // Perform scaling to desired size when copying output.
-    request->SetScaleRatio(
-        gfx::Vector2d(desktop_size.width(), desktop_size.height()),
-        gfx::Vector2d(size_.width(), size_.height()));
-  }
+
+  // Unconditionally set the scaling ratio, even if the two sizes are identical.
+  // What may be identical here may not be identical further down when the scale
+  // is transformed for the surface. Note that desktop_size is is not in
+  // physical pixels, and a scale factor is applied to adjust to them.
+  request->SetScaleRatio(
+      gfx::Vector2d(desktop_size.width(), desktop_size.height()),
+      gfx::Vector2d(size_.width(), size_.height()));
+
+  // Ensure we get the result size we want, and not +/- one pixel due to
+  // clamping or rounding.
+  request->set_result_selection(gfx::Rect(size_));
+
   layer->RequestCopyOfOutput(std::move(request));
 }
 
@@ -417,6 +425,18 @@ void ArcScreenCaptureSession::OnCompositingShuttingDown(
 void ArcScreenCaptureSession::OnContextLost() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   Close();
+}
+
+void ArcScreenCaptureSession::OnWillRemoveDisplays(
+    const display::Displays& removed_displays) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  bool removed = false;
+  for (const auto& display : removed_displays) {
+    removed |= (display.id() == display_id_);
+  }
+  if (removed) {
+    Close();
+  }
 }
 
 }  // namespace arc
