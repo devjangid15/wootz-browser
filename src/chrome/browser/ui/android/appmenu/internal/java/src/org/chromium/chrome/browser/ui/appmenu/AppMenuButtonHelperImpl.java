@@ -95,13 +95,6 @@ class AppMenuButtonHelperImpl extends AccessibilityDelegate implements AppMenuBu
             default:
         }
 
-        // If user starts to drag on this menu button, ACTION_DOWN and all the subsequent touch
-        // events are received here. We need to forward this event to the app menu to handle
-        // dragging correctly.
-        AppMenuDragHelper dragHelper = mMenuHandler.getAppMenuDragHelper();
-        if (dragHelper != null) {
-            isTouchEventConsumed |= dragHelper.handleDragging(event, view);
-        }
         return isTouchEventConsumed;
     }
 

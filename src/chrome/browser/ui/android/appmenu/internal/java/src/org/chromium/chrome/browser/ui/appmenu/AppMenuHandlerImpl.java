@@ -91,7 +91,6 @@ class AppMenuHandlerImpl
     }
 
     private @Nullable AppMenu mAppMenu;
-    private @Nullable AppMenuDragHelper mAppMenuDragHelper;
     private final List<AppMenuBlocker> mBlockers;
     private final List<AppMenuObserver> mObservers;
     private final View mHardwareButtonMenuAnchor;
@@ -280,7 +279,6 @@ class AppMenuHandlerImpl
 
         if (mAppMenu == null) {
             mAppMenu = new AppMenu(this, mContext.getResources());
-            mAppMenuDragHelper = new AppMenuDragHelper(mContext, mAppMenu, itemRowHeight);
         }
         setupModelForHighlightAndClick(mModelList, mHighlightMenuId, this);
 
@@ -359,8 +357,6 @@ class AppMenuHandlerImpl
 
     @Override
     public void appMenuDismissed() {
-        assumeNonNull(mAppMenuDragHelper);
-        mAppMenuDragHelper.finishDragging();
         mDelegate.onMenuDismissed();
     }
 
@@ -376,9 +372,6 @@ class AppMenuHandlerImpl
         return mAppMenu;
     }
 
-    @Nullable AppMenuDragHelper getAppMenuDragHelper() {
-        return mAppMenuDragHelper;
-    }
 
     @Override
     public void hideAppMenu() {
@@ -581,19 +574,11 @@ class AppMenuHandlerImpl
             model.set(AppMenuItemProperties.CLICK_HANDLER, appMenuClickHandler);
             model.set(AppMenuItemProperties.POSITION, i);
 
-            if (highlightedId != null) {
-                model.set(
-                        AppMenuItemProperties.HIGHLIGHTED,
-                        model.get(AppMenuItemProperties.MENU_ITEM_ID) == highlightedId);
-                if (model.get(AppMenuItemProperties.ADDITIONAL_ICONS) != null) {
-                    ModelList subList = model.get(AppMenuItemProperties.ADDITIONAL_ICONS);
-                    for (int j = 0; j < subList.size(); j++) {
-                        PropertyModel subModel = subList.get(j).model;
-                        subModel.set(AppMenuItemProperties.CLICK_HANDLER, appMenuClickHandler);
-                        subModel.set(
-                                AppMenuItemProperties.HIGHLIGHTED,
-                                subModel.get(AppMenuItemProperties.MENU_ITEM_ID) == highlightedId);
-                    }
+            if (model.get(AppMenuItemProperties.ADDITIONAL_ICONS) != null) {
+                ModelList subList = model.get(AppMenuItemProperties.ADDITIONAL_ICONS);
+                for (int j = 0; j < subList.size(); j++) {
+                    PropertyModel subModel = subList.get(j).model;
+                    subModel.set(AppMenuItemProperties.CLICK_HANDLER, appMenuClickHandler);
                 }
             }
         }
@@ -641,9 +626,9 @@ class AppMenuHandlerImpl
                 mHighlightMenuId,
                 mDelegate.isMenuIconAtStart(),
                 mBrowserControlsStateProvider.getControlsPosition(),
-                addTopPaddingBeforeFirstRow());
-        assumeNonNull(mAppMenuDragHelper);
-        mAppMenuDragHelper.onShow(startDragging);
+                addTopPaddingBeforeFirstRow(),
+                mModelList);
+        
         clearMenuHighlight();
         RecordUserAction.record("MobileMenuShow");
         mDelegate.onMenuShown();
