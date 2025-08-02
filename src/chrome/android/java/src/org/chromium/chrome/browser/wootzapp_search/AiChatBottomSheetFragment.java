@@ -71,7 +71,7 @@ public class AiChatBottomSheetFragment extends BottomSheetDialogFragment {
         mRecyclerView.setLayoutManager(new LinearLayoutManager(getContext()));
 
         // Initialize Gemini API client
-        mGeminiApiClient = new GeminiApiClient("AIzaSyCoNFODrVovsQEFa4nseHbv0d56eMqhtDU");
+        mGeminiApiClient = new GeminiApiClient("");
         Log.d(TAG, "GeminiApiClient initialized: " + mGeminiApiClient);
 
         // Get initial search query from arguments
