@@ -362,6 +362,7 @@ class TabImpl implements Tab {
             // Reload the NativePage (if any), since the old NativePage has a reference to the old
             // activity.
             if (isNativePage()) {
+                Log.e(TAG, "MAC_maybeShowNativePage: called in updateAttachment at Line 365 " + getUrl().getSpec());
                 maybeShowNativePage(getUrl().getSpec(), true, PdfUtils.getPdfInfo(getNativePage()));
             }
         } else {
@@ -599,6 +600,7 @@ class TabImpl implements Tab {
 
     @Override
     public LoadUrlResult loadUrl(LoadUrlParams params) {
+        Log.e(TAG, "MAC_loadUrl: " + params.getUrl());
         try {
             TraceEvent.begin("Tab.loadUrl");
             // TODO(tedchoc): When showing the android NTP, delay the call to
@@ -607,6 +609,7 @@ class TabImpl implements Tab {
                 boolean isPdf = PdfUtils.isPdfNavigation(params.getUrl(), params);
                 mIsNativePageCommitPending =
                         maybeShowNativePage(params.getUrl(), false, isPdf ? new PdfInfo() : null);
+                Log.e(TAG, "MAC_maybeShowNativePage: called in loadUrl at Line 612" + params.getUrl());
                 if (isPdf) {
                     params.setIsPdf(true);
                 }
@@ -869,6 +872,7 @@ class TabImpl implements Tab {
             // recreate the NativePage now.
             NativePage nativePage = getNativePage();
             if (nativePage != null && nativePage.isFrozen()) {
+                Log.e(TAG, "MAC_maybeShowNativePage: called in show at Line 876" + nativePage.getUrl());
                 maybeShowNativePage(nativePage.getUrl(), true, PdfUtils.getPdfInfo(nativePage));
             }
             NativePageAssassin.getInstance().tabShown(this);
@@ -1289,6 +1293,7 @@ class TabImpl implements Tab {
     void handleDidFinishNavigation(GURL url, int transitionType, boolean isPdf) {
         mIsNativePageCommitPending = false;
         boolean isReload = (transitionType & PageTransition.CORE_MASK) == PageTransition.RELOAD;
+        Log.e(TAG, "MAC_handleDidFinishNavigation: called in handleDidFinishNavigation at Line 1296 " + url.getSpec());
         if (!maybeShowNativePage(url.getSpec(), isReload, isPdf ? new PdfInfo() : null)) {
             showRenderedPage();
         }
@@ -1360,6 +1365,7 @@ class TabImpl implements Tab {
      * @return True, if a native page was displayed for url.
      */
     boolean maybeShowNativePage(String url, boolean forceReload, PdfInfo pdfInfo) {
+        Log.e(TAG, "MAC_maybeShowNativePage: called in maybeShowNativePage at Line 1368 " + url);
         // While detached for reparenting we don't have an owning Activity, or TabModelSelector,
         // so we can't create the native page. The native page will be created once reparenting is
         // completed.
@@ -1385,6 +1391,7 @@ class TabImpl implements Tab {
         NativePage candidateForReuse = forceReload ? null : getNativePage();
         NativePage nativePage =
                 mDelegateFactory.createNativePage(url, candidateForReuse, this, pdfInfo);
+        Log.e(TAG, "MAC_maybeShowNativePage: called in createNativePage at Line 1394 " + url);
         mIsAlreadyCreatingNativePage = false;
         mPendingNativePageHost = null;
 

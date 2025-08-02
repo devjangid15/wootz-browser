@@ -57,6 +57,20 @@ public class OpenExtensionsById {
     }
 
     @CalledByNative
+    public static void openExtensionWebView(String url){
+        Log.d(TAG," Extension id by "+url);
+
+        try {
+            Log.d(TAG, "JANGID: CALLING openExtensionById");
+            ChromeActivity activity = ChromeActivity.getChromeActivity();
+            activity.getRootUiCoordinatorForTesting().getAppMenuCoordinatorForTesting()
+                    .openExtensionWebView(url);
+        } catch (ChromeActivity.ChromeActivityNotFoundException e) {
+            Log.e(TAG, "JANGID: openExtensionById " + e);
+        }
+    }
+
+    @CalledByNative
     public static void closeExtensionBottomSheetNative(){
         try {
             Log.d(TAG, "JANGID: CALLING closeExtensionBottomSheet");

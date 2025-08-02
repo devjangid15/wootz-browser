@@ -47,11 +47,14 @@ import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
 import org.chromium.chrome.browser.ui.native_page.NativePage;
 import org.chromium.chrome.browser.ui.native_page.NativePage.NativePageType;
 import org.chromium.chrome.browser.ui.native_page.NativePageHost;
+import org.chromium.chrome.browser.wootzapp_search.WootzAppSearchPage;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.base.WindowAndroid;
 import org.chromium.ui.util.ColorUtils;
+
+import android.util.Log;
 
 /**
  * Creates NativePage objects to show chrome-native:// URLs using the native Android view system.
@@ -246,6 +249,7 @@ public class NativePageFactory {
         }
 
         protected NativePage buildHistoryPage(Tab tab, String url) {
+            Log.e("NativePageFactory", "MAC_buildHistoryPage: called in buildHistoryPage at Line 251 " + url);
             return new HistoryPage(
                     mActivity,
                     new TabShim(tab, mBrowserControlsManager, mTabModelSelector),
@@ -285,6 +289,17 @@ public class NativePageFactory {
             return NativePageFactory.buildPdfPage(
                     url, tab, pdfInfo, mBrowserControlsManager, mTabModelSelector, mActivity);
         }
+        protected NativePage buildWootzappSearchPage(Tab tab, String url) {
+            return new WootzAppSearchPage(
+                    mActivity,
+                    new TabShim(tab, mBrowserControlsManager, mTabModelSelector),
+                    mSnackbarManagerSupplier.get(),
+                    tab.getProfile(),
+                    mBottomSheetController,
+                    mCurrentTabSupplier,
+                    url);
+        }
+    
     }
 
     /**
@@ -300,6 +315,7 @@ public class NativePageFactory {
      */
     public NativePage createNativePage(
             String url, NativePage candidatePage, Tab tab, PdfInfo pdfInfo) {
+        Log.e("NativePageFactory", "MAC_createNativePage: called in createNativePage at Line 305 " + url);
         return createNativePageForURL(url, candidatePage, tab, tab.isIncognito(), pdfInfo);
     }
 
@@ -307,6 +323,7 @@ public class NativePageFactory {
     NativePage createNativePageForURL(
             String url, NativePage candidatePage, Tab tab, boolean isIncognito, PdfInfo pdfInfo) {
         NativePage page;
+        Log.e("NativePageFactory", "MAC_createNativePageForURL: called in createNativePageForURL at Line 313 " + url);
 
         switch (NativePage.nativePageType(url, candidatePage, isIncognito, pdfInfo != null)) {
             case NativePageType.NONE:
@@ -334,6 +351,9 @@ public class NativePageFactory {
                 break;
             case NativePageType.PDF:
                 page = getBuilder().buildPdfPage(tab, url, pdfInfo);
+                break;
+            case NativePageType.WOOTZAPP_SEARCH:
+                page = getBuilder().buildWootzappSearchPage(tab, url);
                 break;
             default:
                 assert false;

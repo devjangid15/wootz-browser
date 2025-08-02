@@ -16,6 +16,7 @@ import org.chromium.chrome.browser.ui.native_page.BasicNativePage;
 import org.chromium.chrome.browser.ui.native_page.NativePageHost;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 import org.chromium.components.embedder_support.util.UrlConstants;
+import android.util.Log;
 
 /** Native page for managing browsing history. */
 public class HistoryPage extends BasicNativePage {
@@ -44,6 +45,7 @@ public class HistoryPage extends BasicNativePage {
             Supplier<Tab> tabSupplier,
             String url) {
         super(host);
+        Log.e("HistoryPage", "MAC_HistoryPage: called in HistoryPage at Line 46 " + url);
 
         Uri uri = Uri.parse(url);
         assert uri.getHost().equals(UrlConstants.HISTORY_HOST);

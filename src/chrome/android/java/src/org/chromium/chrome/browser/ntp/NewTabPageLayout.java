@@ -213,6 +213,8 @@ public class NewTabPageLayout extends LinearLayout {
                 getResources()
                         .getDimensionPixelOffset(
                                 org.chromium.chrome.R.dimen.tile_view_padding_edge_tablet_polish);
+
+        Log.e("NEW_TAB_PAGE_CHECK NewTabPageLayout Line-217", "NewTabPageLayout constructor");
     }
 
     @Override
@@ -1583,5 +1585,9 @@ public class NewTabPageLayout extends LinearLayout {
             Log.d(TAG, "Hiding webViewContainer");
             webViewContainer.setVisibility(View.GONE);
         }
+    }
+
+    public ViewGroup getMvTilesContainerLayout() {
+        return mMvTilesContainerLayout;
     }
 }

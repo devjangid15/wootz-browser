@@ -49,6 +49,7 @@ import org.chromium.components.externalauth.ExternalAuthUtils;
 import org.chromium.ui.base.WindowAndroid;
 import org.chromium.ui.modaldialog.ModalDialogManager;
 
+import android.util.Log;
 /**
  * {@link TabDelegateFactory} class to be used in all {@link Tab} instances owned by a
  * {@link ChromeTabbedActivity}.
@@ -181,6 +182,7 @@ public class TabbedModeTabDelegateFactory implements TabDelegateFactory {
     @Override
     public NativePage createNativePage(
             String url, NativePage candidatePage, Tab tab, PdfInfo pdfInfo) {
+        Log.e("TabbedModeTabDelegateFactory", "MAC_createNativePage: called in createNativePage at Line 184 " + url);
         if (mNativePageFactory == null) {
             mNativePageFactory =
                     new NativePageFactory(
@@ -200,6 +202,7 @@ public class TabbedModeTabDelegateFactory implements TabDelegateFactory {
                             mTabStripHeightSupplier,
                             mModuleRegistrySupplier);
         }
+        Log.e("TabbedModeTabDelegateFactory", "MAC_createNativePage: called in createNativePage at Line 204 " + url);
         return mNativePageFactory.createNativePage(url, candidatePage, tab, pdfInfo);
     }
 

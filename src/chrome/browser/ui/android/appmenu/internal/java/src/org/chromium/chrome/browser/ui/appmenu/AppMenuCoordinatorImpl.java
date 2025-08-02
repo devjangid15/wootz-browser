@@ -131,6 +131,16 @@ class AppMenuCoordinatorImpl implements AppMenuCoordinator {
     }
 
     @Override
+    public void openExtensionWebView(String url) {
+        Log.e(TAG, "JANGID: openExtensionWebView " + url);
+        if (mAppMenuHandler != null) {
+            mAppMenuHandler.openExtensionWebView(url);
+        } else {
+            Log.e(TAG, "JANGID: AppMenuHandler is null, cannot openExtensionById");
+        }
+    }
+
+    @Override
     public void closeExtensionBottomSheet() {
         Log.e(TAG, "JANGID: closeExtensionBottomSheet ");
         if (mAppMenuHandler != null) {

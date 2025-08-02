@@ -735,6 +735,11 @@
    "META": {"sizes": {"includes": [10]}},
     "includes": [5460],
   },
+  "<(SHARED_INTERMEDIATE_DIR)/chrome/browser/resources/wootzapp_search/resources.grd": {
+   "META": {"sizes": {"includes": [10]}},
+    "includes": [5465],
+  },
+
   # END chrome/ WebUI resources section
 
   # START chrome/ miscellaneous section.

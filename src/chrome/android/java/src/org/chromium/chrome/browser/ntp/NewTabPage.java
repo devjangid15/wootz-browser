@@ -391,6 +391,30 @@ public class NewTabPage
             ObservableSupplier<TabContentManager> tabContentManagerSupplier,
             ObservableSupplier<Integer> tabStripHeightSupplier,
             OneshotSupplier<ModuleRegistry> moduleRegistrySupplier) {
+
+        Log.e("NEW_TAB_PAGE_CHECK Line-395", "NewTabPage constructor start");
+        Log.e("NEW_TAB_PAGE_CHECK Line-396", "activity=" + activity);
+        Log.e("NEW_TAB_PAGE_CHECK Line-397", "browserControlsStateProvider=" + browserControlsStateProvider);
+        Log.e("NEW_TAB_PAGE_CHECK Line-398", "activityTabProvider=" + activityTabProvider);
+        Log.e("NEW_TAB_PAGE_CHECK Line-399", "snackbarManager=" + snackbarManager);
+        Log.e("NEW_TAB_PAGE_CHECK Line-400", "lifecycleDispatcher=" + lifecycleDispatcher);
+        Log.e("NEW_TAB_PAGE_CHECK Line-401", "tabModelSelector=" + tabModelSelector);
+        Log.e("NEW_TAB_PAGE_CHECK Line-402", "isTablet=" + isTablet);
+        Log.e("NEW_TAB_PAGE_CHECK Line-403", "uma=" + uma);
+        Log.e("NEW_TAB_PAGE_CHECK Line-404", "isInNightMode=" + isInNightMode);
+        Log.e("NEW_TAB_PAGE_CHECK Line-405", "nativePageHost=" + nativePageHost);
+        Log.e("NEW_TAB_PAGE_CHECK Line-406", "tab=" + tab);
+        Log.e("NEW_TAB_PAGE_CHECK Line-407", "url=" + url);
+        Log.e("NEW_TAB_PAGE_CHECK Line-408", "bottomSheetController=" + bottomSheetController);
+        Log.e("NEW_TAB_PAGE_CHECK Line-409", "shareDelegateSupplier=" + shareDelegateSupplier);
+        Log.e("NEW_TAB_PAGE_CHECK Line-410", "windowAndroid=" + windowAndroid);
+        Log.e("NEW_TAB_PAGE_CHECK Line-411", "jankTracker=" + jankTracker);
+        Log.e("NEW_TAB_PAGE_CHECK Line-412", "toolbarSupplier=" + toolbarSupplier);
+        Log.e("NEW_TAB_PAGE_CHECK Line-413", "homeSurfaceTracker=" + homeSurfaceTracker);
+        Log.e("NEW_TAB_PAGE_CHECK Line-414", "tabContentManagerSupplier=" + tabContentManagerSupplier);
+        Log.e("NEW_TAB_PAGE_CHECK Line-415", "tabStripHeightSupplier=" + tabStripHeightSupplier);
+        Log.e("NEW_TAB_PAGE_CHECK Line-416", "moduleRegistrySupplier=" + moduleRegistrySupplier);
+        Log.e("NEW_TAB_PAGE_CHECK NewTabPage Line-417", "NewTabPage constructor");
         mConstructedTimeNs = System.nanoTime();
         TraceEvent.begin(TAG);
 
@@ -741,6 +765,7 @@ public class NewTabPage
     }
 
     private void onSearchEngineUpdated() {
+        Log.e("NEW_TAB_PAGE_CHECK NewTabPage Line-744", "onSearchEngineUpdated");
         updateSearchProviderHasLogo();
         setSearchProviderInfoOnView(
                 mSearchProviderHasLogo, mTemplateUrlService.isDefaultSearchEngineGoogle());
@@ -756,6 +781,8 @@ public class NewTabPage
      * @param isGoogle Whether the search provider is Google.
      */
     private void setSearchProviderInfoOnView(boolean hasLogo, boolean isGoogle) {
+        Log.e("NEW_TAB_PAGE_CHECK NewTabPage Line-760", "setSearchProviderInfoOnView");
+        Log.e("NEW_TAB_PAGE_CHECK NewTabPage Line-760", "mNewTabPageLayout: " + mNewTabPageLayout);
         mNewTabPageLayout.setSearchProviderInfo(hasLogo, isGoogle);
     }
 
@@ -887,6 +914,7 @@ public class NewTabPage
      * foreground.
      */
     private void recordNtpShown() {
+        Log.e("NEW_TAB_PAGE_CHECK NewTabPage Line-890", "recordNtpShown");
         mLastShownTimeNs = System.nanoTime();
         RecordUserAction.record("MobileNTPShown");
         mJankTracker.startTrackingScenario(JankScenario.NEW_TAB_PAGE);
@@ -957,6 +985,7 @@ public class NewTabPage
 
     @Override
     public void onTemplateURLServiceChanged() {
+        Log.e("NEW_TAB_PAGE_CHECK NewTabPage Line-961", "onTemplateURLServiceChanged");
         onSearchEngineUpdated();
     }
 
@@ -1000,6 +1029,7 @@ public class NewTabPage
 
     @Override
     public String getUrl() {
+        Log.e("NEW_TAB_PAGE_CHECK NewTabPage Line-1004", "getUrl");
         return UrlConstants.NTP_URL;
     }
 

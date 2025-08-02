@@ -59,6 +59,8 @@ static_library("ui") {
     "webui/startup_crx_install/startup_crx_install.h",
     "webui/startup_crx_install/startup_crx_install_prefs.cc",
     "webui/startup_crx_install/startup_crx_install_prefs.h",
+    "webui/wootzapp_search/wootzapp_search_ui.cc",
+    "webui/wootzapp_search/wootzapp_search_ui.h",
     # All other app_list/ files go under is_chromeos_ash below.
     "autofill/autofill_bubble_handler.h",
     "autofill/autofill_client_provider.cc",

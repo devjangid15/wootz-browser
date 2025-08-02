@@ -1,0 +1,47 @@
+<!DOCTYPE HTML>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI SEARCH</title>
+    <link rel="stylesheet" href="wootzapp_search.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header with Logo and Title -->
+        <div class="header">
+            <div class="logo">
+                <div class="logo-icon">W</div>
+            </div>
+            <div class="title">AI SEARCH</div>
+        </div>
+        
+        <!-- Tab Navigation -->
+        <div class="tab-navigation">
+            <div class="tab active" id="ai-tab">Wootzpp AI</div>
+            <div class="tab" id="google-tab">Google Results</div>
+        </div>
+        
+        <!-- Search Input Area -->
+        <div class="search-container">
+            <div class="search-input-container">
+                <input type="text" id="searchInput" placeholder="Ask Wootzpp AI..." class="search-input">
+                <!-- <button id="searchButton" class="search-button">Ask</button> -->
+                <button id="openInAndroidBtn">Open in Android WebView</button>
+            </div>
+        </div>
+        
+        <!-- Results Display Area -->
+        <div class="results-container">
+            <div id="aiResults" class="results-content active">
+                <div class="placeholder-text">AI results will appear here</div>
+                </div>
+            <div id="googleResults" class="results-content">
+                <div class="placeholder-text">Google search results will appear here</div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="wootzapp_search.js"></script>
+</body>
+</html>

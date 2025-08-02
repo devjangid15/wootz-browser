@@ -40,6 +40,18 @@ import org.chromium.ui.base.WindowAndroid;
 import android.content.pm.ActivityInfo;
 import android.app.Activity;
 import java.util.ArrayList;
+import android.graphics.Color;
+import android.os.Build;
+import android.util.TypedValue;
+import android.view.ViewOutlineProvider;
+import android.graphics.Outline;
+import org.chromium.chrome.browser.app.ChromeActivity;
+import android.app.Dialog;
+import android.view.Window;
+import android.view.WindowManager;
+import android.widget.FrameLayout;
+import android.view.Gravity;
+import android.graphics.drawable.ColorDrawable;
 
 public class AppMenuExtensionOpener {
     private static final String TAG = "AppMenuExtensionOpener";
@@ -49,6 +61,11 @@ public class AppMenuExtensionOpener {
     private WebContents mCurrentWebContents;
     private static BottomSheetDialog mBottomSheetDialog;
     private Activity mActivity;
+    private static Dialog mWebViewDialog;
+    private static WebContents mWebUIContents;
+    private static ThinWebView mWebUIThinWebView;
+    private static ContentView mWebUIContentView;
+
     public AppMenuExtensionOpener(Context context, WindowAndroid windowAndroid) {
         mContext = context;
         mWindowAndroid = windowAndroid;
@@ -71,6 +88,20 @@ public class AppMenuExtensionOpener {
         }
 
         showWebViewInBottomSheet(webView);
+    }
+
+    public void openExtensionWebView(String url) {
+        Log.d(TAG, "JANGID: Opening WebView for URL: " + url);
+        
+        // Create WebView
+        View webView = createWebViewForWebUI(url);
+        if (webView == null) {
+            Log.e(TAG, "JANGID: Failed to create WebView for WebUI");
+            return;
+        }
+
+        // Show WebView in custom container dialog
+        showWebViewInCustomContainer(webView);
     }
 
     private View createWebView(int index) {
@@ -192,6 +223,122 @@ public class AppMenuExtensionOpener {
 
         mBottomSheetDialog.show();
     }
+
+    private View createWebViewForWebUI(String url) {
+        try {
+            Profile profile = ProfileManager.getLastUsedRegularProfile();
+            mWebUIContents = WebContentsFactory.createWebContents(profile, true, false);
+            mWebUIContentView = ContentView.createContentView(mContext, null, mWebUIContents);
+
+            mWebUIContents.setDelegates(
+                    VersionInfo.getProductVersion(),
+                    ViewAndroidDelegate.createBasicDelegate(mWebUIContentView),
+                    mWebUIContentView,
+                    mWindowAndroid,
+                    WebContents.createDefaultInternalsHolder());
+
+            IntentRequestTracker intentRequestTracker = mWindowAndroid.getIntentRequestTracker();
+            mWebUIThinWebView = ThinWebViewFactory.create(
+                    mContext, new ThinWebViewConstraints(), intentRequestTracker);
+            mWebUIThinWebView.attachWebContents(mWebUIContents, mWebUIContentView, null);
+
+            // Get the actual View from ThinWebView
+            View webView = mWebUIThinWebView.getView();
+            
+            // Configure the WebView for custom container
+            configureWebViewForCustomContainer(webView);
+
+            // Load the URL
+            String popupUrl = url;
+            Log.d(TAG, "JANGID: Loading URL: " + popupUrl);
+            mWebUIContents.getNavigationController().loadUrl(new LoadUrlParams(popupUrl));
+
+            return webView;
+
+        } catch (Exception e) {
+            Log.e(TAG, "JANGID: Exception in createWebViewForWebUI", e);
+            e.printStackTrace();
+            return null;
+        }
+    }
+
+    private void showWebViewInCustomContainer(View webView) {
+        try {
+            // Close any existing dialog
+            if (mWebViewDialog != null && mWebViewDialog.isShowing()) {
+                mWebViewDialog.dismiss();
+            }
+
+            // Create a new dialog
+            mWebViewDialog = new Dialog(mContext);
+            mWebViewDialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+            mWebViewDialog.setCanceledOnTouchOutside(true);
+
+            // Create the container layout
+            FrameLayout container = new FrameLayout(mContext);
+            container.setLayoutParams(new ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT));
+            container.setBackgroundColor(Color.TRANSPARENT); // Make container transparent
+
+            // Add the WebView to the container
+            container.addView(webView);
+
+            // Set dialog content
+            mWebViewDialog.setContentView(container);
+
+            // Configure dialog window
+            Window window = mWebViewDialog.getWindow();
+            if (window != null) {
+                WindowManager.LayoutParams params = window.getAttributes();
+                params.width = dpToPx(350);
+                params.height = dpToPx(600);
+                params.gravity = Gravity.CENTER;
+                
+                // Make dialog background transparent
+                window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+                
+                // Apply the layout parameters
+                window.setAttributes(params);
+            }
+
+            // Show the dialog
+            mWebViewDialog.show();
+
+
+        } catch (Exception e) {
+            Log.e(TAG, "JANGID: Exception in showWebViewInCustomContainer", e);
+            e.printStackTrace();
+        }
+    }
+
+    private void configureWebViewForCustomContainer(View webView) {
+        // Set layout parameters for the custom container
+        ViewGroup.LayoutParams params = new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT);
+        webView.setLayoutParams(params);
+
+        // Apply styling for custom container
+        webView.setBackgroundColor(Color.WHITE);
+        
+        // Enable proper scrolling and interaction
+        webView.setNestedScrollingEnabled(true);
+        webView.setScrollContainer(true);
+
+        // Apply corner radius for better visual integration
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            float cornerRadius = dpToPx(12);
+            webView.setClipToOutline(true);
+            webView.setOutlineProvider(new ViewOutlineProvider() {
+                @Override
+                public void getOutline(View view, Outline outline) {
+                    outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), cornerRadius);
+                }
+            });
+        }
+    }
+
     private void resetOrientation() {
         if (mActivity != null) {
             mActivity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
@@ -213,5 +360,10 @@ public class AppMenuExtensionOpener {
             Context context = mBottomSheetDialog.getContext();
             mBottomSheetDialog.dismiss();
         }
+    }
+
+    private int dpToPx(int dp) {
+        float density = mContext.getResources().getDisplayMetrics().density;
+        return Math.round((float) dp * density);
     }
 }

@@ -165,7 +165,8 @@ const char kChromeUINewTabPageThirdPartyURL[] =
 const char kChromeUIHelloWorldURL[] = "wootzapp://rewards/";
 const char kChromeUIHelloWorldHost[] = "rewards";
 
-
+const char kChromeUIWootzappSearchURL[] = "wootzapp://wootzapp-search/";
+const char kChromeUIWootzappSearchHost[] = "wootzapp-search";
 
 const char kChromeUINewTabURL[] = "wootzapp://newtab/";
 const char kChromeUIProfileInternalsHost[] = "profile-internals";

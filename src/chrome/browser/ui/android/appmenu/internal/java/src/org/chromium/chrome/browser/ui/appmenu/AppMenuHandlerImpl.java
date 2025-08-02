@@ -293,6 +293,25 @@ class AppMenuHandlerImpl
         }
     }
 
+    public void openExtensionWebView(String url) {
+        Log.d(TAG, "JANGID: AppMenuHandler openExtensionWebView " + url);
+        if (mAppMenu != null) {
+            try {
+                mAppMenu.showExtensionWebViewDirectly(url, mExtensionOpener);
+            } catch (NullPointerException e) {
+                Log.e(TAG, "Error showing extension web view", e);
+                // Fallback to direct opening if the app menu method fails
+                if (mExtensionOpener != null) {
+                    mExtensionOpener.openExtensionWebView(url);
+                }
+            }
+        } else if (mExtensionOpener != null) {
+            mExtensionOpener.openExtensionWebView(url);
+        } else {
+            Log.e(TAG, "Cannot open extension: both mAppMenu and mExtensionOpener are null");
+        }
+    }
+
     public void closeExtensionBottomSheet() {
         Log.d(TAG, "JANGID: AppMenuHandler closeExtensionBottomSheet ");
         if (mAppMenu != null) {

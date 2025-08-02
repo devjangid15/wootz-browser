@@ -53,6 +53,7 @@ import org.chromium.components.user_prefs.UserPrefs;
 import org.chromium.ui.base.Clipboard;
 
 import java.util.List;
+import android.util.Log;
 
 /** Combines and manages the different UI components of browsing history. */
 public class HistoryManager
@@ -145,6 +146,7 @@ public class HistoryManager
             boolean shouldShowClearData,
             boolean launchedForApp,
             boolean showAppFilter) {
+        Log.e("HistoryManager", "MAC_HistoryManager: called in HistoryManager at Line 148 isSeparateActivity" + isSeparateActivity);
         mActivity = activity;
         mIsSeparateActivity = isSeparateActivity;
         mSnackbarManager = snackbarManager;

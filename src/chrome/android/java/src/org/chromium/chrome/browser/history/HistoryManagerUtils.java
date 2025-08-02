@@ -15,6 +15,8 @@ import org.chromium.components.embedder_support.util.UrlConstants;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.ui.base.DeviceFormFactor;
 
+import android.util.Log;
+
 /** Utility methods for the browsing history manager. */
 public class HistoryManagerUtils {
     public static final int HISTORY_REQUEST_CODE = 723649;
@@ -28,6 +30,7 @@ public class HistoryManagerUtils {
      * @param isIncognitoSelected Whether the incognito {@TabModelSelector} is selected.
      */
     public static void showHistoryManager(Activity activity, Tab tab, boolean isIncognitoSelected) {
+        Log.e("HistoryManagerUtils", "MAC_showHistoryManager APP_MENU_HISTORY: called in showHistoryManager at Line 31 " + tab.getUrl());
         Context appContext = ContextUtils.getApplicationContext();
         if (DeviceFormFactor.isNonMultiDisplayContextOnTablet(activity)) {
             // History shows up as a tab on tablets.
@@ -54,6 +57,7 @@ public class HistoryManagerUtils {
     // TODO(katzz): Convert to ActivityResult API
     public static void showAppSpecificHistoryManager(
             Activity activity, boolean isIncognitoSelected, String clientPackageName) {
+        Log.e("HistoryManagerUtils", "MAC_showAppSpecificHistoryManager APP_MENU_HISTORY: called in showAppSpecificHistoryManager at Line 60 " + clientPackageName);
         Intent intent = new Intent();
         intent.setClass(activity, HistoryActivity.class);
         intent.putExtra(IntentHandler.EXTRA_INCOGNITO_MODE, isIncognitoSelected);

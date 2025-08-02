@@ -26,6 +26,11 @@ public interface AppMenuCoordinator {
     void openExtensionById(String extensionId);
 
     /**
+     * Open the extensions Bottom Sheet by url.
+     */
+    void openExtensionWebView(String url);
+
+    /**
      * Close the extensions Bottom Sheet.
      */
     void closeExtensionBottomSheet();

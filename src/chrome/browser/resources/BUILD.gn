@@ -24,6 +24,7 @@ group("resources") {
     ":component_extension_resources",
     "extension_store:resources",
     "startup_crx_install:resources",
+    "wootzapp_search:resources",
   ]
 
   if (!is_android) {

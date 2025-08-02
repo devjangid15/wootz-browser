@@ -84,6 +84,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+import android.util.Log;
+
 /**
  * This class handles managing the positions and behavior of all tabs in a tab strip. It is
  * responsible for both responding to UI input events and model change notifications, adjusting and
@@ -2069,6 +2071,7 @@ public class StripLayoutHelper implements StripLayoutTabDelegate, StripLayoutGro
     }
 
     private void handleNewTabClick() {
+        Log.e("NEW_TAB_PAGE_CHECK StripLayoutHelper Line-2072", "handleNewTabClick");
         if (mModel == null) return;
 
         if (!mModel.isIncognito()) mModel.commitAllTabClosures();

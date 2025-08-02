@@ -22,6 +22,8 @@ import org.chromium.components.browser_ui.bottomsheet.ManagedBottomSheetControll
 import org.chromium.components.browser_ui.widget.scrim.ScrimCoordinator;
 import org.chromium.ui.KeyboardVisibilityDelegate;
 
+import android.util.Log;
+
 /** Activity for displaying the browsing history manager. */
 public class HistoryActivity extends SnackbarActivity {
     private HistoryManager mHistoryManager;
@@ -44,6 +46,7 @@ public class HistoryActivity extends SnackbarActivity {
         HistoryUmaRecorder historyUmaRecorder =
                 appSpecificHistory ? new AppHistoryUmaRecorder() : new HistoryUmaRecorder();
         boolean showAppFilter = !appSpecificHistory && !isIncognito;
+        Log.e("HistoryActivity", "MAC_HistoryActivity APP_MENU_HISTORY: called in HistoryActivity at Line 47 " + isIncognito);
         mHistoryManager =
                 new HistoryManager(
                         this,

@@ -907,8 +907,8 @@ public class AppMenu extends BottomSheetDialogFragment
         return mGridView;
     }
 
-    public void showExtensionWebViewDirectly(String extensionId, AppMenuExtensionOpener extensionOpener) {
-        extensionOpener.openExtension(extensionId);
+    public void showExtensionWebViewDirectly(String url, AppMenuExtensionOpener extensionOpener) {
+        extensionOpener.openExtensionWebView(url);
     }
 
     public void closeExtensionBottomSheet(AppMenuExtensionOpener extensionOpener) {

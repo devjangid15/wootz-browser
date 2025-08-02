@@ -5,6 +5,7 @@
 package org.chromium.chrome.browser.history;
 
 import android.content.Context;
+import android.graphics.Color;
 import android.graphics.drawable.Drawable;
 import android.text.TextUtils;
 import android.util.AttributeSet;
@@ -63,6 +64,7 @@ public class HistoryItemView extends SelectableItemView<HistoryItem> {
     @Override
     protected void onFinishInflate() {
         super.onFinishInflate();
+        setBackgroundColor(Color.RED);
         mStartIconView.setImageResource(R.drawable.default_favicon);
 
         mRemoveButton = mEndButtonView;
@@ -93,6 +95,7 @@ public class HistoryItemView extends SelectableItemView<HistoryItem> {
 
         super.setItem(item);
 
+        setBackgroundColor(Color.RED);
         mTitleView.setText(item.getTitle());
         mDescriptionView.setText(item.getDomain());
         updateChipView(item);

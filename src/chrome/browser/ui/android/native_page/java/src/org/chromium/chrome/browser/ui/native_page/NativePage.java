@@ -107,6 +107,7 @@ public interface NativePage {
         NativePageType.HISTORY,
         NativePageType.EXPLORE,
         NativePageType.MANAGEMENT,
+        NativePageType.WOOTZAPP_SEARCH,
         NativePageType.PDF
     })
     @Retention(RetentionPolicy.SOURCE)
@@ -120,7 +121,8 @@ public interface NativePage {
         int HISTORY = 6;
         int EXPLORE = 7;
         int MANAGEMENT = 8;
-        int PDF = 9;
+        int WOOTZAPP_SEARCH = 9;
+        int PDF = 10;
     }
 
     /**
@@ -213,6 +215,8 @@ public interface NativePage {
             return NativePageType.EXPLORE;
         } else if (UrlConstants.MANAGEMENT_HOST.equals(host)) {
             return NativePageType.MANAGEMENT;
+        } else if (UrlConstants.WOOTZAPP_SEARCH_HOST.equals(host)) {
+            return NativePageType.WOOTZAPP_SEARCH;
         } else {
             return NativePageType.NONE;
         }
