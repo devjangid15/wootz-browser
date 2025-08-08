@@ -70,6 +70,7 @@
 #include "chrome/renderer/wootz_render_thread_observer.h"
 #include "chrome/services/speech/buildflags/buildflags.h"
 #include "components/action_url/content/renderer/action_url_agent.h"
+#include "components/automation_agent/content/renderer/automation_agent.h"
 #include "components/autofill/content/renderer/autofill_agent.h"
 #include "components/autofill/content/renderer/password_autofill_agent.h"
 #include "components/autofill/content/renderer/password_generation_agent.h"
@@ -264,7 +265,7 @@
 #include "components/safe_builtins/renderer/safe_builtins_helpers.h" // Jai
 #include "components/safe_builtins/renderer/safe_builtins.h"
 
-
+#include "components/action_url/content/renderer/sensitive_element_mask_agent.h"
 
 using autofill::AutofillAgent;
 using autofill::PasswordAutofillAgent;
@@ -597,7 +598,6 @@ void ChromeContentRendererClient::ExposeInterfacesToBrowser(
 
 void ChromeContentRendererClient::RenderFrameCreated(
     content::RenderFrame* render_frame) {
-  LOG(INFO) << "AMIT RenderFrameCreated";
   ChromeRenderFrameObserver* render_frame_observer =
       new ChromeRenderFrameObserver(render_frame, web_cache_impl_.get());
   service_manager::BinderRegistry* registry = render_frame_observer->registry();
@@ -720,9 +720,9 @@ LOG(INFO) << "AMIT SandboxStatusExtension::Create";
         std::move(password_autofill_agent),
         std::move(password_generation_agent), associated_interfaces);
 
-    LOG(INFO) << "AMIT agent created in chrome_content_renderer_client.cc";
-
     new action_url::ActionUrlAgent(render_frame, associated_interfaces);
+    new sensitive_masking::SensitiveElementMaskAgent(render_frame);
+    new automation::AutomationAgent(render_frame, associated_interfaces);
 
 #if BUILDFLAG(IS_ANDROID)
     if (render_frame->IsMainFrame() &&

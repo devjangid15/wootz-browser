@@ -44,6 +44,11 @@
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_event_histogram_value.h"
+#include "chrome/browser/extensions/extension_tab_util.h"
+#include "chrome/browser/ui/android/tab_model/tab_model_list.h"
+#include "chrome/browser/ui/android/tab_model/tab_model.h"
+#include "components/action_url/content/browser/content_sensitive_masking_driver_factory.h"
+#include "components/action_url/content/browser/content_sensitive_masking_driver.h"
 #include "extensions/browser/extension_function.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_prefs_factory.h"
@@ -68,12 +73,21 @@
 #include "components/zk_proof/tls_info/tls_data_store.h"
 #include "components/subresource_filter/core/browser/subresource_filter_prefs.h"
 #include "components/subresource_filter/content/browser/content_subresource_filter_throttle_manager.h"
+#include "components/automation_agent/content/browser/automation_controller.h"
+#include "components/automation_agent/content/browser/automation_controller_factory.h"
+#include "chrome/browser/ui/android/tab_model/tab_model_list.h"
+#include "chrome/browser/ui/android/tab_model/tab_model.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/blocked_domains_prefs.h"
 #include "content/public/browser/saml_prefs.h"
 #include "content/public/browser/domain_block_checker.h"
 #include "components/saml_verifier/saml_verifier.h"
 #include "content/public/browser/copy_paste_blocker_prefs.h"
+#include "content/public/browser/render_frame_host.h"
+#include "components/action_url/content/common/mojom/sensitive_element_masking.mojom.h"
+#include "mojo/public/cpp/bindings/associated_remote.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
+
 
 namespace extensions {
 
@@ -96,7 +110,16 @@ content::WebContents* WebContentsIdToJavaWebContents(int webContentsId) {
     return nullptr;
   }
 
-  return content::WebContents::FromJavaWebContents(receiver_from_native);
+  content::WebContents* web_contents = content::WebContents::FromJavaWebContents(receiver_from_native);
+  if (web_contents) {
+    // Ensure AutomationControllerFactory exists for this WebContents
+    if (!automation::AutomationControllerFactory::FromWebContents(web_contents)) {
+      automation::AutomationControllerFactory::CreateForWebContents(web_contents);
+      LOG(INFO) << "Created AutomationControllerFactory for existing WebContents ID: " << webContentsId;
+    }
+  }
+
+  return web_contents;
 }
 
 void OpenExtensionsById(const std::string& extensionId) {
@@ -1495,6 +1518,161 @@ ExtensionFunction::ResponseAction WootzReplaceAdFunction::Run() {
   return RespondNow(NoArguments());
 }
 
+ExtensionFunction::ResponseAction WootzGetPageStateFunction::Run() {
+  
+  content::WebContents* web_contents = nullptr;
+  bool debug_mode = true;
+  bool include_hidden = true;
+  bool is_background_web_contents = false;
+  absl::optional<int> background_web_contents_id;
+  
+  // Parse options from arguments
+  if (args().size() >= 1 && args()[0].is_dict()) {
+    const base::Value::Dict& options = args()[0].GetDict();
+    debug_mode = options.FindBool("debugMode").value_or(true);
+    include_hidden = options.FindBool("includeHidden").value_or(true);
+    is_background_web_contents = options.FindBool("isBackgroundWebContents").value_or(false);
+    
+    if (is_background_web_contents) {
+      if (auto id = options.FindInt("backgroundWebContentsId")) {
+        background_web_contents_id = id;
+        web_contents = WebContentsIdToJavaWebContents(background_web_contents_id.value());
+        if (!web_contents) {
+          return RespondNow(Error("Background web contents not found"));
+        }
+        LOG(INFO) << "Successfully got background web contents with ID: " << background_web_contents_id.value();
+      } else {
+        LOG(ERROR) << "Missing backgroundWebContentsId for background web contents";
+        return RespondNow(Error("backgroundWebContentsId is required when isBackgroundWebContents is true"));
+      }
+    }
+  }
+
+  // If not background web contents, get active web contents
+  if (!web_contents) {
+    web_contents = TabModelList::GetCurrentTabModel()->GetActiveWebContents();
+    if (!web_contents) {
+      LOG(ERROR) << "No active web contents found for GetPageState";
+      return RespondNow(Error("No active tab found"));
+    }
+  }
+
+  auto* factory = automation::AutomationControllerFactory::FromWebContents(web_contents);
+  if (!factory) {
+    LOG(ERROR) << "Failed to get AutomationControllerFactory";
+    return RespondNow(Error("AutomationControllerFactory not available"));
+  }
+
+  auto* controller = factory->GetDriverForFrame(web_contents->GetPrimaryMainFrame());
+  if (!controller) {
+    LOG(ERROR) << "Failed to get AutomationController";
+    return RespondNow(Error("AutomationController not available"));
+  }
+
+  controller->GetPageState(
+      debug_mode, include_hidden,
+      base::BindOnce(&WootzGetPageStateFunction::OnGetPageStateComplete,
+                     this));
+
+  return RespondLater();
+}
+
+void WootzGetPageStateFunction::OnGetPageStateComplete(bool success, const std::string& state) {
+  
+  if (!success) {
+    LOG(ERROR) << "GetPageState failed in WootzAPI";
+    Respond(Error("Failed to get page state"));
+    return;
+  }
+
+  absl::optional<base::Value> parsed = base::JSONReader::Read(state);
+  if (!parsed || !parsed->is_dict()) {
+    LOG(ERROR) << "Failed to parse page state JSON in WootzAPI";
+    Respond(Error("Failed to parse page state"));
+    return;
+  };
+
+  base::Value::Dict result;
+  result.Set("success", true);
+  result.Set("pageState", std::move(*parsed));
+
+  base::Value::List args;
+  args.Append(std::move(result));
+  
+  Respond(ArgumentList(std::move(args)));
+}
+
+ExtensionFunction::ResponseAction WootzPerformActionFunction::Run() {
+  
+  content::WebContents* web_contents = nullptr;
+
+  if (args().size() < 2 || !args()[0].is_string() || !args()[1].is_dict()) {
+    LOG(ERROR) << "Invalid arguments for PerformAction";
+    return RespondNow(Error("Invalid arguments"));
+  }
+
+  const std::string& action = args()[0].GetString();
+  const base::Value::Dict& action_params = args()[1].GetDict();
+  
+  // Handle background web contents
+  bool is_background_web_contents = action_params.FindBool("isBackgroundWebContents").value_or(false);
+  if (is_background_web_contents) {
+    if (auto background_id = action_params.FindInt("backgroundWebContentsId")) {
+      web_contents = WebContentsIdToJavaWebContents(background_id.value());
+      if (!web_contents) {
+        LOG(ERROR) << "Background web contents not found with ID: " << background_id.value();
+        return RespondNow(Error("Background web contents not found"));
+      }
+    } else {
+      LOG(ERROR) << "Missing backgroundWebContentsId for background web contents";
+      return RespondNow(Error("backgroundWebContentsId is required when isBackgroundWebContents is true"));
+    }
+  }
+
+  // If not background web contents, get active web contents
+  if (!web_contents) {
+    web_contents = TabModelList::GetCurrentTabModel()->GetActiveWebContents();
+    if (!web_contents) {
+      LOG(ERROR) << "No active web contents found for PerformAction";
+      return RespondNow(Error("No active tab found"));
+    }
+  }
+  auto* factory = automation::AutomationControllerFactory::FromWebContents(web_contents);
+  if (!factory) {
+    LOG(ERROR) << "ailed to get AutomationControllerFactory";
+    return RespondNow(Error("AutomationControllerFactory not available"));
+  }
+
+  auto* controller = factory->GetDriverForFrame(web_contents->GetPrimaryMainFrame());
+  if (!controller) {
+    LOG(ERROR) << "Failed to get AutomationController";
+    return RespondNow(Error("AutomationController not available"));
+  }
+
+  controller->PerformAction(
+      action, action_params,
+      base::BindOnce(&WootzPerformActionFunction::OnActionComplete,
+                     this));
+
+  return RespondLater();
+}
+
+void WootzPerformActionFunction::OnActionComplete(bool success) {
+  
+  base::Value::Dict result;
+  result.Set("success", success);
+  
+  if (!success) {
+    LOG(ERROR) << "PerformAction failed in WootzAPI";
+    result.Set("error", "Action execution failed");
+  }
+  
+  base::Value::List args;
+  args.Append(std::move(result));
+  Respond(ArgumentList(std::move(args)));
+}
+
+
 ExtensionFunction::ResponseAction WootzSubmitSamlResponseFunction::Run() {
   LOG(ERROR) << "SAML: WootzSubmitSamlResponseFunction::Run() called";
   
@@ -1548,6 +1726,16 @@ ExtensionFunction::ResponseAction WootzCreateBackgroundWebContentsFunction::Run(
     base::android::ConvertUTF8ToJavaString(env,url)
   );
 
+  // Get the newly created WebContents
+  content::WebContents* web_contents = WebContentsIdToJavaWebContents(webContentsId);
+  if (web_contents) {
+    // Create and attach the AutomationControllerFactory
+    automation::AutomationControllerFactory::CreateForWebContents(web_contents);
+    LOG(INFO) << "Created AutomationControllerFactory for background WebContents ID: " << webContentsId;
+  } else {
+    LOG(ERROR) << "Failed to get WebContents after creation for ID: " << webContentsId;
+  }
+
   base::Value::Dict result;
   result.Set("success", true);
   return RespondNow(WithArguments(std::move(result)));
@@ -1573,7 +1761,111 @@ ExtensionFunction::ResponseAction WootzDestroyBackgroundWebContentsFunction::Run
   return RespondNow(WithArguments(std::move(result)));
 }
 
+// ===== WootzMaskSensitiveElementsFunction =====
+
+WootzMaskSensitiveElementsFunction::WootzMaskSensitiveElementsFunction() = default;
+WootzMaskSensitiveElementsFunction::~WootzMaskSensitiveElementsFunction() = default;
+
+ExtensionFunction::ResponseAction WootzMaskSensitiveElementsFunction::Run() {
+  LOG(INFO) << "[WootzAPI][Masking] maskSensitiveElements called";
+  
+  if (args().empty() || !args()[0].is_list()) {
+    LOG(ERROR) << "[WootzAPI][Masking] Invalid arguments - expected array of selectors";
+    return RespondNow(Error("Expected array of selectors"));
+  }
+
+  const base::Value::List& selectors_list = args()[0].GetList();
+  std::vector<std::string> selectors;
+  
+  for (const auto& selector_value : selectors_list) {
+    if (selector_value.is_string()) {
+      selectors.push_back(selector_value.GetString());
+    }
+  }
+  
+  // Extract optional tabId parameter
+  int tab_id = -1; // -1 means use active tab
+  if (args().size() > 1 && args()[1].is_int()) {
+    tab_id = args()[1].GetInt();
+    LOG(INFO) << "[WootzAPI][Masking] Using specified tab ID: " << tab_id;
+  }
+  
+  LOG(INFO) << "[WootzAPI][Masking] Got " << selectors.size() << " selectors to mask";
+  for (const auto& selector : selectors) {
+    LOG(INFO) << "[WootzAPI][Masking] Selector: " << selector;
+  }
+  
+  SendSelectorsToRenderer(selectors, tab_id);
+  
+  return RespondLater();
+}
+
+void WootzMaskSensitiveElementsFunction::OnMaskingComplete(int masked_count) {
+  LOG(INFO) << "[WootzAPI][Masking] Masking complete: " << masked_count << " elements masked";
+  
+  base::Value::Dict result;
+  result.Set("success", true);
+  result.Set("masked", masked_count);
+  
+  Respond(WithArguments(std::move(result)));
+}
+
+
+void WootzMaskSensitiveElementsFunction::SendSelectorsToRenderer(const std::vector<std::string>& selectors, int tab_id) {
+  LOG(INFO) << "[WootzAPI][Masking] Sending " << selectors.size() << " selectors to renderer via Mojo:";
+  for (const auto& selector : selectors) {
+    LOG(INFO) << "[WootzAPI][Masking] - " << selector;
+  }
+  
+  content::WebContents* web_contents = nullptr;
+  
+  if (tab_id != -1) {
+    // Get WebContents by specific tab ID
+    if (!ExtensionTabUtil::GetTabById(tab_id, browser_context(), 
+                                      include_incognito_information(), 
+                                      &web_contents)) {
+      LOG(ERROR) << "[WootzAPI][Masking] Failed to get WebContents for tab ID: " << tab_id;
+      OnMaskingComplete(0);
+      return;
+    }
+    LOG(INFO) << "[WootzAPI][Masking] Targeting specific tab ID: " << tab_id;
+  } else {
+    // Use the same approach as WootzReplaceElementFunction - get active tab directly
+    web_contents = TabModelList::GetCurrentTabModel()->GetActiveWebContents();
+    if (!web_contents) {
+      LOG(ERROR) << "[WootzAPI][Masking] Unable to get WebContents";
+      OnMaskingComplete(0);
+      return;
+    }
+    LOG(INFO) << "[WootzAPI][Masking] Targeting active tab (no tab ID provided)";
+  }
+  
+  LOG(INFO) << "[WootzAPI][Masking] Targeting tab with URL: " << web_contents->GetVisibleURL().spec();
+  
+  // Use factory pattern like WootzReplaceElementFunction
+  auto* factory = sensitive_masking::ContentSensitiveMaskingDriverFactory::FromWebContents(web_contents);
+  if (!factory) {
+    LOG(ERROR) << "[WootzAPI][Masking] ContentSensitiveMaskingDriverFactory not available";
+    OnMaskingComplete(0);
+    return;
+  }
+  
+  // Get driver for the main frame
+  auto* driver = factory->GetDriverForFrame(web_contents->GetPrimaryMainFrame());
+  if (!driver) {
+    LOG(ERROR) << "[WootzAPI][Masking] Failed to get masking driver for main frame";
+    OnMaskingComplete(0);
+    return;
+  }
+  
+  // Send selectors using the factory's driver
+  driver->UpdateMaskingSelectorsDirectly(selectors,
+    base::BindOnce(&WootzMaskSensitiveElementsFunction::OnMaskingComplete,
+                   weak_factory_.GetWeakPtr()));
+}
+
 ExtensionFunction::ResponseAction WootzChangeWootzAppSearchConfigurationFunction::Run(){
+
   if(args().size() != 3 || !args()[0].is_string() || !args()[1].is_string() || !args()[2].is_string()) {
     LOG(ERROR)<<"Invalid Arguments";
     return RespondNow(Error("Invalid arguments"));

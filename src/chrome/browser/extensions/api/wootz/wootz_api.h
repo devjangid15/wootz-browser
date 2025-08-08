@@ -33,6 +33,7 @@
 #include "ui/shell_dialogs/selected_file_info.h"
 #include "third_party/blink/public/mojom/choosers/file_chooser.mojom.h"
 #include "mojo/public/cpp/bindings/receiver.h"
+#include "components/automation_agent/content/browser/automation_controller.h"
 
 #include "base/functional/callback.h"
 
@@ -377,6 +378,25 @@ class WootzReplaceAdFunction : public ExtensionFunction {
   ResponseAction Run() override;
 };
 
+class WootzGetPageStateFunction : public ExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("wootz.getPageState", WOOTZ_GET_PAGE_STATE)
+  ResponseAction Run() override;
+
+ private:
+  void OnGetPageStateComplete(bool success, const std::string& state);
+};
+
+class WootzPerformActionFunction : public ExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("wootz.performAction", WOOTZ_PERFORM_ACTION)
+  ResponseAction Run() override;
+
+ private:
+  void OnActionComplete(bool success);
+};
+
+
 class WootzSubmitSamlResponseFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("wootz.submitSamlResponse", WOOTZ_SUBMIT_SAML_RESPONSE)
@@ -401,6 +421,23 @@ class WootzDestroyBackgroundWebContentsFunction : public ExtensionFunction {
  protected:
   ~WootzDestroyBackgroundWebContentsFunction() override = default;
   ResponseAction Run() override;
+};
+
+class WootzMaskSensitiveElementsFunction : public ExtensionFunction {
+ public:
+  WootzMaskSensitiveElementsFunction();
+  DECLARE_EXTENSION_FUNCTION("wootz.maskSensitiveElements", WOOTZ_MASK_SENSITIVE_ELEMENTS)
+  
+ protected:
+  ~WootzMaskSensitiveElementsFunction() override;
+  ResponseAction Run() override;
+
+ private:
+  void SendSelectorsToRenderer(const std::vector<std::string>& selectors, int tab_id = -1);
+  void OnMaskingComplete(int masked_count);
+  
+  // WeakPtr factory for safe async operations (must be last member)
+  base::WeakPtrFactory<WootzMaskSensitiveElementsFunction> weak_factory_{this};
 };
 
 class WootzChangeWootzAppSearchConfigurationFunction : public ExtensionFunction {
