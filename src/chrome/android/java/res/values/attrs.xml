@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+Copyright 2014 The Chromium Authors
+Use of this source code is governed by a BSD-style license that can be
+found in the LICENSE file.
+-->
+
+<resources>
+    <declare-styleable name="HyperlinkPreference">
+        <!-- The URL to load when the preference is clicked -->
+        <attr name="url" format="string" />
+    </declare-styleable>
+
+    <declare-styleable name="BookmarkTextInputLayout">
+        <attr name="emptyErrorMessage" format="string" />
+    </declare-styleable>
+
+    <declare-styleable name="MostVisitedTilesGridLayout">
+        <attr name="minHorizontalSpacing" format="dimension"/>
+    </declare-styleable>
+
+    <declare-styleable name="ExploreSitesTileView">
+        <attr name="iconCornerRadius" format="dimension"/>
+    </declare-styleable>
+
+    <declare-styleable name="ManageAccountDevicesLinkView">
+        <attr name="showLink" format="boolean" />
+    </declare-styleable>
+
+    <declare-styleable name="wootz_list_preference">
+        <attr name="dialog_subtitle" format="string"/>
+        <attr name="dialog_entries" format="string"/>
+        <attr name="dialog_default_index" format="integer"/>
+    </declare-styleable>
+
+
+    <attr name="ic_onboarding_backup" format="reference"/>
+    <attr name="ic_onboarding_intro" format="reference"/>
+    <attr name="ic_onboarding_password" format="reference"/>
+
+</resources>

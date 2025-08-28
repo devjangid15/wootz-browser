@@ -1,0 +1,266 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: Arial, sans-serif;
+    background-color: #f5f5f5;
+}
+
+.container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding-left: 20px;
+    padding-right: 20px;
+    padding-top: 10px;
+    padding-bottom: 20px;
+}
+
+/* App Bar Styles */
+.app-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+    height: 60px;
+}
+
+.app-bar-left, .app-bar-right {
+    flex: 1;
+}
+
+.app-bar-center {
+    flex: 2;
+    text-align: center;
+}
+
+.app-logo {
+    height: 40px;
+    width: auto;
+}
+
+h1 {
+    text-align: center;
+    margin: 0;
+    font-size: 26px;
+    font-weight: bold;
+    background-image: linear-gradient(to right, #d60b00, #fe8c00);
+    color: transparent;
+    -webkit-background-clip: text;
+    background-clip: text;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+h1 span {
+    display: inline-block;
+}
+
+.title-icon {
+    height: 32px;
+    width: auto;
+    margin-right: -8px;
+    vertical-align: middle;
+    position: relative;
+    top: -1px;
+}
+
+.extensions-list {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.extension-card {
+    background: #eaeaea;
+    border-radius: 12px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.12);
+    cursor: pointer;
+    overflow: hidden;
+    margin-bottom: 12px;
+    border: 1px solid #a1a1a1;
+    border-bottom: 3px solid #ccc;
+}
+
+.extension-main {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    position: relative;
+}
+
+.extension-icon {
+    width: 60px;
+    height: 60px;
+    border-radius: 8px;
+    margin-right: 12px;
+    object-fit: cover;
+    flex-shrink: 0;
+    /* border: 1px solid #ddd; */
+}
+
+.extension-info {
+    flex: 1;
+    min-width: 0; /* Ensures text truncation works properly */
+    padding-right: 85px; /* Make space for the button */
+}
+
+.extension-header {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 5px;
+}
+
+.extension-actions {
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+.extension-name {
+    font-size: 18px;
+    font-weight: bold;
+    margin-bottom: 2px;
+    color: #281100;
+}
+
+.extension-version {
+    color: #4e4e4e;
+    font-size: 14px;
+    margin-bottom: 5px;
+}
+
+.extension-description {
+    color: #404040;
+    margin: 10px 0;
+    font-size: 14px;
+    display: none;
+    line-height: 1.4;
+}
+
+.extension-expanded .extension-description {
+    display: block;
+}
+
+.extension-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.tag {
+    background: #cfcfcf;
+    padding: 4px 12px;
+    border-radius: 15px;
+    font-size: 12px;
+    color: #3d3d3d;
+    border: 1px solid #444444;
+}
+
+.install-button {
+    background: #ff8c00; /* Orange color */
+    color: white;
+    border: 1px solid #bb5b00;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+    white-space: nowrap;
+    min-width: 80px;
+    flex-shrink: 0;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.install-button:active {
+    background: #e67e00; /* Darker orange on active state for mobile */
+}
+
+.install-button.installed {
+    background: #fd910ee3;  /* Light orange for installed */
+    border: 1px solid #E65100;
+    color: white;
+}
+
+.install-button.update {
+    background: #4CAF50;  /* Green for update */
+    border: 1px solid #388E3C;
+    color: white;
+}
+
+.install-button.installing {
+    background: #fd910ee3;  /* Light orange for installing */
+    border: 1px solid #E65100;
+    color: white;
+}
+
+.install-button:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
+.github-button {
+    background: #e0e0e0;
+    color: #555;
+    border: 1px solid #ccc;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+    margin-top: 10px;
+    display: none;
+}
+
+.extension-expanded .github-button {
+    display: inline-block;
+}
+
+.extension-extra {
+    display: none;
+    padding-left: 75px; /* Aligns with content after the icon */
+    margin-top: 10px;
+}
+
+.extension-expanded .extension-extra {
+    display: block;
+}
+
+/* Helper class for clicks on buttons inside card */
+.prevent-card-click {
+    pointer-events: auto;
+}
+
+@keyframes loading-spinner {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.install-button.loading {
+  position: relative;
+  color: transparent;
+  min-width: 80px;
+  background: transparent; /* Match the original orange background */
+  border: none;
+  box-shadow: none; /* Remove bottom shadow */
+}
+
+.install-button.loading::after {
+  content: "";
+  position: absolute;
+  width: 20px; /* Increased from 16px */
+  height: 20px; /* Increased from 16px */
+  top: 50%;
+  left: 50%;
+  margin-top: -10px; /* Adjusted for new size */
+  margin-left: -10px; /* Adjusted for new size */
+  border-radius: 50%;
+  border: 2.5px solid rgba(255, 255, 255, 0.3); /* Lighter border */
+  border-top: 2.5px solid #ff8c00; /* White spinner color */
+  animation: loading-spinner 1s linear infinite;
+}
