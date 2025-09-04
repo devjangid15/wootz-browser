@@ -143,7 +143,8 @@ source_set("main_extra_parts") {
 
 # Use a static library here because many test binaries depend on this but don't
 # require many files from it. This makes linking more efficient.
-static_library("browser") {  sources = [
+static_library("browser") {
+  sources = [
     "about_flags.cc",
     "about_flags.h",
     "accessibility/accessibility_labels_service.cc",
@@ -2047,6 +2048,7 @@ static_library("browser") {  sources = [
     "//chrome/common:buildflags",
     "//chrome/common:constants",
     "//chrome/browser/ui",
+    "//chrome/browser/domain_block_checker",
     "//components/saml_verifier",
     "//components/wootz_wallet/browser",
     "//components/wootz_wallet/browser:utils",
@@ -2119,7 +2121,6 @@ static_library("browser") {  sources = [
     "//chrome/browser/companion/text_finder",
     "//chrome/browser/crash_upload_list",
     "//chrome/browser/devtools",
-    "//chrome/browser/enterprise/identifiers",
     "//chrome/browser/enterprise/platform_auth:features",
     "//chrome/browser/favicon",
     "//chrome/browser/first_party_sets",
@@ -5471,7 +5472,6 @@ static_library("browser") {  sources = [
       "//chrome/browser/nearby_sharing/contacts",
       "//chrome/browser/nearby_sharing/instantmessaging/proto",
       "//chrome/browser/nearby_sharing/local_device_data",
-      "//chrome/browser/nearby_sharing/logging",
       "//chrome/browser/nearby_sharing/logging:util",
       "//chrome/browser/nearby_sharing/proto:tachyon_proto",
       "//chrome/browser/policy:onc",

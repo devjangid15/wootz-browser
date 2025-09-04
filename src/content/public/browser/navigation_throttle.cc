@@ -12,9 +12,11 @@
 #include "ui/base/page_transition_types.h"
 #include "base/logging.h"
 #include "base/strings/string_util.h"
-#include "content/public/browser/domain_block_checker.h"
+#include "chrome/browser/domain_block_checker/domain_block_checker.h"
 #include "content/public/browser/blocked_domains_prefs.h"
 #include "url/gurl.h"
+
+using chrome::DomainBlockChecker;
 
 namespace content {
 
@@ -75,7 +77,7 @@ NavigationThrottle::~NavigationThrottle() {}
 NavigationThrottle::ThrottleCheckResult NavigationThrottle::WillStartRequest() {
   const GURL& url = navigation_handle()->GetURL();
 
-  if (DomainBlockChecker::GetInstance().IsUrlBlocked(url, navigation_handle())) {
+  if (chrome::DomainBlockChecker::GetInstance().IsUrlBlocked(url, navigation_handle())) {
     VLOG(1) << "[DomainBlocker] BLOCKED: " << url.host();
     
     return NavigationThrottle::ThrottleCheckResult(

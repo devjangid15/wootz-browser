@@ -271,7 +271,6 @@ import android.net.Uri;
 import io.branch.referral.Branch;
 import io.branch.referral.BranchError;
 import org.chromium.chrome.browser.IntentHandler;
-import org.chromium.chrome.browser.ChromeTabbedActivity;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -291,6 +290,7 @@ import org.chromium.chrome.browser.BrandingManager;
 public class ChromeTabbedActivity extends ChromeActivity<ChromeActivityComponent>
         implements MismatchedIndicesHandler {
     private static final String TAG = "ChromeTabbedActivity";
+
     private boolean isFirstRun = true;
     protected static final String WINDOW_INDEX = "window_index";
 
@@ -468,7 +468,7 @@ public class ChromeTabbedActivity extends ChromeActivity<ChromeActivityComponent
 
     private OneshotSupplierImpl<ModuleRegistry> mModuleRegistrySupplier =
             new OneshotSupplierImpl<>();
-    
+
     private String utmSource;
 
     private final IncognitoTabHost mIncognitoTabHost =
@@ -1650,7 +1650,6 @@ public class ChromeTabbedActivity extends ChromeActivity<ChromeActivityComponent
         try {
             TraceEvent.begin("ChromeTabbedActivity.initializeState");
 
-            // Get the default extension from SharedPreferences
             super.initializeState();
             Log.i(TAG, "#initializeState");
             Intent intent = getIntent();
@@ -1833,7 +1832,6 @@ public class ChromeTabbedActivity extends ChromeActivity<ChromeActivityComponent
             }
 
             maybeShowTabSwitcher(intent);
-            Log.d("Wootzapp", "start foreground");
         } finally {
             TraceEvent.end("ChromeTabbedActivity.initializeState");
         }
@@ -1848,7 +1846,6 @@ public class ChromeTabbedActivity extends ChromeActivity<ChromeActivityComponent
     /** Create an initial tab for cold start without restored tabs. */
     private void createInitialTab() {
         Log.i(TAG, "#createInitialTab executed.");
-        
         mPendingInitialTabCreation = false;
 
         // If the start surface or grid tab switcher will be shown on start, do not create a new
@@ -1856,19 +1853,19 @@ public class ChromeTabbedActivity extends ChromeActivity<ChromeActivityComponent
         String url = null;
         boolean shouldShowOverviewPageOnStart = shouldShowOverviewPageOnStart();
         if (!shouldShowOverviewPageOnStart) {
-                GURL homepageGurl = HomepageManager.getInstance().getHomepageGurl();
-                if (homepageGurl.isEmpty()) {
+            GURL homepageGurl = HomepageManager.getInstance().getHomepageGurl();
+            if (homepageGurl.isEmpty()) {
+                url = UrlConstants.NTP_URL;
+            } else {
+                // Migrate legacy NTP URLs (chrome://newtab) to the newer format
+                // (chrome-native://newtab)
+                if (UrlUtilities.isNtpUrl(homepageGurl)) {
                     url = UrlConstants.NTP_URL;
                 } else {
-                    // Migrate legacy NTP URLs (chrome://newtab) to the newer format
-                    // (chrome-native://newtab)
-                    if (UrlUtilities.isNtpUrl(homepageGurl)) {
-                        url = UrlConstants.NTP_URL;
-                    } else {
-                        url = homepageGurl.getSpec();
-                    }
+                    url = homepageGurl.getSpec();
                 }
-                getTabCreator(false).launchUrl(url, TabLaunchType.FROM_STARTUP);
+            }
+            getTabCreator(false).launchUrl(url, TabLaunchType.FROM_STARTUP);
             
             // Check if this is first run using SharedPreferences instead of a local variable
             SharedPreferences prefs = getSharedPreferences(
@@ -1910,7 +1907,6 @@ public class ChromeTabbedActivity extends ChromeActivity<ChromeActivityComponent
         // Launch history as a fresh instance of Chrome.
         maybeLaunchHistory();
     }
-
 
     private void recordExternalIntentSourceUMA(Intent intent) {
         @IntentHandler.ExternalAppId
@@ -2064,7 +2060,8 @@ public class ChromeTabbedActivity extends ChromeActivity<ChromeActivityComponent
                     return;
                 }
 
-                if (!IncognitoUtils.isIncognitoModeEnabled()) {
+                if (!IncognitoUtils.isIncognitoModeEnabled(
+                        getProfileProviderSupplier().get().getOriginalProfile())) {
                     // The incognito launcher shortcut is manipulated in #onDeferredStartup(),
                     // so it's possible for a user to invoke the shortcut before it's disabled.
                     // Quick actions search widget is installed on the home screen and may
@@ -2211,8 +2208,6 @@ public class ChromeTabbedActivity extends ChromeActivity<ChromeActivityComponent
     @Override
     public void performPreInflationStartup() {
         super.performPreInflationStartup();
-
-
 
         // Android FrameMetrics allow tracking of java views and their deadline misses (frame
         // drops/janks).
@@ -2724,7 +2719,8 @@ public class ChromeTabbedActivity extends ChromeActivity<ChromeActivityComponent
             return;
         }
 
-        LauncherShortcutActivity.updateIncognitoShortcut(ChromeTabbedActivity.this);
+        LauncherShortcutActivity.updateIncognitoShortcut(
+                ChromeTabbedActivity.this, mTabModelProfileSupplier.get());
 
         ChromeSurveyController.initialize(
                 mTabModelSelector,
@@ -2940,9 +2936,10 @@ public class ChromeTabbedActivity extends ChromeActivity<ChromeActivityComponent
 
             mLocaleManager.showSearchEnginePromoIfNeeded(this, null);
         } else if (id == R.id.new_incognito_tab_menu_id) {
-            if (IncognitoUtils.isIncognitoModeEnabled()) {
-                if (!mTabModelSelector.isTabStateInitialized()) return false;
+            if (!mTabModelSelector.isTabStateInitialized()) return false;
 
+            Profile profile = mTabModelSelector.getCurrentModel().getProfile();
+            if (IncognitoUtils.isIncognitoModeEnabled(profile)) {
                 getTabModelSelector().getModel(false).commitAllTabClosures();
                 // This action must be recorded before opening the incognito tab since UMA actions
                 // are dropped when an incognito tab is open.
@@ -2951,9 +2948,7 @@ public class ChromeTabbedActivity extends ChromeActivity<ChromeActivityComponent
                 reportNewTabShortcutUsed(true);
                 if (fromMenu) RecordUserAction.record("MobileMenuNewIncognitoTab.AppMenu");
                 getTabCreator(true).launchNtp();
-                Tracker tracker =
-                        TrackerFactory.getTrackerForProfile(
-                                mTabModelSelector.getCurrentModel().getProfile());
+                Tracker tracker = TrackerFactory.getTrackerForProfile(profile);
                 tracker.notifyEvent(EventConstants.APP_MENU_NEW_INCOGNITO_TAB_CLICKED);
             }
         } else if (id == R.id.all_bookmarks_menu_id) {
@@ -3825,6 +3820,46 @@ public class ChromeTabbedActivity extends ChromeActivity<ChromeActivityComponent
        }
     }
 
+    String extUtmSource = "";
+    String campaign = "";
+
+    private void handleBranchDeepLinkParams(JSONObject firstReferringParams) {
+        try {
+            android.content.SharedPreferences prefs = getSharedPreferences("branch_data", MODE_PRIVATE);
+
+            extUtmSource = firstReferringParams.optString("~campaign", "");
+            
+            campaign = firstReferringParams.optString("~channel", "");
+            Log.e(TAG, "Branch deep link params: ext_utm_source=" + extUtmSource + ", campaign=" + campaign);
+                       
+            boolean isFirstRun = prefs.getBoolean("is_first_run", true);
+            if (isFirstRun) {
+                Log.e(TAG, "Processing branch link with utm_source: " + extUtmSource);
+                if (!TextUtils.isEmpty(extUtmSource)) {
+                    Log.e(TAG, "Branch deep link ext_utm_source: " + extUtmSource);
+                    if(extUtmSource.equals(campaign)) {
+                        IntentHandler.switchIconBasedOnUtm(extUtmSource);
+                        BrandingManager.fetchAndSave(extUtmSource);
+                    }
+                    Log.e(TAG, "Branch deep link campaign: " + campaign);
+                    // IntentHandler.storeCampaign(campaign);
+                    // IntentHandler.processStoredCampaignIfNeeded();
+                    IntentHandler.ext_utm_source = extUtmSource;
+                    Log.e(TAG, "Branch deep link ext_utm_source stored: " + extUtmSource);
+                    IntentHandler.storeUtmSource(extUtmSource);
+                    IntentHandler.processStoredUtmSourceIfNeeded();
+                    Log.e(TAG, "Branch deep link campaign and utm stored successfully.");
+                }
+                // Mark first run as completed
+                SharedPreferences.Editor editor = prefs.edit();
+                editor.putBoolean("is_first_run", false);
+                editor.apply();
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error processing branch deep link", e);
+        }
+    }
+
     @Override
     public void onStop() {
         try (TraceEvent e = TraceEvent.scoped("ChromeTabbedActivity.onStop")) {
@@ -4112,45 +4147,6 @@ public class ChromeTabbedActivity extends ChromeActivity<ChromeActivityComponent
                             mTabSwitcherSupplier.get().openInvitationModal("");
                         }
                     });
-        }
-    }
-
-    String extUtmSource = "";
-    String campaign = "";
-    private void handleBranchDeepLinkParams(JSONObject firstReferringParams) {
-        try {
-            android.content.SharedPreferences prefs = getSharedPreferences("branch_data", MODE_PRIVATE);
-
-            extUtmSource = firstReferringParams.optString("~campaign", "");
-            
-            campaign = firstReferringParams.optString("~channel", "");
-            Log.e(TAG, "Branch deep link params: ext_utm_source=" + extUtmSource + ", campaign=" + campaign);
-                       
-            boolean isFirstRun = prefs.getBoolean("is_first_run", true);
-            if (isFirstRun) {
-                Log.e(TAG, "Processing branch link with utm_source: " + extUtmSource);
-                if (!TextUtils.isEmpty(extUtmSource)) {
-                    Log.e(TAG, "Branch deep link ext_utm_source: " + extUtmSource);
-                    if(extUtmSource.equals(campaign)) {
-                        IntentHandler.switchIconBasedOnUtm(extUtmSource);
-                        BrandingManager.fetchAndSave(extUtmSource);
-                    }
-                    Log.e(TAG, "Branch deep link campaign: " + campaign);
-                    // IntentHandler.storeCampaign(campaign);
-                    // IntentHandler.processStoredCampaignIfNeeded();
-                    IntentHandler.ext_utm_source = extUtmSource;
-                    Log.e(TAG, "Branch deep link ext_utm_source stored: " + extUtmSource);
-                    IntentHandler.storeUtmSource(extUtmSource);
-                    IntentHandler.processStoredUtmSourceIfNeeded();
-                    Log.e(TAG, "Branch deep link campaign and utm stored successfully.");
-                }
-                // Mark first run as completed
-                SharedPreferences.Editor editor = prefs.edit();
-                editor.putBoolean("is_first_run", false);
-                editor.apply();
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Error processing branch deep link", e);
         }
     }
 }

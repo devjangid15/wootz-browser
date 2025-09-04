@@ -32,19 +32,15 @@ found in the LICENSE file.
 
     <include
         android:id="@+id/signin_fre_continue_button"
-        android:visibility="gone"
         layout="@layout/account_picker_bottom_sheet_continue_button" />
 
     <org.chromium.ui.widget.ButtonCompat
         android:id="@+id/signin_fre_dismiss_button"
-        android:visibility="visible"
-        style="@style/FilledButton.Flat"
+        style="@style/TextButton"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginStart="24dp"
         android:layout_marginEnd="24dp"
-        android:ellipsize="end"
-        android:singleLine="true"
         android:text="@string/signin_fre_dismiss_button" />
 
 </merge>

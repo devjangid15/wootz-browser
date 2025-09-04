@@ -958,7 +958,7 @@ WebstorePrivateCompleteInstallFunction::
 
 ExtensionFunction::ResponseAction
 WebstorePrivateCompleteInstallFunction::Run() {
-  std::optional<CompleteInstall::Params> params =
+  ::optional<CompleteInstall::Params> params =
       CompleteInstall::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
   Profile* const profile = Profile::FromBrowserContext(browser_context());
@@ -1104,7 +1104,7 @@ WebstorePrivateSetStoreLoginFunction::WebstorePrivateSetStoreLoginFunction() =
 WebstorePrivateSetStoreLoginFunction::~WebstorePrivateSetStoreLoginFunction() {}
 
 ExtensionFunction::ResponseAction WebstorePrivateSetStoreLoginFunction::Run() {
-  std::optional<SetStoreLogin::Params> params =
+  abs::optional<SetStoreLogin::Params> params =
       SetStoreLogin::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
   SetWebstoreLogin(Profile::FromBrowserContext(browser_context()),

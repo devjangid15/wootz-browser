@@ -245,6 +245,11 @@
 #include "content/browser/starscan_load_observer.h"
 #endif
 
+#if !BUILDFLAG(IS_ANDROID)
+#include "content/public/browser/document_picture_in_picture_window_controller.h"
+#include "content/public/browser/picture_in_picture_window_controller.h"
+#endif  // !BUILDFLAG(IS_ANDROID)
+
 namespace content {
 
 namespace {
@@ -3563,6 +3568,10 @@ void WebContentsImpl::Init(const WebContents::CreateParams& params,
 
   if (params.picture_in_picture_options.has_value()) {
     picture_in_picture_options_ = params.picture_in_picture_options;
+    if (GetOpener()) {
+      picture_in_picture_opener_ =
+          FromRenderFrameHostImpl(GetOpener())->GetWeakPtr();
+    }
   }
 
   // This is set before initializing the render manager since
@@ -3845,23 +3854,11 @@ void WebContentsImpl::RenderWidgetWasResized(
 
 KeyboardEventProcessingResult WebContentsImpl::PreHandleKeyboardEvent(
     const NativeWebKeyboardEvent& event) {
-  LOG(INFO) << "[RamPrasad][WebContents] PreHandleKeyboardEvent";
-
-  LOG(INFO) << "[RamPrasad][WebContents] PreHandleKeyboardEvent Details:"
-            << " Type=" << static_cast<int>(event.GetType())
-            << " Modifiers=" << event.GetModifiers()
-            << " KeyCode=" << event.windows_key_code
-            << " IsSystemKey=" << event.is_system_key << " Text=" << event.text;
-
-  LOG(INFO) << "[RamPrasad][WebContents] ShouldBlockCopyPaste: "
-            << ShouldBlockCopyPaste("paste");
 
   // Check for Ctrl+V
   if ((event.GetModifiers() & blink::WebInputEvent::kControlKey) &&
       event.windows_key_code == 'V') {
-    LOG(INFO) << "[RamPrasad][WebContents] Ctrl+V event";
     if (ShouldBlockCopyPaste("paste")) {
-      LOG(INFO) << "[RamPrasad][WebContents] Blocking paste event";
       ShowCopyPasteBlockedSnackbar("Paste");
       return KeyboardEventProcessingResult::HANDLED;
     }
@@ -3870,9 +3867,7 @@ KeyboardEventProcessingResult WebContentsImpl::PreHandleKeyboardEvent(
   // Check for Command+V
   if ((event.GetModifiers() & blink::WebInputEvent::kMetaKey) &&
       event.windows_key_code == 'V') {
-    LOG(INFO) << "[RamPrasad][WebContents] Command+V event";
     if (ShouldBlockCopyPaste("paste")) {
-      LOG(INFO) << "[RamPrasad][WebContents] Blocking paste event";
       ShowCopyPasteBlockedSnackbar("Paste");
       return KeyboardEventProcessingResult::HANDLED;
     }
@@ -3886,9 +3881,7 @@ KeyboardEventProcessingResult WebContentsImpl::PreHandleKeyboardEvent(
   // Check for Ctrl+C
   if (event.GetModifiers() & blink::WebInputEvent::kControlKey &&
       event.windows_key_code == 'C') {
-    LOG(INFO) << "[RamPrasad][WebContents] Ctrl+C event";
     if (ShouldBlockCopyPaste("copy")) {
-      LOG(INFO) << "[RamPrasad][WebContents] Blocking copy event";
       ShowCopyPasteBlockedSnackbar("Copy");
       return KeyboardEventProcessingResult::HANDLED;
     }
@@ -3897,9 +3890,7 @@ KeyboardEventProcessingResult WebContentsImpl::PreHandleKeyboardEvent(
   // Check for Command+C
   if (event.GetModifiers() & blink::WebInputEvent::kMetaKey &&
       event.windows_key_code == 'C') {
-    LOG(INFO) << "[RamPrasad][WebContents] Command+C event";
     if (ShouldBlockCopyPaste("copy")) {
-      LOG(INFO) << "[RamPrasad][WebContents] Blocking copy event";
       ShowCopyPasteBlockedSnackbar("Copy");
       return KeyboardEventProcessingResult::HANDLED;
     }
@@ -5261,12 +5252,24 @@ void WebContentsImpl::AXTreeIDForMainFrameHasChanged() {
       &WebContentsObserver::AXTreeIDForMainFrameHasChanged);
 }
 
-void WebContentsImpl::AccessibilityEventReceived(
-    const ui::AXUpdatesAndEvents& details) {
+void WebContentsImpl::ProcessAccessibilityUpdatesAndEvents(
+    ui::AXUpdatesAndEvents& details) {
   OPTIONAL_TRACE_EVENT0("content",
                         "WebContentsImpl::AccessibilityEventReceived");
+
+  // First, supply the data to consumers that won't change it.
   observers_.NotifyObservers(&WebContentsObserver::AccessibilityEventReceived,
                              details);
+
+  // Next, supply the data to consumers that may change it or who need to avoid
+  // extra copying. Note that this also includes those who will pass to mojo
+  // pipes not taking const.
+  // TODO(accessibility): when we add multiple consumers, we will need some kind
+  // of intermediate class to ensure each consumer gets an unmutated copy of the
+  // data, but also minimize copying.
+  if (delegate_) {
+    delegate_->ProcessAccessibilityUpdatesAndEvents(details);
+  }
 }
 
 void WebContentsImpl::AccessibilityLocationChangesReceived(
@@ -9386,6 +9389,34 @@ void WebContentsImpl::SetFocusedFrame(FrameTreeNode* node,
   CloseListenerManager::DidChangeFocusedFrame(this);
 }
 
+FrameTree* WebContentsImpl::GetOwnedPictureInPictureFrameTree() {
+#if !BUILDFLAG(IS_ANDROID)
+  if (has_picture_in_picture_document_) {
+    WebContents* picture_in_picture_web_contents =
+        PictureInPictureWindowController::
+            GetOrCreateDocumentPictureInPictureController(this)
+                ->GetChildWebContents();
+    if (picture_in_picture_web_contents) {
+      return &(static_cast<WebContentsImpl*>(picture_in_picture_web_contents)
+                   ->GetPrimaryFrameTree());
+    }
+  }
+#endif  // !BUILDFLAG(IS_ANDROID)
+
+  return nullptr;
+}
+
+FrameTree* WebContentsImpl::GetPictureInPictureOpenerFrameTree() {
+#if !BUILDFLAG(IS_ANDROID)
+  if (picture_in_picture_opener_) {
+    return &(static_cast<WebContentsImpl*>(picture_in_picture_opener_.get())
+                 ->GetPrimaryFrameTree());
+  }
+#endif  // !BUILDFLAG(IS_ANDROID)
+
+  return nullptr;
+}
+
 void WebContentsImpl::DidCallFocus() {
   OPTIONAL_TRACE_EVENT0("content", "WebContentsImpl::DidCallFocus");
   // Any explicit focusing of another window while this WebContents is in
@@ -10617,9 +10648,7 @@ void WebContentsImpl::IsClipboardPasteAllowedByPolicy(
     const ClipboardMetadata& metadata,
     ClipboardPasteData clipboard_paste_data,
     IsClipboardPasteAllowedCallback callback) {
-  LOG(INFO) << "[RamPrasad][WebContents] IsClipboardPasteAllowedByPolicy";
   if (ShouldBlockCopyPaste("paste")) {
-    LOG(INFO) << "[RamPrasad][WebContents] Paste blocked by policy";
     return;
   }
   ++suppress_unresponsive_renderer_count_;

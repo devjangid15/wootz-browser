@@ -28,7 +28,7 @@
 #include "content/public/browser/blocked_domains_prefs.h"
 #include "content/public/browser/content_privacy_prefs.h"
 #include "content/public/browser/copy_paste_blocker_prefs.h"
-#include "content/public/browser/domain_block_checker.h"
+#include "chrome/browser/domain_block_checker/domain_block_checker.h"
 #include "content/public/browser/saml_prefs.h"
 #include "content/public/browser/upload_blocking_prefs.h"
 #include "third_party/libxml/src/include/libxml/c14n.h"
@@ -53,6 +53,7 @@
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/simple_url_loader.h"
 #include "url/gurl.h"
+
 
 namespace saml_verifier {
 
@@ -103,7 +104,7 @@ std::vector<std::string> ParseDomainList(const std::string& domain_string) {
       domain_string, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
 
   for (const std::string& domain : parts) {
-    if (content::DomainBlockChecker::IsValidDomain(domain)) {
+    if (chrome::DomainBlockChecker::IsValidDomain(domain)) {
       domains.push_back(domain);
     } else {
       LOG(WARNING) << "Invalid domain in SAML response: " << domain;

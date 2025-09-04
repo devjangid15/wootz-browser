@@ -80,7 +80,7 @@
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/blocked_domains_prefs.h"
 #include "content/public/browser/saml_prefs.h"
-#include "content/public/browser/domain_block_checker.h"
+#include "chrome/browser/domain_block_checker/domain_block_checker.h"
 #include "components/saml_verifier/saml_verifier.h"
 #include "content/public/browser/copy_paste_blocker_prefs.h"
 #include "content/public/browser/render_frame_host.h"
@@ -1090,7 +1090,7 @@ ExtensionFunction::ResponseAction WootzSetJobFunction::Run() {
   
   std::string jobs_json = prefs.ReadString(kWootzJobsListKey, "[]");
   LOG(ERROR) << "WOOTZ JOBS: " << jobs_json;
-  absl::optional<base::Value> parsed = base::JSONReader::Read(jobs_json);
+  std::optional<base::Value> parsed = base::JSONReader::Read(jobs_json);
   base::Value::List* jobs = parsed->GetIfList();
   if (!jobs) {
     jobs = new base::Value::List();
@@ -1116,7 +1116,7 @@ ExtensionFunction::ResponseAction WootzRemoveJobFunction::Run() {
 
   LOG(ERROR) << "WOOTZ JOBS: " << jobs_json;
 
-  absl::optional<base::Value> parsed = base::JSONReader::Read(jobs_json);
+  std::optional<base::Value> parsed = base::JSONReader::Read(jobs_json);
   base::Value::List* jobs = parsed->GetIfList();
   if (!jobs) return RespondNow(NoArguments());
 
@@ -1139,7 +1139,7 @@ ExtensionFunction::ResponseAction WootzGetJobsFunction::Run() {
   auto prefs = android::shared_preferences::GetChromeSharedPreferences();
   std::string results_json = prefs.ReadString(kWootzJobResultsKey, "[]");
   
-  absl::optional<base::Value> parsed = base::JSONReader::Read(results_json);
+  std::optional<base::Value> parsed = base::JSONReader::Read(results_json);
   if (!parsed || !parsed->is_list()) {
     // Return empty array rather than error
     base::Value::List empty;
@@ -1155,7 +1155,7 @@ ExtensionFunction::ResponseAction WootzListJobsFunction::Run() {
   
   LOG(ERROR) << "WOOTZ JOBS LIST JSON: " << jobs_json;
 
-  absl::optional<base::Value> parsed = base::JSONReader::Read(jobs_json);
+  std::optional<base::Value> parsed = base::JSONReader::Read(jobs_json);
   if (!parsed || !parsed->is_list()) {
     base::Value::List empty;
     return RespondNow(WithArguments(base::Value(std::move(empty))));
@@ -1359,7 +1359,7 @@ ExtensionFunction::ResponseAction WootzGenerateZKProofFunction::Run() {
   );
   
   // Parse the keys JSON
-  absl::optional<base::Value> parsed_keys = base::JSONReader::Read(keys_json);
+  std::optional<base::Value> parsed_keys = base::JSONReader::Read(keys_json);
   if (!parsed_keys || !parsed_keys->is_dict()) {
     LOG(ERROR) << "Failed to parse keys JSON";
     result.Set("success", false);
@@ -1525,7 +1525,7 @@ ExtensionFunction::ResponseAction WootzGetPageStateFunction::Run() {
   bool debug_mode = true;
   bool include_hidden = true;
   bool is_background_web_contents = false;
-  absl::optional<int> background_web_contents_id;
+  std::optional<int> background_web_contents_id;
   
   // Parse options from arguments
   if (args().size() >= 1 && args()[0].is_dict()) {
@@ -1586,7 +1586,7 @@ void WootzGetPageStateFunction::OnGetPageStateComplete(bool success, const std::
     return;
   }
 
-  absl::optional<base::Value> parsed = base::JSONReader::Read(state);
+  std::optional<base::Value> parsed = base::JSONReader::Read(state);
   if (!parsed || !parsed->is_dict()) {
     LOG(ERROR) << "Failed to parse page state JSON in WootzAPI";
     Respond(Error("Failed to parse page state"));
