@@ -127,7 +127,6 @@
 #include "components/invalidation/impl/fcm_invalidation_service.h"
 #include "components/invalidation/impl/invalidator_registrar_with_memory.h"
 #include "components/invalidation/impl/per_user_topic_subscription_manager.h"
-#include "components/keyboard_garbaging/keyboard_garbaging_prefs.h"
 #include "components/language/content/browser/geo_language_provider.h"
 #include "components/language/content/browser/ulp_language_code_locator/ulp_language_code_locator.h"
 #include "components/language/core/browser/language_prefs.h"
@@ -193,11 +192,7 @@
 #include "components/wootz_wallet/browser/keyring_service.h"
 #include "components/wootz_wallet/browser/keyring_service_migrations.h"
 #include "components/wootz_wallet/browser/pref_names.h"
-#include "content/public/browser/blocked_domains_prefs.h"
-#include "content/public/browser/content_privacy_prefs.h"
 #include "content/public/browser/render_process_host.h"
-#include "content/public/browser/saml_prefs.h"
-#include "content/public/browser/upload_blocking_prefs.h"
 #include "extensions/buildflags/buildflags.h"
 #include "net/http/http_server_properties_manager.h"
 #include "pdf/buildflags.h"
@@ -205,8 +200,6 @@
 #include "printing/buildflags/buildflags.h"
 #include "rlz/buildflags/buildflags.h"
 #include "services/screen_ai/buildflags/buildflags.h"
-// #include "components/sso_auth/public/saml_constants.h"
-#include "content/public/browser/copy_paste_blocker_prefs.h"
 
 #if BUILDFLAG(ENABLE_BACKGROUND_MODE)
 #include "chrome/browser/background/background_mode_manager.h"
@@ -485,7 +478,6 @@
 #endif
 
 #if BUILDFLAG(IS_WIN)
-#include "chrome/browser/enterprise/platform_auth/platform_auth_policy_observer.h"
 #include "chrome/browser/font_prewarmer_tab_helper.h"
 #include "chrome/browser/media/cdm_pref_service_helper.h"
 #include "chrome/browser/media/media_foundation_service_monitor.h"
@@ -499,6 +491,7 @@
 #endif  // BUILDFLAG(IS_WIN)
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
+#include "chrome/browser/enterprise/platform_auth/platform_auth_policy_observer.h"
 #include "components/os_crypt/sync/os_crypt.h"
 #endif
 
@@ -1112,6 +1105,10 @@ constexpr char kBlockTruncatedCookies[] = "profile.cookie_block_truncated";
 inline constexpr char kDefaultSearchProviderChoiceLocationPrefName[] =
     "default_search_provider_data.choice_location";
 
+// Deprecated 05/2024.
+inline constexpr char kSyncCachedTrustedVaultAutoUpgradeDebugInfo[] =
+    "sync.cached_trusted_vault_auto_upgrade_debug_info";
+
 // Register local state used only for migration (clearing or moving to a new
 // key).
 void RegisterLocalStatePrefsForMigration(PrefRegistrySimple* registry) {
@@ -1122,6 +1119,7 @@ void RegisterLocalStatePrefsForMigration(PrefRegistrySimple* registry) {
   registry->RegisterDictionaryPref(kEasyUnlockHardlockState);
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
+  // Deprecated 04/2023.
   registry->RegisterDictionaryPref(kTypeSubscribedForInvalidations);
   registry->RegisterStringPref(kActiveRegistrationToken, std::string());
   registry->RegisterStringPref(kFCMInvalidationClientIDCache, std::string());
@@ -1595,6 +1593,9 @@ void RegisterProfilePrefsForMigration(
   registry->RegisterIntegerPref(
       kDefaultSearchProviderChoiceLocationPrefName,
       static_cast<int>(search_engines::ChoiceMadeLocation::kOther));
+
+  // Deprecated 05/2024.
+  registry->RegisterStringPref(kSyncCachedTrustedVaultAutoUpgradeDebugInfo, "");
 }
 
 void ClearSyncRequestedPrefAndMaybeMigrate(PrefService* profile_prefs) {
@@ -1879,9 +1880,9 @@ void RegisterLocalState(PrefRegistrySimple* registry) {
   screen_ai::RegisterLocalStatePrefs(registry);
 #endif  // BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
 
-#if BUILDFLAG(IS_WIN)
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
   PlatformAuthPolicyObserver::RegisterPrefs(registry);
-#endif  // BUILDFLAG(IS_WIN)
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
 
   // Platform-specific and compile-time conditional individual preferences.
   // If you have multiple preferences that should clearly be grouped together,
@@ -1920,15 +1921,9 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry,
   AccessibilityLabelsService::RegisterProfilePrefs(registry);
   AccessibilityUIMessageHandler::RegisterProfilePrefs(registry);
   action_url::prefs::RegisterProfilePrefs(registry);
-  keyboard_garbaging_prefs::RegisterProfilePrefs(registry);
   extension_developer_mode_settings::RegisterProfilePrefs(registry);
   AnnouncementNotificationService::RegisterProfilePrefs(registry);
   autofill::prefs::RegisterProfilePrefs(registry);
-  blocked_domains::prefs::RegisterProfilePrefs(registry);
-  saml::prefs::RegisterProfilePrefs(registry);
-  content_privacy::prefs::RegisterProfilePrefs(registry);
-  copy_paste_blocker::RegisterProfilePrefs(registry);
-  content::upload_blocking_prefs::RegisterProfilePrefs(registry);
   browsing_data::prefs::RegisterBrowserUserPrefs(registry);
   capture_policy::RegisterProfilePrefs(registry);
   certificate_transparency::prefs::RegisterPrefs(registry);
@@ -2005,7 +2000,6 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry,
   SharingSyncPreference::RegisterProfilePrefs(registry);
   SigninPrefs::RegisterProfilePrefs(registry);
   site_engagement::SiteEngagementService::RegisterProfilePrefs(registry);
-  // sso_auth::RegisterProfilePrefs(registry);
   supervised_user::RegisterProfilePrefs(registry);
   subresource_filter::prefs::RegisterProfilePrefs(registry);
   sync_sessions::SessionSyncPrefs::RegisterProfilePrefs(registry);
@@ -2098,6 +2092,7 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry,
   DevToolsWindow::RegisterProfilePrefs(registry);
   DriveService::RegisterProfilePrefs(registry);
   enterprise_connectors::RegisterProfilePrefs(registry);
+  extensions::CommandService::RegisterProfilePrefs(registry);
   extensions::TabsCaptureVisibleTabFunction::RegisterProfilePrefs(registry);
   first_run::RegisterProfilePrefs(registry);
   gcm::RegisterProfilePrefs(registry);
@@ -2977,6 +2972,9 @@ void MigrateObsoleteProfilePrefs(PrefService* profile_prefs,
 
   // Added 05/2024
   profile_prefs->ClearPref(kDefaultSearchProviderChoiceLocationPrefName);
+
+  // Added 05/2024.
+  profile_prefs->ClearPref(kSyncCachedTrustedVaultAutoUpgradeDebugInfo);
 
   // Please don't delete the following line. It is used by PRESUBMIT.py.
   // END_MIGRATE_OBSOLETE_PROFILE_PREFS

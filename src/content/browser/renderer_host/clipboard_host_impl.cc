@@ -27,12 +27,10 @@
 #include "content/browser/renderer_host/data_transfer_util.h"
 #include "content/browser/renderer_host/render_frame_host_delegate.h"
 #include "content/browser/storage_partition_impl.h"
-#include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/child_process_host.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
-#include "content/public/browser/web_contents.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/drop_data.h"
 #include "ipc/ipc_message.h"
@@ -288,24 +286,6 @@ void ClipboardHostImpl::IsFormatAvailable(blink::mojom::ClipboardFormat format,
 
 void ClipboardHostImpl::ReadText(ui::ClipboardBuffer clipboard_buffer,
                                  ReadTextCallback callback) {
-  LOG(INFO) << "[ClipboardHostImpl] ReadText called";
-
-  // Get WebContents
-  content::WebContents* web_contents =
-      content::WebContents::FromRenderFrameHost(&render_frame_host());
-
-  if (web_contents) {
-    content::WebContentsImpl* web_contents_impl =
-        static_cast<content::WebContentsImpl*>(web_contents);
-
-    // Check if paste should be blocked
-    if (web_contents_impl->ShouldBlockCopyPaste("paste")) {
-      LOG(INFO) << "[ClipboardHostImpl] Blocking clipboard read due to paste restrictions";
-      std::move(callback).Run(std::u16string());
-      return;
-    }
-  }
-
   if (!IsRendererPasteAllowed(clipboard_buffer, render_frame_host())) {
     std::move(callback).Run(std::u16string());
     return;
@@ -332,24 +312,6 @@ void ClipboardHostImpl::ReadText(ui::ClipboardBuffer clipboard_buffer,
 
 void ClipboardHostImpl::ReadHtml(ui::ClipboardBuffer clipboard_buffer,
                                  ReadHtmlCallback callback) {
-  LOG(INFO) << "[ClipboardHostImpl] ReadHtml called";
-
-  // Get WebContents and check if paste should be blocked
-  content::WebContents* web_contents =
-      content::WebContents::FromRenderFrameHost(&render_frame_host());
-
-  if (web_contents) {
-    content::WebContentsImpl* web_contents_impl =
-        static_cast<content::WebContentsImpl*>(web_contents);
-
-    // Check if paste should be blocked
-    if (web_contents_impl->ShouldBlockCopyPaste("paste")) {
-      LOG(INFO) << "[ClipboardHostImpl] Blocking HTML clipboard read due to paste restrictions";
-      std::move(callback).Run(std::u16string(), GURL(), 0, 0);
-      return;
-    }
-  }
-
   if (!IsRendererPasteAllowed(clipboard_buffer, render_frame_host())) {
     std::move(callback).Run(std::u16string(), GURL(), 0, 0);
     return;
@@ -384,24 +346,6 @@ void ClipboardHostImpl::ReadHtml(ui::ClipboardBuffer clipboard_buffer,
 
 void ClipboardHostImpl::ReadSvg(ui::ClipboardBuffer clipboard_buffer,
                                 ReadSvgCallback callback) {
-  LOG(INFO) << "[ClipboardHostImpl] ReadSvg called";
-
-  // Get WebContents and check if paste should be blocked
-  content::WebContents* web_contents =
-      content::WebContents::FromRenderFrameHost(&render_frame_host());
-
-  if (web_contents) {
-    content::WebContentsImpl* web_contents_impl =
-        static_cast<content::WebContentsImpl*>(web_contents);
-
-    // Check if paste should be blocked
-    if (web_contents_impl->ShouldBlockCopyPaste("paste")) {
-      LOG(INFO) << "[ClipboardHostImpl] Blocking SVG clipboard read due to paste restrictions";
-      std::move(callback).Run(std::u16string());
-      return;
-    }
-  }
-
   if (!IsRendererPasteAllowed(clipboard_buffer, render_frame_host())) {
     std::move(callback).Run(std::u16string());
     return;
@@ -428,24 +372,6 @@ void ClipboardHostImpl::ReadSvg(ui::ClipboardBuffer clipboard_buffer,
 
 void ClipboardHostImpl::ReadRtf(ui::ClipboardBuffer clipboard_buffer,
                                 ReadRtfCallback callback) {
-  LOG(INFO) << "[ClipboardHostImpl] ReadRtf called";
-
-  // Get WebContents and check if paste should be blocked
-  content::WebContents* web_contents =
-      content::WebContents::FromRenderFrameHost(&render_frame_host());
-
-  if (web_contents) {
-    content::WebContentsImpl* web_contents_impl =
-        static_cast<content::WebContentsImpl*>(web_contents);
-
-    // Check if paste should be blocked
-    if (web_contents_impl->ShouldBlockCopyPaste("paste")) {
-      LOG(INFO) << "[ClipboardHostImpl] Blocking RTF clipboard read due to paste restrictions";
-      std::move(callback).Run(std::string());
-      return;
-    }
-  }
-
   if (!IsRendererPasteAllowed(clipboard_buffer, render_frame_host())) {
     std::move(callback).Run(std::string());
     return;
@@ -473,24 +399,6 @@ void ClipboardHostImpl::ReadRtf(ui::ClipboardBuffer clipboard_buffer,
 
 void ClipboardHostImpl::ReadPng(ui::ClipboardBuffer clipboard_buffer,
                                 ReadPngCallback callback) {
-  LOG(INFO) << "[ClipboardHostImpl] ReadPng called";
-
-  // Get WebContents and check if paste should be blocked
-  content::WebContents* web_contents =
-      content::WebContents::FromRenderFrameHost(&render_frame_host());
-
-  if (web_contents) {
-    content::WebContentsImpl* web_contents_impl =
-        static_cast<content::WebContentsImpl*>(web_contents);
-
-    // Check if paste should be blocked
-    if (web_contents_impl->ShouldBlockCopyPaste("paste")) {
-      LOG(INFO) << "[ClipboardHostImpl] Blocking PNG clipboard read due to paste restrictions";
-      std::move(callback).Run(mojo_base::BigBuffer());
-      return;
-    }
-  }
-
   if (!IsRendererPasteAllowed(clipboard_buffer, render_frame_host())) {
     std::move(callback).Run(mojo_base::BigBuffer());
     return;
@@ -530,26 +438,7 @@ void ClipboardHostImpl::OnReadPng(ui::ClipboardBuffer clipboard_buffer,
 
 void ClipboardHostImpl::ReadFiles(ui::ClipboardBuffer clipboard_buffer,
                                   ReadFilesCallback callback) {
-  LOG(INFO) << "[ClipboardHostImpl] ReadFiles called";
-
   blink::mojom::ClipboardFilesPtr result = blink::mojom::ClipboardFiles::New();
-  
-  // Get WebContents and check if paste should be blocked
-  content::WebContents* web_contents =
-      content::WebContents::FromRenderFrameHost(&render_frame_host());
-
-  if (web_contents) {
-    content::WebContentsImpl* web_contents_impl =
-        static_cast<content::WebContentsImpl*>(web_contents);
-
-    // Check if paste should be blocked
-    if (web_contents_impl->ShouldBlockCopyPaste("paste")) {
-      LOG(INFO) << "[ClipboardHostImpl] Blocking file clipboard read due to paste restrictions";
-      std::move(callback).Run(std::move(result));
-      return;
-    }
-  }
-
   if (!IsRendererPasteAllowed(clipboard_buffer, render_frame_host())) {
     std::move(callback).Run(std::move(result));
     return;
@@ -626,24 +515,6 @@ void ClipboardHostImpl::ReadFiles(ui::ClipboardBuffer clipboard_buffer,
 void ClipboardHostImpl::ReadCustomData(ui::ClipboardBuffer clipboard_buffer,
                                        const std::u16string& type,
                                        ReadCustomDataCallback callback) {
-  LOG(INFO) << "[ClipboardHostImpl] ReadCustomData called";
-
-  // Get WebContents and check if paste should be blocked
-  content::WebContents* web_contents =
-      content::WebContents::FromRenderFrameHost(&render_frame_host());
-
-  if (web_contents) {
-    content::WebContentsImpl* web_contents_impl =
-        static_cast<content::WebContentsImpl*>(web_contents);
-
-    // Check if paste should be blocked
-    if (web_contents_impl->ShouldBlockCopyPaste("paste")) {
-      LOG(INFO) << "[ClipboardHostImpl] Blocking custom data clipboard read due to paste restrictions";
-      std::move(callback).Run(std::u16string());
-      return;
-    }
-  }
-
   if (!IsRendererPasteAllowed(clipboard_buffer, render_frame_host())) {
     std::move(callback).Run(std::u16string());
     return;
@@ -784,29 +655,8 @@ void ClipboardHostImpl::CommitWrite() {
 bool ClipboardHostImpl::IsRendererPasteAllowed(
     ui::ClipboardBuffer clipboard_buffer,
     RenderFrameHost& render_frame_host) {
-  LOG(INFO) << "[ClipboardHostImpl] IsRendererPasteAllowed called for URL: "
-            << render_frame_host.GetLastCommittedURL().spec();
-  
-  // First check if paste is allowed based on web contents
-  content::WebContents* web_contents =
-      content::WebContents::FromRenderFrameHost(&render_frame_host);
-  if (web_contents) {
-    content::WebContentsImpl* web_contents_impl =
-        static_cast<content::WebContentsImpl*>(web_contents);
-    if (web_contents_impl->ShouldBlockCopyPaste("paste")) {
-      LOG(WARNING) << "[ClipboardHostImpl] Paste BLOCKED by web contents for URL: " 
-                   << render_frame_host.GetLastCommittedURL().spec();
-      web_contents_impl->ShowCopyPasteBlockedSnackbar("paste");
-      return false;
-    }
-  }
-  
-  // If web contents doesn't block paste, check if it's allowed based on the clipboard policy
-  bool policy_allowed = GetContentClient()->browser()->IsClipboardPasteAllowed(&render_frame_host);
-  LOG(INFO) << "[ClipboardHostImpl] Clipboard policy allows paste: " << policy_allowed
-            << " for URL: " << render_frame_host.GetLastCommittedURL().spec();
-  
-  return policy_allowed;
+  return GetContentClient()->browser()->IsClipboardPasteAllowed(
+      &render_frame_host);
 }
 
 void ClipboardHostImpl::ReadAvailableCustomAndStandardFormats(
@@ -821,28 +671,10 @@ void ClipboardHostImpl::ReadAvailableCustomAndStandardFormats(
 void ClipboardHostImpl::ReadUnsanitizedCustomFormat(
     const std::u16string& format,
     ReadUnsanitizedCustomFormatCallback callback) {
-  LOG(INFO) << "[ClipboardHostImpl] ReadUnsanitizedCustomFormat called";
-
-  // Get WebContents and check if paste should be blocked
-  content::WebContents* web_contents =
-      content::WebContents::FromRenderFrameHost(&render_frame_host());
-
-  if (web_contents) {
-    content::WebContentsImpl* web_contents_impl =
-        static_cast<content::WebContentsImpl*>(web_contents);
-
-    // Check if paste should be blocked
-    if (web_contents_impl->ShouldBlockCopyPaste("paste")) {
-      LOG(INFO) << "[ClipboardHostImpl] Blocking unsanitized custom format clipboard read due to paste restrictions";
-      return;  // Don't call callback when blocked
-    }
-  }
-
   // `kMaxFormatSize` includes the null terminator as well so we check if
   // the `format` size is strictly less than `kMaxFormatSize` or not.
-  if (format.length() >= blink::mojom::ClipboardHost::kMaxFormatSize) {
+  if (format.length() >= blink::mojom::ClipboardHost::kMaxFormatSize)
     return;
-  }
 
   // Extract the custom format names and then query the web custom format
   // corresponding to the MIME type.
@@ -852,20 +684,17 @@ void ClipboardHostImpl::ReadUnsanitizedCustomFormat(
       ui::Clipboard::GetForCurrentThread()->ExtractCustomPlatformNames(
           ui::ClipboardBuffer::kCopyPaste, data_endpoint.get());
   std::string web_custom_format_string;
-  if (custom_format_names.find(format_name) != custom_format_names.end()) {
+  if (custom_format_names.find(format_name) != custom_format_names.end())
     web_custom_format_string = custom_format_names[format_name];
-  }
-  if (web_custom_format_string.empty()) {
+  if (web_custom_format_string.empty())
     return;
-  }
 
   std::string result;
   ui::Clipboard::GetForCurrentThread()->ReadData(
       ui::ClipboardFormatType::GetType(web_custom_format_string),
       data_endpoint.get(), &result);
-  if (result.size() >= blink::mojom::ClipboardHost::kMaxDataSize) {
+  if (result.size() >= blink::mojom::ClipboardHost::kMaxDataSize)
     return;
-  }
   base::span<const uint8_t> span = base::as_bytes(base::make_span(result));
   mojo_base::BigBuffer buffer = mojo_base::BigBuffer(span);
   std::move(callback).Run(std::move(buffer));
@@ -875,12 +704,10 @@ void ClipboardHostImpl::WriteUnsanitizedCustomFormat(
     const std::u16string& format,
     mojo_base::BigBuffer data) {
   // `kMaxFormatSize` & `kMaxDataSize` includes the null terminator.
-  if (format.length() >= blink::mojom::ClipboardHost::kMaxFormatSize) {
+  if (format.length() >= blink::mojom::ClipboardHost::kMaxFormatSize)
     return;
-  }
-  if (data.size() >= blink::mojom::ClipboardHost::kMaxDataSize) {
+  if (data.size() >= blink::mojom::ClipboardHost::kMaxDataSize)
     return;
-  }
 
   // The `format` is mapped to user agent defined web custom format before
   // writing to the clipboard. This happens in

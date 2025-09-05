@@ -8,11 +8,14 @@ component("saml_verifier") {
   sources = [
     "saml_verifier.cc",
     "saml_verifier.h",
+    "renderer_context_menu/copy_paste_blocked_snackbar_bridge.cc",
+    "renderer_context_menu/copy_paste_blocked_snackbar_bridge.h",
   ]
 
   deps = [
     "//base",
     "//components/prefs",
+    "//components/domain_block_checker",
     "//content/public/browser",
     "//third_party/libxml:xml_reader",    # Chromium's safe XML reader
     "//third_party/libxml:libxml_utils",  # Chromium libxml utilities
@@ -20,6 +23,7 @@ component("saml_verifier") {
     "//crypto",                          # Chromium's crypto library
     "//third_party/boringssl",          # For signature verification
     "//net",
+    # "//ui/android",
     "//services/network/public/cpp",
   ]
 

@@ -744,7 +744,7 @@ if (current_toolchain == default_toolchain) {
       "//third_party/jni_zero:jni_zero_java",
       "//third_party/kotlin_stdlib:kotlin_stdlib_java",
       "//third_party/metrics_proto:metrics_proto_java",
-      "//third_party/android_deps:sentry_java",
+      # "//third_party/android_deps:sentry_java",
       "//ui/accessibility:ax_base_java",
       "//ui/android:ui_java",
       "//ui/android:ui_no_recycler_view_java",
@@ -754,7 +754,6 @@ if (current_toolchain == default_toolchain) {
       "//url:gurl_java",
       "//url/mojom:url_mojom_gurl_java",
       "//url/mojom:url_mojom_origin_java",
-      
     ]
 
     deps += feed_deps

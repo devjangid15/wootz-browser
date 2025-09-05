@@ -106,7 +106,7 @@ public class FirstRunActivity extends FirstRunActivityBase implements FirstRunPa
     @Nullable private static FirstRunActivityObserver sObserver;
 
     private boolean mPostNativeAndPolicyPagesCreated;
-    public static String ext_utm_source = "";
+    // public static String ext_utm_source = "";
 
     private static final String TAG = "FirstRunActivity";
 
@@ -413,40 +413,39 @@ public class FirstRunActivity extends FirstRunActivityBase implements FirstRunPa
     @Override
     public void onStart() {
         super.onStart();
-        
-        // // // Get the latest Branch deep link data in onStart
-        Branch.sessionBuilder(this)
-            .withCallback(new Branch.BranchReferralInitListener() {
-                @Override
-                public void onInitFinished(JSONObject referringParams, BranchError error) {
-                    if (error == null && referringParams != null) {
-                        Log.e(TAG, "onFirstRunActivityStart: Branch session data: " + referringParams.toString());
-                        try {
-                            android.content.SharedPreferences prefs = getSharedPreferences("branch_data", MODE_PRIVATE);
-                            android.content.SharedPreferences.Editor editor = prefs.edit();
+        // // // // Get the latest Branch deep link data in onStart
+        // Branch.sessionBuilder(this)
+        //     .withCallback(new Branch.BranchReferralInitListener() {
+        //         @Override
+        //         public void onInitFinished(JSONObject referringParams, BranchError error) {
+        //             if (error == null && referringParams != null) {
+        //                 Log.e(TAG, "onFirstRunActivityStart: Branch session data: " + referringParams.toString());
+        //                 try {
+        //                     android.content.SharedPreferences prefs = getSharedPreferences("branch_data", MODE_PRIVATE);
+        //                     android.content.SharedPreferences.Editor editor = prefs.edit();
 
-                            // Store the full JSON for reference
-                            editor.putString("branch_data_json", referringParams.toString());
+        //                     // Store the full JSON for reference
+        //                     editor.putString("branch_data_json", referringParams.toString());
 
-                            // Store individual parameters
-                            if (referringParams.has("~channel")) {
-                                String utmSource = referringParams.optString("~campaign", "");
-                                editor.putString("utm_source_wootzapp", utmSource);
-                                Log.e(TAG, "Stored utm_source_wootzapp: " + utmSource);
-                            }
-                            editor.apply();
-                            Log.e(TAG, "Branch data stored in SharedPreferences");
-                        } catch (Exception e) {
-                            Log.e(TAG, "Error storing branch data: " + e.getMessage(), e);
-                        }
-                    } else if (error != null) {
-                        Log.e(TAG, "onFirstRunActivityStart: Branch initialization error: " + error.getMessage());
-                    }
-                }
-            })
-            .withData(getIntent().getData())
-            .init();
-    
+        //                     // Store individual parameters
+        //                     if (referringParams.has("~channel")) {
+        //                         String utmSource = referringParams.optString("~campaign", "");
+        //                         editor.putString("utm_source_wootzapp", utmSource);
+        //                         Log.e(TAG, "Stored utm_source_wootzapp: " + utmSource);
+        //                     }
+        //                     editor.apply();
+        //                     Log.e(TAG, "Branch data stored in SharedPreferences");
+        //                 } catch (Exception e) {
+        //                     Log.e(TAG, "Error storing branch data: " + e.getMessage(), e);
+        //                 }
+        //             } else if (error != null) {
+        //                 Log.e(TAG, "onFirstRunActivityStart: Branch initialization error: " + error.getMessage());
+        //             }
+        //         }
+        //     })
+        //     .withData(getIntent().getData())
+        //     .init();
+
         // Multiple active FREs does not really make sense for the user. Once one is complete, the
         // others would become out of date. This approach turns out to be quite tricky to enforce
         // completely with just Android configuration, because of all the different ways the FRE
@@ -548,16 +547,16 @@ public class FirstRunActivity extends FirstRunActivityBase implements FirstRunPa
     private void launchPendingIntentAndFinish() {
         Log.e(TAG, "launchPendingIntentAndFinish called"); 
         if (!sendFirstRunCompletePendingIntent()) {
-            Log.e(TAG, "No pending intent to launch, launching main activity");
+            // Log.e(TAG, "No pending intent to launch, launching main activity");
 
-            try {
-                Intent mainIntent = new Intent(this, ChromeTabbedActivity.class);
-                mainIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
-                startActivity(mainIntent);
-                Log.e(TAG, "Started ChromeTabbedActivity");
-            } catch (Exception e) {
-                Log.e(TAG, "Error launching main activity", e);
-            }
+            // try {
+            //     Intent mainIntent = new Intent(this, ChromeTabbedActivity.class);
+            //     mainIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+            //     startActivity(mainIntent);
+            //     Log.e(TAG, "Started ChromeTabbedActivity");
+            // } catch (Exception e) {
+            //     Log.e(TAG, "Error launching main activity", e);
+            // }
             finish();
         } else {
             ApplicationStatus.registerStateListenerForAllActivities(

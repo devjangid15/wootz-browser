@@ -23,9 +23,9 @@
 #include "base/containers/flat_set.h"
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
+#include "base/json/json_writer.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
-#include "base/json/json_writer.h"
 #include "base/lazy_instance.h"
 #include "base/location.h"
 #include "base/logging.h"
@@ -50,11 +50,8 @@
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
-#include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/renderer_context_menu/copy_paste_blocked_snackbar_bridge.h"
 #include "components/attribution_reporting/features.h"
 #include "components/download/public/common/download_stats.h"
-#include "components/prefs/pref_service.h"
 #include "components/url_formatter/url_formatter.h"
 #include "components/viz/common/features.h"
 #include "components/viz/host/host_frame_sink_manager.h"
@@ -244,6 +241,11 @@
 #include "base/allocator/partition_allocator/src/partition_alloc/starscan/pcscan.h"
 #include "content/browser/starscan_load_observer.h"
 #endif
+
+#if !BUILDFLAG(IS_ANDROID)
+#include "content/public/browser/document_picture_in_picture_window_controller.h"
+#include "content/public/browser/picture_in_picture_window_controller.h"
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 namespace content {
 
@@ -3563,6 +3565,10 @@ void WebContentsImpl::Init(const WebContents::CreateParams& params,
 
   if (params.picture_in_picture_options.has_value()) {
     picture_in_picture_options_ = params.picture_in_picture_options;
+    if (GetOpener()) {
+      picture_in_picture_opener_ =
+          FromRenderFrameHostImpl(GetOpener())->GetWeakPtr();
+    }
   }
 
   // This is set before initializing the render manager since
@@ -3845,66 +3851,6 @@ void WebContentsImpl::RenderWidgetWasResized(
 
 KeyboardEventProcessingResult WebContentsImpl::PreHandleKeyboardEvent(
     const NativeWebKeyboardEvent& event) {
-  LOG(INFO) << "[RamPrasad][WebContents] PreHandleKeyboardEvent";
-
-  LOG(INFO) << "[RamPrasad][WebContents] PreHandleKeyboardEvent Details:"
-            << " Type=" << static_cast<int>(event.GetType())
-            << " Modifiers=" << event.GetModifiers()
-            << " KeyCode=" << event.windows_key_code
-            << " IsSystemKey=" << event.is_system_key << " Text=" << event.text;
-
-  LOG(INFO) << "[RamPrasad][WebContents] ShouldBlockCopyPaste: "
-            << ShouldBlockCopyPaste("paste");
-
-  // Check for Ctrl+V
-  if ((event.GetModifiers() & blink::WebInputEvent::kControlKey) &&
-      event.windows_key_code == 'V') {
-    LOG(INFO) << "[RamPrasad][WebContents] Ctrl+V event";
-    if (ShouldBlockCopyPaste("paste")) {
-      LOG(INFO) << "[RamPrasad][WebContents] Blocking paste event";
-      ShowCopyPasteBlockedSnackbar("Paste");
-      return KeyboardEventProcessingResult::HANDLED;
-    }
-  }
-
-  // Check for Command+V
-  if ((event.GetModifiers() & blink::WebInputEvent::kMetaKey) &&
-      event.windows_key_code == 'V') {
-    LOG(INFO) << "[RamPrasad][WebContents] Command+V event";
-    if (ShouldBlockCopyPaste("paste")) {
-      LOG(INFO) << "[RamPrasad][WebContents] Blocking paste event";
-      ShowCopyPasteBlockedSnackbar("Paste");
-      return KeyboardEventProcessingResult::HANDLED;
-    }
-  }
-
-  // Note: Removed overly broad IME and system paste detection that was
-  // incorrectly catching regular typing events. Paste blocking is still
-  // handled through proper clipboard API interception and Ctrl+V/Cmd+V
-  // detection.
-
-  // Check for Ctrl+C
-  if (event.GetModifiers() & blink::WebInputEvent::kControlKey &&
-      event.windows_key_code == 'C') {
-    LOG(INFO) << "[RamPrasad][WebContents] Ctrl+C event";
-    if (ShouldBlockCopyPaste("copy")) {
-      LOG(INFO) << "[RamPrasad][WebContents] Blocking copy event";
-      ShowCopyPasteBlockedSnackbar("Copy");
-      return KeyboardEventProcessingResult::HANDLED;
-    }
-  }
-
-  // Check for Command+C
-  if (event.GetModifiers() & blink::WebInputEvent::kMetaKey &&
-      event.windows_key_code == 'C') {
-    LOG(INFO) << "[RamPrasad][WebContents] Command+C event";
-    if (ShouldBlockCopyPaste("copy")) {
-      LOG(INFO) << "[RamPrasad][WebContents] Blocking copy event";
-      ShowCopyPasteBlockedSnackbar("Copy");
-      return KeyboardEventProcessingResult::HANDLED;
-    }
-  }
-
   OPTIONAL_TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("content.verbose"),
                         "WebContentsImpl::PreHandleKeyboardEvent");
   auto* outermost_contents = GetOutermostWebContents();
@@ -5261,12 +5207,24 @@ void WebContentsImpl::AXTreeIDForMainFrameHasChanged() {
       &WebContentsObserver::AXTreeIDForMainFrameHasChanged);
 }
 
-void WebContentsImpl::AccessibilityEventReceived(
-    const ui::AXUpdatesAndEvents& details) {
+void WebContentsImpl::ProcessAccessibilityUpdatesAndEvents(
+    ui::AXUpdatesAndEvents& details) {
   OPTIONAL_TRACE_EVENT0("content",
                         "WebContentsImpl::AccessibilityEventReceived");
+
+  // First, supply the data to consumers that won't change it.
   observers_.NotifyObservers(&WebContentsObserver::AccessibilityEventReceived,
                              details);
+
+  // Next, supply the data to consumers that may change it or who need to avoid
+  // extra copying. Note that this also includes those who will pass to mojo
+  // pipes not taking const.
+  // TODO(accessibility): when we add multiple consumers, we will need some kind
+  // of intermediate class to ensure each consumer gets an unmutated copy of the
+  // data, but also minimize copying.
+  if (delegate_) {
+    delegate_->ProcessAccessibilityUpdatesAndEvents(details);
+  }
 }
 
 void WebContentsImpl::AccessibilityLocationChangesReceived(
@@ -5692,14 +5650,6 @@ void WebContentsImpl::Redo() {
 
 void WebContentsImpl::Cut() {
   OPTIONAL_TRACE_EVENT0("content", "WebContentsImpl::Cut");
-
-  if (ShouldBlockCopyPaste("cut")) {
-    LOG(INFO)
-        << "[CopyPasteBlocker] WebContents Cut operation blocked for domain: "
-        << GetLastCommittedURL().host();
-    return;
-  }
-
   auto* input_handler = GetFocusedFrameWidgetInputHandler();
   if (!input_handler) {
     return;
@@ -5710,153 +5660,8 @@ void WebContentsImpl::Cut() {
   RecordAction(base::UserMetricsAction("Cut"));
 }
 
-void WebContentsImpl::ShowCopyPasteBlockedSnackbar(const std::string& action) {
-  LOG(INFO) << "[CopyPasteBlocker] Showing native Snackbar for blocked "
-            << action;
-
-  // Get current domain
-  GURL url = GetLastCommittedURL();
-  std::string domain = url.host();
-
-  // Create snackbar message
-  std::string snackbar_message = base::StringPrintf(
-      "Copy-Paste blocked on %s by your organization.", domain.c_str());
-
-  LOG(INFO) << "[CopyPasteBlocker] Snackbar message: " << snackbar_message;
-
-  // Use the native Android Snackbar bridge
-  CopyPasteBlockedSnackbarBridge::ShowSnackbar(this, snackbar_message);
-
-  LOG(INFO) << "[CopyPasteBlocker] Native Snackbar called";
-}
-
-void WebContentsImpl::HideToast() {
-  // if (auto* browser = chrome::FindBrowserWithWebContents(this)) {
-  //   browser->window()->SetStatusBubbleText(std::u16string());
-  // }
-}
-
-bool WebContentsImpl::ShouldBlockCopyPaste(const std::string& operation_type) {
-  LOG(INFO)
-      << "[RamPrasad][WebContents] Checking if copy-paste should be blocked";
-
-  Profile* profile = Profile::FromBrowserContext(GetBrowserContext());
-  if (!profile) {
-    LOG(INFO) << "[RamPrasad][WebContents] No profile found, not blocking";
-    return false;
-  }
-
-  PrefService* prefs = profile->GetPrefs();
-  if (!prefs) {
-    LOG(INFO) << "[RamPrasad][WebContents] No prefs found, not blocking";
-    return false;
-  }
-
-  // Check if blocking is enabled globally
-  bool enabled =
-      prefs->GetBoolean(copy_paste_blocker::prefs::kCopyPasteBlockingEnabled);
-  LOG(INFO) << "[RamPrasad][WebContents] Copy-paste blocking enabled: "
-            << enabled;
-  if (!enabled) {
-    LOG(INFO) << "[RamPrasad][WebContents] Blocking disabled globally";
-    return false;
-  }
-
-  // // Check if this specific operation type is blocked
-  // const base::Value::Dict& block_types =
-  // prefs->GetDict(copy_paste_blocker::prefs::kCopyPasteBlockingTypes); bool
-  // block_operation = block_types.FindBool(operation_type).value_or(true); if
-  // (!block_operation) {
-  //   LOG(INFO) << "[RamPrasad][WebContents] Operation " << operation_type << "
-  //   not blocked by type"; return false;
-  // }
-
-  // // Get blocking mode
-  // std::string mode =
-  // prefs->GetString(copy_paste_blocker::prefs::kCopyPasteBlockingMode);
-  // LOG(INFO) << "[RamPrasad][WebContents] Blocking mode: " << mode;
-
-  // // If global mode, block everywhere
-  // if (mode == "global") {
-  //   LOG(INFO) << "[RamPrasad][WebContents] Global mode: blocking everywhere";
-  //   return true;
-  // }
-
-  // Get current URL's domain
-  GURL url = GetLastCommittedURL();
-  std::string current_domain = url.host();
-
-  // Get domain list
-  const base::Value::List& domains =
-      prefs->GetList(copy_paste_blocker::prefs::kCopyPasteBlockingDomains);
-
-  // Check if domain is in list
-  bool domain_in_list = false;
-  for (const auto& domain : domains) {
-    if (domain.is_string() && domain.GetString() == current_domain) {
-      domain_in_list = true;
-      break;
-    }
-  }
-
-  // If no exact match, check subdomains
-  if (!domain_in_list) {
-    std::string domain_to_check = current_domain;
-    size_t dot_pos = domain_to_check.find('.');
-
-    while (dot_pos != std::string::npos) {
-      std::string parent_domain = domain_to_check.substr(dot_pos + 1);
-
-      // Check if this parent domain is in the blocked list
-      for (const auto& domain : domains) {
-        if (domain.is_string() && domain.GetString() == parent_domain) {
-          domain_in_list = true;
-          break;
-        }
-      }
-
-      if (domain_in_list) {
-        break;
-      }
-
-      // Move to the next level up in the domain hierarchy
-      domain_to_check = parent_domain;
-      dot_pos = domain_to_check.find('.');
-    }
-  }
-
-  // // Apply whitelist/blacklist logic
-  // if (mode == "whitelist") {
-  //   // In whitelist mode, block if domain is NOT in list
-  //   LOG(INFO) << "[RamPrasad][WebContents] Whitelist mode: blocking = " <<
-  //   !domain_in_list; return !domain_in_list;
-  // } else if (mode == "blacklist") {
-  //   // In blacklist mode, block if domain IS in list
-  //   LOG(INFO) << "[RamPrasad][WebContents] Blacklist mode: blocking = " <<
-  //   domain_in_list; return domain_in_list;
-  // }
-
-  // LOG(INFO) << "[RamPrasad][WebContents] Global mode: blocking everywhere";
-  // return true;
-
-  if (domain_in_list) {
-    return true;  // Block if domain is in the list
-  }
-  LOG(INFO) << "[RamPrasad][WebContents] Domain is NOT in the list";
-  return false;  // Allow if domain is not in the list
-}
-
 void WebContentsImpl::Copy() {
   OPTIONAL_TRACE_EVENT0("content", "WebContentsImpl::Copy");
-  if (ShouldBlockCopyPaste("copy")) {
-    LOG(INFO)
-        << "[CopyPasteBlocker] WebContents Copy operation blocked for domain: "
-        << GetLastCommittedURL().host();
-    ShowCopyPasteBlockedSnackbar("copy");
-    return;
-  }
-
-  LOG(INFO) << "[RamPrasad][WebContents] Copy operation allowed";
   auto* input_handler = GetFocusedFrameWidgetInputHandler();
   if (!input_handler) {
     return;
@@ -5897,15 +5702,6 @@ void WebContentsImpl::CenterSelection() {
 
 void WebContentsImpl::Paste() {
   OPTIONAL_TRACE_EVENT0("content", "WebContentsImpl::Paste");
-
-  if (ShouldBlockCopyPaste("paste")) {
-    LOG(INFO)
-        << "[CopyPasteBlocker] WebContents Paste operation blocked for domain: "
-        << GetLastCommittedURL().host();
-    ShowCopyPasteBlockedSnackbar("paste");
-    return;
-  }
-
   auto* input_handler = GetFocusedFrameWidgetInputHandler();
   if (!input_handler) {
     return;
@@ -5919,13 +5715,6 @@ void WebContentsImpl::Paste() {
 
 void WebContentsImpl::PasteAndMatchStyle() {
   OPTIONAL_TRACE_EVENT0("content", "WebContentsImpl::PasteAndMatchStyle");
-  if (ShouldBlockCopyPaste("pasteAndMatchStyle")) {
-    LOG(INFO) << "[CopyPasteBlocker] WebContents PasteAndMatchStyle operation "
-                 "blocked for domain: "
-              << GetLastCommittedURL().host();
-    return;
-  }
-
   auto* input_handler = GetFocusedFrameWidgetInputHandler();
   if (!input_handler) {
     return;
@@ -5951,13 +5740,6 @@ void WebContentsImpl::Delete() {
 
 void WebContentsImpl::SelectAll() {
   OPTIONAL_TRACE_EVENT0("content", "WebContentsImpl::SelectAll");
-  if (ShouldBlockCopyPaste("selectAll")) {
-    LOG(INFO) << "[CopyPasteBlocker] WebContents SelectAll operation blocked "
-                 "for domain: "
-              << GetLastCommittedURL().host();
-    return;
-  }
-
   auto* input_handler = GetFocusedFrameWidgetInputHandler();
   if (!input_handler) {
     return;
@@ -6723,168 +6505,168 @@ void WebContentsImpl::DidRedirectNavigation(
 }
 
 void WebContentsImpl::ReadyToCommitNavigation(
-    NavigationHandle* navigation_handle) {
-  TRACE_EVENT1("navigation", "WebContentsImpl::ReadyToCommitNavigation",
-               "navigation_handle", navigation_handle);
+  NavigationHandle* navigation_handle) {
+TRACE_EVENT1("navigation", "WebContentsImpl::ReadyToCommitNavigation",
+             "navigation_handle", navigation_handle);
 
-  // Cross-document navigation of the top-level frame resets the capture
-  // handle config. Using IsInPrimaryMainFrame is valid here since the browser
-  // caches this state for the active main frame only.
-  if (!navigation_handle->IsSameDocument() &&
-      navigation_handle->IsInPrimaryMainFrame()) {
-    SetCaptureHandleConfig(blink::mojom::CaptureHandleConfig::New());
-  }
+// Cross-document navigation of the top-level frame resets the capture
+// handle config. Using IsInPrimaryMainFrame is valid here since the browser
+// caches this state for the active main frame only.
+if (!navigation_handle->IsSameDocument() &&
+    navigation_handle->IsInPrimaryMainFrame()) {
+  SetCaptureHandleConfig(blink::mojom::CaptureHandleConfig::New());
+}
 
-  observers_.NotifyObservers(&WebContentsObserver::ReadyToCommitNavigation,
-                             navigation_handle);
+observers_.NotifyObservers(&WebContentsObserver::ReadyToCommitNavigation,
+                           navigation_handle);
 
-  // If any domains are blocked from accessing 3D APIs because they may
-  // have caused the GPU to reset recently, unblock them here if the user
-  // initiated this navigation. This implies that the user was involved in
-  // the decision to navigate, so there's no concern about
-  // denial-of-service issues. Want to do this as early as
-  // possible to avoid race conditions with pages attempting to access
-  // WebGL early on.
-  //
-  // TODO(crbug.com/41257523): currently navigations initiated by the browser
-  // (reload button, reload menu option, pressing return in the Omnibox)
-  // return false from HasUserGesture(). If or when that is addressed,
-  // remove the check for IsRendererInitiated() below.
-  //
-  // TODO(crbug.com/40571460): HasUserGesture comes from the renderer
-  // process and isn't validated. Until it is, don't trust it.
-  if (!navigation_handle->IsRendererInitiated()) {
-    GpuDataManagerImpl::GetInstance()->UnblockDomainFrom3DAPIs(
-        navigation_handle->GetURL());
-  }
+// If any domains are blocked from accessing 3D APIs because they may
+// have caused the GPU to reset recently, unblock them here if the user
+// initiated this navigation. This implies that the user was involved in
+// the decision to navigate, so there's no concern about
+// denial-of-service issues. Want to do this as early as
+// possible to avoid race conditions with pages attempting to access
+// WebGL early on.
+//
+// TODO(crbug.com/41257523): currently navigations initiated by the browser
+// (reload button, reload menu option, pressing return in the Omnibox)
+// return false from HasUserGesture(). If or when that is addressed,
+// remove the check for IsRendererInitiated() below.
+//
+// TODO(crbug.com/40571460): HasUserGesture comes from the renderer
+// process and isn't validated. Until it is, don't trust it.
+if (!navigation_handle->IsRendererInitiated()) {
+  GpuDataManagerImpl::GetInstance()->UnblockDomainFrom3DAPIs(
+      navigation_handle->GetURL());
+}
 
-  if (navigation_handle->IsSameDocument()) {
-    return;
-  }
+if (navigation_handle->IsSameDocument()) {
+  return;
+}
 
-  // SSLInfo is not needed on subframe navigations since the main-frame
-  // certificate is the only one that can be inspected (using the info
-  // bubble) without refreshing the page with DevTools open.
-  // We don't call DidStartResourceResponse on net errors, since that results on
-  // existing cert exceptions being revoked, which leads to weird behavior with
-  // committed interstitials or while offline. We only need the error check for
-  // the main frame case.
-  if (navigation_handle->IsInMainFrame() &&
-      navigation_handle->GetNetErrorCode() == net::OK) {
-    LOG(INFO) << "Processing TLS data for URL: "
-              << navigation_handle->GetURL().spec();
+// SSLInfo is not needed on subframe navigations since the main-frame
+// certificate is the only one that can be inspected (using the info
+// bubble) without refreshing the page with DevTools open.
+// We don't call DidStartResourceResponse on net errors, since that results on
+// existing cert exceptions being revoked, which leads to weird behavior with
+// committed interstitials or while offline. We only need the error check for
+// the main frame case.
+if (navigation_handle->IsInMainFrame() &&
+    navigation_handle->GetNetErrorCode() == net::OK) {
+  LOG(INFO) << "Processing TLS data for URL: "
+            << navigation_handle->GetURL().spec();
 
-    if (navigation_handle->GetSSLInfo().has_value()) {
-      const net::SSLInfo& ssl_info = *navigation_handle->GetSSLInfo();
-      LOG(INFO) << "SSL certificate status: 0x" << std::hex
-                << ssl_info.cert_status;
+  if (navigation_handle->GetSSLInfo().has_value()) {
+    const net::SSLInfo& ssl_info = *navigation_handle->GetSSLInfo();
+    LOG(INFO) << "SSL certificate status: 0x" << std::hex
+              << ssl_info.cert_status;
 
-      // LOG(INFO) << "SSL version: " << ssl_info.connection_status;
-      // LOG(INFO) << "Key Exchange Group: " << ssl_info.key_exchange_group;
-      // LOG(INFO) << "Peer Signature Algorithm: " <<
-      // ssl_info.peer_signature_algorithm;
+    // LOG(INFO) << "SSL version: " << ssl_info.connection_status;
+    // LOG(INFO) << "Key Exchange Group: " << ssl_info.key_exchange_group;
+    // LOG(INFO) << "Peer Signature Algorithm: " <<
+    // ssl_info.peer_signature_algorithm;
 
-      // Certificate information
-      // if (ssl_info.cert) {
-      //   LOG(INFO) << "Certificate details:";
-      //   LOG(INFO) << "  Subject: " <<
-      //   ssl_info.cert->subject().GetDisplayName(); LOG(INFO) << "  Issuer: "
-      //   << ssl_info.cert->issuer().GetDisplayName();
-      // }
+    // Certificate information
+    // if (ssl_info.cert) {
+    //   LOG(INFO) << "Certificate details:";
+    //   LOG(INFO) << "  Subject: " <<
+    //   ssl_info.cert->subject().GetDisplayName(); LOG(INFO) << "  Issuer: "
+    //   << ssl_info.cert->issuer().GetDisplayName();
+    // }
 
-      // // Security state
-      // LOG(INFO) << "Security state:";
-      // LOG(INFO) << "  Issued by known root: " <<
-      // ssl_info.is_issued_by_known_root; LOG(INFO) << "  PKP bypassed: " <<
-      // ssl_info.pkp_bypassed; LOG(INFO) << "  Client cert sent: " <<
-      // ssl_info.client_cert_sent; LOG(INFO) << "  Early data received: " <<
-      // ssl_info.early_data_received;
+    // // Security state
+    // LOG(INFO) << "Security state:";
+    // LOG(INFO) << "  Issued by known root: " <<
+    // ssl_info.is_issued_by_known_root; LOG(INFO) << "  PKP bypassed: " <<
+    // ssl_info.pkp_bypassed; LOG(INFO) << "  Client cert sent: " <<
+    // ssl_info.client_cert_sent; LOG(INFO) << "  Early data received: " <<
+    // ssl_info.early_data_received;
 
-      // // Handshake info
-      // LOG(INFO) << "Handshake type: " << [&ssl_info]() {
-      //   switch(ssl_info.handshake_type) {
-      //     case net::SSLInfo::HANDSHAKE_RESUME: return "RESUME";
-      //     case net::SSLInfo::HANDSHAKE_FULL: return "FULL";
-      //     default: return "UNKNOWN";
-      //   }
-      // }();
+    // // Handshake info
+    // LOG(INFO) << "Handshake type: " << [&ssl_info]() {
+    //   switch(ssl_info.handshake_type) {
+    //     case net::SSLInfo::HANDSHAKE_RESUME: return "RESUME";
+    //     case net::SSLInfo::HANDSHAKE_FULL: return "FULL";
+    //     default: return "UNKNOWN";
+    //   }
+    // }();
 
-      // Public key hashes
-      if (!ssl_info.public_key_hashes.empty()) {
-        // Get the first certificate hash (most important one)
-        LOG(INFO) << "Public key hashes size: "
-                  << ssl_info.public_key_hashes.size();
-        const auto& hash = ssl_info.public_key_hashes[0];
-        LOG(INFO) << "Certificate hash: " << hash.ToString();
-        std::vector<uint8_t> cert_hash(hash.data(), hash.data() + hash.size());
-        LOG(INFO) << "Certificate hash: " << cert_hash.size() << " bytes";
+    // Public key hashes
+    if (!ssl_info.public_key_hashes.empty()) {
+      // Get the first certificate hash (most important one)
+      LOG(INFO) << "Public key hashes size: "
+                << ssl_info.public_key_hashes.size();
+      const auto& hash = ssl_info.public_key_hashes[0];
+      LOG(INFO) << "Certificate hash: " << hash.ToString();
+      std::vector<uint8_t> cert_hash(hash.data(), hash.data() + hash.size());
+      LOG(INFO) << "Certificate hash: " << cert_hash.size() << " bytes";
 
-        // Create a JSON object with the header info
-        base::Value::Dict ssl_dict;
-        ssl_dict.Set("ssl_status", static_cast<int>(ssl_info.cert_status));
-        ssl_dict.Set("ssl_version",
-                     static_cast<int>(ssl_info.connection_status));
-        ssl_dict.Set("key_exchange_group", ssl_info.key_exchange_group);
-        ssl_dict.Set("peer_signature_algorithm",
-                     ssl_info.peer_signature_algorithm);
+      // Create a JSON object with the header info
+      base::Value::Dict ssl_dict;
+      ssl_dict.Set("ssl_status", static_cast<int>(ssl_info.cert_status));
+      ssl_dict.Set("ssl_version",
+                   static_cast<int>(ssl_info.connection_status));
+      ssl_dict.Set("key_exchange_group", ssl_info.key_exchange_group);
+      ssl_dict.Set("peer_signature_algorithm",
+                   ssl_info.peer_signature_algorithm);
 
-        // Add certificate subject/issuer if available
-        if (ssl_info.cert) {
-          ssl_dict.Set("subject", ssl_info.cert->subject().GetDisplayName());
-          ssl_dict.Set("issuer", ssl_info.cert->issuer().GetDisplayName());
-        }
-
-        std::string headers_json;
-        base::JSONWriter::Write(ssl_dict, &headers_json);
-
-        // Store the data
-        zk_proof::TlsDataStore::GetInstance()->StoreTlsData(
-            navigation_handle->GetURL().spec(), cert_hash, headers_json);
-
-        LOG(INFO) << "Stored TLS data for ZK proof generation";
-
-        for (size_t i = 0; i < ssl_info.public_key_hashes.size(); ++i) {
-          // LOG(INFO) << "Public key hash " << i << " size: "
-          // << ssl_info.public_key_hashes[i].size() << " bytes";
-          // LOG(INFO) << "Public key hash " << i << ": "
-          // << ssl_info.public_key_hashes[i].ToString();
-        }
-      } else {
-        LOG(INFO) << "No public key hashes available.";
+      // Add certificate subject/issuer if available
+      if (ssl_info.cert) {
+        ssl_dict.Set("subject", ssl_info.cert->subject().GetDisplayName());
+        ssl_dict.Set("issuer", ssl_info.cert->issuer().GetDisplayName());
       }
 
-      // // Certificate timestamps
-      // LOG(INFO) << "Signed certificate timestamps count: "
-      //           << ssl_info.signed_certificate_timestamps.size();
+      std::string headers_json;
+      base::JSONWriter::Write(ssl_dict, &headers_json);
 
-      // // CT Policy compliance
-      // LOG(INFO) << "CT Policy compliance: "
-      //           << static_cast<int>(ssl_info.ct_policy_compliance);
+      // Store the data
+      zk_proof::TlsDataStore::GetInstance()->StoreTlsData(
+          navigation_handle->GetURL().spec(), cert_hash, headers_json);
+
+      LOG(INFO) << "Stored TLS data for ZK proof generation";
+
+      for (size_t i = 0; i < ssl_info.public_key_hashes.size(); ++i) {
+        // LOG(INFO) << "Public key hash " << i << " size: "
+        // << ssl_info.public_key_hashes[i].size() << " bytes";
+        // LOG(INFO) << "Public key hash " << i << ": "
+        // << ssl_info.public_key_hashes[i].ToString();
+      }
     } else {
-      LOG(WARNING) << "No SSL info available for: "
-                   << navigation_handle->GetURL().spec();
+      LOG(INFO) << "No public key hashes available.";
     }
-    static_cast<NavigationRequest*>(navigation_handle)
-        ->frame_tree_node()
-        ->frame_tree()
-        .controller()
-        .ssl_manager()
-        ->DidStartResourceResponse(
-            url::SchemeHostPort(navigation_handle->GetURL()),
-            navigation_handle->GetSSLInfo().has_value()
-                ? net::IsCertStatusError(
-                      navigation_handle->GetSSLInfo()->cert_status)
-                : false);
+
+    // // Certificate timestamps
+    // LOG(INFO) << "Signed certificate timestamps count: "
+    //           << ssl_info.signed_certificate_timestamps.size();
+
+    // // CT Policy compliance
+    // LOG(INFO) << "CT Policy compliance: "
+    //           << static_cast<int>(ssl_info.ct_policy_compliance);
+  } else {
+    LOG(WARNING) << "No SSL info available for: "
+                 << navigation_handle->GetURL().spec();
   }
+  static_cast<NavigationRequest*>(navigation_handle)
+      ->frame_tree_node()
+      ->frame_tree()
+      .controller()
+      .ssl_manager()
+      ->DidStartResourceResponse(
+          url::SchemeHostPort(navigation_handle->GetURL()),
+          navigation_handle->GetSSLInfo().has_value()
+              ? net::IsCertStatusError(
+                    navigation_handle->GetSSLInfo()->cert_status)
+              : false);
+}
+LOG(INFO) << "[RamPrasad] >> WebContentsImpl::DidStartNavigation: "
+          << navigation_handle->GetURL().spec();
+// For twitter, we need to start SAML authentication
+if (navigation_handle->GetURL().spec().find("x.com") != std::string::npos) {
   LOG(INFO) << "[RamPrasad] >> WebContentsImpl::DidStartNavigation: "
             << navigation_handle->GetURL().spec();
-  // For twitter, we need to start SAML authentication
-  if (navigation_handle->GetURL().spec().find("x.com") != std::string::npos) {
-    LOG(INFO) << "[RamPrasad] >> WebContentsImpl::DidStartNavigation: "
-              << navigation_handle->GetURL().spec();
-    // sso_auth::SamlManager::GetInstance()->StartSAMLAuthentication(this,
-    // navigation_handle->GetURL().spec());
-  }
+  // sso_auth::SamlManager::GetInstance()->StartSAMLAuthentication(this,
+  // navigation_handle->GetURL().spec());
+}
 }
 
 void WebContentsImpl::DidFinishNavigation(NavigationHandle* navigation_handle) {
@@ -8406,37 +8188,6 @@ void WebContentsImpl::RunFileChooser(
   absl::Cleanup cancel_chooser = [&listener] {
     listener->FileSelectionCanceled();
   };
-
-  // AADI UPLOAD BLOCKING: Check if upload should be blocked
-  std::string domain = GetLastCommittedURL().host();
-
-  // Get PrefService to check blocked domains/URLs from preferences
-  Profile* profile = Profile::FromBrowserContext(GetBrowserContext());
-  bool should_block = false;
-
-  if (profile) {
-    PrefService* prefs = profile->GetPrefs();
-    if (prefs) {
-      // Use UploadBlockingService to check if upload should be blocked based on
-      // preferences
-      should_block = UploadBlockingService::GetInstance()->ShouldBlockUpload(
-          domain, prefs);
-    } else {
-      LOG(INFO) << "AADI UPLOAD BLOCKING: No prefs service available, allowing "
-                   "upload";
-    }
-  } else {
-    LOG(INFO) << "AADI UPLOAD BLOCKING: No profile found, allowing upload";
-  }
-
-  if (should_block) {
-    // Show native snackbar notification
-    ShowUploadBlockedSnackbar("upload");
-
-    // Block the file chooser by not proceeding further
-    return;
-  }
-
   if (visibility_ == Visibility::HIDDEN) {
     // Do not allow background tab to open file chooser.
     return;
@@ -8456,31 +8207,6 @@ void WebContentsImpl::RunFileChooser(
     delegate_->RunFileChooser(render_frame_host, std::move(listener), params);
     std::move(cancel_chooser).Cancel();
   }
-}
-
-void WebContentsImpl::ShowUploadBlockedSnackbar(const std::string& action) {
-  LOG(INFO) << "[UploadBlocker] Showing native notification for blocked "
-            << action;
-
-  // Get current domain
-  GURL url = GetLastCommittedURL();
-  std::string domain = url.host();
-
-  // Create notification message
-  std::string notification_message = base::StringPrintf(
-      "Upload blocked on %s by your organization.", domain.c_str());
-
-  LOG(INFO) << "[UploadBlocker] Notification message: " << notification_message;
-
-  // Use the upload blocking service with delegate pattern
-  UploadBlockingService* service = UploadBlockingService::GetInstance();
-  if (service) {
-    service->ShowUploadBlockedNotification(this, notification_message);
-  } else {
-    LOG(ERROR) << "[UploadBlocker] No upload blocking service available";
-  }
-
-  LOG(INFO) << "[UploadBlocker] Native notification called";
 }
 
 double WebContentsImpl::GetPendingPageZoomLevel() {
@@ -9384,6 +9110,34 @@ void WebContentsImpl::SetFocusedFrame(FrameTreeNode* node,
   }
 
   CloseListenerManager::DidChangeFocusedFrame(this);
+}
+
+FrameTree* WebContentsImpl::GetOwnedPictureInPictureFrameTree() {
+#if !BUILDFLAG(IS_ANDROID)
+  if (has_picture_in_picture_document_) {
+    WebContents* picture_in_picture_web_contents =
+        PictureInPictureWindowController::
+            GetOrCreateDocumentPictureInPictureController(this)
+                ->GetChildWebContents();
+    if (picture_in_picture_web_contents) {
+      return &(static_cast<WebContentsImpl*>(picture_in_picture_web_contents)
+                   ->GetPrimaryFrameTree());
+    }
+  }
+#endif  // !BUILDFLAG(IS_ANDROID)
+
+  return nullptr;
+}
+
+FrameTree* WebContentsImpl::GetPictureInPictureOpenerFrameTree() {
+#if !BUILDFLAG(IS_ANDROID)
+  if (picture_in_picture_opener_) {
+    return &(static_cast<WebContentsImpl*>(picture_in_picture_opener_.get())
+                 ->GetPrimaryFrameTree());
+  }
+#endif  // !BUILDFLAG(IS_ANDROID)
+
+  return nullptr;
 }
 
 void WebContentsImpl::DidCallFocus() {
@@ -10617,11 +10371,6 @@ void WebContentsImpl::IsClipboardPasteAllowedByPolicy(
     const ClipboardMetadata& metadata,
     ClipboardPasteData clipboard_paste_data,
     IsClipboardPasteAllowedCallback callback) {
-  LOG(INFO) << "[RamPrasad][WebContents] IsClipboardPasteAllowedByPolicy";
-  if (ShouldBlockCopyPaste("paste")) {
-    LOG(INFO) << "[RamPrasad][WebContents] Paste blocked by policy";
-    return;
-  }
   ++suppress_unresponsive_renderer_count_;
   GetContentClient()->browser()->IsClipboardPasteAllowedByPolicy(
       source, destination, metadata, std::move(clipboard_paste_data),

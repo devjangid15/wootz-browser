@@ -27,18 +27,18 @@ public class ChromeLauncherActivity extends Activity {
         super.onCreate(savedInstanceState);
         Log.e("ChromeLauncherActivity", "onCreate");
 
-        // Skip welcome page
-        FirstRunStatus.setSkipWelcomePage(true);
+        // // Skip welcome page
+        // FirstRunStatus.setSkipWelcomePage(true);
 
         // Handle Branch intents by redirecting to first run experience
-        if (getIntent() != null && getIntent().getData() != null 
-                && "branch.wootz.app".equals(getIntent().getData().getHost())) {
-            // Instead of just finishing, redirect to first run
-            redirectBranchIntentToFirstRun();
-            TraceEvent.end("ChromeLauncherActivity.onCreate");
-            Log.e("ChromeLauncherActivity", "redirectBranchIntentToFirstRun");
-            return;
-        }
+        // if (getIntent() != null && getIntent().getData() != null 
+        //         && "branch.wootz.app".equals(getIntent().getData().getHost())) {
+        //     // Instead of just finishing, redirect to first run
+        //     redirectBranchIntentToFirstRun();
+        //     TraceEvent.end("ChromeLauncherActivity.onCreate");
+        //     Log.e("ChromeLauncherActivity", "redirectBranchIntentToFirstRun");
+        //     return;
+        // }
 
         // TODO(crbug.com/40775606): Figure out a scalable way to apply overlays to
         // activities like this.

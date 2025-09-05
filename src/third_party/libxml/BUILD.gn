@@ -83,8 +83,8 @@ static_library("xml_reader") {
     "//base/test:test_support",
     "//components/policy/core/common:unit_tests", 
     "//services/data_decoder:*",
-    "//third_party/xmlsec:*",  # For SAML signature verification
-    "//components/saml_verifier:*",  # For SAML signature verification
+    # "//third_party/xmlsec:*",  # For SAML signature verification
+    # "//components/saml_verifier:*",  # For SAML signature verification
   ]
   if (is_win) {
     visibility += [ "//components/wifi" ]

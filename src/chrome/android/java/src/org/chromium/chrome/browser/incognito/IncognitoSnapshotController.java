@@ -11,15 +11,10 @@ import androidx.annotation.NonNull;
 
 import org.chromium.base.supplier.Supplier;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
-import org.chromium.chrome.browser.customtabs.ContentPrivacyPreferencesBridge;
 
 /**
- * An abstract base class to provide common functionalities related to blocking screenshots
- * across {@link ChromeTabbedActivity} and {@link CustomTabActivity}.
- * 
- * Blocks screenshots when:
- * 1. Content privacy is enabled via SAML server response, OR
- * 2. User is in incognito mode (unless incognito screenshots are explicitly enabled)
+ * An abstract base class to provide common functionalities related to allowing/blocking snapshot
+ * for Incognito tabs across {@link ChromeTabbedActivity} and {@link CustomTabActivity}.
  */
 public abstract class IncognitoSnapshotController {
     private final @NonNull Window mWindow;
@@ -36,37 +31,25 @@ public abstract class IncognitoSnapshotController {
         mIsShowingIncognitoSupplier = isShowingIncognitoSupplier;
     }
 
-    /** Sets the attributes flags to secure to block screenshots globally. */
+    /** Sets the attributes flags to secure if there is an incognito tab visible. */
     protected void updateIncognitoTabSnapshotState() {
-        // Safety check to prevent native crashes
-        if (mWindow == null) return;
-        
-        try {
-            WindowManager.LayoutParams attributes = mWindow.getAttributes();
-            if (attributes == null) return;
-            
-            boolean currentSecureState =
-                    (attributes.flags & WindowManager.LayoutParams.FLAG_SECURE)
-                            == WindowManager.LayoutParams.FLAG_SECURE;
+        assert mIsShowingIncognitoSupplier != null : "Supplier not found!";
 
-            // Block screenshots when:
-            // 1. Content privacy is enabled via SAML, OR
-            // 2. User is in incognito mode (and incognito screenshots are disabled)
-            boolean contentPrivacyEnabled = ContentPrivacyPreferencesBridge.isContentPrivacyEnabled();
-            boolean isIncognitoMode = mIsShowingIncognitoSupplier.get();
-            
-            boolean expectedSecureState = contentPrivacyEnabled || isIncognitoMode;
-            
-            if (currentSecureState == expectedSecureState) return;
+        WindowManager.LayoutParams attributes = mWindow.getAttributes();
+        boolean currentSecureState =
+                (attributes.flags & WindowManager.LayoutParams.FLAG_SECURE)
+                        == WindowManager.LayoutParams.FLAG_SECURE;
 
-            if (expectedSecureState) {
-                mWindow.addFlags(WindowManager.LayoutParams.FLAG_SECURE);
-            } else {
-                mWindow.clearFlags(WindowManager.LayoutParams.FLAG_SECURE);
-            }
-        } catch (Exception e) {
-            // Log error but don't crash
-            android.util.Log.e("IncognitoSnapshotController", "Error setting FLAG_SECURE", e);
+        boolean expectedSecureState = mIsShowingIncognitoSupplier.get();
+        if (ChromeFeatureList.sIncognitoScreenshot.isEnabled()) {
+            expectedSecureState = false;
+        }
+        if (currentSecureState == expectedSecureState) return;
+
+        if (expectedSecureState) {
+            mWindow.addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+        } else {
+            mWindow.clearFlags(WindowManager.LayoutParams.FLAG_SECURE);
         }
     }
 }
