@@ -305,7 +305,6 @@ public class NewTabPage
             if (!mTab.isHidden()) recordNtpShown();
         }
     }
-
     /**
      * Extends {@link TileGroupDelegateImpl} to add metrics logging that is specific to {@link
      * NewTabPage}.

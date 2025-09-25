@@ -35,7 +35,8 @@ SystemIndicatorManagerFactory::SystemIndicatorManagerFactory()
               .WithGuest(ProfileSelection::kOriginalOnly)
               .Build()) {
   if (extensions::ExtensionsBrowserClient::Get())
-    DependsOn(ExtensionsBrowserClient::Get()->GetExtensionSystemFactory());
+    DependsOn(Extension
+      sBrowserClient::Get()->GetExtensionSystemFactory());
 }
 
 SystemIndicatorManagerFactory::~SystemIndicatorManagerFactory() = default;

@@ -60,6 +60,7 @@ import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.base.WindowAndroid;
 import org.chromium.ui.base.WindowDelegate;
 import org.chromium.ui.modaldialog.ModalDialogManager;
+import android.util.Log;
 
 import java.util.List;
 import java.util.Optional;
@@ -530,6 +531,7 @@ public class LocationBarCoordinator
 
     @Override
     public void loadUrl(OmniboxLoadUrlParams omniboxLoadUrlParams) {
+        Log.e("LocationBarCoordinator", "loadUrl: " + omniboxLoadUrlParams);
         mLocationBarMediator.loadUrl(omniboxLoadUrlParams);
     }
 

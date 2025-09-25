@@ -20,6 +20,7 @@ import android.view.View;
 import android.view.View.MeasureSpec;
 import android.view.View.OnKeyListener;
 import android.widget.TextView;
+import android.util.Log;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -72,6 +73,7 @@ import org.chromium.components.browser_ui.styles.ChromeColors;
 import org.chromium.components.browser_ui.widget.animation.CancelAwareAnimatorListener;
 import org.chromium.components.browser_ui.widget.gesture.BackPressHandler;
 import org.chromium.components.embedder_support.util.UrlUtilities;
+import org.chromium.components.infobars.R;
 import org.chromium.components.omnibox.AutocompleteMatch;
 import org.chromium.components.omnibox.OmniboxFeatures;
 import org.chromium.components.search_engines.TemplateUrl;
@@ -551,6 +553,46 @@ class LocationBarMediator
         }
 
         String url = omniboxLoadUrlParams.url;
+        String userQuery = mUrlCoordinator.getTextWithoutAutocomplete();
+        Log.e("kritagya", "start");
+        Log.e("kritagya", "url: " + url);
+        Log.e("kritagya", "userQuery: " + userQuery);
+        if (!userQuery.startsWith("https://")) {
+            Log.e("kritagya", "in if");
+            try {
+                String encodedQuery = java.net.URLEncoder.encode(url, java.nio.charset.StandardCharsets.UTF_8);
+                String chatUrl = "wootzapp://chat/?q=" + userQuery;
+                Log.e("kritagya", "chatUrl: " + chatUrl);
+                Log.e("kkritagya", "cencodedQuery"+encodedQuery);
+                // Create new OmniboxLoadUrlParams with chat URL
+                OmniboxLoadUrlParams chatLoadParams = new OmniboxLoadUrlParams.Builder(chatUrl, PageTransition.GENERATED)
+                        .setOpenInNewTab(false)
+                        .build();
+                
+                // Load the chat URL by creating LoadUrlParams and using the current tab
+                if (currentTab != null) {
+                    Log.e("kritagya", "currenttab");
+                    LoadUrlParams chatParams = new LoadUrlParams(chatUrl);
+                    chatParams.setTransitionType(PageTransition.GENERATED | PageTransition.FROM_ADDRESS_BAR);
+                    currentTab.loadUrl(chatParams);
+                    mLocaleManager.recordLocaleBasedSearchMetrics(false, chatUrl, PageTransition.GENERATED);
+                    PostTask.postTask(TaskTraits.UI_USER_VISIBLE, () -> focusCurrentTab());
+                }
+                return;
+            } catch (Exception e) {
+                // Fallback to basic chat URL without query
+                Log.e("kritagya", "exception " + e);
+                if (currentTab != null) {
+                    LoadUrlParams chatParams = new LoadUrlParams("wootzapp://chat/");
+                    chatParams.setTransitionType(PageTransition.GENERATED | PageTransition.FROM_ADDRESS_BAR);
+                    currentTab.loadUrl(chatParams);
+                    mLocaleManager.recordLocaleBasedSearchMetrics(false, "wootzapp://chat/", PageTransition.GENERATED);
+                    PostTask.postTask(TaskTraits.UI_USER_VISIBLE, () -> focusCurrentTab());
+                }
+                return;
+            }
+        }
+
         if (currentTab != null) {
             boolean isCurrentTabNtpUrl = UrlUtilities.isNtpUrl(currentTab.getUrl());
             if (currentTab.isNativePage() || isCurrentTabNtpUrl) {
@@ -1382,7 +1424,11 @@ class LocationBarMediator
                 mTemplateUrlServiceSupplier.get().getUrlForSearchQuery(query, searchParams);
 
         if (!TextUtils.isEmpty(queryUrl)) {
-            loadUrl(
+            Log.e("AI_SEARCH", "performSearchQuery: queryUrl: " + queryUrl);
+            Log.e("AI_SEARCH", "performSearchQuery: query: " + query);
+            Log.e("AI_SEARCH", "performSearchQuery: searchParams: " + searchParams);
+            Log.e("AI_SEARCH", "Sending queryUrl to LoadURL");
+                loadUrl(
                     new OmniboxLoadUrlParams.Builder(queryUrl, PageTransition.GENERATED)
                             .setOpenInNewTab(false)
                             .build());
